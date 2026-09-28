@@ -17,19 +17,32 @@
 // every file the user owns outside its home and empties its home, verified. Ending a seat is that destroy (admin.ts),
 // which removes the user itself. These are separate invocations, never this seat's own runner, which the seat can
 // kill or stop (it runs as the same user).
-import { accessSync, constants, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { RELEASE_BUILD } from "../../license/service.ts";
 import { redactSecrets } from "../../protocol/safety.ts";
-import { cloneBundle, seatOutcome } from "./git.ts";
+import { cloneBundle, git, seatOutcome } from "./git.ts";
+import { MAX_SEAT_BRIEF, SEAT_TASK_PROMPT, SEAT_TASK_PROMPT_ALT, SeatBranch, SeatResultFile } from "../../protocol/seats.ts";
+import { readResultFile, removeTask, writeTask, type TaskFile } from "./v2.ts";
 import { Input } from "./runner-io.ts";
 import { FAKE_UID_ENV, fakeScope, uidOp } from "./runner-uid.ts";
 import { sweepOp, validRoots } from "./runner-sweep.ts";
 
 /** Bumped when the stdin/stdout protocol changes: an installed runner copy of another version refuses to run. */
 export const RUNNER_PROTOCOL = 6;
+/**
+ * A v2 seat's run (FO-2): the v6 spec plus the brief (written to TASK.md after the clone), a staged bundle path, a
+ * branch to check out and a result file to return. This runner takes both; an older installed copy refuses a v7
+ * spec with its "not a seat request this runner understands" (the seat fails with that, nothing runs).
+ */
+export const RUNNER_PROTOCOL_V2 = 7;
 export const RUNNER_MAX_BUNDLE = 25 * 1024 * 1024;
+/**
+ * A v2 seat's workspace bundle (rv 7): the exact commit of the host's own clone, staged privately by the host and
+ * streamed over this runner's stdin (never a path another local user could open), written to disk as it arrives.
+ */
+export const RUNNER_MAX_STAGED = 1024 * 1024 * 1024;
 export const RUNNER_MAX_PROMPT = 256 * 1024;
 export const HEADER_MAX = 1024 * 1024;
 export const CONTROL_MAX = 64;
@@ -72,16 +85,29 @@ export interface RunnerSpec {
    * and gone with the user (the product requirement: seats use the machine's own Claude/Codex login).
    */
   codex_auth?: string;
+  /** rv 7: the brief, written into the work tree (TASK.md) once it exists; the prompt is then the fixed pointer. */
+  task?: string;
+  /** rv 7: after the clone, check out this branch at its HEAD (a build lane). */
+  branch?: string;
+  /** rv 7: returned with the outcome (read without following symlinks, at most 64 KiB, redacted). */
+  result_file?: string;
 }
 
 export function validSpec(v: unknown): RunnerSpec | null {
   const s = v as Partial<RunnerSpec> | null;
-  if (!s || typeof s !== "object" || s.rv !== RUNNER_PROTOCOL || (s.op !== undefined && s.op !== "run")) return null;
+  if (!s || typeof s !== "object" || (s.rv !== RUNNER_PROTOCOL && s.rv !== RUNNER_PROTOCOL_V2) || (s.op !== undefined && s.op !== "run")) return null;
+  const v2 = s.task !== undefined || s.branch !== undefined || s.result_file !== undefined;
+  if (v2 && s.rv !== RUNNER_PROTOCOL_V2) return null;
+  if (s.task !== undefined && (typeof s.task !== "string" || !s.task || s.task.length > MAX_SEAT_BRIEF)) return null;
+  if (s.branch !== undefined && !SeatBranch.safeParse(s.branch).success) return null;
+  if (s.result_file !== undefined && !SeatResultFile.safeParse(s.result_file).success) return null;
+
   if (typeof s.dir_name !== "string" || !/^\d{8}-\d{6}-[a-z0-9-]{1,40}$/.test(s.dir_name)) return null;
   if (typeof s.bin !== "string" || !s.bin.startsWith("/") || !Array.isArray(s.args) || !s.args.every((a) => typeof a === "string")) return null;
   if (typeof s.env !== "object" || s.env === null || !Object.values(s.env).every((x) => typeof x === "string")) return null;
   if (typeof s.token !== "string" || !/^[0-9a-f]{64}$/.test(s.token) || typeof s.socket !== "string" || !s.socket.startsWith("/")) return null;
-  if (!Number.isInteger(s.bundle_len) || (s.bundle_len as number) < 0 || (s.bundle_len as number) > RUNNER_MAX_BUNDLE) return null;
+  const maxBundle = s.rv === RUNNER_PROTOCOL_V2 ? RUNNER_MAX_STAGED : RUNNER_MAX_BUNDLE;
+  if (!Number.isInteger(s.bundle_len) || (s.bundle_len as number) < 0 || (s.bundle_len as number) > maxBundle) return null;
   if (!Number.isInteger(s.prompt_len) || (s.prompt_len as number) < 1 || (s.prompt_len as number) > RUNNER_MAX_PROMPT) return null;
   if (s.probe_permission_prompts !== undefined && typeof s.probe_permission_prompts !== "boolean") return null;
   if (s.claude_credentials !== undefined && (typeof s.claude_credentials !== "string" || s.claude_credentials.length > 64 * 1024)) return null;
@@ -186,9 +212,17 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   } catch (err) {
     return fail(`the seat's directory could not be made under ${home}/walkie-seats: ${(err as Error).message}`);
   }
-  const bundle = spec.bundle_len ? await input.bytes(spec.bundle_len) : null;
+  // v2 (rv 7): the bundle is streamed straight to a 0600 file in the seat's own directory; v1: held in memory (≤ 25 MB).
+  const streamed = spec.rv === RUNNER_PROTOCOL_V2 && spec.bundle_len > 0 ? join(dir, "input.bundle") : null;
+  if (streamed) {
+    const fd = openSync(streamed, "wx", 0o600);
+    let ok = false;
+    try { ok = await input.toFile(spec.bundle_len, fd); } finally { closeSync(fd); }
+    if (!ok) return fail("the seat request ended early");
+  }
+  const bundle = spec.bundle_len && !streamed ? await input.bytes(spec.bundle_len) : null;
   const prompt = await input.bytes(spec.prompt_len);
-  if (!prompt || (spec.bundle_len && !bundle)) return fail("the seat request ended early");
+  if (!prompt || (spec.bundle_len && !bundle && !streamed)) return fail("the seat request ended early");
   const tokenFile = join(dir, SEAT_TOKEN_FILE);
   writeFileSync(tokenFile, spec.token, { mode: 0o600 });
   const dropToken = () => rmSync(tokenFile, { force: true });
@@ -234,16 +268,22 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
 
   let cwd = join(dir, "work");
   let base: string | null = null;
+  let task: TaskFile | null = null;
   try {
-    if (bundle) {
-      const file = join(dir, "input.bundle");
-      writeFileSync(file, bundle, { mode: 0o600 });
+    if (bundle || streamed) {
+      const file = streamed ?? join(dir, "input.bundle");
+      if (bundle) writeFileSync(file, bundle, { mode: 0o600 });
       const cloned = await cloneBundle(file, dir, env, abort.signal);
       cwd = cloned.repo;
       base = cloned.base;
+      if (spec.branch) {
+        const co = await git(["checkout", "--quiet", "-B", spec.branch], cwd, env, { signal: abort.signal });
+        if (co.code !== 0) throw new Error(`the branch ${spec.branch} could not be made in the seat's clone`);
+      }
     } else {
       mkdirSync(cwd, { mode: 0o700 });
     }
+    if (spec.task) task = await writeTask(cwd, spec.task, env, abort.signal);
   } catch (err) {
     dropToken();
     return fail(abort.signal.aborted ? "stopped" : (err as Error).message);
@@ -253,13 +293,16 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
     dropToken();
     return fail(`${spec.bin} can't be run by the seat user ${me.username} (walkie seats setup-user --apply installs the runtimes for the seat users)`);
   }
-  const args = spec.args.map((a) => (a === "{cwd}" ? cwd : a));
+  // v2: the brief went to .walkie/TASK.md (the tree had a TASK.md of its own): the fixed pointer follows it.
+  const alt = task !== null && task.prompt !== SEAT_TASK_PROMPT;
+  const args = spec.args.map((a) => (a === "{cwd}" ? cwd : alt && a === SEAT_TASK_PROMPT ? SEAT_TASK_PROMPT_ALT : a));
+  const promptBytes = alt ? new TextEncoder().encode(new TextDecoder().decode(prompt).split(SEAT_TASK_PROMPT).join(SEAT_TASK_PROMPT_ALT)) : prompt;
   if (spec.probe_permission_prompts && await knowsPermissionPrompts(spec.bin, env)) args.push("--permission-prompts", "none");
   child = Bun.spawn([spec.bin, ...args], { cwd, env, stdin: "pipe", stdout: "pipe", stderr: "inherit", detached: true });
   const runtime = child;
   send({ ready: { dir, cwd, base, pid: runtime.pid } });
   const sink = runtime.stdin as import("bun").FileSink;
-  sink.write(prompt);
+  sink.write(promptBytes);
   sink.end();
   const reader = (runtime.stdout as ReadableStream<Uint8Array>).getReader();
   const relay = (async () => {
@@ -286,10 +329,16 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   void reader.cancel().catch(() => undefined);
   ended = true;
   send({ exit: code });
-  if (abort.signal.aborted) { send({ outcome: null }); dropToken(); return 0; }
+  // v2: the result file first (read as this user, no symlink followed; also after an abort: a plain file read),
+  // then the brief is taken out of the tree.
+  const result = spec.result_file ? readResultFile(cwd, spec.result_file) : null;
+  removeTask(cwd, task);
+  const file = result ? ("bytes" in result ? { file: Buffer.from(result.bytes).toString("base64") } : { file_error: result.error }) : {};
+  if (abort.signal.aborted) { send({ outcome: result ? { commits: 0, dirty: 0, aborted: true, ...file } : null }); dropToken(); return 0; }
   // The post-run git runs as the seat user: nothing a seat planted can run as anyone else.
   // Its scratch space inside the run's own directory (never the user's shared tmpdir: Codex r5 MEDIUM 5).
-  const out = await seatOutcome(cwd, base, join(dir, "result.bundle"), env, abort.signal, join(dir, "tmp")).catch(() => null);
+  // A commit that carries the brief file is never returned (FO-2 r1 MEDIUM 5).
+  const out = await seatOutcome(cwd, base, join(dir, "result.bundle"), env, abort.signal, join(dir, "tmp"), undefined, task?.file).catch(() => null);
   let bundleB64: string | undefined;
   if (out?.bundle) {
     try {
@@ -297,7 +346,7 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
       if (bytes.byteLength <= RUNNER_MAX_BUNDLE) bundleB64 = Buffer.from(bytes).toString("base64");
     } catch { /* no bundle */ }
   }
-  send({ outcome: out ? { commits: out.commits, dirty: out.dirty, ...(bundleB64 ? { bundle: bundleB64 } : {}) } : null });
+  send({ outcome: out ? { commits: out.commits, dirty: out.dirty, ...(bundleB64 ? { bundle: bundleB64 } : {}), ...(out.brief ? { brief: true } : {}), ...file } : result ? { commits: 0, dirty: 0, ...file } : null });
   dropToken();
   return 0;
 }

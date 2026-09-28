@@ -6,8 +6,9 @@ import {
 } from "../../protocol/accounts-format.ts";
 import type { AccountView, AccountWindow } from "../../protocol/accounts.ts";
 import { accountForModel, accountViewForModel, accountViewJson, ACCOUNTS_NOTE } from "../agent-output.ts";
+import { fleetCommand, poolNoticeLines } from "./accounts-pool.ts";
 import { EXIT, type Ctx } from "../context.ts";
-import { UsageError } from "../args.ts";
+import { bool, UsageError } from "../args.ts";
 import { vaultCommand } from "./vault.ts";
 import { c, pad, safeTerm } from "../format.ts";
 
@@ -97,9 +98,13 @@ export async function accounts(ctx: Ctx): Promise<number> {
   if (sub && sub !== "list") {
     const r = await vaultCommand(ctx, sub);
     if (r !== null) return r;
-    throw new UsageError(`unknown accounts command "${sub}" (add, remove, policy, vault, pick, exec, shims)`);
+    throw new UsageError(`unknown accounts command "${sub}" (add, remove, policy, vault, pick, exec, shims, split, pool, personal, promote)`);
   }
-  const { accounts: list } = await ctx.client().accounts();
+  // RESET-CLOCK-1: every machine's accounts, windows and resets, and who uses what now (for an orchestrator).
+  if (bool(ctx.args, "all")) return fleetCommand(ctx);
+  const { accounts: list, pool } = await ctx.client().accounts();
+  // COMPANY POOL: when an owner turned the team's pool on, its person hears it once (never an agent or --json).
+  if (!ctx.json && !ctx.forAgent) for (const l of poolNoticeLines(pool)) ctx.out(l);
   if (ctx.json) ctx.out(JSON.stringify(ctx.forAgent ? { accounts: list.map(accountViewJson), trust: "team-member", note: ACCOUNTS_NOTE } : { accounts: list }));
   else ctx.out(ctx.forAgent ? renderAccountsForModel(list) : renderAccounts(list));
   return EXIT.ok;

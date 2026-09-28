@@ -14,6 +14,7 @@
 // or an exhausted reading whose reset is still ahead.
 import type { AccountUsage, AccountWindow, ResetClock } from "../protocol/accounts.ts";
 import { clockAvailability, usageUntil } from "../protocol/accounts-format.ts";
+import { PERSONAL_RESERVE_PCT } from "../protocol/pool-rules.ts";
 import { markGuessed } from "./clock.ts";
 import { markApplies, markExcludes, markKey, markLifted, type Mark } from "./leases.ts";
 
@@ -21,6 +22,8 @@ export const LEASE_RESERVE_PTS = 10;
 export const DEFAULT_THRESHOLD_PCT = 95;
 /** A reading older than this is no reading (phase 1's UNKNOWN_MS). */
 export const READING_MAX_AGE_MS = 60 * 60_000;
+/** COMPANY POOL (Alex decision): the last 10 % of every window is kept for the login's person (pool-rules.ts). */
+export { PERSONAL_RESERVE_PCT };
 
 export interface Candidate {
   id: string;
@@ -50,6 +53,10 @@ export interface Candidate {
    * not picked until the remembered reset — without asking the provider.
    */
   clock?: readonly ResetClock[];
+  /** COMPANY POOL: another person's account lent through the team's company pool (the personal reserve applies). */
+  pooled?: boolean;
+  /** COMPANY POOL: every machine that may lend it, the preferred first (`node`); tried in turn when one fails. */
+  nodes?: string[];
 }
 
 export interface Ranked extends Candidate {
@@ -122,6 +129,13 @@ export function roomOf(u: AccountUsage, model: string | null | undefined, now: n
   return Math.min(...ws.map((w) => 100 - w.used_pct));
 }
 
+/** The same freshness rule for borrowing and reserve supervision. */
+export function freshRoomOf(u: AccountUsage | null, model: string | null | undefined, now: number): number | null {
+  if (!u || u.at > now || now - u.at > READING_MAX_AGE_MS) return null;
+  if (u.state === "exhausted") return 0;
+  return u.state === "ok" && u.windows.length ? roomOf(u, model, now) : null;
+}
+
 /** The highest used % over the applicable windows and which window it is (for the switch line). */
 export function hottestWindow(u: AccountUsage | null, model: string | null | undefined, now: number): AccountWindow | null {
   if (!u) return null;
@@ -138,19 +152,22 @@ function recoveryAt(u: AccountUsage | null, model: string | null | undefined, no
 }
 
 /**
- * Own accounts first, always (round 1, Opus 4 / Codex 7): a teammate's shared account (own = false) is considered
- * only when none of the caller's own accounts can be picked. The caller decides whether borrowed candidates are in
- * the list at all (the borrower's opt-in).
+ * Own accounts first, always (round 1, Opus 4 / Codex 7): a teammate's account (own = false) is considered only when
+ * none of the caller's own accounts can be picked. The caller decides whether borrowed candidates are in the list at
+ * all (the borrower's opt-in for `shared`; the team's company pool for `pooled`).
  */
 export function selectOwnFirst(cands: readonly Candidate[], o: SelectOptions): Selection {
   const own = cands.filter((c) => c.own && c.provider === o.provider);
   const mine = select(own, o);
-  const theirs = cands.filter((c) => !c.own);
-  if (mine.pick || !theirs.length) return mine;
-  // Round 2 (Codex 9): a teammate's account only when EVERY own account is affirmatively at its limit — never because
-  // an own account is unknown, stale, near the threshold, failing its credentials or left out for another reason.
+  if (mine.pick) return mine;
+  // COMPANY POOL: an account pooled for the whole company may be used whenever no own account can be picked.
+  const pooled = cands.filter((c) => !c.own && c.pooled);
+  // Round 2 (Codex 9): a teammate's SHARED account only when EVERY own account is affirmatively at its limit — never
+  // because an own account is unknown, stale, near the threshold, failing its credentials or left out otherwise.
   const atLimit = new Set(mine.excluded.filter((e) => e.atLimit).map((e) => e.key ?? e.id));
-  if (!own.every((c) => atLimit.has(markKey(c)))) return mine;
+  const shared = own.every((c) => atLimit.has(markKey(c))) ? cands.filter((c) => !c.own && !c.pooled) : [];
+  const theirs = [...pooled, ...shared];
+  if (!theirs.length) return mine;
   const b = select(theirs, o);
   const excluded = [...mine.excluded, ...b.excluded];
   if (b.pick) return { ...b, excluded };
@@ -209,12 +226,23 @@ export function select(cands: readonly Candidate[], o: SelectOptions): Selection
       out(c, "limit reached (remembered)", remembered.until, true, true);
       continue;
     }
+    // COMPANY POOL (Codex p8 HIGH 2): another person's pooled login keeps its last PERSONAL_RESERVE_PCT for its person
+    // using a fresh reading. Unknown or stale usage holds a new launch until refreshed.
+    if (c.pooled && !c.own) {
+      if (c.usage?.state === "exhausted") { out(c, "limit reached", usageUntil(c.usage), true, true); continue; }
+      const last = freshRoomOf(c.usage, o.model, o.now);
+      if (last === null) { out(c, `usage unknown: the last ${PERSONAL_RESERVE_PCT}% kept for its person can't be checked`, null); continue; }
+      if (last - PERSONAL_RESERVE_PCT <= 0) { out(c, `kept for its person (the last ${PERSONAL_RESERVE_PCT}%)`, recoveryAt(c.usage, o.model, o.now), true, true); continue; }
+    }
     const u = c.usage && o.now - c.usage.at <= READING_MAX_AGE_MS ? c.usage : null;
     if (u?.state === "relogin") { out(c, "needs re-login", null); continue; }
     if (u?.state === "exhausted" && usageUntil(u) === null) { out(c, "limit reached", null, true, true); continue; }
     const weekly = u?.windows.find((w) => w.kind === "weekly")?.resets_at ?? null;
-    const room = u && u.state !== "unknown" ? roomOf(u, o.model, o.now) : null;
-    if (room !== null && room <= 0) { out(c, "100% used", recoveryAt(u, o.model, o.now), true, true); continue; }
+    const raw = u && u.state !== "unknown" ? roomOf(u, o.model, o.now) : null;
+    if (raw !== null && raw <= 0) { out(c, "100% used", recoveryAt(u, o.model, o.now), true, true); continue; }
+    // COMPANY POOL: a borrower never takes the last PERSONAL_RESERVE_PCT of a window (kept for the account's person).
+    const room = raw !== null && c.pooled && !c.own ? raw - PERSONAL_RESERVE_PCT : raw;
+    if (room !== null && room <= 0) { out(c, `kept for its person (the last ${PERSONAL_RESERVE_PCT}%)`, recoveryAt(u, o.model, o.now), true, true); continue; }
     const tier = room === null ? 1 : room <= minRoom ? 2 : 0;
     const score = (room ?? 0) - LEASE_RESERVE_PTS * c.leases;
     ranked.push({ ...c, room, tier, score, weeklyReset: weekly });

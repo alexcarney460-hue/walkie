@@ -136,7 +136,7 @@ export interface DoctorFacts {
   helper: "ok" | string;
   rootsFile: "ok" | string;
   /** The runtimes seats would run: found or not. */
-  runtimes: Record<SeatRuntime, string | null>;
+  runtimes: Record<"claude" | "codex", string | null>;
   /** The installed runner and helper's versions against this walkie (release builds with seat users; else absent). */
   helperVersion?: HelperVersion | null;
 }
@@ -180,7 +180,7 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
     : local.codex_login === "unavailable" ? { ok: false, what: "Codex seats: not signed in where seat users can use it (no ~/.codex/auth.json)", fix: "codex login" }
     : { ok: true, what: "Codex seats: signed in (this machine's own sign-in)" });
   if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed" });
-  if (local.quarantined?.length) out.push({ ok: false, what: `seat users not verified removed: ${local.quarantined.join(", ")}`, fix: "see walkie seats (the reason), INSTALL.md §8" });
+  if (local.quarantined?.length) out.push({ ok: false, what: `seat users not verified removed: ${local.quarantined.join(", ")}`, fix: "see walkie seats (the reason), https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional" });
   if (local.availability?.state === "busy") out.push({ ok: "warn", what: "this machine is busy (its person is using it): new seats queue", fix: "walkie seats resume" });
   if (!f.release && local.ephemeral) out.push({ ok: "warn", what: "a source build: its own runner and helper, not the installed ones (not checked)" });
   return out;

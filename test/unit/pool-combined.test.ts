@@ -2,7 +2,7 @@
 // are, the head with the smallest total round trip, and what this machine can start now (sharing machines only).
 import { describe, expect, test } from "bun:test";
 import { canServe, rttBetween, suggestCombined, UNMEASURED_RTT_MS } from "../../src/pool/combined.ts";
-import { HOP_OVERHEAD_MS, EFFICIENCY, suggestTeam } from "../../src/pool/suggest.ts";
+import { HOP_OVERHEAD_MS, RPC_ROUND_TRIPS_PER_TOKEN, EFFICIENCY, suggestTeam } from "../../src/pool/suggest.ts";
 import type { GroupInput } from "../../src/pool/group.ts";
 import type { MachineAccel, MachineStats } from "../../src/protocol/machine-stats.ts";
 import type { PoolShare } from "../../src/protocol/pool.ts";
@@ -69,10 +69,10 @@ describe("with all our machines together", () => {
     expect(p.need).toBeGreaterThanOrEqual(p.placement.reduce((s, x) => s + x.bytes, 0) - 1);
   });
 
-  test("speed = compute on each stage + one round trip from the head to every remote stage (+2 ms each)", () => {
+  test("speed = compute on each stage + 1.3 round trips (measured, POOL-REAL-1) from the head to every remote stage (+2 ms each)", () => {
     const c = suggestCombined(fleet());
     const p = c.pick!;
-    const hops = p.hops.reduce((s, h) => s + Math.max(1, h.ms) + HOP_OVERHEAD_MS, 0);
+    const hops = p.hops.reduce((s, h) => s + RPC_ROUND_TRIPS_PER_TOKEN * Math.max(1, h.ms) + HOP_OVERHEAD_MS, 0);
     expect(p.hopMs).toBe(hops);
     expect(p.hops.length).toBe(p.placement.filter((x) => x.node_id !== p.head.node_id).length);
     expect(p.tokensPerSec).toBeCloseTo(1000 / (p.computeMs + p.hopMs), 6);

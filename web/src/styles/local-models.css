@@ -221,3 +221,7 @@
   .lm-machine-hw { grid-column: 1 / -1; grid-row: 2; }
   .lm-machine-note { grid-column: 1 / -1; }
 }
+
+/* POOL-REAL-1: serve on one machine */
+.lm-serve { padding-bottom: 8px; border-bottom: 1px solid var(--border, rgba(127,127,127,.2)); }
+.lm-serve code { font-size: var(--fs-12); word-break: break-all; }

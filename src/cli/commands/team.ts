@@ -1,6 +1,7 @@
 // init / invite / join / channel create / status / who
 import { adminCtx, requireAdmin } from "../admin-gate.ts";
 import { subagentLabel, subagentsText } from "../../protocol/subagents.ts";
+import { labelWorthShowing, runtimeLabel } from "../../protocol/runtime-label.ts";
 import type { MemPressure } from "../../protocol/machine-stats.ts";
 import { gb, memText, tempLevel, tempText } from "../../protocol/machine-stats-format.ts";
 import { archiveCountText, hiddenByNode, needsPerson, shownByDefault, type ArchiveCount } from "../../protocol/agent-roster.ts";
@@ -170,9 +171,11 @@ export function statsDetail(n: NodeView): string {
   const swap = s?.mem && s.mem.swap_used >= 0.1 * 1024 ** 3 ? ` (swap ${gb(s.mem.swap_used)})` : "";
   const mem = `mem ${memText(s?.mem)}${swap}`;
   const temp = s?.temp_c == null ? "temp n/a" : `${tempText(s.temp_c)}${s.temp_src === "gpu" ? " GPU" : ""}`;
-  if (!n.online) return c.gray(`${mem} · ${temp}${s ? " (last known)" : ""}`);
+  // AGENT-SEE-1: local model servers are machine load, shown with the machine ("models: ollama, rpc-server ×2").
+  const models = s?.model_servers?.length ? ` · models: ${s.model_servers.map((m) => `${safeTerm(m.name)}${m.count > 1 ? ` ×${m.count}` : ""}`).join(", ")}` : "";
+  if (!n.online) return c.gray(`${mem} · ${temp}${models}${s ? " (last known)" : ""}`);
   const color = (l: MemPressure | null | undefined): ((x: string) => string) => (l ? LEVEL_COLOR[l] : c.dim);
-  return `${color(s?.mem?.pressure)(mem)} · ${color(tempLevel(s?.temp_c ?? null))(temp)}`;
+  return `${color(s?.mem?.pressure)(mem)} · ${color(tempLevel(s?.temp_c ?? null))(temp)}${c.dim(models)}`;
 }
 
 /**
@@ -207,7 +210,9 @@ export function renderWho(team: TeamView, agents: AgentView[], now = Date.now(),
         const subs = subagentsText(a.subagents?.working ?? 0);
         // A sub-agent (WALKIE-MISSION-SUB-1) is marked as its session's child.
         const name = a.status.parent ? `↳ ${a.agent}` : agentDisplayName(a.agent); // ORCH-2: WalkieTalkie
-        lines.push(`      ${pad(name, 20)} ${pad((STATE_COLOR[st] ?? c.dim)(st), 9)} ${pad(safeTerm(title).slice(0, 60), 62)} ${c.dim(ago(a.updated_at, now))}${subs ? c.dim(` · ${subs}`) : ""}`);
+        // AGENT-SEE-1: what kind of run it is, where the name doesn't say ("kimi · headless", "claude · acp").
+        const kind = labelWorthShowing(a.status) ? c.dim(` · ${safeTerm(runtimeLabel(a.status))}`) : "";
+        lines.push(`      ${pad(name, 20)} ${pad((STATE_COLOR[st] ?? c.dim)(st), 9)} ${pad(safeTerm(title).slice(0, 60), 62)} ${c.dim(ago(a.updated_at, now))}${kind}${subs ? c.dim(` · ${subs}`) : ""}`);
       }
       const h = hidden?.find((x) => x.node === n.node_id);
       const text = h ? archiveCountText(h) : "";

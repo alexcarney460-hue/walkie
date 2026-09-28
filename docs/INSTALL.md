@@ -449,6 +449,11 @@ of its with a system flag (`ls -lO`; `sudo chflags noschg <path>`), an entry of 
 (`sudo ls -la <dir>`: whose it is), or a missing `seat-roots.json` (re-run `walkie seats setup-user --apply`). Once
 fixed, the next retry removes it; a daemon restart retries too.
 
+On macOS, empty per-user directories under `/private/var/folders` may remain with the system `sunlnk` flag, which
+SIP prevents even root from clearing. Walkie records these empty directories and verifies the destroy after checking
+the account and its processes are gone. Files, nonempty directories, other flags, and other users' entries still
+quarantine the seat user.
+
 One person per machine takes seats for now: the sudo rules name one daemon user, and a second person's `setup-user`
 is refused (it names whose seats the machine takes; `/usr/local/libexec/walkie/seat-owner`). Seat user ids run
 1–99,999 per machine and are never reused; after the last, no seat user is made and Walkie says so.

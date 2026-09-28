@@ -22,7 +22,7 @@ const d = await startDaemon({
   peerHost: "127.0.0.1", peerPort: 0, localPort: false, hostname: "alex-mbp", env: false, webDir: join(home, "no-web"),
   integrations: { autoRun: false }, licenseRenew: false, discovery: false, machineStats: false, accounts: false,
   licenseService: { fetch: async () => { throw new Error("no license service"); } },
-  orchestrator: { restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: log } },
+  orchestrator: { autoCheckMs: 150, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: log } },
 });
 const person = new WalkieClient({ socket: d.socket, agent: "", timeoutMs: 15_000 });
 

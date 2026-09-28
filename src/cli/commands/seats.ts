@@ -6,8 +6,8 @@ import { basename, join, resolve } from "node:path";
 import type { WalkieClient } from "../../client/index.ts";
 import { wrapForModel } from "../../protocol/safety.ts";
 import {
-  DEFAULT_SEAT_MODE, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, TERMINAL_STATES, busyDetail, parseLauncher, seatsChannel,
-  type HostAvailability, type SeatMode, type SeatRuntime, type SeatView, type SeatsLocalView,
+  DEFAULT_SEAT_MODE, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, SEAT_WORKSPACE_MODES, TERMINAL_STATES, busyDetail, parseLauncher, seatsChannel,
+  type HostAvailability, type SeatMode, type SeatRuntime, type SeatView, type SeatWorkspace, type SeatsLocalView,
 } from "../../protocol/seats.ts";
 import { parseDuration } from "../../daemon/seats/busy.ts";
 import { setupUser } from "./seat-user.ts";
@@ -20,10 +20,13 @@ const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user] | seats d
   + " | seats start <machine> [--count n] [--provider claude|codex] (--prompt \"…\" | --brief file|-)"
   + " | seats setup-user [--apply] [--accept-readable-home] | seats allow [--same-user]"
   + " [--accept-readable-home] [--launchers @a,@a/machine/agent] [--max n]"
-  + " [--runtimes claude,codex] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume";
-const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
+  + " [--runtimes claude,codex,kimi] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
+  + " | seats repo [list] | seats repo add <id> <path> | seats repo rm <id>";
+const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
   + " [--repo <bundle|git dir|artifact hash>] [--timeout 3600] [--max-concurrent 9] [--wait] -- <prompt…|->"
-  + " | seat stop <id> | seat show <id> [--follow] | seat fetch <id> [-o file.bundle]";
+  + " | seat run --machine <host> --brief-file <file|-> [--label x] [--repo-id id --ref <sha|branch> --mode branch|detached|fresh"
+  + " [--branch b] [--delta <bundle file>]] [--account <owner>:<id>] [--result-file rel/path] (v2: hosts announcing seats_v2)"
+  + " | seat stop <id> | seat show <id> [--follow] | seat fetch <id> [-o file.bundle] [--save] [--file=true (deprecated)]";
 
 export async function seats(ctx: Ctx): Promise<number> {
   const sub = ctx.args.pos[0];
@@ -38,6 +41,7 @@ export async function seats(ctx: Ctx): Promise<number> {
     case "busy": return busy(adminCtx(ctx, "mark this machine busy"));
     case "setup-user": return setupUserAdmin(adminCtx(ctx, "set up seat users here"));
     case "token": return token(adminCtx(ctx, "set the seats' Claude token"));
+    case "repo": return repoCommand(ctx);
     case "resume": return resume(adminCtx(ctx, "resume seats here"));
     default: throw new UsageError(`unknown subcommand "${sub}" (${SEATS_USAGE})`);
   }
@@ -84,7 +88,7 @@ export function quarantineLines(l: SeatsLocalView): string[] {
   return [
     c.yellow(`Seat users not verified removed (their processes or files may remain; Walkie retries every minute): ${l.quarantined.join(", ")}`),
     ...l.quarantined.filter((u) => l.quarantine_why?.[u]).map((u) => c.dim(`  ${u}: ${safeTerm(l.quarantine_why?.[u] ?? "")}`)),
-    c.dim("  If one stays: see INSTALL.md §8, \"A seat user that stays quarantined\"."),
+    c.dim("  If one stays: https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional"),
   ];
 }
 
@@ -189,6 +193,16 @@ export async function allowSeats(client: WalkieClient, opts: {
   return res.local;
 }
 
+/**
+ * `--dir` as config.json keeps it: `~` or `~/…` exactly as given (the daemon expands it against its own HOME, once);
+ * anything else resolved against this terminal's directory. A quoted `'~/x'` used to be resolved as a relative path
+ * (`<cwd>/~/x`; run remotely with the daemon's home as cwd it read back as `~/~/x`).
+ */
+export function seatsDirArg(dir: string, cwd: string = process.cwd()): string {
+  if (dir === "~" || dir.startsWith("~/")) return dir;
+  return resolve(cwd, dir);
+}
+
 async function configure(ctx: Ctx, allow: boolean): Promise<number> {
   const client = ctx.client();
   let local: SeatsLocalView;
@@ -204,7 +218,7 @@ async function configure(ctx: Ctx, allow: boolean): Promise<number> {
     const acceptReadableHome = bool(ctx.args, "accept-readable-home");
     local = await allowSeats(client, {
       ...(launchers ? { launchers } : {}), ...(max ? { max } : {}), ...(runtimes ? { runtimes: runtimes as SeatRuntime[] } : {}),
-      ...(dir ? { dir: resolve(dir) } : {}), ...(env ? { env } : {}), ...(sameUser ? { sameUser } : {}),
+      ...(dir ? { dir: seatsDirArg(dir) } : {}), ...(env ? { env } : {}), ...(sameUser ? { sameUser } : {}),
       ...(acceptReadableHome ? { acceptReadableHome } : {}),
     });
   } else {
@@ -289,6 +303,31 @@ async function repoBundle(ctx: Ctx, repo: string): Promise<string> {
   }
 }
 
+/** The v2 fields of `walkie seat run` (FO-2), or null when none is given. The brief never goes on argv. */
+async function v2Fields(ctx: Ctx): Promise<Partial<Parameters<WalkieClient["seatRun"]>[0]> | null> {
+  const briefFile = str(ctx.args, "brief-file");
+  const repoId = str(ctx.args, "repo-id");
+  const label = str(ctx.args, "label");
+  const account = str(ctx.args, "account");
+  const resultFile = str(ctx.args, "result-file");
+  if (!briefFile && !repoId && !label && !account && !resultFile) return null;
+  const brief = briefFile === undefined ? undefined : briefFile === "-" ? await readStdin() : readFileSync(resolve(briefFile), "utf8");
+  let workspace: SeatWorkspace | undefined;
+  if (repoId) {
+    const ref = str(ctx.args, "ref");
+    const mode = (str(ctx.args, "mode") ?? "branch") as SeatWorkspace["mode"];
+    if (!ref) throw new UsageError("--repo-id needs --ref <sha|branch>");
+    if (!SEAT_WORKSPACE_MODES.includes(mode)) throw new UsageError(`--mode must be one of ${SEAT_WORKSPACE_MODES.join(", ")}`);
+    const delta = str(ctx.args, "delta");
+    const bundle = delta ? (await ctx.client().seatsBundle(new Uint8Array(readFileSync(resolve(delta))))).hash : undefined;
+    workspace = { repo: repoId, ref, mode, ...(str(ctx.args, "branch") ? { branch: str(ctx.args, "branch") as string } : {}), ...(bundle ? { bundle } : {}) };
+  }
+  return {
+    v: 2, ...(brief !== undefined ? { brief } : {}), ...(label ? { label } : {}), ...(workspace ? { workspace } : {}),
+    ...(account ? { account } : {}), ...(resultFile ? { result_file: resultFile } : {}),
+  };
+}
+
 async function run(ctx: Ctx): Promise<number> {
   const machine = str(ctx.args, "machine");
   if (!machine) throw new UsageError(`--machine is required (${SEAT_USAGE})`);
@@ -296,20 +335,22 @@ async function run(ctx: Ctx): Promise<number> {
   if (!SEAT_RUNTIMES.includes(runtime)) throw new UsageError(`--runtime must be one of ${SEAT_RUNTIMES.join(", ")}`);
   const mode = str(ctx.args, "permission-mode") as SeatMode | undefined;
   if (mode !== undefined && !SEAT_MODES.includes(mode)) throw new UsageError(`--permission-mode must be one of ${SEAT_MODES.join(", ")}`);
+  const v2 = await v2Fields(ctx);
   const rest = ctx.args.pos.slice(1);
-  const prompt = rest.length === 1 && rest[0] === "-" ? await readStdin() : rest.join(" ");
-  if (!prompt.trim()) throw new UsageError("missing prompt (after --, or - to read stdin)");
+  const prompt = v2?.brief !== undefined && !rest.length ? "" : rest.length === 1 && rest[0] === "-" ? await readStdin() : rest.join(" ");
+  if (!prompt.trim() && v2?.brief === undefined) throw new UsageError("missing prompt (after --, or - to read stdin; or --brief-file)");
   const client = ctx.client();
   const team = await client.team();
   const node = team.nodes.find((n) => n.node_id === machine || n.hostname === machine);
   if (!node) throw new UsageError(`no machine ${machine} in the team (see: walkie who)`);
   const repo = str(ctx.args, "repo");
+  if (repo && (v2 || runtime === "kimi")) throw new UsageError("--repo is for v1 seats: a v2 seat works in the host's clone (--repo-id, --ref, --delta)");
   const bundle = repo ? await repoBundle(ctx, repo) : undefined;
   const timeout = int(ctx.args, "timeout");
   const maxConcurrent = int(ctx.args, "max-concurrent");
   const res = await client.seatRun({
-    machine: node.node_id, runtime, prompt, ...(str(ctx.args, "model") ? { model: str(ctx.args, "model") } : {}),
-    ...(mode ? { permission_mode: mode } : {}), ...(bundle ? { bundle } : {}),
+    machine: node.node_id, runtime, ...(prompt.trim() ? { prompt } : {}), ...(str(ctx.args, "model") ? { model: str(ctx.args, "model") } : {}),
+    ...(mode ? { permission_mode: mode } : {}), ...(bundle ? { bundle } : {}), ...(v2 ?? {}),
     ...(timeout !== undefined ? { timeout_s: timeout } : {}), ...(maxConcurrent !== undefined ? { max_concurrent: maxConcurrent } : {}),
   });
   const a = res.host.availability;
@@ -429,6 +470,16 @@ async function fetchResult(ctx: Ctx): Promise<number> {
   const client = ctx.client();
   const s = (await client.seats(id)).seats[0];
   if (!s) throw new UsageError(`no seat ${id} that you can see`);
+  if (bool(ctx.args, "save") || str(ctx.args, "file") === "true") {
+    // v2: the seat's result file (e.g. verdict.json), returned on done, failed, stopped and timeout alike.
+    if (!s.result_file_blob) throw new UsageError(`seat ${id} returned no result file${s.file_error ? ` (${s.file_error})` : TERMINAL_STATES.has(s.state) ? "" : " (yet: it is still running)"}`);
+    const bytes = await client.fetchArtifact(s.result_file_blob);
+    const out = str(ctx.args, "output");
+    if (out) writeFileSync(out, bytes);
+    else if (!ctx.json) process.stdout.write(bytes);
+    if (ctx.json) ctx.out(JSON.stringify({ ...(out ? { file: out } : { text: new TextDecoder().decode(bytes) }), bytes: bytes.byteLength, state: s.state }));
+    return EXIT.ok;
+  }
   if (!s.result_bundle) throw new UsageError(`seat ${id} returned no commits${TERMINAL_STATES.has(s.state) ? "" : " (yet: it is still running)"}`);
   const bytes = await client.fetchArtifact(s.result_bundle);
   const out = str(ctx.args, "output") ?? `seat-${id.replace(":", "-")}.bundle`;
@@ -436,4 +487,32 @@ async function fetchResult(ctx: Ctx): Promise<number> {
   ctx.out(ctx.json ? JSON.stringify({ file: out, bytes: bytes.byteLength, commits: s.commits ?? 0 })
     : `${c.green("saved")} ${s.commits ?? 0} commit(s) to ${out} · apply with: git fetch ${out} HEAD && git merge FETCH_HEAD`);
   return EXIT.ok;
+}
+
+/** `walkie seats repo [list] | add <id> <path> | rm <id>` (FO-2): this machine's clones for v2 seats. */
+async function repoCommand(ctx: Ctx): Promise<number> {
+  const verb = ctx.args.pos[1] ?? "list";
+  if (verb === "list") {
+    const { repos } = await ctx.client().seatsRepos();
+    if (ctx.json) { ctx.out(JSON.stringify({ repos })); return EXIT.ok; }
+    const ids = Object.keys(repos).sort();
+    if (!ids.length) ctx.out(c.dim("no repos for seats on this machine (walkie seats repo add <id> <path>)"));
+    for (const id of ids) ctx.out(`  ${id} → ${repos[id]}`);
+    return EXIT.ok;
+  }
+  // AGENT-ADMIN-1 (pre.8 merge): the machine's person, or an agent of theirs while agent admin is on (audited).
+  const client = adminCtx(ctx, `change the seats' repos (${verb})`).client();
+  const id = need(ctx.args, 2, "repo id");
+  if (verb === "add") {
+    const path = resolve(need(ctx.args, 3, "path"));
+    const { repos } = await client.seatsRepoSet(id, path);
+    ctx.out(ctx.json ? JSON.stringify({ repos }) : `${c.green("added")} repo ${id} → ${repos[id]}`);
+    return EXIT.ok;
+  }
+  if (verb === "rm") {
+    const { repos } = await client.seatsRepoSet(id, null);
+    ctx.out(ctx.json ? JSON.stringify({ repos }) : `${c.green("removed")} repo ${id}`);
+    return EXIT.ok;
+  }
+  throw new UsageError(`unknown: seats repo ${verb} (${SEATS_USAGE})`);
 }

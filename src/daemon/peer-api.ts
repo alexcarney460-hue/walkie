@@ -1,3 +1,6 @@
+import { VERSION } from "./version.ts";
+import { SEATS_V2_CAP } from "../protocol/seats.ts";
+import { hostFor } from "./orchestrator/host.ts";
 // Peer API (PROTOCOL §4). Two ways in, one set of handlers:
 //   tailscale  bound to the Tailscale IP; `tailscale whois` + roster gate on every request.
 //   direct     Walkie Direct (src/daemon/direct/net.ts): the caller's node key is authenticated by QUIC/TLS, and
@@ -23,7 +26,7 @@ import { checkInvite, directLogin } from "./invite.ts";
 import { isValidPubkey } from "./keys.ts";
 import type { BucketSpec } from "./ratelimit.ts";
 import { applyRequest } from "./requests.ts";
-import { grantLease } from "./vault-lease.ts";
+import { grantLease, refreshBorrowedUsage } from "./vault-lease.ts";
 import {
   DEFAULT_PEER_PORT, canSeeChannel, directMemberByKey, endpointHex, isRestricted, memberByHandle, nodeMember, pickTransport, servesDirect, transportFields,
   transportsOf, withTransport, type MemberRec,
@@ -32,6 +35,7 @@ import { JoinLimitError, type EventRow } from "./store.ts";
 import type { TunnelDecision } from "./direct/net.ts";
 import type { TunnelGrant } from "../pool/run/stage.ts";
 import { WsEnd } from "../pool/run/tunnel.ts";
+import { trackOp } from "./watchdog.ts";
 
 export const PEER_BODY_MAX = 1024 * 1024;
 
@@ -92,7 +96,8 @@ export class PeerApi {
   async handle(req: Request, from: string | PeerOrigin, server?: Server<TunnelSocketData>): Promise<Response> {
     try {
       const origin: PeerOrigin = typeof from === "string" ? { kind: "tailscale", ip: from } : from;
-      return await (origin.kind === "direct" ? this.routeDirect(req, origin.pubkey) : this.route(req, origin.ip, server));
+      return await trackOp(`peer ${req.method} ${new URL(req.url).pathname}`,
+        () => (origin.kind === "direct" ? this.routeDirect(req, origin.pubkey) : this.route(req, origin.ip, server)));
     } catch (err) {
       return errorResponse(err, this.core.log);
     }
@@ -123,12 +128,21 @@ export class PeerApi {
     }
   }
 
-  /** The stage's grant for `/peer/v1/pool/tunnel/<run>` from an admitted node (throws the refusal). */
+  /**
+   * The grant for `/peer/v1/pool/tunnel/<run>` (a split run's stage) or `/peer/v1/pool/serve-tunnel/<id>` (a served
+   * model's proxy, POOL-REAL-1) from an admitted node (throws the refusal).
+   */
   private tunnelGrant(path: string, nodeId: string): TunnelGrant {
-    const m = /^\/peer\/v1\/pool\/tunnel\/([0-9a-f]{32})$/.exec(path);
+    const m = /^\/peer\/v1\/pool\/(tunnel|serve-tunnel)\/([0-9a-f]{32})$/.exec(path);
     if (!m) throw new HttpError(404, "not_found", "not found");
     if (!this.core.pool) throw new HttpError(404, "not_found", "split runs are not available on this daemon");
-    return this.core.pool.stages.tunnel(m[1]!, nodeId);
+    if (m[1] === "serve-tunnel") {
+      const member = nodeMember(this.core.roster, nodeId);
+      if (!member || member.role === "observer") throw new HttpError(403, "forbidden", "an observer's machine can't use served models");
+      if (!this.core.limiter.take(`pool-serve-tunnel:${nodeId}`, { capacity: 60, perSecond: 1 })) throw new HttpError(429, "rate_limited", "too many tunnel requests");
+      return this.core.pool.server.tunnel(m[2]!, nodeId);
+    }
+    return this.core.pool.stages.tunnel(m[2]!, nodeId);
   }
 
   private async route(req: Request, ip: string, server?: Server<TunnelSocketData>): Promise<Response> {
@@ -165,7 +179,7 @@ export class PeerApi {
       core.log.warn("peer_denied", { ip, login: who.login, node: nodeHdr, path, reason: "node_not_admitted" });
       throw new HttpError(403, "forbidden", "calling node is not admitted");
     }
-    if (path.startsWith("/peer/v1/pool/tunnel/")) {
+    if (path.startsWith("/peer/v1/pool/tunnel/") || path.startsWith("/peer/v1/pool/serve-tunnel/")) {
       // WALKIE-POOL-2: the gate above passed (tailnet identity -> admitted node of a current member); the stage decides.
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket" || !server) throw new HttpError(426, "upgrade_required", "a tunnel is a WebSocket");
       const grant = this.tunnelGrant(path, nodeHdr);
@@ -221,21 +235,33 @@ export class PeerApi {
       const online = core.reachedPeers?.() ?? [];
       return json({
         node: core.nodeId, vv: core.store.vv(), ts: Date.now(),
+        capabilities: { version: VERSION, caps: [SEATS_V2_CAP] },
         ...(online.length ? { online } : {}),
         ...(core.publishedStats() ? { stats: core.publishedStats() } : {}),
         ...(core.accounts ? { accounts: core.accounts } : {}), // ACCOUNTS-1: this machine's accounts + usage (PROTOCOL §3)
         ...(core.poolShare?.() ? { pool: core.poolShare() } : {}), // WALKIE-POOL-2: split-run sharing (PROTOCOL §3)
       });
     }
+    if (req.method === "POST" && path === "/peer/v1/orchestrator/lease") {
+      const host = hostFor(core);
+      if (!host) throw new HttpError(503, "unavailable", "orchestrator leadership unavailable");
+      if (!core.limiter.take(`orchestrator-lease:${nodeId}`, { capacity: 30, perSecond: 20 })) throw new HttpError(429, "rate_limited", "too many lease requests");
+      return json(host.grantLeadership(nodeId));
+    }
+    if (req.method === "POST" && path === "/peer/v1/vault/usage") {
+      if (member.role === "observer") throw new HttpError(403, "forbidden", "observers cannot refresh borrowed accounts");
+      return json(refreshBorrowedUsage(core, nodeId, await readJson(req, 1024)));
+    }
     if (req.method === "POST" && path === "/peer/v1/vault/lease") {
       // ACCOUNTS-2 phase 3: a setup-token from this machine's vault, if its policy allows the caller (vault-lease.ts).
-      const res = await grantLease(core, { vault: core.vault, sharing: core.vaultSharing, nonces: core.vaultNonces, grants: core.vaultGrants }, nodeId, member, await readJson(req, 16 * 1024));
+      const res = await grantLease(core, { vault: core.vault, sharing: core.vaultSharing, nonces: core.vaultNonces, grants: core.vaultGrants, teamPolicy: core.teamPolicy, roomLeft: core.vaultRoomLeft, renew: core.vaultRenew }, nodeId, member, await readJson(req, 16 * 1024));
       return new Response(JSON.stringify(res), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
     }
     if (req.method === "GET" && path === "/peer/v1/events") return json(this.serveEvents(url, member.handle));
     if (req.method === "POST" && path === "/peer/v1/events") return json(await this.receive(req, nodeId));
     if (req.method === "POST" && path === "/peer/v1/roster-request") return json(await this.rosterRequest(req, nodeId));
     if (req.method === "POST" && path === "/peer/v1/pool/stage") return json(await this.poolStage(req, nodeId, member));
+    if (req.method === "POST" && path === "/peer/v1/pool/serve") return json(await this.poolServe(req, nodeId, member));
     // AGENT-ADMIN-1: an allow-listed walkie command, for an owner or this machine's own person (admin/remote.ts).
     if (req.method === "POST" && path === "/peer/v1/admin/run") {
       // Who may is known before the body is read; the body must arrive within 10 s (fix round 2, Opus MEDIUM).
@@ -451,6 +477,16 @@ export class PeerApi {
     const raw = await readJson(req, REQUEST_BODY_MAX);
     if (!core.limiter.take(`pool-stage:${nodeId}`, { capacity: 30, perSecond: 1 })) throw new HttpError(429, "rate_limited", "too many stage requests");
     return core.pool.stages.handle(raw, nodeId);
+  }
+
+  /** POOL-REAL-1: a member machine starts / connects to / renews / leaves / stops a model this machine serves whole. */
+  private async poolServe(req: Request, nodeId: string, member: MemberRec): Promise<unknown> {
+    const core = this.core;
+    if (!core.pool) throw new HttpError(404, "not_found", "served models are not available on this daemon");
+    if (member.role === "observer") throw new HttpError(403, "forbidden", "an observer's machine can't use served models");
+    const raw = await readJson(req, REQUEST_BODY_MAX);
+    if (!core.limiter.take(`pool-serve:${nodeId}`, { capacity: 30, perSecond: 1 })) throw new HttpError(429, "rate_limited", "too many serve requests");
+    return core.pool.server.handle(raw, nodeId);
   }
 
   /** Roster requests are served by the authority only (PROTOCOL §2); the requester must be the caller. */

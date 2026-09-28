@@ -6,8 +6,13 @@ export type {
 export type { OrchMessage, OrchestratorAccess, OrchestratorView } from "../../../src/protocol/orchestrator.ts";
 export type { HostAvailability, SeatHostView, SeatMode, SeatRuntime, SeatView, SeatsLocalView, SeatsView } from "../../../src/protocol/seats.ts";
 export type { IntegrationView, LinearIssueInfo } from "../../../src/integrations/views.ts";
+export type {
+  ImportStatus, JobView, Plan as ImportPlan, PlanOptions as ImportOptions, PlanProject as ImportPlanProject, Selection as ImportSelection, SyncResult, SyncView,
+} from "../../../src/integrations/linear-import/views.ts";
 export type { ArchiveCount } from "../../../src/protocol/agent-roster.ts";
 export type { AccountMachineView, AccountProvider, AccountUsage, AccountView, AccountWindow, ResetAttemptView, ResetOutcome, ResetResult } from "../../../src/protocol/accounts.ts";
+/** COMPANY POOL: the team accounts policy (`pool` on GET /v1/accounts; absent from an older daemon). */
+export interface AccountsPool { policy: "company" | "per-account"; at: number | null; by: string | null }
 export type { DeviceView, MobileStatus, PairView } from "../../../src/mobile/views.ts";
 export type {
   BoardDelta, BoardView, CardDetail, CardView, Column, ColumnRole, Meter, PathRule, ProjectStub, ProjectView, ProjectsPayload, TimelineEntry,

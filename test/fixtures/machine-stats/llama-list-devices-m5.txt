@@ -1,0 +1,2 @@
+Available devices:
+  MTL0: Apple M5 (12124 MiB, 12123 MiB free)

@@ -7,7 +7,7 @@ import { AgentCard } from "../src/views/mission/AgentCard.tsx";
 import { AccessChoice, StartOrchestrator } from "../src/views/orchestrator/Lifecycle.tsx";
 import { AccessSelect, ModelPicker } from "../src/views/orchestrator/ModelPicker.tsx";
 import { modelLabel } from "../src/views/orchestrator/model.ts";
-import { standingDown, TalkieStateCard } from "../src/views/orchestrator/TalkieState.tsx";
+import { notRunningKind, standingDown, StoppedCard, TalkieStateCard } from "../src/views/orchestrator/TalkieState.tsx";
 
 describe("the Start dialog's access choice", () => {
   test("Start renders both options with platform checked by default, before the Start button", () => {
@@ -115,5 +115,32 @@ describe("Codex RC MEDIUM 4: the header's access switch", () => {
   test("the dashboard's client calls the access route", async () => {
     const client = await Bun.file(new URL("../src/api/client.ts", import.meta.url)).text();
     expect(client).toContain('request<OrchestratorView>("POST", "/v1/orchestrator/access", { access }');
+  });
+});
+
+describe("pre.8: no Start press on the lead", () => {
+  const v = (extra: Record<string, unknown>) => ({ running: false, state: "stopped" as const, restarts: 0, ...extra });
+  test("stopped by you: the one button is Resume (automatic)", () => {
+    expect(notRunningKind(v({ stopped_by_hand: true }))).toBe("stopped_by_you");
+    const out = renderToStaticMarkup(<StoppedCard kind="stopped_by_you" />);
+    expect(out).toContain("WalkieTalkie is stopped (by you)");
+    expect(out).toContain(">Resume</button>");
+    expect(out).not.toContain("Start WalkieTalkie");
+    expect(out.match(/<button/g)?.length).toBe(1);
+  });
+  test("not stopped by you, auto on: starting on its own, no button", () => {
+    expect(notRunningKind(v({ auto: true }))).toBe("starting");
+    const out = renderToStaticMarkup(<StoppedCard kind="starting" />);
+    expect(out).toContain("WalkieTalkie is starting");
+    expect(out).toContain("nothing to press");
+    expect(out).not.toContain("<button");
+  });
+  test("a daemon without the auto-start keeps the manual Start", () => {
+    expect(notRunningKind(v({}))).toBe("manual");
+    expect(notRunningKind(null)).toBe("manual");
+  });
+  test("Resume calls POST /v1/orchestrator/auto", async () => {
+    const client = await Bun.file(new URL("../src/api/client.ts", import.meta.url)).text();
+    expect(client).toContain('request<OrchestratorView>("POST", "/v1/orchestrator/auto", {}');
   });
 });

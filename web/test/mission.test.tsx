@@ -87,6 +87,25 @@ test("Mission Control default: working and needing a person only; per machine 'N
   expect(out).not.toContain(">Idle<"); // no Idle / Offline filter on the live view
 });
 
+test("running seats remain separate visible agents under their host, including idle seats", () => {
+  go("#/mission");
+  const host = agent("atlas", "seats", "working", 0.1, "Seats · 2 queued");
+  const seats = Array.from({ length: 3 }, (_, i) => {
+    const a = agent("atlas", `seat-abc123-${i + 1}`, i === 0 ? "working" : "idle", 0.1, `Brief ${i + 1}`);
+    return { ...a, status: { ...a.status, parent: "seats", launcher: "maren", model: "test-model", activity: `Step ${i + 1}` } };
+  });
+  const out = render(state({ agents: [host, ...seats] }), <mod.MissionControl />);
+  expect(out).toContain("Seats · 2 queued");
+  for (let i = 1; i <= 3; i++) {
+    expect(out).toContain(`seat-abc123-${i}`);
+    expect(out).toContain(`Brief ${i}`);
+    expect(out).toContain(`Step ${i}`);
+  }
+  expect(out).toContain('data-testid="agent-group-seats"');
+  expect(out).toContain("@maren");
+  expect(out).toContain("test-model");
+});
+
 test("a machine with nothing working says so, keeps the archive link; one with nothing at all shows the setup hint", () => {
   go("#/mission");
   const quiet = render(state({ agents: [agent("atlas", "seat-9", "idle", 2)], archive: [] }), <mod.MissionControl />);
@@ -114,4 +133,22 @@ test("archive entries: an archived agent that reported again leaves the archive;
   const list = mod.archiveEntries([back, agent("atlas", "seat-3", "idle", 5)], [agent("atlas", "seat-11", "offline", 180, "x", true), agent("atlas", "seat-3", "idle", 90, "older", true)], NOW);
   expect(list.map((a) => a.agent)).toEqual(["seat-3"]);
   expect(list[0]?.status.title).toBe("seat-3 title");
+});
+
+test("discovered runtimes have headless labels, elapsed time, project and machine model load", () => {
+  go("#/mission");
+  const base = agent("atlas", "kimi-pid100", "working", 0.1);
+  const found: AgentView[] = [
+    { ...base, status: { agent: base.agent, runtime: "kimi", launch: "headless", state: "working", repo: "project", activity: "Working (seen from the process)", started_at: NOW - 300000 } },
+    { ...base, agent: "claude-pid101", id: "claude-pid101", status: { agent: "claude-pid101", runtime: "claude-code", launch: "headless", state: "working" } },
+    { ...base, agent: "grok-pid102", id: "grok-pid102", status: { agent: "grok-pid102", runtime: "other", runtime_name: "grok", launch: "headless", state: "working" } },
+  ];
+  const nodes = NODES.map((n) => n.hostname === "atlas" ? { ...n, stats: { at: NOW, mem: null, temp_c: null, model_servers: [{ name: "ollama", count: 1 }] } } : n);
+  const out = render(state({ agents: found, nodes }), <mod.MissionControl />);
+  expect(out).toContain("Kimi · headless");
+  expect(out).toContain("Claude Code · headless");
+  expect(out).toContain("Grok · headless");
+  expect(out).toMatch(/session \d+m/); // elapsed session time (exact minutes depend on the shared-process clock)
+  expect(out).toContain("project");
+  expect(out).toContain("Models: ollama");
 });

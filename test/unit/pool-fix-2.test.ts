@@ -22,20 +22,21 @@ const node = (hostname: string, total: number, used: number, accel: MachineAccel
 const team = (nodes: NodeView[]): TeamView => ({ id: "t", name: "acme", members: [], channels: [], authority: null, nodes } as unknown as TeamView);
 
 describe("Codex r2-3: Apple Silicon Metal and CPU backends are considered separately", () => {
-  test("32 GiB M-series, 4 GiB used: Metal 21.3 GiB, CPU 27 GiB, so Qwen3-32B Q4 (21.7 GiB) runs on the CPU", () => {
+  test("32 GiB M-series, 4 GiB used: Metal 21.3 GiB, CPU 27 GiB, so Qwen3-32B Q4 (21.7 GiB) fits only on the CPU (offered as 'Bigger, slow', POOL-REAL-1)", () => {
     const mac = node("mac", 32, 4, apple("Apple M2 Pro"), {}, { self: true, rtt_ms: null });
     const cap = machineCapacity(mac)!;
     expect(cap.backends.map((b) => [b.kind, b.memory])).toEqual([["apple", "unified memory"], ["cpu", CPU_MEMORY]]);
     expect(cap.backends[0]!.usable / GiB).toBeCloseTo(21.33, 2);
     expect(cap.backends[1]!.usable).toBe(27 * GiB);
     const s = suggestTeam([mac]).suggestions[0]!;
-    expect(s.single?.model.id).toBe("qwen3-32b");
-    expect(s.single?.quant).toBe("q4");
-    expect(s.single?.placement[0]?.memory).toBe(CPU_MEMORY);
-    expect(renderPool(poolFromTeam(team([mac])))).toMatch(/Qwen3 32B · 4-bit on mac \(CPU\) · slow, about [\d.]+ tokens\/s \(estimate\)/);
-    // The Metal pick is still offered as the faster, smaller alternative.
-    const faster = s.alternatives.find((a) => a.fits);
-    expect(faster?.placement[0]?.memory).toBe("unified memory");
+    // POOL-REAL-1: the headline is the largest model that isn't slow (on Metal); the CPU one is the slow bigger option.
+    expect(s.single?.placement[0]?.memory).toBe("unified memory");
+    expect(s.single?.speed).not.toBe("slow");
+    const bigger = s.alternatives.find((a) => a.fits && a.model.params_b > s.single!.model.params_b)!;
+    expect(bigger.model.id).toBe("qwen3-32b");
+    expect(bigger.quant).toBe("q4");
+    expect(bigger.placement[0]?.memory).toBe(CPU_MEMORY);
+    expect(renderPool(poolFromTeam(team([mac])))).toMatch(/Bigger, slow +Qwen3 32B · 4-bit on mac \(CPU\) · slow, about [\d.]+ tokens\/s \(estimate\)/);
   });
 
   test("a model that fits on Metal stays on Metal (the faster backend on a tie)", () => {

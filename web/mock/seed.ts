@@ -34,6 +34,8 @@ interface MockMachine {
   accel: Accel;
   /** Free VRAM per GPU (MB), as nvidia-smi memory.free reports it. */
   gpuFree?: readonly number[];
+  /** AGENT-SEE-1: local model servers running on the machine (machine load, not agents). */
+  models?: readonly { name: string; count: number }[];
 }
 
 /**
@@ -43,8 +45,8 @@ interface MockMachine {
  */
 const SCATTERED: readonly MockMachine[] = [
   { hostname: "maren-mbp", handle: "maren", ip: "100.88.14.2", rtt: 0, mem: [16, 11.4, 1.2, "normal"], temp: 63.8, accel: mac("Apple M3") },
-  { hostname: "atlas", handle: "maren", ip: "100.88.14.9", rtt: 9, mem: [64, 41.2, 0, "normal"], temp: 88.4, accel: pc("AMD Ryzen 9 7950X", [{ name: "NVIDIA GeForce RTX 4090", vram: 24564 * MB }]), gpuFree: [9812] },
-  { hostname: "tobias-mbp", handle: "tobias", ip: "100.88.21.4", rtt: 23, mem: [32, 28.9, 6.3, "warn"], temp: 74.1, accel: mac("Apple M2 Pro") },
+  { hostname: "atlas", handle: "maren", ip: "100.88.14.9", rtt: 9, mem: [64, 41.2, 0, "normal"], temp: 88.4, accel: pc("AMD Ryzen 9 7950X", [{ name: "NVIDIA GeForce RTX 4090", vram: 24564 * MB }]), gpuFree: [9812], models: [{ name: "ollama", count: 1 }, { name: "rpc-server", count: 2 }] },
+  { hostname: "tobias-mbp", handle: "tobias", ip: "100.88.21.4", rtt: 23, mem: [32, 28.9, 6.3, "warn"], temp: 74.1, accel: mac("Apple M2 Pro"), models: [{ name: "llama-server", count: 1 }] },
   { hostname: "ines-studio", handle: "ines", ip: "100.88.30.7", rtt: 31, mem: [64, 22.5, 0, "normal"], temp: 51.6, accel: mac("Apple M2 Max") },
   { hostname: "sol-x1", handle: "sol", ip: "100.88.42.3", rtt: 47, mem: [16, 14.9, 3.9, "critical"], temp: null, accel: pc("Intel(R) Core(TM) i7-1365U") },
 ];
@@ -61,7 +63,7 @@ const SHARE: PoolShare = { share: true, cap: null, runtime: true, busy: false };
 const FLEET: readonly MockMachine[] = [
   { hostname: "maren-mbp", handle: "maren", ip: "100.88.14.2", rtt: 0, mem: [16, 9.1, 0.4, "normal"], temp: 58.2, accel: mac("Apple M5"), pool: { share: false, cap: null, runtime: true, busy: false } },
   { hostname: "tobias-mbp", handle: "tobias", ip: "100.88.21.4", rtt: 24, mem: [36, 14.2, 0, "normal"], temp: 61.0, accel: mac("Apple M3 Pro"), pool: { ...SHARE, cap: 22 * GB }, peerRtt: { atlas: 18, "ines-studio": 21 } },
-  { hostname: "atlas", handle: "maren", ip: "100.88.14.9", rtt: 31, mem: [64, 12.4, 0, "normal"], temp: 66.3, accel: pc("AMD Ryzen 9 7950X", [{ name: "NVIDIA GeForce RTX 4090", vram: 24564 * MB }]), gpuFree: [22800], pool: SHARE, peerRtt: { "tobias-mbp": 19 } },
+  { hostname: "atlas", handle: "maren", ip: "100.88.14.9", rtt: 31, mem: [64, 12.4, 0, "normal"], temp: 66.3, accel: pc("AMD Ryzen 9 7950X", [{ name: "NVIDIA GeForce RTX 4090", vram: 24564 * MB }]), gpuFree: [22800], pool: process.env.WALKIE_MOCK_POOL_SERVE === "remote" ? { ...SHARE, busy: true, serving: { id: "a7".repeat(16), model: "Qwen3 32B", model_id: "qwen3-32b", quant: "q4", state: "serving", open: true, tokens_per_s: 38.2 } } : SHARE, peerRtt: { "tobias-mbp": 19 } },
   { hostname: "sol-x1", handle: "sol", ip: "100.88.42.3", rtt: 38, mem: [16, 7.2, 0.3, "normal"], temp: null, accel: pc("Intel(R) Core(TM) Ultra 7 155H") },
   { hostname: "ines-studio", handle: "ines", ip: "100.88.30.7", rtt: 27, mem: [24, 10.1, 0, "normal"], temp: 49.8, accel: mac("Apple M4"), pool: SHARE, peerRtt: { "tobias-mbp": 22 } },
 ];
@@ -117,6 +119,10 @@ const AGENTS: AgentSeed[] = [
     [[58, { state: "working", title: "Dry-running migration 0042 against a staging snapshot", activity: "Bash bun run db:migrate --dry-run" }]]],
   ["atlas", "e2e", { agent: "e2e", state: "working", runtime: "cli", title: "Nightly e2e: 142 of 180 specs passed so far", repo: "harbor-web", branch: "main", cwd: "~/src/harbor-web", activity: "playwright checkout/refund.spec.ts", session: "nightly-0925", started_at: 0, ask_policy: "off" }, 0.6,
     [[70, { state: "idle", title: "Waiting for the nightly window", activity: "cron" }]]],
+  // AGENT-SEE-1: discovered without hooks (privacy defaults: no title, no prompt, project basename only).
+  ["atlas", "kimi-3f2a91", { agent: "kimi-3f2a91", state: "working", runtime: "kimi", launch: "headless", repo: "harbor-api", cwd: "~/src/harbor-api", activity: "Working (seen from the process)", model: "k3", session: "3f2a91c7-1b2d-4e5f-8a9b-0c1d2e3f4a5b", started_at: 0, ask_policy: "off" }, 12, []],
+  ["atlas", "claude-pid4120", { agent: "claude-pid4120", state: "working", runtime: "claude-code", launch: "headless", repo: "harbor-api", cwd: "~/src/harbor-api", activity: "Working (seen from the process)", started_at: 0, ask_policy: "off" }, 26, []],
+  ["sol-x1", "grok-pid881", { agent: "grok-pid881", state: "working", runtime: "other", runtime_name: "grok", launch: "headless", repo: "search-bench", activity: "Working (seen from the process)", started_at: 0, ask_policy: "off" }, 8, []],
   ["tobias-mbp", "infra", { agent: "infra", state: "blocked", runtime: "claude-code", title: "Terraform plan fails: state lock held by CI run 5521", task: "KST-377", repo: "infra", branch: "chore/pg-16", cwd: "~/src/infra", activity: "Bash terraform plan -out plan.bin", model: "opus", session: "s-7e02", started_at: 0, ask_policy: "auto" }, 9,
     [[160, { state: "working", title: "Upgrading staging Postgres to 16", activity: "Edit modules/db/main.tf" }], [44, { state: "working", title: "Planning the pg-16 change set", activity: "Bash terraform init" }]]],
   ["tobias-mbp", "docs", { agent: "docs", state: "working", runtime: "claude-code", title: "Writing the webhook retry guide", task: "KST-405", repo: "harbor-docs", branch: "docs/webhook-retries", cwd: "~/src/harbor-docs", activity: "Write guides/webhooks/retries.mdx", model: "sonnet", session: "s-2b77", started_at: 0, ask_policy: "auto" }, 1.1,
@@ -261,6 +267,7 @@ export function seedWorld(opts: { hasTeam: boolean }): World {
         accel: m.accel,
         ...(m.gpuFree ? { gpu_free: m.gpuFree.map((x) => x * MB) } : {}),
         ...(m.peerRtt ? { peer_rtt: Object.fromEntries(Object.entries(m.peerRtt).map(([h, ms]) => [nodeIdFor(h), ms])) } : {}),
+        ...(m.models ? { model_servers: m.models.map((x) => ({ ...x })) } : {}),
         sys: sysFor(m),
       },
       ...(m.pool ? { pool: m.pool } : {}),

@@ -12,8 +12,12 @@ const GiB = 1024 ** 3;
 export const RESERVE_BYTES = 1 * GiB;
 /** What an idle machine's OS and apps still hold (the "if idle" figure). */
 export const IDLE_OS_BYTES = 4 * GiB;
-/** Per NVIDIA GPU: the CUDA context and display. */
-export const GPU_RESERVE_BYTES = 1 * GiB;
+/**
+ * Per NVIDIA GPU, on top of what it reports free: the CUDA context. POOL-REAL-1 measured it: Llama 3.1 8B Q4 with an
+ * 8K cache used 5692 MiB of VRAM in all (weights 4.58 GiB + cache 1.0 GiB + context and compute buffers), under the
+ * catalog's figure (6.58 GiB, which carries 1 GiB of runtime overhead already), so 1 GiB more here double-counted.
+ */
+export const GPU_RESERVE_BYTES = 0.5 * GiB;
 /**
  * macOS lets the GPU wire about 2/3 of unified memory up to 32 GiB and 3/4 above (Metal's
  * recommendedMaxWorkingSetSize; measured by the llama.cpp community, not documented by Apple: [UNCLEAR]).
@@ -33,6 +37,21 @@ const APPLE_BW: ReadonlyArray<[RegExp, number]> = [
   [/M4 Max/, 410], [/M4 Pro/, 273], [/M4\b/, 120],
   [/M5 Max/, 460], [/M5 Pro/, 307], [/M5\b/, 153],
 ];
+/**
+ * Memory bandwidth (GB/s) of common NVIDIA GPUs (NVIDIA's spec sheets: bus width x memory data rate), most specific
+ * name first: a "Laptop GPU" and a "Ti"/"SUPER" differ from the plain desktop card. POOL-REAL-1: the team's RTX 5070
+ * (672) and RTX 5070 Laptop GPU (384) were measured against these.
+ */
+const NVIDIA_BW: ReadonlyArray<[RegExp, number]> = [
+  [/RTX 5090 Laptop/i, 896], [/RTX 5080 Laptop/i, 896], [/RTX 5070 Ti Laptop/i, 672], [/RTX 5070 Laptop/i, 384], [/RTX 5060 Laptop/i, 384],
+  [/RTX 4090 Laptop/i, 576], [/RTX 4080 Laptop/i, 432], [/RTX 4070 Laptop/i, 256], [/RTX 4060 Laptop/i, 256],
+  [/RTX 5090/i, 1792], [/RTX 5080/i, 960], [/RTX 5070 Ti/i, 896], [/RTX 5070/i, 672], [/RTX 5060 Ti/i, 448], [/RTX 5060/i, 448],
+  [/RTX 4090/i, 1008], [/RTX 4080 SUPER/i, 736], [/RTX 4080/i, 717], [/RTX 4070 Ti SUPER/i, 672], [/RTX 4070 Ti/i, 504],
+  [/RTX 4070/i, 504], [/RTX 4060 Ti/i, 288], [/RTX 4060/i, 272],
+  [/RTX 3090/i, 936], [/RTX 3080 Ti/i, 912], [/RTX 3080/i, 760], [/RTX 3070/i, 448], [/RTX 3060 Ti/i, 448], [/RTX 3060/i, 360],
+  [/H100/i, 2000], [/A100/i, 1555], [/L40S/i, 864], [/RTX 6000 Ada/i, 960], [/RTX A6000/i, 768],
+];
+
 /** Unknown Apple chip, NVIDIA GPU, laptop NVIDIA GPU, CPU-only: rough class figures, labelled estimates. */
 export const DEFAULT_BW = { apple: 100, nvidia: 400, nvidiaLaptop: 250, cpu: 60 } as const;
 
@@ -56,6 +75,11 @@ export interface Backend {
   bandwidth: number;
   /** false = a class default, not this chip's figure. */
   bandwidthKnown: boolean;
+  /**
+   * NVIDIA with several GPUs: the FIRST GPU's own figures. A split-run stage (rpc-server) and a split head's own part
+   * use one device, the first, so they plan against it; serving (-ngl all) spreads over every GPU (POOL-REAL-1 p8-3).
+   */
+  device?: { usable: number; usableIdle: number };
 }
 
 export interface MachineCapacity {
@@ -129,9 +153,17 @@ function nvidia(accel: MachineAccel, mem: MachineMem, gpuFree: readonly number[]
   const laptop = accel.gpus.some((g) => /laptop|mobile|max-q/i.test(g.name));
   const name = accel.gpus.length === 1 ? accel.gpus[0]!.name : `${accel.gpus.length}x ${accel.gpus[0]!.name}`;
   const vram = accel.gpus.reduce((s, g) => s + g.vram, 0);
+  // Several GPUs: layers are split over them and each token still passes every one, so the slowest one's figure.
+  const known = accel.gpus.map((g) => NVIDIA_BW.find(([re]) => re.test(g.name))?.[1] ?? null);
+  const bwKnown = known.every((b) => b !== null);
+  const g0 = accel.gpus[0]!;
+  const device = {
+    usable: measured ? Math.max(0, Math.min(gpuFree![0]!, g0.vram) - GPU_RESERVE_BYTES) : 0,
+    usableIdle: Math.max(0, g0.vram - GPU_RESERVE_BYTES),
+  };
   const gpu: Backend = {
-    kind: "nvidia", memory: "GPU memory", usable: now, usableIdle: idle, measured,
-    bandwidth: laptop ? DEFAULT_BW.nvidiaLaptop : DEFAULT_BW.nvidia, bandwidthKnown: false,
+    kind: "nvidia", memory: "GPU memory", usable: now, usableIdle: idle, measured, device,
+    bandwidth: bwKnown ? Math.min(...(known as number[])) : laptop ? DEFAULT_BW.nvidiaLaptop : DEFAULT_BW.nvidia, bandwidthKnown: bwKnown,
   };
   const freeVram = measured ? accel.gpus.reduce((s, g, i) => s + Math.min(gpuFree![i]!, g.vram), 0) : 0;
   const note = measured
@@ -148,7 +180,8 @@ export function machineCapacity(n: CapacityInput): MachineCapacity | null {
   const base: Base = { node_id: n.node_id, hostname: n.hostname, handle: n.handle };
   if (accel && accel.gpus.length > 0) return nvidia(accel, mem, n.stats?.gpu_free, base);
   if (accel?.unified) {
-    const cap = accel.gpu_limit ?? mem.total * appleGpuShare(mem.total);
+    // A user-set limit, else Metal's own budget (POOL-REAL-1, read from llama.cpp), else the community fraction.
+    const cap = accel.gpu_limit ?? accel.metal_budget ?? mem.total * appleGpuShare(mem.total);
     const free = Math.max(0, mem.total - mem.used - RESERVE_BYTES);
     const { bw, known } = appleBandwidth(accel.chip);
     const unified: Backend = {

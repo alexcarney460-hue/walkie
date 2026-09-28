@@ -15,7 +15,7 @@ interface Layout {
   lib: string;
   sym: { fstatat: string[]; fdopendir: string[]; readdir: string[]; errno: string };
   /** struct stat: st_dev (offset, bytes), st_ino, st_mode (offset, bytes), st_uid. */
-  st: { dev: [number, 4 | 8]; ino: number; mode: [number, 2 | 4]; uid: number };
+  st: { dev: [number, 4 | 8]; ino: number; mode: [number, 2 | 4]; uid: number; flags?: number };
   /** struct dirent: where the name starts, and where its length is (macOS) or null (NUL-terminated, Linux). */
   dirent: { name: number; namlen: number | null };
   O: { RDONLY: number; NOFOLLOW: number; DIRECTORY: number; CLOEXEC: number; NONBLOCK: number };
@@ -33,7 +33,7 @@ function layout(): Layout | null {
     return {
       lib: "libSystem.B.dylib",
       sym: { fstatat: s("fstatat"), fdopendir: s("fdopendir"), readdir: s("readdir"), errno: "__error" },
-      st: { dev: [0, 4], ino: 8, mode: [4, 2], uid: 16 },
+      st: { dev: [0, 4], ino: 8, mode: [4, 2], uid: 16, flags: 116 },
       dirent: { name: 21, namlen: 18 },
       O: { RDONLY: 0, NOFOLLOW: 0x100, DIRECTORY: 0x100000, CLOEXEC: 0x1000000, NONBLOCK: 0x4 },
       AT: { FDCWD: -2, SYMLINK_NOFOLLOW: 0x20, REMOVEDIR: 0x80 },
@@ -61,7 +61,9 @@ export class FsatError extends Error {
   constructor(readonly code: string, what: string) { super(`${what}: ${code}`); }
 }
 
-export interface StatAt { dev: number; ino: number; mode: number; uid: number }
+export interface StatAt { dev: number; ino: number; mode: number; uid: number; flags?: number }
+/** macOS's SIP-protected no-unlink flag on /var/folders per-user directories. */
+export const SF_NOUNLINK = 0x00100000;
 export const S_IFMT = 0o170000;
 export const S_IFDIR = 0o040000;
 export const S_IFLNK = 0o120000;
@@ -160,7 +162,8 @@ export function statAt(dirfd: number, name: Uint8Array | string): StatAt {
   const v = new DataView(buf.buffer);
   const dev = L.st.dev[1] === 4 ? v.getInt32(L.st.dev[0], true) : Number(v.getBigUint64(L.st.dev[0], true));
   const mode = L.st.mode[1] === 2 ? v.getUint16(L.st.mode[0], true) : v.getUint32(L.st.mode[0], true);
-  return { dev, ino: Number(v.getBigUint64(L.st.ino, true)), mode, uid: v.getUint32(L.st.uid, true) };
+  return { dev, ino: Number(v.getBigUint64(L.st.ino, true)), mode, uid: v.getUint32(L.st.uid, true),
+    ...(L.st.flags === undefined ? {} : { flags: v.getUint32(L.st.flags, true) }) };
 }
 
 /** Opens directory `name` in `dirfd` (an absolute path with AT_FDCWD): a symlink or a non-directory is refused. */

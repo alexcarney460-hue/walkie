@@ -4,6 +4,7 @@
 // login.
 import { useMemo, useState } from "react";
 import { AccountTile, inUse } from "../components/Accounts.tsx";
+import { PoolPanel } from "../components/AccountsPool.tsx";
 import { PageHeader } from "../components/Shell.tsx";
 import { EmptyState } from "../components/primitives.tsx";
 import { displayState, unswitchedSessions } from "../../../src/protocol/accounts-format.ts";
@@ -18,7 +19,7 @@ const FILTERS: Array<{ id: Filter; label: string }> = [
 ];
 
 export function Accounts() {
-  const { accounts, agents } = useStore();
+  const { accounts, agents, nodes, accountsPool } = useStore();
   const unswitched = useMemo(() => unswitchedSessions(agents, accounts), [agents, accounts]);
   const now = useNow();
   const [filter, setFilter] = useState<Filter>("all");
@@ -47,6 +48,7 @@ export function Accounts() {
           {unswitched.length > 6 ? ` and ${unswitched.length - 6} more` : ""}. Restart them to enable switching.
         </div>
       )}
+      {accounts.length > 0 && <PoolPanel accounts={accounts} nodes={nodes} pool={accountsPool} now={now} />}
       {accounts.length > 0 && (
         <div className="segmented acct-filter" role="radiogroup" aria-label="Show">
           {FILTERS.map((f) => (

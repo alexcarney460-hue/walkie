@@ -8,7 +8,7 @@
 // Adding, removing and changing a policy are for people only (the CLI refuses agents); reading a token is
 // in-process only (the wrapper, `walkie accounts exec`, and the daemon's usage poll / owner-checked hand-out).
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -16,10 +16,15 @@ import { z } from "zod";
 import { isAccountLabel, PLAN_RE } from "../../protocol/accounts.ts";
 import { defaultKeyStore, fileKeyStore, type KeyStore } from "./keystore.ts";
 import { aadFor, openAtRest, sealAtRest } from "./seal.ts";
+import { codexAccessOnly, codexLeaseCopy, type CodexAccess } from "./codex-access.ts";
 
 export const VAULT_PROVIDERS = ["claude", "codex"] as const;
 export type VaultProvider = (typeof VAULT_PROVIDERS)[number];
-/** local = this machine only (default) · own = also the owner's other machines · shared = also named teammates. */
+/**
+ * local = this machine only (default) · own = also the owner's other machines · shared = also named teammates. The
+ * company pool is not a policy: it is a TEAM setting (`walkie accounts pool on`, off by default) that lends every login
+ * not marked personal to every member's machines while it is on (COMPANY POOL, pool.ts).
+ */
 export const POLICIES = ["local", "own", "shared"] as const;
 export type Policy = (typeof POLICIES)[number];
 export const MAX_VAULT_ACCOUNTS = 16;
@@ -46,12 +51,16 @@ export interface VaultEntry {
   linked: boolean;
   /** This stored credential's generation (new on every add): marks name the generation they are about. */
   gen: string;
+  /** COMPANY POOL: since when this machine is the account's home (its lender): when added, or promoted. */
+  home_at: number;
+  /** COMPANY POOL: its person keeps it out of the company pool (`walkie accounts personal`); its policy still applies. */
+  personal: boolean;
 }
 
 const Row = z.object({
   id: z.string().regex(/^[0-9a-f]{24}$/), provider: z.enum(VAULT_PROVIDERS), label: z.string(), plan: z.string().nullable(),
   policy: z.enum(POLICIES), share_with: z.string(), created_at: z.number(), expires_at: z.number().nullable(),
-  home: z.string().nullable(), linked: z.number(), gen: z.string(),
+  home: z.string().nullable(), linked: z.number(), gen: z.string(), home_at: z.number().nullable(), personal: z.number(),
 });
 
 export function walkieHomeDir(): string {
@@ -105,6 +114,10 @@ export class Vault {
     // Round 1 (Codex 9): a credential generation per stored login, so marks about an older credential never apply.
     const cols = (db.query("PRAGMA table_info(accounts)").all() as { name: string }[]).map((c) => c.name);
     if (!cols.includes("gen")) db.exec("ALTER TABLE accounts ADD COLUMN gen TEXT NOT NULL DEFAULT ''");
+    // COMPANY POOL: when this machine became the login's home (null = when it was added).
+    if (!cols.includes("home_at")) db.exec("ALTER TABLE accounts ADD COLUMN home_at INTEGER");
+    // COMPANY POOL: its person keeps it out of the pool (nothing is pooled unless the team turns the pool on).
+    if (!cols.includes("personal")) db.exec("ALTER TABLE accounts ADD COLUMN personal INTEGER NOT NULL DEFAULT 0");
     let id = (db.query("SELECT v FROM meta WHERE k = 'vault_id'").get() as { v: string } | null)?.v;
     if (!id) {
       id = randomBytes(12).toString("hex");
@@ -124,7 +137,7 @@ export class Vault {
   close(): void { this.db.close(); }
 
   list(): VaultEntry[] {
-    const rows = this.db.query("SELECT id, provider, label, plan, policy, share_with, created_at, expires_at, home, linked, gen FROM accounts ORDER BY created_at").all();
+    const rows = this.db.query("SELECT id, provider, label, plan, policy, share_with, created_at, expires_at, home, linked, gen, home_at, personal FROM accounts ORDER BY created_at").all();
     return rows.flatMap((r) => {
       const p = Row.safeParse(r);
       if (!p.success) return [];
@@ -134,7 +147,7 @@ export class Vault {
       return [{
         id: d.id, provider: d.provider, label: validLabel(d.label) ? d.label : d.provider === "claude" ? "Claude account" : "ChatGPT account",
         plan: d.plan && PLAN_RE.test(d.plan) ? d.plan : null, policy: d.policy, share_with: share, created_at: d.created_at,
-        expires_at: d.expires_at, home: d.home, linked: d.linked === 1, gen: d.gen,
+        expires_at: d.expires_at, home: d.home, linked: d.linked === 1, gen: d.gen, home_at: d.home_at ?? d.created_at, personal: d.personal === 1,
       }];
     });
   }
@@ -256,14 +269,60 @@ export class Vault {
   setPolicy(id: string, policy: Policy, shareWith: readonly string[] = []): VaultEntry {
     const e = this.get(id);
     if (!e) throw new Error("no such account in the vault");
-    if (policy !== "local" && e.provider === "codex") {
-      throw new Error("Codex logins stay on the machine that holds them (a copied login would fight over its refresh token); add the account on each machine instead");
-    }
+    // COMPANY POOL: a Codex login may be lent too — as an access-only lease (codex-access.ts); its refresh token never
+    // leaves this machine, so this machine stays its only refresher.
     const share = policy === "shared" ? [...new Set(shareWith)] : [];
     if (share.some((h) => !HANDLE_RE.test(h))) throw new Error("--with takes teammates' handles (a,b)");
     if (policy === "shared" && !share.length) throw new Error("shared needs --with <handle,…>");
     this.db.query("UPDATE accounts SET policy = ?, share_with = ? WHERE id = ?").run(policy, JSON.stringify(share), id);
     return this.get(id) as VaultEntry;
+  }
+
+  // ---- company pool ---------------------------------------------------------------------------
+
+  /** COMPANY POOL: its person keeps it out of the pool (true) or lets the pool have it again (false). */
+  setPersonal(id: string, personal: boolean): VaultEntry {
+    if (!this.get(id)) throw new Error("no such account in the vault");
+    this.db.query("UPDATE accounts SET personal = ? WHERE id = ?").run(personal ? 1 : 0, id);
+    return this.get(id) as VaultEntry;
+  }
+
+  /**
+   * Makes this machine the login's home (COMPANY POOL promotion): borrowers lease from the online holder with the
+   * newest home_at. This machine's login is its own (added here), so two holders never share one refresh token.
+   */
+  promote(id: string, now = Date.now()): VaultEntry {
+    if (!this.get(id)) throw new Error("no such account in the vault");
+    this.db.query("UPDATE accounts SET home_at = ? WHERE id = ?").run(now, id);
+    return this.get(id) as VaultEntry;
+  }
+
+  /**
+   * The lease copy of a vault Codex login (codex-access.ts codexLeaseCopy: never its refresh token or email): null when
+   * its access token's expiry cannot be read or it runs out within the lease minimum (this machine renews it, below).
+   */
+  codexAccess(id: string, now = Date.now()): CodexAccess | null {
+    const text = this.codexAuthText(id);
+    return text === null ? null : codexLeaseCopy(text, now);
+  }
+
+  /** When a vault Codex login's access token runs out (its JWT exp), or null when unreadable (renewal planning). */
+  codexExpiry(id: string): number | null {
+    const text = this.codexAuthText(id);
+    return text === null ? null : codexAccessOnly(text)?.expiresAt ?? null;
+  }
+
+  private codexAuthText(id: string): string | null {
+    const e = this.get(id);
+    if (!e || e.provider !== "codex" || !e.home) return null;
+    const file = join(e.home, "auth.json");
+    try {
+      const st = statSync(file);
+      if (!st.isFile() || st.size > 64 * 1024) return null;
+      return readFileSync(file, "utf8");
+    } catch {
+      return null;
+    }
   }
 
   /** The Claude setup-token, decrypted in memory for one launch / one request. Never logged, never stored elsewhere. */

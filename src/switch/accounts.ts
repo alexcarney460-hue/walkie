@@ -6,12 +6,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { WalkieClient } from "../client/index.ts";
-import { AccountUsage, type AccountView, type AccountVault, type ResetClock } from "../protocol/accounts.ts";
+import { AccountUsage, DEFAULT_TEAM_POLICY, type AccountView, type AccountVault, type ResetClock, type TeamPolicy } from "../protocol/accounts.ts";
 import { activeLeases, markKey, readMarks, readSessionReadings } from "../accounts/leases.ts";
 import type { Candidate } from "../accounts/select.ts";
 import { Vault, type VaultEntry } from "../accounts/vault/vault.ts";
 import { codexBaseHome, syncCodexHome } from "../accounts/vault/codex-home.ts";
+import { removeLeaseHome, sweepLeaseHomes, writeLeaseHome } from "../accounts/vault/codex-lease-home.ts";
 import { validClock } from "../accounts/clock.ts";
+import { isPooled, mayLeaseUnder } from "../accounts/pool.ts";
 
 export interface Credentials {
   /** Claude: the setup-token (held in memory for one launch). */
@@ -19,8 +21,10 @@ export interface Credentials {
   /** A hand-out's grant id (the lease names it) and the credential generation (marks bind to it). */
   grant?: string;
   gen?: string;
-  /** Codex: the account's CODEX_HOME. */
+  /** Codex: the account's CODEX_HOME (a leased one for a pooled login: deleted by `release`). */
   home?: string;
+  /** Deletes what the credentials left on disk (a leased Codex home); call when the session ended. */
+  release?: () => void;
 }
 
 export interface AccountSource {
@@ -74,15 +78,18 @@ function meterless(u: AccountUsage | null): boolean {
   return !u || u.state === "unknown";
 }
 
-/** Whether `me` may have an account handed out from its owner's vault under this policy. */
-export function mayLease(v: AccountVault | undefined, owner: string, me: string): boolean {
-  if (!v) return false;
-  if (v.policy === "own") return owner === me;
-  if (v.policy === "shared") return owner === me || (v.share_with ?? []).includes(me);
-  return false;
+/** Whether `me` may have an account handed out from its owner's vault under this policy (COMPANY POOL: pool.ts). */
+export function mayLease(v: AccountVault | undefined, owner: string, me: string, team: TeamPolicy = DEFAULT_TEAM_POLICY, role: string | null = "member"): boolean {
+  return mayLeaseUnder(v, owner, me, team, role);
 }
 
-export interface PooledView { accounts: AccountView[]; me: string | null }
+export interface PooledView {
+  accounts: AccountView[]; me: string | null;
+  /** COMPANY POOL: the team accounts policy (absent from an older daemon: company, the default). */
+  team?: TeamPolicy;
+  /** The caller's role in the team (observers never borrow through the pool). */
+  role?: string | null;
+}
 
 /** Leases the scheduler may count: backed by the owner's own machine or a hand-out the owner granted (round 1, Codex 7). */
 function verifiedLeases(v: AccountView | undefined): number {
@@ -108,6 +115,8 @@ export function candidatesFrom(o: {
   clocks?: Map<string, ResetClock[]>;
 }): Candidate[] {
   const me = o.pooled?.me ?? null;
+  const team = o.pooled?.team ?? DEFAULT_TEAM_POLICY;
+  const role = o.pooled?.role ?? "member";
   const out: Candidate[] = [];
   const local = new Set<string>();
   for (const e of o.entries) {
@@ -115,7 +124,6 @@ export function candidatesFrom(o: {
     local.add(e.id);
     const mine = me !== null ? o.pooled?.accounts.find((v) => v.id === e.id && v.owners.includes(me)) : undefined;
     const usage = freshest([mine?.usage && !meterless(mine.usage) ? mine.usage : null, o.saved.get(e.id) ?? null, o.sessions?.[e.id] ?? null]) ?? mine?.usage ?? null;
-    // RESET-CLOCK-1: the remembered reset times (the owner's pooled view; else what the daemon saved).
     const clock = mine?.clock ?? o.clocks?.get(e.id);
     out.push({
       id: e.id, provider: e.provider, label: e.label, owner: me, own: true, source: "local", usage, gen: e.gen,
@@ -124,39 +132,48 @@ export function candidatesFrom(o: {
       meterless: meterless(usage),
     });
   }
-  // Hand-outs (phase 3): Claude setup-tokens another machine's vault may lend to this one. Codex logins never move.
-  // Round 4 (Codex 3): identity is owner-qualified (owner + account id) throughout — a teammate advertising the same
-  // account id can never shadow an own account — and every own account is listed (reachable or not) before any
-  // teammate's, so the borrowing rule always sees all of them.
-  if (o.provider === "claude" && o.pooled && me) {
+  // Hand-outs (phase 3): logins another machine's vault may lend to this one — Claude setup-tokens, and (COMPANY POOL)
+  // Codex logins as access-only leases. Round 4 (Codex 3): identity is owner-qualified (owner + account id) throughout
+  // — a teammate advertising the same account id can never shadow an own account — and every own account is listed
+  // (reachable or not) before any teammate's, so the borrowing rule always sees all of them.
+  if (o.pooled && me) {
     const seen = new Set<string>([...local].map((id) => `${me}\u0000${id}`));
-    const views = o.pooled.accounts.filter((v) => v.provider === "claude");
+    const views = o.pooled.accounts.filter((v) => v.provider === o.provider);
     const ownerOf = (v: AccountView) => v.owners[0] ?? "";
     for (const pass of ["own", "theirs"] as const) {
       for (const v of views) {
         const owner = ownerOf(v);
         const own = owner === me;
         if ((pass === "own") !== own) continue;
-        if (!own && !o.borrow) continue;
         const key = `${owner}\u0000${v.id}`;
         if (seen.has(key)) continue;
-        const holder = v.machines.find((m) => !m.self && m.online && mayLease(m.vault, owner, me));
+        // The lenders: online machines of the owner that may lend here, whose own copy does not need a re-login; the
+        // newest home (promotion) first, the others kept as alternatives when it fails (Codex p8 MEDIUM 4).
+        const holders = v.machines.filter((m) => !m.self && m.online && m.usage?.state !== "relogin" && mayLease(m.vault, owner, me, team, role))
+          .sort((a, b) => (b.vault?.home_at ?? 0) - (a.vault?.home_at ?? 0));
+        const holder = holders[0];
+        // A teammate's login: through the company pool, or (shared) only with the borrower's opt-in.
+        const pooled = !own && !!holder && isPooled(holder.vault, team);
+        if (!own && !pooled && !o.borrow) continue;
         if (!holder) {
           // An own account in a vault on another machine that is offline (or not lending here): unreachable, but
           // still one of "every own account" for the borrowing rule.
           if (own && v.machines.some((m) => !m.self && m.vault)) {
             seen.add(key);
-            out.push({ id: v.id, provider: "claude", label: v.label, owner, own: true, source: "peer", usage: v.usage, leases: 0, unavailable: true, ...(v.clock?.length ? { clock: v.clock } : {}) });
+            out.push({ id: v.id, provider: o.provider, label: v.label, owner, own: true, source: "peer", usage: v.usage, leases: 0, unavailable: true, ...(v.clock?.length ? { clock: v.clock } : {}) });
           }
           continue;
         }
         seen.add(key);
         out.push({
-          id: v.id, provider: "claude", label: v.label, owner, own, source: "peer", node: holder.node_id,
+          id: v.id, provider: o.provider, label: v.label, owner, own, source: "peer", node: holder.node_id,
+          ...(holders.length > 1 ? { nodes: holders.map((m) => m.node_id) } : {}),
           ...(holder.vault?.gen ? { gen: holder.vault.gen } : {}),
           // Marks are owner-qualified (round 5, Codex 7): what a borrowed account hit never lands on an own one.
-          usage: v.usage, ...(o.marks[markKey({ id: v.id, own, owner })] ? { mark: o.marks[markKey({ id: v.id, own, owner })] } : {}), leases: own ? verifiedLeases(v) : 0, meterless: meterless(v.usage),
-          ...(v.clock?.length ? { clock: v.clock } : {}),
+          usage: v.usage, ...(o.marks[markKey({ id: v.id, own, owner })] ? { mark: o.marks[markKey({ id: v.id, own, owner })] } : {}),
+          // Leases on a pooled login count for everyone (the pool spreads out); a shared one's are informational.
+          leases: own || pooled ? verifiedLeases(v) : 0, meterless: meterless(v.usage),
+          ...(v.clock?.length ? { clock: v.clock } : {}), ...(pooled ? { pooled: true } : {}),
         });
       }
     }
@@ -187,7 +204,6 @@ export function defaultSource(walkieHome: string, env: NodeJS.ProcessEnv = proce
     },
     async available(provider, now) {
       if (this.hasAccounts(provider)) return true;
-      if (provider !== "claude") return false;
       return (await this.gather(provider, now)).length > 0;
     },
     async gather(provider, now) {
@@ -195,7 +211,7 @@ export function defaultSource(walkieHome: string, env: NodeJS.ProcessEnv = proce
       let pooled: PooledView | null = null;
       try {
         const [acc, me] = await Promise.all([client.accounts(), client.me().catch(() => null)]);
-        pooled = { accounts: acc.accounts, me: me?.handle ?? null };
+        pooled = { accounts: acc.accounts, me: me?.handle ?? null, team: acc.pool?.policy ?? DEFAULT_TEAM_POLICY, role: me?.role ?? null };
       } catch { /* daemon down or not in a team: the vault alone */ }
       const localLeases = new Map<string, number>();
       for (const l of activeLeases(walkieHome)) localLeases.set(l.account, (localLeases.get(l.account) ?? 0) + 1);
@@ -203,7 +219,22 @@ export function defaultSource(walkieHome: string, env: NodeJS.ProcessEnv = proce
     },
     async credentials(c, agent) {
       if (c.source === "peer") {
-        const r = await client.vaultLease({ account: c.id, node: c.node as string, ...(agent ? { agent } : {}) });
+        // The preferred lender first, then the other holders (one failing machine never blocks a healthy one).
+        const nodes = c.nodes?.length ? c.nodes : [c.node as string];
+        let r: Awaited<ReturnType<typeof client.vaultLease>> | null = null;
+        let last: unknown = null;
+        for (const node of nodes) {
+          try { r = await client.vaultLease({ account: c.id, node, ...(agent ? { agent } : {}), ...(c.provider === "codex" ? { provider: "codex" as const } : {}) }); break; } catch (err) { last = err; }
+        }
+        if (!r) throw last instanceof Error ? last : new Error("no machine holding it could lend it");
+        if (c.provider === "codex") {
+          // COMPANY POOL: a leased (access-only) Codex login in a home of its own, deleted when the session ends.
+          if (!r.codex_auth) throw new Error("the owner's machine sent no Codex login");
+          sweepLeaseHomes(walkieHome);
+          const home = writeLeaseHome(walkieHome, codexBaseHome(walkieHome, env), r.grant, r.codex_auth);
+          return { home, grant: r.grant, ...(r.gen ? { gen: r.gen } : {}), release: () => { try { removeLeaseHome(home, walkieHome); } catch { /* swept later */ } } };
+        }
+        if (!r.token) throw new Error("the owner's machine sent no token");
         return { token: r.token, grant: r.grant, ...(r.gen ? { gen: r.gen } : {}) };
       }
       const v = openVault();

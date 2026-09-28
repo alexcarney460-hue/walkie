@@ -8,6 +8,7 @@ import { cpus, loadavg } from "node:os";
 import type { MachineAccel, MachineStats, MachineSys } from "../../protocol/machine-stats.ts";
 import type { Logger } from "../logger.ts";
 import { VERSION } from "../version.ts";
+import { SEATS_V2_CAP } from "../../protocol/seats.ts";
 import { readAccel, readGpuNow, type GpuNow } from "./accel.ts";
 import { platformReader, type Reader, type Reading } from "./read.ts";
 
@@ -19,12 +20,17 @@ export const MEM_STEP = 0.05;
 /** Temperature moving by this many °C publishes. */
 export const TEMP_STEP_C = 2;
 
+/** Linux without a GPU found yet: accelerator facts are read again this often (WSL driver mount race). */
+export const ACCEL_RETRY_MS = 5 * 60_000;
+
 export interface SamplerOptions {
   intervalMs?: number; heartbeatMs?: number;
   /** Tests inject readings; default the platform reader (read.ts). */
   read?: Reader;
-  /** Accelerator facts, read once on the first tick (default accel.ts). */
+  /** Accelerator facts, read on the first tick and again every ACCEL_RETRY_MS on Linux while no GPU was found (default accel.ts). */
   readAccel?: () => Promise<MachineAccel | null>;
+  /** Tests: the platform (default process.platform). */
+  platform?: NodeJS.Platform;
   /** Free VRAM and temperature per NVIDIA GPU, read every tick when there is one (default accel.ts readGpuNow). */
   readGpu?: (gpus: number) => Promise<GpuNow>;
   /** Free VRAM only (tests written before GPU temperatures); used when `readGpu` is not given. */
@@ -44,6 +50,7 @@ export function hostSys(platform: string = process.platform, arch: string = proc
     version: VERSION,
     cpus: Math.max(1, Math.min(4096, cpus().length || 1)),
     load1: load === null || !Number.isFinite(load) ? null : Math.round(Math.max(0, load) * 100) / 100,
+    caps: [SEATS_V2_CAP],
   };
 }
 
@@ -115,8 +122,11 @@ export class MachineStatsSampler {
   private readonly readGpu: (gpus: number) => Promise<GpuNow>;
   /** undefined = not read yet; null = none on this platform or the read failed. */
   private accel: MachineAccel | null | undefined = undefined;
+  /** When accelerator facts were last read (they are read again while no GPU was found: ACCEL_RETRY_MS). */
+  private accelAt = 0;
   private readonly clock: () => number;
   private readonly readSys: () => MachineSys | null;
+  private readonly platform: NodeJS.Platform;
 
   constructor(private readonly publish: (s: MachineStats) => void, private readonly log: Logger, opts: SamplerOptions = {}) {
     this.intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -127,9 +137,23 @@ export class MachineStatsSampler {
     this.readGpu = opts.readGpu ?? (readFree ? async (n) => ({ free: await readFree(n), temp: null }) : (n) => readGpuNow(n));
     this.clock = opts.clock ?? Date.now;
     this.readSys = opts.readSys ?? (() => hostSys());
+    this.platform = opts.platform ?? process.platform;
   }
 
   get current(): MachineStats | null { return this.published; }
+
+  /**
+   * Re-read accelerator facts while no GPU was found (POOL-REAL-1): on WSL the Windows driver's mount
+   * (/usr/lib/wsl/lib) can appear after the service started, and a GPU missed at start was never seen again.
+   * Only Linux, where that race exists; a machine that has a GPU keeps its facts.
+   */
+  private accelStale(): boolean {
+    if (this.accel === undefined || (this.accel?.gpus.length ?? 0) > 0) return false;
+    const due = this.clock() - this.accelAt >= ACCEL_RETRY_MS;
+    // Apple Silicon: the Metal budget appears once the llama.cpp runtime is installed (walkie pool install).
+    if (this.accel !== null && this.accel.unified) return this.platform === "darwin" && this.accel.metal_budget === undefined && due;
+    return this.platform === "linux" && due;
+  }
 
   start(): void {
     this.stopped = false;
@@ -150,7 +174,13 @@ export class MachineStatsSampler {
     if (this.running || this.stopped) return false;
     this.running = true;
     try {
-      if (this.accel === undefined) this.accel = await this.readAccel().catch(() => null);
+      if (this.accel === undefined || this.accelStale()) {
+        const before = this.accel?.gpus.length ?? 0;
+        this.accelAt = this.clock();
+        this.accel = await this.readAccel().catch(() => null);
+        const after = this.accel?.gpus.length ?? 0;
+        if (after > before && before === 0 && this.accel) this.log.info("machine_accel_found", { gpus: after });
+      }
       const gpus = this.accel?.gpus.length ?? 0;
       const none: GpuNow = { free: null, temp: null };
       const [r, gpu] = await Promise.all([this.read(), gpus ? this.readGpu(gpus).catch(() => none) : Promise.resolve(none)]);

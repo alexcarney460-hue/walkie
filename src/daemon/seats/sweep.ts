@@ -16,11 +16,11 @@
 // is reported, never a reason to fail.
 //
 // Verification is the same walk again (repeated while it still finds something to remove, at most three passes): the
-// last must remove nothing and find nothing of the user left, with no inspection problem. Nothing is "kept" (Opus r7
-// 1): the roots themselves (its home, its per-user folder) are the only entries of its that survive the sweep.
+// last must remove nothing and find nothing of the user left, with no inspection problem. macOS may keep only empty
+// SF_NOUNLINK directories inside its own per-user folder; those paths are recorded separately.
 import { basename, dirname } from "node:path";
 import {
-  AT_FDCWD, FsatError, canWriteAt, clearProtections, closeFd, fdIdentity, isDir, listDir, openDirAt, statAt, unlinkAt, type StatAt,
+  AT_FDCWD, FsatError, SF_NOUNLINK, canWriteAt, clearProtections, closeFd, fdIdentity, isDir, listDir, openDirAt, statAt, unlinkAt, type StatAt,
 } from "./fsat.ts";
 
 /** Whether an entry is the sweeping user's (its uid; tests add their fake ownership). */
@@ -30,6 +30,8 @@ export interface SweepRoot {
   path: string;
   /** Whether the root directory itself is the user's (its home, its per-user folder): kept, never removed. */
   owned?: boolean;
+  /** macOS's own /private/var/folders per-user directory; only empty sunlnk directories may survive here. */
+  sunlnk?: boolean;
 }
 
 export interface SweepResult {
@@ -41,6 +43,7 @@ export interface SweepResult {
   problems: string[];
   /** Reported, never a reason to fail: mount points met inside a root, others' trees deeper than the limit. */
   notes: string[];
+  leftoverDirs: string[];
   /** False when the walk stopped early in the user's own subtree (too many entries, too deep). */
   complete: boolean;
 }
@@ -53,20 +56,41 @@ export interface SweepOptions {
   beforeOpen?: (path: string) => void;
   /** Tests: the access check on others' directories (default canWriteAt; throws when it can't tell). */
   canWrite?: (dirfd: number, name: Uint8Array) => boolean;
+  /** Tests: simulate descriptor operations and macOS's SIP-protected flags. */
+  statAt?: typeof statAt;
+  unlinkAt?: typeof unlinkAt;
 }
 
 const show = (dir: string, name: Uint8Array) => `${dir}/${Buffer.from(name).toString("utf8")}`;
 const code = (err: unknown): string => (err instanceof FsatError ? err.code : "EIO");
 
 export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOptions): SweepResult {
-  const r: SweepResult = { seen: 0, removed: 0, left: [], problems: [], notes: [], complete: true };
+  const r: SweepResult = { seen: 0, removed: 0, left: [], problems: [], notes: [], leftoverDirs: [], complete: true };
   const max = opts.maxEntries ?? 2_000_000;
   const maxDepth = opts.maxDepth ?? 200;
   const note = (list: string[], s: string) => { if (list.length < 200) list.push(s); else if (list.length === 200) list.push("…"); };
+  const recordLeftover = (path: string) => {
+    if (r.leftoverDirs.length >= 200) note(r.problems, "more than 200 protected per-user directories remain");
+    else r.leftoverDirs.push(path);
+  };
 
   /** Its own entry `name` in `dirfd`, removed (its protections cleared and retried once when they are in the way). */
-  const remove = (dirfd: number, name: Uint8Array, path: string, dir: boolean): void => {
-    const attempt = () => unlinkAt(dirfd, name, dir);
+  const protectedEmptyDir = (dirfd: number, name: Uint8Array, path: string, original: StatAt): boolean => {
+    try {
+      const now = (opts.statAt ?? statAt)(dirfd, name);
+      if (!isDir(now) || now.dev !== original.dev || now.ino !== original.ino || now.flags !== SF_NOUNLINK) return false;
+      const fd = openDirAt(dirfd, name);
+      try {
+        const id = fdIdentity(fd);
+        return id.ino === now.ino && id.dev === now.dev && listDir(fd).every((child) =>
+          r.leftoverDirs.includes(show(path, child)));
+      }
+      finally { closeFd(fd); }
+    } catch { return false; }
+  };
+
+  const remove = (dirfd: number, name: Uint8Array, path: string, dir: boolean, original: StatAt, sunlnk: boolean): void => {
+    const attempt = () => (opts.unlinkAt ?? unlinkAt)(dirfd, name, dir);
     try { attempt(); r.removed++; return; } catch (err) {
       const c = code(err);
       if (c === "ENOENT") return;
@@ -76,11 +100,15 @@ export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOp
     try { clearProtections(dirfd, name, dir); attempt(); r.removed++; } catch (err) {
       const c = code(err);
       if (c === "ENOENT") return;
+      if (sunlnk && dir && c === "EPERM" && protectedEmptyDir(dirfd, name, path, original)) {
+        recordLeftover(path);
+        return;
+      }
       note(r.left, `${path}: its own ${dir ? "directory" : "file"} is protected and the protection couldn't be cleared (${c}: a system flag, or its parent's)`);
     }
   };
 
-  const walk = (dirfd: number, dir: string, dev: number, dirOwned: boolean, depth: number): void => {
+  const walk = (dirfd: number, dir: string, dev: number, dirOwned: boolean, depth: number, sunlnk: boolean): void => {
     if (depth > maxDepth) {
       if (dirOwned) { r.complete = false; note(r.problems, `${dir}: its own tree is deeper than ${maxDepth}`); } else note(r.notes, `${dir}: another owner's tree deeper than ${maxDepth}, not walked`);
       return;
@@ -92,12 +120,13 @@ export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOp
     for (const name of names) {
       const path = show(dir, name);
       let st: StatAt;
-      try { st = statAt(dirfd, name); } catch (err) {
+      try { st = (opts.statAt ?? statAt)(dirfd, name); } catch (err) {
         if (code(err) !== "ENOENT") note(r.problems, `${path}: ${code(err)}`);
         continue;
       }
-      if (st.dev !== dev) { note(r.notes, `${path}: a mount point, not crossed`); continue; }
+      if (st.dev !== dev) { note(sunlnk ? r.problems : r.notes, `${path}: a mount point, not crossed`); continue; }
       const mine = owned(st, name, dirOwned);
+      if (sunlnk && !mine) note(r.left, `${path} (holds an entry of another user)`);
       if (mine && ++r.seen > max) { r.complete = false; note(r.problems, `more than ${max} of its own entries`); return; }
       if (isDir(st)) {
         // Others' directories only where the seat could have created entries (Opus r7 3).
@@ -120,17 +149,17 @@ export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOp
         try {
           const id = fdIdentity(fd);
           if (id.ino !== st.ino || id.dev !== st.dev) { note(r.problems, `${path}: replaced while it was swept`); continue; }
-          walk(fd, path, dev, mine, depth + 1);
+          walk(fd, path, dev, mine, depth + 1, sunlnk && mine);
         } finally { closeFd(fd); }
         if (!r.complete) return;
         if (!mine) continue;
         if (!opts.remove) { note(r.left, path); continue; }
-        remove(dirfd, name, path, true);
+        remove(dirfd, name, path, true, st, sunlnk);
         continue;
       }
       if (!mine) continue;
       if (!opts.remove) { note(r.left, path); continue; }
-      remove(dirfd, name, path, false);
+      remove(dirfd, name, path, false, st, sunlnk);
     }
   };
 
@@ -150,8 +179,14 @@ export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOp
       continue;
     }
     try {
-      walk(fd, root.path.replace(/\/+$/, ""), fdIdentity(fd).dev, root.owned === true, 0);
+      walk(fd, root.path.replace(/\/+$/, ""), fdIdentity(fd).dev, root.owned === true, 0, root.sunlnk === true);
     } finally { closeFd(fd); }
+    if (root.sunlnk && root.owned && r.left.length === 0 && r.problems.length === 0 && r.complete) {
+      try {
+        const st = (opts.statAt ?? statAt)(AT_FDCWD(), root.path);
+        if (isDir(st) && st.flags === SF_NOUNLINK) recordLeftover(root.path);
+      } catch (err) { note(r.problems, `${root.path}: ${code(err)}`); }
+    }
     if (!r.complete) break;
   }
   return r;
@@ -162,7 +197,7 @@ export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOp
  * has no inspection problem, complete. Anything else is not verified.
  */
 export function sweepVerified(roots: readonly SweepRoot[], owned: OwnedFn, opts: Omit<SweepOptions, "remove"> = {}): {
-  verified: boolean; removed: number; left: string[]; problems: string[]; notes: string[];
+  verified: boolean; removed: number; left: string[]; problems: string[]; notes: string[]; leftoverDirs: string[];
 } {
   let removed = 0;
   let last: SweepResult | null = null;
@@ -174,5 +209,5 @@ export function sweepVerified(roots: readonly SweepRoot[], owned: OwnedFn, opts:
   }
   const r = last as SweepResult;
   const verified = r.complete && r.removed === 0 && r.left.length === 0 && r.problems.length === 0;
-  return { verified, removed, left: r.left, problems: r.problems, notes: r.notes };
+  return { verified, removed, left: r.left, problems: r.problems, notes: r.notes, leftoverDirs: r.leftoverDirs };
 }

@@ -35,6 +35,7 @@ describe("argv: the Walkie tools are allowed in every access mode", () => {
   test("platform keeps the permission mode it was given", () => {
     expect(valueOf(argvFor("platform"), "--permission-mode")).toBe("default");
     expect(valueOf(argvFor("platform", "acceptEdits"), "--permission-mode")).toBe("acceptEdits");
+    expect(valueOf(argvFor("platform"), "--setting-sources")).toBe("");
   });
 
   test("full access is bypassPermissions, whatever mode was asked", () => {

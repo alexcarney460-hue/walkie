@@ -97,7 +97,7 @@ export interface AdminSys {
   /** The world-writable directories setup found on this machine, to sweep too (Opus r7 6). Throws when unknown. */
   extraRoots(): string[];
   /** The runner's `sweep` as the seat user (sweep.ts): verified, or what is left. */
-  sweepAsUser(name: string, uid: number, roots: string[]): Promise<{ ok: boolean; left: string[] }>;
+  sweepAsUser(name: string, uid: number, roots: string[]): Promise<{ ok: boolean; left: string[]; leftoverDirs?: string[] }>;
   sleep(ms: number): Promise<void>;
   /** Tests: how long a destroy waits for another operation on the id (20 s), and for SIGKILL to take (10 s). */
   busyWaitMs?: number;
@@ -111,7 +111,7 @@ export interface AdminSys {
  */
 export interface AdminResult {
   ok: boolean; code?: "used" | "refused" | "failed" | "busy"; name?: string; uid?: number; home?: string; high?: number; why?: string;
-  left?: string[]; ids?: number[];
+  left?: string[]; ids?: number[]; leftoverDirs?: string[];
 }
 
 export function seatHome(sys: Pick<AdminSys, "platform" | "homesDir">, n: number): string {
@@ -289,13 +289,15 @@ export async function destroySeatUser(n: number, sys: AdminSys): Promise<AdminRe
   }
   if (taken.state === "cancelled") return { ok: true, name, uid }; // nothing was ever made for it
   const left: string[] = [];
+  let leftoverDirs: string[] = [];
   const step = <T>(what: string, f: () => T): T | undefined => { try { return f(); } catch (err) { left.push(`${what}: ${msg(err)}`); return undefined; } };
   const done = (): AdminResult => {
     const unique = [...new Set(left)];
     try {
       if (unique.length) ledger.release(n, op); else ledger.finish(n, op, "destroyed");
     } catch { /* the ledger keeps "destroying": a destroy again continues */ }
-    return unique.length ? { ok: false, name, uid, left: unique, why: unique.join("; ") } : { ok: true, name, uid };
+    return unique.length ? { ok: false, name, uid, left: unique, why: unique.join("; ") }
+      : { ok: true, name, uid, ...(leftoverDirs.length ? { leftoverDirs } : {}) };
   };
   const u = step("the user", () => sys.lookup(name));
   if (u === undefined) return done();
@@ -321,8 +323,9 @@ export async function destroySeatUser(n: number, sys: AdminSys): Promise<AdminRe
     const roots = step("the sweep's roots", () => sys.extraRoots());
     if (!roots) return done();
     // As the seat user itself: it can remove only what it may (Codex r6 CRITICAL 1, HIGH 2).
-    const swept = await sys.sweepAsUser(name, uid, roots).catch((err: unknown) => ({ ok: false, left: [msg(err)] }));
+    const swept = await sys.sweepAsUser(name, uid, roots).catch((err: unknown) => ({ ok: false, left: [msg(err)], leftoverDirs: [] as string[] }));
     if (!swept.ok) left.push(`files it owns remain or couldn't be checked (${swept.left.slice(0, 5).join("; ") || "no answer"})`);
+    else leftoverDirs = swept.leftoverDirs ?? [];
     if (left.length || !(await kill("after its sweep"))) return done();
   }
   const h = step("its home", () => removeEmptyHome(home, uid, sys));

@@ -4,13 +4,21 @@
 // between the live roster and the archive because time passed (no new status arrives to announce that).
 import { ARCHIVE_CAP_PER_NODE, isExpired } from "../protocol/agent-roster.ts";
 import { SUBAGENT_ARCHIVE_CAP_PER_NODE, SUBAGENT_ARCHIVE_TTL_MS } from "../protocol/subagents.ts";
+import { SEATS_AGENT, isSeatAgent } from "../protocol/seats.ts";
 import type { AgentView } from "../protocol/schemas.ts";
 import type { Core } from "./core.ts";
 import type { Logger } from "./logger.ts";
 import type { SyncManager } from "./sync.ts";
 import { agentsView } from "./views.ts";
+import { trackOp } from "./watchdog.ts";
 
 export const ARCHIVE_UPKEEP_MS = 60_000;
+export const SEAT_ARCHIVE_CAP_PER_NODE = 100;
+export const SEAT_ARCHIVE_TTL_MS = 7 * 86_400_000;
+
+function isSeatCard(a: AgentView): boolean {
+  return a.status.parent === SEATS_AGENT && isSeatAgent(a.agent);
+}
 
 /**
  * Which archived agents to delete: expired ones, and per node the oldest beyond `cap`. Sub-agents (WALKIE-MISSION-SUB-1)
@@ -28,11 +36,14 @@ export function archiveOverflow(views: readonly AgentView[], now: number, cap = 
   const subCap = Math.min(cap, SUBAGENT_ARCHIVE_CAP_PER_NODE);
   for (const list of byNode.values()) {
     const newestFirst = [...list].sort((x, y) => y.updated_at - x.updated_at);
+    const seats = newestFirst.filter(isSeatCard);
+    const dropSeats = new Set(seats.filter((a, i) => i >= SEAT_ARCHIVE_CAP_PER_NODE || now - a.updated_at >= SEAT_ARCHIVE_TTL_MS));
+    out.push(...dropSeats);
     const dropSub = new Set<AgentView>();
-    newestFirst.filter((a) => a.status.parent).forEach((a, i) => {
+    newestFirst.filter((a) => !isSeatCard(a) && a.status.parent).forEach((a, i) => {
       if (i >= subCap || now - a.updated_at >= SUBAGENT_ARCHIVE_TTL_MS) dropSub.add(a);
     });
-    newestFirst.filter((a) => !dropSub.has(a)).forEach((a, i) => { if (i >= cap || isExpired(a, now)) out.push(a); });
+    newestFirst.filter((a) => !isSeatCard(a) && !dropSub.has(a)).forEach((a, i) => { if (i >= cap || isExpired(a, now)) out.push(a); });
     out.push(...dropSub);
   }
   return out;
@@ -61,6 +72,10 @@ export class AgentArchive {
 
   /** One pass; never throws. Returns how many agents were deleted. */
   tick(): number {
+    return trackOp("agent_archive", () => this.pass());
+  }
+
+  private pass(): number {
     try {
       const now = (this.opts.now ?? Date.now)();
       const views = agentsView(this.core, this.sync, now);

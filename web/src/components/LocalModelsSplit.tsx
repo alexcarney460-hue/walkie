@@ -1,7 +1,7 @@
 // "With all our machines together" (WALKIE-POOL-2): the whole team's compute combined, where each part would run,
 // this machine's sharing switch, and the split run itself (Run it split / status / Stop). Used by LocalModels.tsx.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Share2, Square } from "lucide-react";
+import { Download, Play, Share2, Square } from "lucide-react";
 import type { NodeView } from "../api/types.ts";
 import { friendlyError } from "../api/client.ts";
 import { poolApi, type PoolLocalView, type RunView } from "../api/pool.ts";
@@ -30,7 +30,8 @@ export function usePool(): { view: PoolLocalView | null; error: string | null; r
       if (alive.current) setError(friendlyError(err));
     }
   }, []);
-  const active = !!view?.run && ACTIVE.has(view.run.state);
+  const active = (!!view?.run && ACTIVE.has(view.run.state)) || view?.install?.state === "downloading"
+    || (!!view?.serve && ["downloading", "loading"].includes(view.serve.state)) || view?.prepare?.state === "downloading" || view?.prepare?.state === "preparing";
   useEffect(() => {
     alive.current = true;
     void refresh();
@@ -101,7 +102,28 @@ function RunStatus({ run, onStop, busy }: { run: RunView; onStop: () => void; bu
   );
 }
 
-function ShareSwitch({ view, onChange, busy }: { view: PoolLocalView; onChange: (on: boolean, maxGb: number | null) => void; busy: boolean }) {
+/** POOL-REAL-1: the runtime is one click (the daemon downloads the pinned, sha256-checked build). */
+function InstallRuntime({ view, busy, onInstall }: { view: PoolLocalView; busy: boolean; onInstall: () => void }) {
+  const inst = view.install ?? null;
+  if (inst?.state === "downloading") {
+    return (
+      <span className="lm-share-hint" role="status" aria-live="polite">
+        Installing llama.cpp {inst.build} ({inst.target}): {gbText(inst.done)} of {gbText(inst.total)}
+      </span>
+    );
+  }
+  return (
+    <span className="lm-share-hint">
+      needs the llama.cpp runtime{" "}
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={onInstall}>
+        <Download size={12} strokeWidth={2} aria-hidden="true" /> Install
+      </button>
+      {inst?.state === "failed" && <span className="lm-run-error"> Install failed: {inst.error}</span>}
+    </span>
+  );
+}
+
+function ShareSwitch({ view, onChange, onInstall, busy }: { view: PoolLocalView; onChange: (on: boolean, maxGb: number | null) => void; onInstall: () => void; busy: boolean }) {
   const [max, setMax] = useState<string>(view.share.max_bytes ? String(Math.round((view.share.max_bytes / GiB) * 10) / 10) : "");
   const on = view.share.on;
   const maxGb = max.trim() === "" ? null : Number(max);
@@ -117,7 +139,7 @@ function ShareSwitch({ view, onChange, busy }: { view: PoolLocalView; onChange: 
         <input type="number" min="1" step="1" inputMode="decimal" placeholder="free" value={max} aria-label="Most memory a split run may use here, GB (empty: what is free)" onChange={(e) => setMax(e.target.value)} onBlur={() => { if (on && valid) onChange(true, maxGb); }} />
         <span>GB</span>
       </label>
-      {!view.runtime.installed && <span className="lm-share-hint">needs the runtime: <code>walkie pool install</code></span>}
+      {!view.runtime.installed && <InstallRuntime view={view} busy={busy} onInstall={onInstall} />}
       <p className="lm-share-warn">{SHARE_WARNING}</p>
     </div>
   );
@@ -170,7 +192,7 @@ export function CombinedBlock({ cs, detail }: { cs: CombinedSuggestion; detail?:
           {cs.sharing.length > 0 && <p className="lm-run-note"><Share2 size={11} strokeWidth={1.75} aria-hidden="true" /> Sharing now: {cs.sharing.join(", ")}.</p>}
         </div>
       ) : null}
-      {pool.view && <ShareSwitch view={pool.view} busy={busy} onChange={(on, max) => void act(() => poolApi.share(on, max))} />}
+      {pool.view && <ShareSwitch view={pool.view} busy={busy} onChange={(on, max) => void act(() => poolApi.share(on, max))} onInstall={() => void act(() => poolApi.install())} />}
       {(err ?? pool.error) && <p className="lm-run-error">{err ?? pool.error}</p>}
     </div>
   );

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigSchema } from "../../src/daemon/config.ts";
 import type { Core } from "../../src/daemon/core.ts";
-import { AgentDiscovery, DISCOVERED_ACTIVITY, DISCOVERY_STALE_MS, EXITED_ACTIVITY, runtimeOf } from "../../src/daemon/discovery.ts";
+import { AgentDiscovery, DISCOVERED_ACTIVITY, DISCOVERY_STALE_MS, EXITED_ACTIVITY, SWEEP_GRACE_MS, runtimeOf } from "../../src/daemon/discovery.ts";
 import { createLogger } from "../../src/daemon/logger.ts";
 import { parsePs, pickEnv, type ProcessProvider, type ProcRow } from "../../src/daemon/procs.ts";
 import type { BodyOf } from "../../src/protocol/schemas.ts";
@@ -199,6 +199,25 @@ describe("agent discovery", () => {
     const again = new AgentDiscovery(core, createLogger({}), { provider: fx, uid: ME, now: () => clock.t });
     await again.tick();
     expect(status(core, "claude-pid600")?.state).toBe("offline");
+  });
+
+  test("daemon-owned cards survive sweep ticks until their host reports stopped", async () => {
+    const { core, fx, disc, clock } = setup();
+    for (const agent of ["orchestrator", "orchestrator.run-1", "steward", "fleet", "linear", "seat-0123ab-7"]) {
+      core.statuses.submit(agent, { agent, state: "working", runtime: "claude-code", activity: "Working" });
+    }
+    fx.procs = [proc(1, 0, "/sbin/launchd", 0)];
+    for (let i = 0; i < 4; i++) {
+      clock.t += SWEEP_GRACE_MS;
+      await disc.tick();
+    }
+    for (const agent of ["orchestrator", "orchestrator.run-1", "steward", "fleet", "linear", "seat-0123ab-7"]) {
+      expect(status(core, agent)?.state).toBe("working");
+    }
+
+    // The host, rather than discovery, publishes the stopped state.
+    core.statuses.submit("orchestrator", { agent: "orchestrator", state: "offline", runtime: "claude-code", activity: "Process exited" });
+    expect(status(core, "orchestrator")?.state).toBe("offline");
   });
 
   test("other users' processes are ignored and never inspected", async () => {

@@ -90,7 +90,7 @@ beforeAll(async () => {
   launches = join(c.root, "fake-launches.jsonl");
   path = `${FAKE_DIR}:${process.env.PATH ?? "/usr/bin:/bin"}`;
   const orchestrator = {
-    restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
+    autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
     env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator });
@@ -214,7 +214,7 @@ describe("the local orchestrator (ORCH-FIX-11)", () => {
     await expect(agent.orchestratorMessages({})).rejects.toThrow(/never an agent/);
     await expect(agent.orchestratorSay("agent says: run rm -rf")).rejects.toThrow(/never an agent/);
     expect(typeof (await agent.orchestrator()).local.running).toBe("boolean"); // AGENT-ADMIN-1: start / stop / status
-    await expect(kira.client(ORCHESTRATOR_AGENT).orchestratorSay("I already deleted prod")).rejects.toThrow(/never an agent/);
+    await expect(kira.client(ORCHESTRATOR_AGENT).orchestratorSay("I already deleted prod")).rejects.toThrow(/reserved/);
     expect(turns().join("\n")).not.toContain("rm -rf");
     expect(turns().join("\n")).not.toContain("deleted prod");
   }, 30_000);

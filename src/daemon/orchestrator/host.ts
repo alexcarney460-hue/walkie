@@ -1,3 +1,7 @@
+import { Leadership } from "./leadership.ts";
+import type { LeadGrant } from "./lease.ts";
+import type { PeerClient } from "../peer-client.ts";
+import { electLead } from "./lead.ts";
 // The orchestrator host (PROTOCOL §8): supervises one long-lived `claude -p` stream-json child for the person who
 // owns this machine and talks with them LOCALLY (ORCH-FIX-11): their messages come from this machine's dashboard or
 // CLI only (say()), each authorised again when it runs; the conversation is stored in this machine's database
@@ -20,11 +24,12 @@ import { HttpError } from "../http.ts";
 import type { Logger } from "../logger.ts";
 import { interruptRequest, userMessage, type ClaudeSignal } from "./claude-stream.ts";
 import { endStaleGroups, recordGroup, type GroupRecord } from "./group-record.ts";
-import { AutoPilot, defaultLogins, needsLoginText, peerLive, type AutoDecision, type AutoHost } from "./auto.ts";
+import { AutoPilot, defaultLogins, leadIfRunning, needsLoginText, peerLive, type AutoDecision, type AutoHost } from "./auto.ts";
 import type { Logins } from "./logins.ts";
 import { FIRST_RUN_PROMPT, playbook } from "./playbook.ts";
 import { walkieArgv } from "../../hooks/install.ts";
 import { ClaudeChild, childEnv, claudeArgs, findClaude, supportsPermissionPrompts, walkieMcpConfig } from "./process.ts";
+import { vmMayLead, setVmLeadEligible } from "./vm-lead.ts";
 
 export interface OrchestratorOptions {
   /** Restart backoff after a crash: base · 2^n, capped (default 1 s → 60 s). */
@@ -91,6 +96,8 @@ interface HostState {
   mode?: "auto" | "manual";
   /** Stopped by hand (walkie talkie stop, the dashboard): it stays stopped until started by hand. */
   stopped_by_hand?: boolean;
+  /** Only a real person stopping pre.8 may persist a stop through upgrade. */
+  stop_by_person_v8?: boolean;
   /** When the first-run onboarding was last opened (set once on the first start; again only when no projects). */
   onboarded_at?: number;
 }
@@ -120,7 +127,7 @@ const TRANSCRIPT_CHARS = 24_000;
 const HEALTHY_MS = 60_000;
 
 export interface HostDeps {
-  core: Core; log: Logger;
+  core: Core; log: Logger; client?: PeerClient;
   /** The team's machines with their heartbeats (views.ts nodesView), for the lead election. */
   nodes?: () => NodeView[];
 }
@@ -136,6 +143,7 @@ export class OrchestratorHost {
   private readonly reaping = new Set<Promise<void>>();
   private childSession: string | null = null;
   /** The secret the current Claude child got (acceptsToken). */
+  private childLeaseEpoch = 0;
   private childToken: string | null = null;
   /** The child was spawned for a new session and has not been sent anything yet. */
   private childFresh = false;
@@ -170,18 +178,53 @@ export class OrchestratorHost {
   private logins: Logins | null = null;
   /** The team's lead when it is another machine (from the last check). */
   private otherLead: string | null = null;
+  /** Bumped by every start, stop or resume by hand (stale automatic decisions are dropped). */
+  private handGen = 0;
   /** The state file was from before ORCH-2 and was migrated on load (saved at init). */
   private migrated = false;
   /** A vault account's token for the child only (never logged, stored or shown). */
   private authEnv: Record<string, string> = {};
   private stopping = false;
   /** While active: re-checks that this machine still counts as its person (checkPlace). */
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly leadership: Leadership;
+  private requestingStart = false;
   private gateTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: HostDeps, private readonly opts: OrchestratorOptions = {}) {
     this.core = deps.core;
     this.log = deps.log;
     this.statePath = join(this.core.paths.home, "orchestrator.json");
+    this.leadership = new Leadership({ core: this.core, client: deps.client, renewMs: opts.autoCheckMs,
+      preferred: () => this.preferredLead(), lost: () => this.leaseLost(),
+      canRequest: () => vmMayLead(this.core, this.deps.nodes?.() ?? []) });
+    this.core.orchestratorCanAct = () => this.leadership.valid;
+  }
+
+  rosterChanged(): void { this.checkPlace(); }
+
+  grantLeadership(node: string): LeadGrant { return this.leadership.grant(node); }
+
+  setLeadEligible(on: boolean): void { setVmLeadEligible(this.core, on); }
+
+  wouldAutoElevate(): boolean { return this.state?.access === "full" || (this.state?.permission_mode !== undefined && this.state.permission_mode !== "default"); }
+
+  private preferredLead(): string | null {
+    const owners = new Set([...this.core.roster.members.values()].filter((m) => m.role === "owner").map((m) => m.handle));
+    // A host used without the auto loop still needs an authority lease for an explicit start.
+    const nodes = this.deps.nodes?.() ?? [{ node_id: this.core.nodeId, hostname: this.core.hostname,
+      handle: this.core.myHandle() ?? "", online: true, last_seen: Date.now() }];
+    return electLead({ self: this.core.nodeId, authority: this.core.authority, nodes, owners, now: Date.now(),
+      offlineMs: this.opts.leadOfflineMs,
+      eligible: (id) => id === this.core.nodeId ? vmMayLead(this.core, nodes) && (this.requestingStart || (!this.state?.stopped_by_hand && (this.logins ? !!this.logins.claude : !!this.state?.active))) : peerLive(this.core, id),
+    })?.node_id ?? null;
+  }
+
+  private leaseLost(): void {
+    this.childToken = null;
+    this.child?.terminate();
+    if (!this.closed && this.state) { this.state = { ...this.state, active: false }; this.save(); }
+    void this.halt().catch((err) => this.log.warn("orchestrator_fence_failed", { err: String(err) }));
   }
 
   private get restartBase(): number { return this.opts.restartBaseMs ?? 1_000; }
@@ -204,7 +247,7 @@ export class OrchestratorHost {
     if (this.migrated) {
       this.save();
       this.log.info("orchestrator_state_migrated", { active: !!this.state?.active });
-      // A pre.6 stop is now a stop by hand: its team status must say offline too, or peers keep electing it (Opus RC LOW).
+      // A preserved explicit person stop must also withdraw its previously advertised live status.
       if (this.state?.stopped_by_hand && this.ownStatusLive()) this.status("offline", "Stopped", true);
     }
     // Claude's process groups a daemon that died abruptly left behind (ORCH-FIX-13): ended first, once each is
@@ -239,12 +282,39 @@ export class OrchestratorHost {
 
   /** `walkie orchestrator start`: (re)starts the orchestrator on this machine with these settings. */
   start(req: StartRequest): Promise<void> {
-    return this.serial(() => this.startNow(req, "manual"));
+    // pre.8 (Alex: "it should just run on its own"): on the machine that leads, a start by hand means "run
+    // automatically"; manual mode is only a start on a machine that doesn't lead (`walkie talkie start --here`).
+    return this.serial(() => { this.handGen++; return this.startNow(req, this.pilot && this.selfLeads() ? "auto" : "manual", true); });
   }
 
-  private async startNow(req: StartRequest, mode: "auto" | "manual"): Promise<void> {
+  /** Whether this machine would lead if it ran (its stop and manual mode aside). */
+  private selfLeads(): boolean {
+    const lead = leadIfRunning(this.core, this.deps.nodes?.() ?? [], this.logins ? !!this.logins.claude : true, this.opts.leadOfflineMs);
+    return lead?.node_id === this.core.nodeId;
+  }
+
+  /**
+   * `walkie talkie auto` / the dashboard's Resume (pre.8): back to automatic from a start or a stop by hand. It runs
+   * here when this machine leads, else stands by; the next check (now) decides.
+   */
+  resumeAuto(): Promise<OrchestratorView["local"]> {
+    return this.serial(async () => {
+      this.handGen++;
+      this.ensureState();
+      const s = this.state;
+      if (!s) throw new HttpError(409, "no_team", "not in a team yet");
+      const { stopped_by_hand: _stop, ...rest } = s;
+      this.state = { ...rest, mode: "auto" };
+      this.save();
+      this.log.info("orchestrator_auto_resumed", {});
+      void Promise.resolve().then(() => this.pilot?.tick());
+      return this.view();
+    });
+  }
+
+  private async startNow(req: StartRequest, mode: "auto" | "manual", byHand = false): Promise<void> {
     // Only a start by hand clears a stop by hand: an auto start never does (Codex RC HIGH 1).
-    if (mode === "auto" && this.state?.stopped_by_hand) return;
+    if (!byHand && mode === "auto" && this.state?.stopped_by_hand) return;
     if (this.closed) throw new HttpError(503, "unavailable", "the daemon is shutting down");
     const owner = this.core.myHandle();
     if (!this.core.teamId || !owner) throw new HttpError(409, "no_team", "not in a team yet");
@@ -256,6 +326,13 @@ export class OrchestratorHost {
     if (!claude) throw new HttpError(409, "claude_not_found", "the claude CLI was not found (install Claude Code and sign in, or pass --claude <path>)");
     const cwd = req.cwd ?? homedir();
     if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new HttpError(400, "invalid", `no such directory: ${cwd}`);
+    this.requestingStart = true;
+    try {
+      if (!(await this.leadership.acquire())) {
+        this.leadership.stop();
+        throw new HttpError(409, "leadership_unavailable", "WalkieTalkie needs an exclusive lease from the roster authority; another holder or an unreachable authority prevents this start");
+      }
+    } finally { this.requestingStart = false; }
     await this.halt();
     const prev = this.state?.owner === owner ? this.state : null;
     this.state = {
@@ -285,20 +362,23 @@ export class OrchestratorHost {
   /** A stop by hand (a person, or an agent under AGENT-ADMIN-1): sticky, the auto-start leaves it stopped. */
   stopByHand(): Promise<void> {
     return this.serial(async () => {
+      this.handGen++;
       await this.stopNow("Stopped");
       this.ensureState();
       const s = this.state;
-      if (s) { const { mode: _m, ...rest } = s; this.state = { ...rest, stopped_by_hand: true }; this.save(); }
+      if (s) { const { mode: _m, ...rest } = s; this.state = { ...rest, stopped_by_hand: true, stop_by_person_v8: true }; this.save(); }
       this.autoState = null;
       // A machine that was standing by leaves the election too (its standby status said it could lead).
-      if (this.ownStatusLive()) this.status("offline", "Stopped", true);
+      this.status("offline", "Stopped", true);
     });
   }
 
   private async stopNow(reason: string): Promise<void> {
-    if (!this.state?.active && this.phase === "stopped") return;
+    const wasActive = this.state?.active || this.phase !== "stopped";
+    if (!wasActive) { this.leadership.stop(); return; }
     this.stopGate();
     await this.halt();
+    this.leadership.stop();
     if (this.state) { this.state = { ...this.state, active: false }; this.save(); }
     this.status("offline", reason, true);
     this.log.info("orchestrator_stopped", { reason });
@@ -315,12 +395,14 @@ export class OrchestratorHost {
     return this.serial(async () => {
       this.stopGate();
       await this.halt();
+      this.leadership.stop();
       await Promise.all([...this.reaping]);
     });
   }
 
   /** Whether `token` is the live Claude child's secret (a write as agent `orchestrator` is this host's own). */
   acceptsToken(token: string | undefined): boolean {
+    if (!this.leadership.valid || this.childLeaseEpoch !== this.leadership.epoch) return false;
     const mine = this.childToken;
     if (!token || !mine || !this.child?.alive || token.length !== mine.length) return false;
     return timingSafeEqual(Buffer.from(token), Buffer.from(mine));
@@ -467,6 +549,17 @@ export class OrchestratorHost {
     }
     await this.detectLogins(); // a vault-only login is found before the first spawn too (a daemon restart resumes here)
     await this.prepareAuth();
+    if (!(await this.leadership.acquire())) {
+      this.phase = "stopped";
+      if (!this.closed && this.state?.active && !this.resumeTimer) {
+        this.resumeTimer = setTimeout(() => {
+          this.resumeTimer = null;
+          void this.serial(async () => { if (!this.closed && this.state?.active) await this.boot(); });
+        }, this.opts.autoCheckMs ?? 15_000);
+        this.resumeTimer.unref?.();
+      }
+      return;
+    }
     if (!this.state?.active || this.stopping || this.closed || this.phase !== "starting") return;
     this.spawn(randomUUID(), false);
     this.status("idle", "Ready", true);
@@ -507,18 +600,30 @@ export class OrchestratorHost {
       stoppedByHand: () => !!this.state?.stopped_by_hand,
       setLogins: (l) => { this.logins = l; },
       setLead: (h) => { this.otherLead = h; },
-      apply: (d) => this.serial(() => this.applyAuto(d)),
+      promote: (selfLeads, gen) => this.serial(async () => {
+        // pre.8: no manual mode on the lead (a pre.6 migration or a pre.7 start by hand): it becomes automatic.
+        const s = this.state;
+        if (gen !== this.handGen || !selfLeads || s?.mode !== "manual") return;
+        this.state = { ...s, mode: "auto" };
+        this.save();
+        this.log.info("orchestrator_manual_to_auto", { active: s.active });
+      }),
+      gen: () => this.handGen,
+      apply: (gen, d) => this.serial(() => this.applyAuto(d, gen)),
     };
   }
 
-  private async applyAuto(d: AutoDecision): Promise<void> {
+  private async applyAuto(d: AutoDecision, gen?: number): Promise<void> {
     if (this.closed) return;
+    // pre.8: a decision taken before a start, stop or resume by hand is stale (the next check decides again).
+    if (gen !== undefined && gen !== this.handGen) return;
     if (d.kind === "none" || d.kind === "stopped") { if (d.kind === "stopped") this.autoState = null; return; }
     // Decided before this ran: a stop or a start by hand that came in meanwhile wins over EVERY automatic transition
     // (Codex RC HIGH 1; RC delta MEDIUM): it never stops a manual instance, never restarts a stopped one, and never
     // republishes a standby status over a person's stop (that would advertise this machine as able to lead).
     if (this.handHeld()) { this.autoState = null; return; }
     if (d.kind === "run") {
+      if (!(await this.leadership.acquire())) { if (this.state?.active) await this.autoPause(); return; }
       if (this.state?.active && this.phase !== "stopped") { this.autoState = null; return; }
       await this.autoStart();
       return;
@@ -560,6 +665,7 @@ export class OrchestratorHost {
   private async autoPause(): Promise<void> {
     this.stopGate();
     await this.halt();
+    this.leadership.stop();
     if (this.state) { this.state = { ...this.state, active: false }; this.save(); }
   }
 
@@ -612,6 +718,7 @@ export class OrchestratorHost {
 
   /** This machine losing its place (revoked, removed, no longer counted as its person) stops the host (Codex r8 HIGH 3). */
   private checkPlace(): void {
+    if (!this.leadership.valid) return;
     const s = this.state;
     if (!s?.active || this.phase === "stopped") return;
     if (this.core.me()?.handle !== s.owner) {
@@ -623,6 +730,8 @@ export class OrchestratorHost {
   /** Stops the child and every timer; the queue and any reply in progress are dropped. */
   private async halt(): Promise<void> {
     this.stopping = true;
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.resumeTimer = null;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.statusTimer) clearTimeout(this.statusTimer);
     this.clearInterruptTimer();
@@ -640,6 +749,7 @@ export class OrchestratorHost {
   }
 
   private spawn(session: string, resume: boolean): void {
+    if (!this.leadership.valid) return;
     const s = this.state;
     if (!s) return;
     const args = claudeArgs({
@@ -650,6 +760,7 @@ export class OrchestratorHost {
     });
     // A fresh secret per Claude process: only this child (and what it runs) can write as `orchestrator`.
     this.childToken = randomBytes(32).toString("hex");
+    this.childLeaseEpoch = this.leadership.epoch;
     const env = childEnv(this.env, s.claude, s.path, {
       WALKIE_AGENT: ORCHESTRATOR_AGENT, WALKIE_HOME: this.core.paths.home, WALKIE_SOCKET: this.core.paths.socket,
       [ORCHESTRATOR_TOKEN_ENV]: this.childToken, ...this.authEnv,
@@ -669,7 +780,8 @@ export class OrchestratorHost {
       child = new ClaudeChild(s.claude, args, s.cwd, env, {
         onSignal: (sig) => { if (this.child === child) this.onSignal(sig); },
         onExit: (code, err) => { if (this.child === child) this.onExit(code, err); },
-      });
+      }, undefined, { directory: this.core.paths.home, expires: () => this.leadership.valid ? this.leadership.expiresAt : 0,
+        epoch: this.childLeaseEpoch, hook: true });
     } catch (err) {
       this.child = null;
       this.onSpawnFailed((err as Error).message);
@@ -677,7 +789,7 @@ export class OrchestratorHost {
     }
     this.child = child;
     // Its process group is remembered until it is reaped, so a daemon crash can't leave its tools running for good.
-    const rec = recordGroup(child.pid);
+    const rec = recordGroup(child.pid, child.marker);
     if (rec && this.state) { this.state = { ...this.state, groups: [...(this.state.groups ?? []), rec] }; this.save(); }
     const reap = child.reaped;
     this.reaping.add(reap);
@@ -784,6 +896,7 @@ export class OrchestratorHost {
 
   /** Sends the next queued message once Claude is free, switching sessions when it belongs to another conversation. */
   private pump(): void {
+    if (!this.leadership.valid) return;
     const s = this.state;
     if (!s?.active || this.turn || this.phase === "restarting" || this.phase === "starting" || this.phase === "stopped") return;
     // Authorised again when its turn comes (ORCH-FIX-11, Codex r11 HIGH 3's local analogue): a message that waited past
@@ -1022,12 +1135,9 @@ export class OrchestratorHost {
       const mode = PERMISSION_MODES.includes(s.permission_mode) ? s.permission_mode : "default";
       const { model, ...rest } = s;
       const kept = validModel(model) ? modelArg(model) : undefined;
-      // A file from before ORCH-2 (pre.6: no mode, no stopped_by_hand) was only ever started and stopped by hand:
-      // running = started by hand (it keeps running as before), stopped = a stop by hand (it stays stopped; the
-      // auto-start never resurrects it). Codex RC HIGH 2.
-      const legacy = rest.mode === undefined && rest.stopped_by_hand === undefined
-        ? (rest.active ? { mode: "manual" as const } : { stopped_by_hand: true }) : {};
-      this.migrated = Object.keys(legacy).length > 0;
+      // pre.7 inferred a stop from an idle pre.6 file. Only a person's explicit pre.8 stop sticks.
+      const legacy = rest.stop_by_person_v8 === true ? {} : { stopped_by_hand: false, stop_by_person_v8: false, mode: rest.mode ?? (rest.active ? "manual" as const : "auto" as const) };
+      this.migrated = rest.stop_by_person_v8 === undefined;
       return { ...rest, ...legacy, ...(kept ? { model: kept } : {}), access, permission_mode: effectiveMode(access, mode), sessions: s.sessions ?? {} };
     } catch (err) {
       this.log.warn("orchestrator_state_unreadable", { err: (err as Error).message });

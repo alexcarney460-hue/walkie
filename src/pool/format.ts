@@ -39,6 +39,10 @@ export function groupTitle(g: PoolGroup): string {
 
 /** The label of an alternative pick, the same on the dashboard and in `walkie pool`. */
 export function alternativeLabel(s: GroupSuggestion, a: Pick): string {
+  if (a.fits && s.single?.placement[0]?.memory === CPU_MEMORY && a.placement[0]?.memory !== CPU_MEMORY && a.placement.length === 1) return "On the GPU";
+  if (a.fits && s.single && a.model.params_b > s.single.model.params_b) {
+    return a.speed === "slow" ? "Bigger, slow" : a.placement.some((x) => x.memory === CPU_MEMORY) ? "Bigger, on CPU" : "Bigger";
+  }
   return a.fits ? "Faster" : s.single || s.pooled ? "Next size up" : "Smallest";
 }
 

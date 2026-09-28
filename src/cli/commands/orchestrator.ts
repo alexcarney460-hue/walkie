@@ -10,7 +10,7 @@ import { EXIT, readStdin, TERMINAL, type Ctx } from "../context.ts";
 import { ago, c, hhmm, safeTerm } from "../format.ts";
 
 const USAGE = "talkie start [--here] [--access platform|full] [--model m] [--cwd path] [--permission-mode default|acceptEdits|bypassPermissions] [--claude path]"
-  + " | model <default|opus|sonnet|haiku|fable|full-id> | access <platform|full> | stop | status | say <text…|-> [--new] [--thread id] [--timeout 600] | log [--limit 20]";
+  + " | model <default|opus|sonnet|haiku|fable|full-id> | access <platform|full> | lead-eligible <on|off> | auto | stop | status | say <text…|-> [--new] [--thread id] [--timeout 600] | log [--limit 20]";
 
 const START_HINT = "start it on this machine: walkie talkie start";
 
@@ -23,20 +23,31 @@ export async function orchestrator(ctx: Ctx): Promise<number> {
   // reached from a person's terminal or the dashboard only.
   const marker = ctx.agentMarker();
   const agent = marker !== null || ctx.args.flags.get("for-agent") === true || adminCaller(ctx).kind === "agent";
-  const admin = sub === "start" || sub === "stop" || sub === "status" || sub === "model" || sub === "access" || sub === undefined;
+  if (agent && sub === "lead-eligible") return refused(ctx, sub, marker);
+  const admin = sub === "start" || sub === "stop" || sub === "status" || sub === "model" || sub === "access" || sub === "auto" || sub === undefined;
   if (agent && !admin) return refused(ctx, sub ?? "status", marker);
   // A person's client sends no agent header (never the environment's WALKIE_AGENT); an agent's is marked.
   const client = agent ? adminCtx(ctx, `talkie ${sub ?? "status"}`).client() : new WalkieClient({ agent: "" });
   switch (sub) {
-    case "start": return start(ctx, client);
+    case "start": return start(ctx, client, agent);
     case "stop": return stop(ctx, client);
     case "model": return model(ctx, client);
     case "access": return access(ctx, client);
+    case "lead-eligible": return leadEligible(ctx, client);
+    case "auto": return auto(ctx, client);
     case "status": case undefined: return status(ctx, client);
     case "say": return say(ctx, client);
     case "log": return log(ctx, client);
     default: throw new UsageError(`unknown subcommand "${sub}" (${USAGE})`);
   }
+}
+
+async function leadEligible(ctx: Ctx, client: WalkieClient): Promise<number> {
+  const value = ctx.args.pos[1];
+  if ((value !== "on" && value !== "off") || ctx.args.pos.length !== 2) throw new UsageError("talkie lead-eligible on|off");
+  const result = await client.orchestratorLeadEligible(value === "on");
+  ctx.out(ctx.json ? JSON.stringify(result) : `WalkieTalkie VM leadership eligibility ${value}`);
+  return EXIT.ok;
 }
 
 function refused(ctx: Ctx, sub: string, marker: string | null): number {
@@ -50,13 +61,18 @@ function stateLine(v: OrchestratorView): string {
   const l = v.local;
   if (l.state === "standby") return `${c.cyan("standby")}${l.lead ? ` (lead: ${safeTerm(l.lead)})` : " (no lead machine yet)"} — the team's WalkieTalkie runs on its lead machine`;
   if (l.state === "needs_login") return `${c.yellow("needs a model login")} — ${safeTerm(l.needs ?? "sign in to Claude Code on this machine (run: claude)")}`;
-  if (!l.running) return `${c.yellow("not running")}${l.stopped_by_hand ? " (stopped by hand)" : ""} — ${START_HINT}`;
+  if (!l.running && l.stopped_by_hand) return `${c.yellow("stopped by you")} — resume it (automatic again): walkie talkie auto`;
+  if (!l.running && l.auto) return `${c.dim("starting")} — it starts on its own on this machine`;
+  if (!l.running) return `${c.yellow("not running")} — ${START_HINT}`;
   const state = l.state === "working" ? c.green("working") : c.dim(l.state);
   const extra = [l.model, l.started_at ? `started ${ago(l.started_at)} ago` : ""].filter(Boolean).join(" · ");
   return `running on this machine · ${state}${extra ? c.dim(` · ${extra}`) : ""}`;
 }
 
-async function start(ctx: Ctx, client: WalkieClient): Promise<number> {
+async function start(ctx: Ctx, client: WalkieClient, agent: boolean): Promise<number> {
+  if (agent && (str(ctx.args, "claude") !== undefined || str(ctx.args, "cwd") !== undefined)) {
+    throw new UsageError("only a person can choose WalkieTalkie’s binary or folder");
+  }
   const mode = str(ctx.args, "permission-mode");
   if (mode !== undefined && !PERMISSION_MODES.includes(mode as PermissionMode)) {
     throw new UsageError(`--permission-mode must be one of ${PERMISSION_MODES.join(", ")}`);
@@ -79,11 +95,11 @@ async function start(ctx: Ctx, client: WalkieClient): Promise<number> {
   const claude = str(ctx.args, "claude") ?? Bun.which("claude") ?? undefined;
   const view = await client.orchestratorStart({
     ...(modelName ? { model: modelName } : {}),
-    cwd: resolve(str(ctx.args, "cwd") ?? process.cwd()),
+    ...(!agent ? { cwd: resolve(str(ctx.args, "cwd") ?? process.cwd()) } : {}),
     ...(mode ? { permission_mode: mode as PermissionMode } : {}),
     ...(access ? { access: access as OrchestratorAccess } : {}),
-    ...(claude ? { claude: resolve(claude) } : {}),
-    ...(process.env.PATH ? { path: process.env.PATH } : {}),
+    ...(!agent && claude ? { claude: resolve(claude) } : {}),
+    ...(!agent && process.env.PATH ? { path: process.env.PATH } : {}),
   });
   if (ctx.json) { ctx.out(JSON.stringify(view)); return EXIT.ok; }
   const l = view.local;
@@ -98,6 +114,14 @@ function accessLabel(l: OrchestratorView["local"]): string {
 }
 
 const MODEL_USAGE = `the model is default, ${MODEL_ALIASES.join(", ")} or a full model id (letters, digits and . _ : - [ ])`;
+
+/** `walkie talkie auto` (pre.8): back to automatic, from a start or a stop by hand. */
+async function auto(ctx: Ctx, client: WalkieClient): Promise<number> {
+  const v = await client.orchestratorAuto();
+  if (ctx.json) { ctx.out(JSON.stringify(v)); return EXIT.ok; }
+  ctx.out(`${c.green("automatic")}: WalkieTalkie runs here when this machine leads the team, else it stands by`);
+  return EXIT.ok;
+}
 
 /** `walkie talkie access platform|full` (ORCH-2): the access changes, keeping the conversation. */
 async function access(ctx: Ctx, client: WalkieClient): Promise<number> {

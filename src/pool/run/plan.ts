@@ -3,7 +3,8 @@ import { machineCapacity } from "../capacity.ts";
 import { CATALOG, memoryNeeded, type CatalogModel, type Quant } from "../catalog.ts";
 import { canServe, capped, headFirst } from "../combined.ts";
 import type { GroupInput } from "../group.ts";
-import { fastest, place, roomiest } from "../suggest.ts";
+import { candidates, deviceSlot, place, singleSpeed, speedClass, type SpeedClass } from "../suggest.ts";
+export { deviceSlot } from "../suggest.ts";
 
 const GiB = 1024 ** 3;
 
@@ -27,6 +28,8 @@ export function catalogNeed(m: CatalogModel, q: Quant): number {
 }
 
 /** A machine named on the command line: its hostname, node id, or @handle/hostname. */
+export function resolveMachine(nodes: readonly GroupInput[], name: string): GroupInput { return resolve(nodes, name); }
+
 function resolve(nodes: readonly GroupInput[], name: string): GroupInput {
   const n = name.replace(/^@/, "");
   const hit = nodes.filter((x) => x.hostname === n || x.node_id === n || `${x.handle}/${x.hostname}` === n);
@@ -43,7 +46,7 @@ function usableOf(n: GroupInput): number | null {
   const c = machineCapacity(n);
   if (!c) return null;
   const m = n.self ? c : capped(c, n.pool?.cap ?? null);
-  return Math.max(...m.backends.map((b) => b.usable));
+  return deviceSlot(m).b.usable;
 }
 
 /**
@@ -65,11 +68,16 @@ export function planRun(nodes: readonly GroupInput[], need: number, names?: read
     }
     const members = [self, ...named];
     const free = members.map(usableOf);
-    // A head without an accelerator holds no layers (v1: llama-server's layers go to devices only).
-    const weights = free.map((f, i) => (i === 0 && cpuOnly(self) ? 0 : f === null ? 1 : Math.max(f, 1)));
-    const total = weights.reduce((s, w) => s + w, 0);
     const extra = (i: number) => (i === 0 ? 0 : overhead);
-    const stages = members.map((n, i) => ({ node_id: n.node_id, hostname: n.hostname, self: n.self, bytes: Math.round((need * weights[i]!) / total) + extra(i) }));
+    // A head without an accelerator holds no layers (v1: llama-server's layers go to devices only). A worker's weight
+    // is what it can hold of the model after its own runtime's overhead (POOL-REAL-1: weighting by raw free memory and
+    // adding the overhead on top pushed a capped Mac past its cap).
+    const weights = free.map((f, i) => (i === 0 && cpuOnly(self) ? 0 : f === null ? 1 : Math.max(f - extra(i), 1)));
+    const total = weights.reduce((s, w) => s + w, 0);
+    const stages = members.map((n, i) => {
+      const share = Math.round((need * weights[i]!) / total);
+      return { node_id: n.node_id, hostname: n.hostname, self: n.self, bytes: share + extra(i), model_bytes: share };
+    });
     stages.forEach((st, i) => {
       const f = free[i];
       if (typeof f === "number" && st.bytes > f) throw new PlanError("does_not_fit", `${st.hostname} would need ${(st.bytes / GiB).toFixed(1)} GB and has ${(f / GiB).toFixed(1)} GB free`);
@@ -79,14 +87,60 @@ export function planRun(nodes: readonly GroupInput[], need: number, names?: read
   const pool = [...(cpuOnly(self) ? [] : [self]), ...nodes.filter((n) => !n.self && n.online && canServe(n))];
   const caps = headFirst(pool.flatMap((n) => { const c = machineCapacity(n); return c ? [n.self ? c : capped(c, n.pool?.cap ?? null)] : []; }), self.node_id);
   if (!caps.length) throw new PlanError("no_memory", "no machine here reported its memory (machine stats are off); name the machines with --machines");
-  const parts = place(need, caps, "usable", overhead, fastest, true) ?? place(need, caps, "usable", overhead, roomiest, true);
+  const parts = place(need, caps, "usable", overhead, (m) => deviceSlot(m), true);
   if (!parts) {
-    const have = caps.reduce((s, m) => s + Math.max(...m.backends.map((b) => b.usable)), 0);
-    throw new PlanError("does_not_fit", `needs ${(need / GiB).toFixed(1)} GB; this machine and the sharing machines have ${(have / GiB).toFixed(1)} GB free`);
+    // What the stages could hold: each machine's device (GPU / unified memory), as placed above; not its CPU RAM.
+    const have = caps.reduce((s, m) => s + deviceSlot(m).b.usable, 0);
+    const names = caps.map((m) => m.hostname).join(", ");
+    throw new PlanError("does_not_fit", `needs ${(need / GiB).toFixed(1)} GB of GPU memory; ${names} ${caps.length === 1 ? "has" : "have"} ${(have / GiB).toFixed(1)} GB free (a machine counts once its owner shares it and the team has seen that)`);
   }
   const byId = new Map(pool.map((n) => [n.node_id, n] as const));
-  const stages = parts.map((p) => ({ node_id: p.s.m.node_id, hostname: p.s.m.hostname, self: byId.get(p.s.m.node_id)?.self === true, bytes: Math.round(p.bytes) }));
+  const stages = parts.map((p) => ({ node_id: p.s.m.node_id, hostname: p.s.m.hostname, self: byId.get(p.s.m.node_id)?.self === true, bytes: Math.round(p.bytes), model_bytes: Math.round(p.share) }));
   // The head always runs llama-server; list it first even when it holds nothing of the model.
-  if (!stages.some((s) => s.self)) stages.unshift({ node_id: self.node_id, hostname: self.hostname, self: true, bytes: 0 });
+  if (!stages.some((s) => s.self)) stages.unshift({ node_id: self.node_id, hostname: self.hostname, self: true, bytes: 0, model_bytes: 0 });
   return { need, stages: [...stages.filter((s) => s.self), ...stages.filter((s) => !s.self)] };
+}
+
+/** A machine that could serve a model whole on its GPU now (POOL-REAL-1). */
+export interface ServeHost { node: GroupInput; usable: number; bandwidth: number; memory: string }
+
+/**
+ * Where a model needing `need` bytes could run whole on a GPU (or Apple unified memory) now: this machine, and every
+ * online machine whose owner shares it (with the runtime, no other pool job), within its share cap. Fastest GPU first
+ * (bandwidth), this machine first on a tie. CPU-only machines are not listed: serving puts every layer on a GPU.
+ */
+export function serveHosts(nodes: readonly GroupInput[], need: number): ServeHost[] {
+  const out: ServeHost[] = [];
+  for (const n of nodes) {
+    if (!n.online && !n.self) continue;
+    if (!n.self && !canServe(n)) continue;
+    // An older Walkie shares for split runs but has no serve API (p8 review): never picked to serve.
+    if (!n.self && n.pool?.serve !== true) continue;
+    const c = machineCapacity(n);
+    if (!c) continue;
+    const m = n.self ? c : capped(c, n.pool?.cap ?? null);
+    const gpu = m.backends.find((b) => b.kind !== "cpu" && b.measured);
+    if (gpu && gpu.usable >= need) out.push({ node: n, usable: gpu.usable, bandwidth: gpu.bandwidth, memory: gpu.memory });
+  }
+  return out.sort((a, b) => b.bandwidth - a.bandwidth || Number(b.node.self) - Number(a.node.self));
+}
+
+/** The model to serve whole on one machine's GPU (POOL-REAL-1): what `walkie pool serve` and the dashboard offer. */
+export interface ServePick {
+  model: CatalogModel; quant: Quant; need: number; host: ServeHost; tokensPerSec: number; speed: SpeedClass;
+}
+
+/**
+ * The largest catalog model (8-bit before 4-bit) that one machine here or sharing runs whole on its GPU at a speed
+ * that isn't slow, on the fastest GPU that holds it; null when none does.
+ */
+export function bestServe(nodes: readonly GroupInput[]): ServePick | null {
+  for (const c of candidates()) {
+    const host = serveHosts(nodes, c.need)[0];
+    if (!host) continue;
+    const tps = singleSpeed(c.bpt, host.bandwidth);
+    if (speedClass(tps) === "slow") continue;
+    return { model: c.model, quant: c.quant, need: c.need, host, tokensPerSec: tps, speed: speedClass(tps) };
+  }
+  return null;
 }

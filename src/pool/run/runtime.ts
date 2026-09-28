@@ -2,7 +2,7 @@
 // RPC wire protocol between llama-server and rpc-server is versioned. Homebrew's llama.cpp is built on a ggml without
 // GGML_RPC, so it has no RPC server; Walkie pins a GitHub release build and installs it with `walkie pool install`
 // into <walkie home>/pool/llama/, checking the tarball's sha256 (GitHub's asset digest, recorded here).
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { arch as osArch, platform as osPlatform } from "node:os";
 import { dirname, join } from "node:path";
@@ -100,15 +100,19 @@ export async function installRuntime(t: RuntimeTarget, dir: string, onProgress?:
   if (existsSync(dir) && readdirSync(dir).length > 0 && !existsSync(join(dir, "WALKIE_BUILD"))) {
     throw new Error(`${dir} is not empty and wasn't installed by walkie pool install; choose an empty directory`);
   }
-  const staging = `${dir}.staging-${process.pid}`;
+  // Its own staging directory per install (POOL-REAL-1 fix round: a PID-named one was shared by two installs).
+  const staging = `${dir}.staging-${process.pid}-${randomBytes(6).toString("hex")}`;
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true, mode: 0o700 });
   try {
     for (const a of t.assets) {
       const tgz = join(staging, a.file);
       await download(`${BASE}/${a.file}`, tgz, a.sha256, a.bytes + 1024, (d) => onProgress?.(a.file, d, a.bytes));
-      const tar = Bun.spawnSync(["tar", "-xzf", tgz, "--strip-components=1", "-C", staging], { stderr: "pipe" });
-      if (tar.exitCode !== 0) throw new Error(`could not extract ${a.file}: ${tar.stderr.toString().slice(0, 300)}`);
+      // Asynchronous (POOL-REAL-1): the daemon installs now, and a synchronous tar of the 594 MB CUDA runtime froze its
+      // event loop (hestia-wsl's socket stopped answering until the extraction ended).
+      const tar = Bun.spawn(["tar", "-xzf", tgz, "--strip-components=1", "-C", staging], { stdout: "ignore", stderr: "pipe" });
+      const [code, errText] = await Promise.all([tar.exited, new Response(tar.stderr).text()]);
+      if (code !== 0) throw new Error(`could not extract ${a.file}: ${errText.slice(0, 300)}`);
       rmSync(tgz, { force: true });
     }
     const found = locateRuntime("", staging);
@@ -180,5 +184,25 @@ export function verifyPinnedRpc(rt: Runtime): string | null {
     return null;
   } catch (err) {
     return `could not check the rpc-server: ${(err as Error).message}`;
+  }
+}
+
+/**
+ * Apple Silicon (POOL-REAL-1): Metal's working-set budget in bytes, from the installed llama-server's device list
+ * (`--list-devices` prints MTL0 with MTLDevice.recommendedMaxWorkingSetSize), or null without the runtime or Metal.
+ */
+export async function metalBudget(rt: Runtime): Promise<number | null> {
+  if (!rt.server) return null;
+  const { parseMetalBudget } = await import("../../daemon/machine-stats/accel.ts");
+  const p = Bun.spawn([rt.server, "--list-devices"], {
+    stdout: "pipe", stderr: "pipe", stdin: "ignore",
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: rt.dir, LANG: "C" },
+  });
+  const timer = setTimeout(() => { try { p.kill(9); } catch { /* gone */ } }, 15_000);
+  try {
+    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    return parseMetalBudget(`${out}\n${err}`);
+  } finally {
+    clearTimeout(timer);
   }
 }

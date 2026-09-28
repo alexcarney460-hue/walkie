@@ -13,12 +13,14 @@ import { currentVersion, foldRoom, type RoomFileState } from "../../protocol/pro
 import type { Core } from "../core.ts";
 import { scrubPrivateKeys } from "../../protocol/projects/assoc.ts";
 import { cardRef } from "../../protocol/projects/short.ts";
+import { isStewardAuthor } from "../../protocol/projects/steward.ts";
 import type { Logger } from "../logger.ts";
 import { memberByHandle } from "../roster.ts";
 import { ProjectsDb } from "./db.ts";
+import { trackOp } from "../watchdog.ts";
 
 /** Bumped when the fold's rules change: every project is re-folded once at startup. */
-export const FOLD_VERSION = "8"; // 8: an agent's project and board roots count (AGENT-PROJECTS); 7: 8-hex short ids, oversize bodies aren't ops; 6: ranks from the parent chain only (board ops never evicted), card short ids
+export const FOLD_VERSION = "10"; // 10: the steward lease `steward_node` is a project setting (FO-6 r3); 9: the board steward may move a person's card (FO-6); 8: an agent's project and board roots count (AGENT-PROJECTS); 7: 8-hex short ids, oversize bodies aren't ops; 6: ranks from the parent chain only (board ops never evicted), card short ids
 const FOLD_META = "projects_fold";
 /**
  * Set while any re-fold work is queued, cleared when the queue drains (round-1 audit, Codex M8): a daemon stopped with
@@ -34,7 +36,7 @@ const PENDING_META = "projects_pending";
 const CHECKPOINT_META = "projects_checkpoint";
 /**
  * The stored project views carry a Data Room summary (files, pinned, current-version bytes) that FOLD_VERSION doesn't
- * cover (it stays "8" for pre.5 peers and downgrades). When the room fold's rules change, bump this: every project's
+ * cover (DATA-ROOM-1 kept that at "8"; FO-6 took it to "10"). When the room fold's rules change, bump this: every project's
  * room summary is rebuilt once at start (a room re-fold and a view save per project; no card is re-folded).
  */
 export const ROOM_SUMMARY_VERSION = "1"; // 1: DATA-ROOM-1 (causal pinned document, per-author version caps, file cap exemptions)
@@ -70,7 +72,16 @@ export class ProjectsIndex {
 
   constructor(private readonly core: Core, private readonly log: Logger) {
     this.db = new ProjectsDb(core.store.db);
+    // A rolled-back write may have been read into the cache: it is dropped (the next scrub reads the tables again).
+    core.store.onTransaction<null>({ snapshot: () => null, restore: () => { this.scrubPrefixes = null; } });
   }
+
+  /**
+   * The status scrub's private prefixes, for one board_projects revision and one roster (rosters are replaced, never
+   * changed, on every chain entry): every own status is scrubbed, a minute's archive upkeep re-projects each one, and
+   * parsing every project's view per status was most of that work (DAEMON-STALL-1).
+   */
+  private scrubPrefixes: { rev: number; roster: object; prefixes: string[] } | null = null;
 
   /** Re-folds everything once if the stored boards came from another fold version (or none: a fresh upgrade). */
   start(): void {
@@ -200,7 +211,7 @@ export class ProjectsIndex {
     this.timer = setTimeout(() => {
       this.timer = null;
       try {
-        if (this.flush(PAGE)) this.schedule(); else this.noteDrained();
+        if (trackOp("projects_fold", () => this.flush(PAGE))) this.schedule(); else this.noteDrained();
       } catch (err) {
         this.log.warn("projects_fold_failed", { err: err instanceof Error ? err.message : String(err) });
       }
@@ -245,7 +256,12 @@ export class ProjectsIndex {
     if (!s.project) return null;
     const { root, thread } = this.db.threadPosts(id, channel);
     if (!root) return null;
-    const state = foldCard(root, thread, { boards: new Map(s.boards.map((b) => [b.id, b])) });
+    const env = this.env(channel);
+    const creator = s.project.creator;
+    const state = foldCard(root, thread, {
+      boards: new Map(s.boards.map((b) => [b.id, b])),
+      steward: (ev) => { const role = env.roleOf(ev); return isStewardAuthor(ev.author, role === "removed" ? null : role, creator); },
+    });
     return state ? { state, settings: s } : null;
   }
 
@@ -367,9 +383,11 @@ export class ProjectsIndex {
     // Private = restricted in the CURRENT roster (not the stored view, which may lag a privacy change); every prefix
     // the project ever had (its old keys stay masked after a rename; round-4 audit, Opus M4).
     const r = this.core.roster;
-    const prefixes = this.projects()
+    const hit = this.scrubPrefixes;
+    const prefixes = hit && hit.rev === this.db.revision && hit.roster === r ? hit.prefixes : this.projects()
       .filter((p) => p.private || !!r.channels.get(p.channel)?.members)
       .flatMap((p) => [p.prefix, ...(p.prior_prefixes ?? [])]);
+    if (prefixes !== hit?.prefixes) this.scrubPrefixes = { rev: this.db.revision, roster: r, prefixes };
     return scrubPrivateKeys(b, prefixes, { anyKey: this.rebuilding });
   }
 

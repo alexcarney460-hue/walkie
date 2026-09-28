@@ -30,7 +30,7 @@ const A = "a".repeat(24);
 const noKeychain = async () => { throw new Error("TEST FAILURE: keychain read"); };
 
 function entry(over: Partial<VaultEntry> = {}): VaultEntry {
-  return { id: A, provider: "claude", label: "al***@ex***.com", plan: "Max", policy: "own", share_with: [], created_at: 1, expires_at: Date.now() + 1e10, home: null, linked: false, gen: "g1", ...over };
+  return { id: A, provider: "claude", label: "al***@ex***.com", plan: "Max", policy: "own", share_with: [], created_at: 1, expires_at: Date.now() + 1e10, home: null, linked: false, gen: "g1", home_at: 1, personal: false, ...over };
 }
 function vaultOf(entries: VaultEntry[], reads: string[] = []): VaultSource {
   return { list: () => entries, claudeToken: async (id) => { reads.push(id); return TOKEN; } };
@@ -136,7 +136,7 @@ describe("candidates for the switcher", () => {
   });
   const base = { provider: "claude" as const, entries: [], saved: new Map(), marks: {}, localLeases: new Map<string, number>() };
 
-  test("hand-outs: own-machines accounts reach the owner's other machines; shared only the listed teammates; never Codex", () => {
+  test("hand-outs: own-machines accounts reach the owner's other machines; shared only the listed teammates; Codex leased", () => {
     expect(candidatesFrom({ ...base, pooled: { accounts: [view({})], me: "alex" } }).map((c) => [c.source, c.node])).toEqual([["peer", "n-mac"]]);
     expect(candidatesFrom({ ...base, pooled: { accounts: [view({})], me: "kira" } })).toEqual([]);
     const shared = view({ machines: [{ node_id: "n-mac", hostname: "alex-mac", handle: "alex", online: true, self: false, agents: [], usage: null, vault: { policy: "shared", share_with: ["kira"] } }] });
@@ -144,7 +144,8 @@ describe("candidates for the switcher", () => {
     expect(candidatesFrom({ ...base, pooled: { accounts: [shared], me: "kira" } })).toEqual([]);
     expect(candidatesFrom({ ...base, borrow: true, pooled: { accounts: [shared], me: "kira" } })[0]).toMatchObject({ own: false, owner: "alex", source: "peer", leases: 0 });
     expect(candidatesFrom({ ...base, borrow: true, pooled: { accounts: [shared], me: "arvid" } })).toEqual([]);
-    expect(candidatesFrom({ ...base, provider: "codex", pooled: { accounts: [view({ provider: "codex" })], me: "alex" } })).toEqual([]);
+    // COMPANY POOL: a Codex login is lent too — as an access-only lease (the refresh token never leaves its home).
+    expect(candidatesFrom({ ...base, provider: "codex", pooled: { accounts: [view({ provider: "codex" })], me: "alex" } }).map((c) => [c.provider, c.source, c.node])).toEqual([["codex", "peer", "n-mac"]]);
     expect(mayLease({ policy: "local" }, "alex", "alex")).toBe(false);
   });
 
@@ -269,7 +270,7 @@ describe("pooled view (accountsView): vault badges, leases, and unknown readings
     const a = list[0] as AccountView;
     expect(a.vault).toEqual({ policy: "shared", share_with: ["kira"] });
     expect(a.machines.find((m) => m.hostname === "hestia")?.vault?.policy).toBe("shared");
-    expect(a.usage?.state).toBe("ok"); // hestia's newer "unknown" does not hide alex-mac's 30-minute-old reading
+    expect(a.usage?.state).toBe("ok"); // worker-b's newer "unknown" does not hide alex-mac's 30-minute-old reading
     // Kira's machine claims a lease on Alex's account: listed under Alex, but unverified (this daemon granted nothing).
     expect(a.leases).toEqual([{ handle: "kira", hostname: "kira-mbp", node_id: "kmac", agent: "cc-kira01", since: NOW - 5_000, verified: false }]);
   });

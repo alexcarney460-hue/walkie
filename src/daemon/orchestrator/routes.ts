@@ -2,7 +2,7 @@
 // (GET /v1/orchestrator/messages, POST /v1/orchestrator/say | stop-reply) and POST /v1/orchestrator/start | stop.
 // Only the person at this machine drives it: the dashboard (a session) or the CLI (the unix socket, or the durable
 // token), never an agent, never a peer (nothing of it is on the peer API). The conversation is never replicated.
-import { adminGate, adminRead } from "../admin/gate.ts";
+import { agentCaller, adminGate, adminRead } from "../admin/gate.ts";
 import { z } from "zod";
 import { MAX_MESSAGE_CHARS, MODEL_PATTERN, ORCHESTRATOR_ACCESS, PERMISSION_MODES, type OrchestratorView } from "../../protocol/orchestrator.ts";
 import { HttpError, json, parseWith, readJson } from "../http.ts";
@@ -88,6 +88,10 @@ route("POST", "/v1/orchestrator/start", async (c) => {
   requireTeam(c);
   noPhone(c);
   const b = parseWith(StartReq, await readJson(c.req, LOCAL_BODY_MAX));
+  adminRead(c);
+  if (agentCaller(c) && (b.access === "full" || b.claude !== undefined || b.path !== undefined || b.cwd !== undefined || (b.permission_mode && b.permission_mode !== "default"))) {
+    throw new HttpError(403, "person_only", "only a person can give WalkieTalkie shell access or elevated permissions or choose its binary and folder");
+  }
   // ORCH-2: the audit line says which access and model an agent started it with (AGENT-ADMIN-1: agents may, audited).
   adminGate(c, `started the orchestrator (access: ${b.access ?? "platform"}, model: ${b.model ?? "default"})`);
   // The dashboard's Start dialog (PRE5-INT, ORCH-2) chooses the access and the model; which claude binary, its PATH,
@@ -120,9 +124,32 @@ route("POST", "/v1/orchestrator/access", async (c) => {
   requireTeam(c);
   noPhone(c);
   const b = parseWith(AccessReq, await readJson(c.req, LOCAL_BODY_MAX));
+  if (agentCaller(c) && b.access === "full") {
+    throw new HttpError(403, "person_only", "only a person can give WalkieTalkie shell access");
+  }
   adminGate(c, `set WalkieTalkie's access to ${b.access}`);
   c.noTimeout();
   return json({ local: await host(c).setAccess(b.access as "platform" | "full") });
+});
+
+/** pre.8: `walkie talkie auto` / the dashboard's Resume: back to automatic (clears a start or a stop by hand). */
+route("POST", "/v1/orchestrator/auto", async (c) => {
+  requireTeam(c);
+  noPhone(c);
+  if (agentCaller(c) && host(c).wouldAutoElevate()) {
+    throw new HttpError(403, "person_only", "only a person can give WalkieTalkie shell access or elevated permissions");
+  }
+  adminGate(c, "returned WalkieTalkie to automatic");
+  return json({ local: await host(c).resumeAuto() });
+});
+
+const LeadEligibleReq = z.object({ eligible: z.boolean() });
+route("POST", "/v1/orchestrator/lead-eligible", async (c) => {
+  requireTeam(c);
+  personOnly(c, "configured");
+  const b = parseWith(LeadEligibleReq, await readJson(c.req, LOCAL_BODY_MAX));
+  host(c).setLeadEligible(b.eligible);
+  return json({ eligible: b.eligible });
 });
 
 /** Stops the orchestrator on this machine. */

@@ -63,7 +63,8 @@ function VaultLine({ account: a }: { account: AccountView }) {
   return (
     <p className="acct-vault">
       <span className="chip acct-vault-badge">Switchable</span>
-      <span className="muted">{POLICY_TEXT[a.vault.policy]}{who}</span>
+      {/* COMPANY POOL: a pooled login travels as policy own + company. */}
+      <span className="muted">{a.machines.some((m) => m.vault?.company) ? "company pool: every machine (leased)" : `${POLICY_TEXT[a.vault.policy]}${who}${a.machines.some((m) => m.vault?.personal) ? " · personal" : ""}`}</span>
     </p>
   );
 }

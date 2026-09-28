@@ -1,13 +1,14 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Check, Copy, RefreshCw, TriangleAlert } from "lucide-react";
 import type { AgentState, Runtime } from "../api/types.ts";
-import { RUNTIME_LABEL, STATE_LABEL, hueFor, initials } from "../lib/format.ts";
+import { STATE_LABEL, hueFor, initials } from "../lib/format.ts";
+import { ago, agoLong, fullTime, useNow } from "../lib/time.ts";
+import { runtimeLabel } from "../../../src/protocol/runtime-label.ts";
 
 /** An inline hue custom property (UI-POLISH-2): `--mh` machine, `--ph` person, `--th` tag. */
 export function hueVar(name: "--mh" | "--ph" | "--th", hue: number): CSSProperties {
   return { [name]: hue } as CSSProperties;
 }
-import { ago, agoLong, fullTime, useNow } from "../lib/time.ts";
 
 export function Avatar({ handle, name, size = 24, agent }: { handle: string; name: string; size?: number; agent?: boolean }) {
   const hue = hueFor(handle);
@@ -29,8 +30,8 @@ export function StatePill({ state, compact }: { state: AgentState; compact?: boo
   );
 }
 
-export function RuntimeBadge({ runtime }: { runtime: Runtime }) {
-  return <span className={`runtime rt-${runtime}`}>{RUNTIME_LABEL[runtime]}</span>;
+export function RuntimeBadge(status: { runtime: Runtime; runtime_name?: string; launch?: string }) {
+  return <span className={`runtime rt-${status.runtime}`}>{runtimeLabel(status, true)}</span>;
 }
 
 export function RelTime({ ts, long, className }: { ts: number; long?: boolean; className?: string }) {

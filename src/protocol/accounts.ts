@@ -6,6 +6,7 @@
 //
 // Only numbers, enums and controlled labels travel: never a token, a full email, a path or a raw provider string.
 import { z } from "zod";
+import type { TeamPolicy } from "./pool-rules.ts";
 
 export const PROVIDERS = ["claude", "codex", "kimi", "grok"] as const;
 export const AccountProvider = z.enum(PROVIDERS);
@@ -143,8 +144,30 @@ export const AccountVault = z.object({
    * dropped once the owner replaces it (round 2, Codex 8). Not a secret.
    */
   gen: z.string().regex(/^[0-9a-f]{1,32}$/).optional(),
+  /**
+   * COMPANY POOL (additive): this machine lends the login to every member's machines right now (the team's pool is on
+   * and its person has not marked it personal). Its `policy` is unchanged (released peers read that).
+   */
+  company: z.literal(true).optional().catch(undefined),
+  /** COMPANY POOL (additive): its person keeps it out of the pool (`walkie accounts personal`). */
+  personal: z.literal(true).optional().catch(undefined),
+  /**
+   * COMPANY POOL (additive): since when this machine is the account's home (the machine borrowers lease it from):
+   * when it was added, or when its person promoted this machine's own login of it. The newest online one lends.
+   */
+  home_at: Ts.optional().catch(undefined),
 });
 export type AccountVault = z.infer<typeof AccountVault>;
+
+
+/**
+ * COMPANY POOL: the team's pool setting, set by an owner (`walkie accounts pool on|off`): company = on (every vault
+ * login not marked personal is lent to every member's machines); per-account = off (the default, and when unknown).
+ */
+export const TEAM_POLICIES = ["company", "per-account"] as const satisfies readonly TeamPolicy[];
+export { DEFAULT_TEAM_POLICY, type TeamPolicy } from "./pool-rules.ts";
+export const TeamPolicyAd = z.object({ policy: z.enum(TEAM_POLICIES), at: Ts });
+export type TeamPolicyAd = z.infer<typeof TeamPolicyAd>;
 
 export const AccountSummary = z.object({
   /** sha256(provider | stable provider ids), first 24 hex: the same account on two machines has the same id. */
@@ -189,6 +212,11 @@ export const AccountsSnapshot = z.object({
   accounts: z.array(AccountSummary).max(MAX_ACCOUNTS_PER_NODE),
   /** Old daemons neither send nor read it; a malformed list is dropped on its own. */
   leases: z.array(AccountLease).max(MAX_LEASES_PER_NODE).optional().catch(undefined),
+  /**
+   * COMPANY POOL (additive): the team accounts policy this machine's person set (only an owner's setting counts; the
+   * newest wins). Absent = never set here.
+   */
+  team_policy: TeamPolicyAd.optional().catch(undefined),
 });
 export type AccountsSnapshot = z.infer<typeof AccountsSnapshot>;
 

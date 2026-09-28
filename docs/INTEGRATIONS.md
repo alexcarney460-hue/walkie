@@ -106,6 +106,23 @@ Personal API key from Linear, Settings, Security & access. Three things happen:
   reply must be visible to you now and in the same channel as the linked message. Otherwise the create is
   refused (403) instead of sending part of the thread.
 
+### Switching from Linear
+
+```bash
+walkie import linear --dry-run                 # read Linear, write linear-import-plan.json + .txt (nothing else)
+walkie import linear --plan linear-import-plan.json   # import what is still ticked
+walkie import linear --sync [--two-way]        # while switching: update the imported cards now
+walkie import linear --schedule 10m [--two-way]  # …or every 10 minutes (needs this integration, or --key-file)
+```
+
+Or from the dashboard: Projects → Import from Linear. Each Linear project becomes a Walkie project (folders from
+initiatives or teams) with its issues as cards: column by state, labels, assignee (matched to members by email, name
+or `--map-users @kira=Kira Rowe`), estimate, due date, parent, a link back, and one comment with the issue's history
+and comments. The import writes in signed batches (hundreds of cards a second, not one a second), is safe to re-run
+(it updates what changed and creates nothing twice) and continues where it stopped (`--resume`). The dry run flags
+what may not be worth moving: completed or canceled projects (unticked), backlog nobody touched in 60 days, and
+likely duplicate titles. Details: docs/plans/LINEAR-IMPORT-1.md.
+
 ## For agents (MCP)
 
 - `walkie_meetings`: recent meeting posts (Fireflies and Wispr), filter by text and date.

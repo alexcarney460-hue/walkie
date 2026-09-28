@@ -123,7 +123,7 @@ export function fakeSeatWorld(root: string, walkieHome: string): FakeSeatWorld {
           `${SWEEP_ROOTS_ENV}=${JSON.stringify([outside])}`, ...selfRunnerArgv()];
         const r = await runnerOp(argv, "sweep", 60_000, { roots });
         w.sweeps.push({ name, verified: r?.verified ?? false, left: r?.samples ?? [] });
-        return { ok: r?.verified === true, left: r?.verified ? [] : [...(r?.samples ?? []), ...(r?.why ? [r.why] : [])] };
+        return { ok: r?.verified === true, left: r?.verified ? [] : [...(r?.samples ?? []), ...(r?.why ? [r.why] : [])], leftoverDirs: r?.verified ? r.leftoverDirs : [] };
       },
       sleep: (ms) => Bun.sleep(ms),
     },

@@ -25,7 +25,9 @@ import { join } from "node:path";
 import { resolveAgentName } from "../agent/identity.ts";
 import { walkieCommand } from "../hooks/install.ts";
 import { markKey, readMarks, releaseLease, updateLease, writeLease, writeMark, writeSessionReading, type Lease } from "../accounts/leases.ts";
-import { DEFAULT_THRESHOLD_PCT, selectOwnFirst, type Candidate, type Selection } from "../accounts/select.ts";
+import { DEFAULT_THRESHOLD_PCT, READING_MAX_AGE_MS, roomOf, selectOwnFirst, type Candidate, type Selection } from "../accounts/select.ts";
+import { PERSONAL_RESERVE_PCT } from "../protocol/pool-rules.ts";
+import type { AccountUsage } from "../protocol/accounts.ts";
 import { codexBaseHome, codexSessionsDir } from "../accounts/vault/codex-home.ts";
 import { privateDir } from "../accounts/vault/vault.ts";
 import type { AccountSource, Credentials } from "./accounts.ts";
@@ -59,6 +61,8 @@ export interface WrapOptions {
   tickMs?: number;
   /** How long nothing must have been written before the CLI is ended at the limit. */
   settleMs?: number;
+  /** COMPANY POOL: how often a borrowed pooled session checks the person's reserve (default RESERVE_CHECK_MS). */
+  reserveCheckMs?: number;
   /** The longest the switch waits at the limit for the session's background work to finish (default 10 min). */
   backgroundWaitMs?: number;
   tokenVia?: "fd" | "env";
@@ -73,6 +77,17 @@ export interface WrapOptions {
 
 /** A run that could not continue anywhere: every account out (sysexits EX_TEMPFAIL). */
 export const EXIT_ALL_EXHAUSTED = 75;
+/**
+ * Whether a refused token is a strike on the ACCOUNT (a lasting "needs re-login" mark). COMPANY POOL (Codex p8 MEDIUM
+ * 3): a leased Codex copy that stops working has simply expired — the lender renews its own login — so it is only
+ * avoided for this run; the next launch leases a fresh copy.
+ */
+export function refusalMarksAccount(acct: Pick<Candidate, "source" | "provider">): boolean {
+  return !(acct.source === "peer" && acct.provider === "codex");
+}
+
+/** COMPANY POOL: how often a borrowed pooled session checks its room against the person's reserve. */
+export const RESERVE_CHECK_MS = 60_000;
 
 /**
  * The machine-readable line when every account is out (RESET-CLOCK-1): until when, and which account frees first
@@ -250,7 +265,7 @@ export async function runWrapped(o: WrapOptions): Promise<number> {
     return await new Session(o, {
       spawn, clock, sleep, say, trust: trustNow, pathReal: real, baseEnv, parsed,
       threshold: o.thresholdPct ?? DEFAULT_THRESHOLD_PCT, tickMs: o.tickMs ?? 500,
-      settleMs: o.settleMs ?? 3_000, backgroundWaitMs: o.backgroundWaitMs ?? BACKGROUND_WAIT_MS,
+      settleMs: o.settleMs ?? 3_000, backgroundWaitMs: o.backgroundWaitMs ?? BACKGROUND_WAIT_MS, reserveCheckMs: o.reserveCheckMs ?? RESERVE_CHECK_MS,
       setChild: (c) => { child = c; }, stopping: () => stopping, passthrough, userSettings, rawSettings,
     }).run();
   } finally {
@@ -260,7 +275,7 @@ export async function runWrapped(o: WrapOptions): Promise<number> {
 
 interface Ctx {
   spawn: Spawner; clock: () => number; sleep: (ms: number) => Promise<void>; say: (l: string) => void;
-  threshold: number; tickMs: number; settleMs: number; backgroundWaitMs: number;
+  threshold: number; tickMs: number; settleMs: number; backgroundWaitMs: number; reserveCheckMs: number;
   /**
    * Re-validates the credential recipient (round 2, Codex 3): run before EVERY credential-bearing launch; its `argv`
    * (the validated native executable) is what runs. `pathReal` = the CLI as found on PATH
@@ -428,8 +443,11 @@ class Session {
         } catch (err) {
           // Before or at the start of a launch (the trust re-check, the token hand-over, a lease file): the session
           // continues on the CLI's own login instead (round 2, Codex 5 / Opus 4).
+          creds.release?.();
           return this.ownLogin(n, (err as Error).message);
         }
+        // COMPANY POOL: a leased Codex home is deleted as soon as the session on it ended (the next launch leases anew).
+        creds.release?.();
         if (out.kind === "exit") return out.code;
         if (++switches > max) { this.c.say(`walkie: switched ${max} times in this run; stopping here`); return 1; }
         if (out.kind === "resume_failed") {
@@ -561,6 +579,9 @@ class Session {
     let limitHandled = false;
     let cutSeen: number | null = null;
     let lastReadingAt = 0;
+    // COMPANY POOL (Codex p8 HIGH 2): a borrowed pooled login is left at its person's reserve, not only at the limit.
+    let reserveCheckedAt = 0;
+    let reserveHit: { at: number } | null = null;
     for (;;) {
       const done = await Promise.race([child.exited, this.c.sleep(this.c.tickMs).then(() => null)]);
       try {
@@ -573,12 +594,19 @@ class Session {
           return { kind: "exit", code: done };
         }
         if (this.c.stopping()) continue; // the forwarded signal ends the child; its exit ends the run
-        const cut = s.limit ?? (s.refused ? { at: s.refused.at, until: null, window: "token refused" } : null);
-        if (cut && !limitHandled) {
+        if (!reserveHit && acct.pooled && !acct.own && now - reserveCheckedAt >= this.c.reserveCheckMs) {
+          reserveCheckedAt = now;
+          const room = await this.roomNow(acct, s.reading, now);
+          if (room !== null && room - PERSONAL_RESERVE_PCT <= 0) reserveHit = { at: now };
+        }
+        const cut = s.limit ?? (s.refused ? { at: s.refused.at, until: null, window: "token refused" } : null)
+          ?? (reserveHit ? { at: reserveHit.at, until: null, window: "personal reserve" } : null);
+        if (cut && !limitHandled && !(reserveHit && !s.limit && !s.refused)) {
           limitHandled = true;
           cutSeen = now;
           this.markCut(acct, s, now);
         }
+        if (cut && cutSeen === null) cutSeen = now; // a reserve stop waits for background work like a limit
         if (headless) continue;
         const quiet = now - s.lastActivity >= this.c.settleMs;
         if (s.resumeFailed && relaunched && !this.resumeRetried && quiet) { await this.end(child); return { kind: "resume_failed" }; }
@@ -606,10 +634,13 @@ class Session {
         if (again.lastActivity !== s.lastActivity) continue;
         await this.end(child);
         const after = await this.poll(w).catch(() => again);
-        const why = s.limit ? `${acct.label} reached its ${s.limit.window.replace(/_/g, "-")} limit${s.limit.until ? ` (resets ${fmtTime(s.limit.until)})` : ""}` : `${acct.label}'s token was refused`;
+        const why = s.limit ? `${acct.label} reached its ${s.limit.window.replace(/_/g, "-")} limit${s.limit.until ? ` (resets ${fmtTime(s.limit.until)})` : ""}`
+          : s.refused ? `${acct.label}'s token was refused`
+          : `${acct.label} reached the last ${PERSONAL_RESERVE_PCT}% kept for @${acct.owner ?? "its person"}`;
         // Background work still running at the bound is ended with the CLI: the resumed session is told what it was.
         const stopped = again.background.map((b) => (again.backgroundInfo[b] ? `${again.backgroundInfo[b]} (${b})` : b));
-        return { kind: "switch", reason: why, resume: true, avoid: true, answer: after.promptAfterLimit, stopped };
+        // A reserve stop writes no mark (the login is not out for its person): it is only skipped by the next pick.
+        return { kind: "switch", reason: why, resume: true, avoid: !!(s.limit || s.refused), answer: after.promptAfterLimit, stopped };
       } catch (err) {
         if (done !== null) return { kind: "exit", code: done };
         return this.degrade(child, err);
@@ -631,6 +662,7 @@ class Session {
     }
     if (!s.refused) return;
     this.avoid.add(markKey(acct));
+    if (!refusalMarksAccount(acct)) return;
     // One strike per refusal EVENT (round 7, Codex r6 3): supervision and a headless run's exit handling see the same one.
     const event = `${key}@${s.refused.at}`;
     if (this.refusalsMarked.has(event)) return;
@@ -639,6 +671,23 @@ class Session {
     const again = !!prev && prev.state === "relogin" && (prev.gen ?? null) === (this.gen ?? null) && now - prev.at < 86_400_000;
     const strikes = again ? Math.min(10, (prev.strikes ?? 2) + 1) : 1;
     writeMark(this.o.walkieHome, key, { state: "relogin", until: null, at: now, reason: "token_refused", strikes, ...gen }, now);
+  }
+
+  /**
+   * The room (%) left on a borrowed pooled login now: the session's own reading when it has one (Codex), else the
+   * team's pooled view (at most a minute stale). Null when nothing current says (the lender blocks new leases then).
+   */
+  private async roomNow(acct: Candidate, reading: AccountUsage | null | undefined, now: number): Promise<number | null> {
+    const fresh = (u: AccountUsage | null | undefined) => (u && u.state === "ok" && u.windows.length && now - u.at <= READING_MAX_AGE_MS ? u : null);
+    const own = fresh(reading);
+    if (own) return roomOf(own, this.c.parsed.model, now);
+    try {
+      const again = (await this.o.source.gather(this.o.provider, now)).find((c) => markKey(c) === markKey(acct));
+      const u = fresh(again?.usage);
+      return u ? roomOf(u, this.c.parsed.model, now) : again?.usage?.state === "exhausted" ? 0 : null;
+    } catch {
+      return null;
+    }
   }
 
   /** A headless run (claude -p) that ended on a limit is run again on the next account, resuming its session. */

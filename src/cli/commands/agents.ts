@@ -1,6 +1,8 @@
 // walkie mcp · walkie hook claude|codex · walkie hooks install|uninstall claude|codex
 import { runClaudeHook } from "../../hooks/claude.ts";
 import { runCodexHook } from "../../hooks/codex.ts";
+import { runKimiHook } from "../../hooks/kimi.ts";
+import { installKimi } from "../../hooks/install-kimi.ts";
 import { runSwitchHook } from "../../hooks/switch-channel.ts";
 import { installClaude, installCodex } from "../../hooks/install.ts";
 import { runMcpServer } from "../../mcp/server.ts";
@@ -24,6 +26,9 @@ export async function hook(ctx: Ctx): Promise<number> {
       const raw = await Promise.race([new Response(Bun.stdin.stream()).text(), Bun.sleep(1000).then(() => "")]);
       const out = await runClaudeHook(raw);
       if (out) writeOut(out + "\n");
+    } else if (runtime === "kimi") {
+      const raw = await Promise.race([new Response(Bun.stdin.stream()).text(), Bun.sleep(1000).then(() => "")]);
+      await runKimiHook(raw);
     } else if (runtime === "codex") {
       await runCodexHook(ctx.args.pos[ctx.args.pos.length - 1] ?? "");
     } else if (runtime === "switch") {
@@ -36,7 +41,7 @@ export async function hook(ctx: Ctx): Promise<number> {
 
 export async function hooks(ctx: Ctx): Promise<number> {
   const action = need(ctx.args, 0, "install|uninstall");
-  const target = need(ctx.args, 1, "claude|codex|all");
+  const target = need(ctx.args, 1, "claude|codex|kimi|all");
   if (action !== "install" && action !== "uninstall") throw new UsageError(`unknown action ${action}`);
   if (target === "all") {
     // Every runtime Walkie connects (AGENT-ADMIN-1: one call for an agent setting a machine up).
@@ -48,7 +53,7 @@ export async function hooks(ctx: Ctx): Promise<number> {
   }
   const opts = { dryRun: bool(ctx.args, "dry-run"), uninstall: action === "uninstall" };
   // An agent's change to its runtimes' configuration is admin (AGENT-ADMIN-1): refused while agent admin is off, audited.
-  if (!opts.dryRun && (target === "claude" || target === "codex")) await auditLocal(ctx, `${action === "install" ? "installed" : "removed"} the Walkie hooks for ${target}`);
+  if (!opts.dryRun && (target === "claude" || target === "codex" || target === "kimi")) await auditLocal(ctx, `${action === "install" ? "installed" : "removed"} the Walkie hooks for ${target}`);
   if (target === "claude") {
     const r = await installClaude(opts);
     ctx.out(`${c.green(opts.dryRun ? "would update" : "updated")} ${r.changed.join(", ")}\n${r.commands.map((x) => `  ${opts.dryRun ? "would run" : "ran"}: ${x}`).join("\n")}` +
@@ -57,6 +62,9 @@ export async function hooks(ctx: Ctx): Promise<number> {
     const r = await installCodex(opts);
     ctx.out(`${c.green(opts.dryRun ? "would update" : "updated")} ${r.changed.join(", ")}` +
       (r.notifySkipped ? `\n${c.yellow("note:")} config.toml already has a notify command; add \`walkie hook codex\` to it yourself to report Codex status.` : ""));
+  } else if (target === "kimi") {
+    const r = await installKimi(opts);
+    ctx.out(`${opts.dryRun ? "would update" : "updated"} ${r.changed.join(", ")}`);
   } else {
     throw new UsageError(`unknown target ${target}`);
   }

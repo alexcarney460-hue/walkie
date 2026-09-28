@@ -44,6 +44,13 @@ function view(state: AgentState, updated_at: number, extra: Partial<AgentView> =
 }
 
 describe("archive rules", () => {
+  test("ended seat cards use the normal agent archive retention", () => {
+    const now = 3 * 86_400_000;
+    const seat = view("offline", 0, { agent: "seat-abc123-1", archived: true, status: { agent: "seat-abc123-1", parent: "seats", state: "offline", runtime: "codex" } });
+    const sub = view("offline", 0, { agent: "cc-abc.sub", archived: true, status: { agent: "cc-abc.sub", parent: "cc-abc", state: "offline", runtime: "codex" } });
+    expect(archiveOverflow([seat, sub], now)).toEqual([sub]);
+  });
+
   test("default view = working + needs a person; idle 30 min and offline 10 min are archived", () => {
     const t = 1_000_000_000;
     expect(shownByDefault({ effective_state: "working" })).toBe(true);
@@ -137,6 +144,23 @@ describe("live roster vs archive in the daemon", () => {
     const drop = archiveOverflow(views, 10_000);
     expect(views.length - drop.length).toBe(ARCHIVE_CAP_PER_NODE);
     expect(Math.min(...views.filter((v) => !drop.includes(v)).map((v) => v.updated_at))).toBe(1_000 + 687 - ARCHIVE_CAP_PER_NODE);
+  });
+
+  test("seat cards have an independent cap and age limit and never consume session slots", () => {
+    const now = 10 * 86_400_000;
+    const sessions = Array.from({ length: 50 }, (_, i) => view("offline", now - 3 * 86_400_000 - i, { agent: `claude-s${i}`, archived: true }));
+    const seats = Array.from({ length: 250 }, (_, i) => view("offline", now - 60_000 - i, {
+      agent: `seat-abc123-${i}`, archived: true,
+      status: { agent: `seat-abc123-${i}`, parent: "seats", state: "offline", runtime: "codex" },
+    }));
+    const oldSeat = view("offline", now - 8 * 86_400_000, {
+      agent: "seat-abc123-old", archived: true,
+      status: { agent: "seat-abc123-old", parent: "seats", state: "offline", runtime: "codex" },
+    });
+    const dropped = archiveOverflow([...sessions, ...seats, oldSeat], now);
+    expect(dropped.filter((a) => a.agent.startsWith("claude-s"))).toHaveLength(0);
+    expect(dropped.filter((a) => a.agent.startsWith("seat-")).length).toBe(151);
+    expect(dropped).toContain(oldSeat);
   });
 });
 

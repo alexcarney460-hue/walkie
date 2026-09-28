@@ -281,13 +281,13 @@ export interface SpliceResult { up: number; down: number; error: string | null }
  * Pumps a <-> b until either side closes (even while a pump is blocked writing to the other one), then closes both.
  * `meterAtoB` / `transformAtoB` apply to bytes going from a to b (on a worker: the tunnel into rpc-server).
  */
-export async function splice(a: End, b: End, meterAtoB?: (n: number) => Promise<void>, transformAtoB?: Transform): Promise<SpliceResult> {
+export async function splice(a: End, b: End, meterAtoB?: (n: number) => Promise<void>, transformAtoB?: Transform, countBtoA?: (n: number) => void): Promise<SpliceResult> {
   let up = 0;
   let down = 0;
   let error: string | null = null;
   const note = (e: unknown): void => { if (!(e instanceof Closed) && !error) error = (e as Error).message; };
   const ab = pump(a, b, meterAtoB, transformAtoB).then((n) => { up = n; }, note);
-  const ba = pump(b, a).then((n) => { down = n; }, note);
+  const ba = pump(b, a, countBtoA ? async (n) => { countBtoA(n); } : undefined).then((n) => { down = n; }, note);
   await Promise.race([ab, ba, a.done, b.done]);
   a.close();
   b.close();

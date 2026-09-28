@@ -63,7 +63,7 @@ beforeAll(async () => {
   // The daemon's OWN PATH has the fake claude first (and bun, its interpreter): the dashboard sends no path, so this is
   // where start finds it.
   const orchestrator = {
-    restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
+    autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
     env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: join(c.root, "fake-launches.jsonl") },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator, mobile: { relayUrl, appUrl: "http://127.0.0.1:1/m" } });
@@ -122,6 +122,23 @@ describe("the dashboard's Start / Stop (PRE5-INT c)", () => {
       link.close();
     }
     expect((await alex.client("").orchestrator()).local.running).toBe(false);
+  }, 30_000);
+
+  test("an agent cannot grant shell or elevated permissions, but can lower access", async () => {
+    const agent = alex.client("cc-agent1");
+    await expect(agent.orchestratorStart({ access: "full" })).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    await expect(agent.orchestratorStart({ permission_mode: "acceptEdits" })).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    for (const option of [{ claude: "/bin/sh" }, { path: "/tmp" }, { cwd: "/tmp" }]) {
+      await expect(agent.orchestratorStart(option)).rejects.toMatchObject({ status: 403, code: "person_only" });
+    }
+    await expect(agent.orchestratorAccess("full")).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    await expect(agent.orchestratorLeadEligible(true)).rejects.toMatchObject({ status: 403 });
+    const h = await session(alex);
+    const res = await fetch(url(alex, "/v1/orchestrator/start"), { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ access: "full" }) });
+    expect(res.status).toBe(200);
+    await expect(agent.orchestratorAuto()).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    expect((await agent.orchestratorAccess("platform")).local.access).toBe("platform");
+    await alex.client("").orchestratorStop();
   }, 30_000);
 
   test("an observer's dashboard is refused with the daemon's reason", async () => {

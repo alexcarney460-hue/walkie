@@ -30,19 +30,27 @@ import { Store } from "./store.ts";
 import { SyncManager, type SyncOptions } from "./sync.ts";
 import { VERSION } from "./version.ts";
 import { accountsView, agentsPayload, nodesView } from "./views.ts";
+import { TeamPoolState } from "./team-pool.ts";
 import { AgentArchive } from "./agent-archive.ts";
 import { AgentDiscovery, UNNAMED_MIN_AGE_MS, type DiscoveryOptions } from "./discovery.ts";
 import { MachineStatsSampler, type SamplerOptions } from "./machine-stats/sampler.ts";
+import { readAccel } from "./machine-stats/accel.ts";
+import { locateRuntime, metalBudget } from "../pool/run/runtime.ts";
 import { AccountsService, type AccountsOptions } from "../accounts/service.ts";
 import { lazyVault } from "../accounts/vault/source.ts";
 import { liveVaultSharing } from "./vault-lease.ts";
+import { localTeamPolicy } from "../accounts/pool.ts";
 import { LinearService } from "../integrations/linear-service.ts";
 import { IntegrationManager, type ManagerOptions } from "../integrations/manager.ts";
 import { Poster } from "../integrations/poster.ts";
 import "../integrations/routes.ts"; // registers /v1/integrations, /v1/linear, /v1/meetings
+import "../integrations/linear-import/routes.ts"; // registers /v1/import/linear (LINEAR-IMPORT-1)
+import { LinearImportService } from "../integrations/linear-import/service.ts";
 import "../pool/run/routes.ts"; // registers /v1/pool (WALKIE-POOL-2 split runs)
 import { PoolService, type PoolOptions } from "../pool/run/service.ts";
 import { PeerCallError } from "./peer-client.ts";
+import type { PeerAddr } from "./transport.ts";
+import type { End } from "../pool/run/tunnel.ts";
 import { nodeMember } from "./roster.ts";
 import "../accounts/routes.ts"; // registers /v1/accounts/reset and /v1/accounts/refresh
 import "./mobile/routes.ts"; // registers /v1/mobile (Walkie on your phone)
@@ -53,11 +61,15 @@ import "./projects/routes.ts"; // registers /v1/projects, /v1/tasks (WALKIE-PROJ
 import "./projects/room-routes.ts"; // registers /v1/projects/:ch/room, /v1/tasks/:ref/context (DATA-ROOM-1)
 import "./admin/routes.ts"; // registers /v1/admin (AGENT-ADMIN-1: switches, audit, remote admin)
 import { postUpgradeNotice } from "./admin/audit.ts";
+import "./projects/steward-routes.ts"; // registers /v1/steward (FO-6 board steward)
+import { StewardLoop } from "./projects/steward-run.ts";
 import { ProjectsIndex } from "./projects/index.ts";
 import { RestrictedMembership } from "./projects/members.ts";
 import { authorityProjectQuota } from "./projects/service.ts";
 import { SeatsHost, registerSeats, type SeatsOptions } from "./seats/host.ts";
 import "./seats/routes.ts"; // registers /v1/seats
+import "./seats/repos-routes.ts"; // registers /v1/seats/repos (FO-2)
+import { startWatchdog, stopWatchdog, trackOp } from "./watchdog.ts";
 
 export interface DaemonOptions {
   home?: string;
@@ -82,6 +94,8 @@ export interface DaemonOptions {
   writePid?: boolean;
   /** Connector options (tests inject the HTTP layer and drive runs). */
   integrations?: ManagerOptions;
+  /** Linear import (tests: another GraphQL URL, a fast schedule tick). */
+  linearImport?: { url?: string; tickMs?: number };
   /** Daily license renewal on the authority (default on). false disables it. */
   licenseRenew?: Omit<RenewOptions, "service"> | false;
   /**
@@ -119,6 +133,8 @@ export interface DaemonHandle {
   readonly peerPort: number | null; readonly localPort: number | null; readonly token: string;
   readonly core: Core; readonly sync: SyncManager; readonly config: Config; readonly log: Logger;
   readonly integrations: IntegrationManager;
+  /** The Linear import (LINEAR-IMPORT-1). */
+  readonly linearImport: LinearImportService;
   /** The peer API client (Tailscale or Walkie Direct) and the transport this daemon runs. */
   readonly client: PeerClient; readonly transport: DirectLink;
   /** Walkie on your phone (tests inspect it). */
@@ -127,6 +143,12 @@ export interface DaemonHandle {
   readonly projects: ProjectsIndex;
   stop(): Promise<void>;
 }
+
+/** POOL-REAL-1: the transport "auto" prefers for pool tunnels to a machine that serves both (decided by measurement). */
+/** After a pool change, machine stats are sampled again this soon (fresh free VRAM for teammates' plans). */
+const POOL_RESAMPLE_MS = 2_000;
+
+export const POOL_AUTO_TRANSPORT: "tailscale" | "direct" = "direct";
 
 export const DEFAULT_WEB_DIR = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 
@@ -252,12 +274,18 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const restricted = new RestrictedMembership(core, log);
   const poster = new Poster({ core });
   const manager = new IntegrationManager(core, poster, opts.integrations);
-  const integrations = { manager, linear: new LinearService(core, manager) };
-  const orchestrator = new OrchestratorHost({ core, log, nodes: () => nodesView(core, sync) }, opts.orchestrator);
+  const linearImport = new LinearImportService({
+    core, idx: projects, manager, client, catchUp: sync.requestCatchUp, log,
+    ...(opts.integrations?.fetch ? { fetch: opts.integrations.fetch } : {}), ...(opts.linearImport ?? {}),
+  });
+  const integrations = { manager, linear: new LinearService(core, manager), linearImport };
+  // FO-6: the board steward; runs only when this machine's person turned `steward.auto` on (steward-run.ts).
+  const steward = new StewardLoop({ core, idx: projects, sync, client, catchUp: sync.requestCatchUp, linear: integrations.linear, log });
+  const orchestrator = new OrchestratorHost({ core, log, client, nodes: () => nodesView(core, sync) }, opts.orchestrator);
   registerHost(core, orchestrator);
   // Set once the accounts service starts (below); the reset routes answer 404 until then.
   let accountsRef: AccountsService | null = null;
-  const seats = new SeatsHost({ core, client, catchUp: sync.requestCatchUp, log }, opts.seats);
+  const seats = new SeatsHost({ core, client, catchUp: sync.requestCatchUp, log, accounts: () => accountsView(core, sync) }, opts.seats);
   registerSeats(core, seats);
   // Paired phones' requests (through the encrypted relay link) run on the local API declared just below.
   const mobile = new MobileManager({
@@ -270,11 +298,12 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     accounts: () => accountsRef,
   });
 
+  let statsSampler: MachineStatsSampler | null = null;
   try {
     core.onLocalEvent = (ev) => sync.push(ev);
     core.onRosterChange = () => {
       sync.rosterChanged(); direct.rosterChanged(); mobile.rosterChanged(); core.pool?.rosterChanged();
-      projects.rosterChanged(); restricted.rosterChanged();
+      projects.rosterChanged(); restricted.rosterChanged(); orchestrator.rosterChanged();
     };
     core.onPostChange = (ev, change) => projects.onPost(ev, change);
     projects.onDelta = (d) => hub.publishBoard(d);
@@ -290,14 +319,43 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       if (!addr) throw new PeerCallError(0, "unreachable", `${n?.hostname ?? nodeId} can't be reached from this machine (no transport in common)`);
       return addr;
     };
+    // POOL-REAL-1: which transport pool tunnels use to a machine that serves both. "auto" = the usual choice
+    // (addrOf: Tailscale first). Measured on atlas-wsl <-> hestia-wsl (docs/plans/POOL-REAL-1.md): Walkie Direct was
+    // not clearly faster than Tailscale there, and right after a restart its address lookup can fail, so it is an
+    // opt-in (config pool_transport / WALKIE_POOL_TRANSPORT) that falls back to the usual transport when unreachable.
+    let resampleTimer: ReturnType<typeof setTimeout> | null = null;
+    const poolTunnel = async (nodeId: string, open: (addr: PeerAddr) => Promise<End>): Promise<End> => {
+      const usual = addrOrThrow(nodeId);
+      const pref = (process.env.WALKIE_POOL_TRANSPORT ?? config.pool_transport) as "auto" | "tailscale" | "direct";
+      const n = core.roster.nodes.get(nodeId);
+      const via = pref !== "auto" && n && !n.revoked ? client.addrVia(n, pref) : null;
+      if (!via || (via.pubkey ?? "") === (usual.pubkey ?? "")) return open(usual);
+      try {
+        return await open(via);
+      } catch (err) {
+        if (!(err instanceof PeerCallError) || err.status !== 0) throw err; // a refusal is an answer, not a path problem
+        log.warn("pool_tunnel_fallback", { node: nodeId, from: pref, err: err.message.slice(0, 160) });
+        return open(usual);
+      }
+    };
     core.pool = new PoolService({
       home: paths.home, configPath: paths.config, config, log,
       mayHead: (nodeId) => { const m = nodeMember(core.roster, nodeId); return !!m && m.role !== "observer"; },
       stats: () => core.machineStats,
       hostnameOf: (nodeId) => core.roster.nodes.get(nodeId)?.hostname ?? nodeId,
-      changed: () => hub.nodesChanged(),
+      // A pool job starting or ending moves GBs of GPU memory: sample again soon so teammates plan with fresh figures
+      // (POOL-REAL-1: a run started right after another was refused on the 30 s old free-VRAM figure).
+      changed: () => {
+        hub.nodesChanged();
+        if (!resampleTimer) {
+          resampleTimer = setTimeout(() => { resampleTimer = null; void statsSampler?.tick(); }, POOL_RESAMPLE_MS);
+          (resampleTimer as { unref?: () => void }).unref?.();
+        }
+      },
       stage: (nodeId, body) => client.stage(addrOrThrow(nodeId), body),
-      tunnel: (nodeId, run) => client.tunnel(addrOrThrow(nodeId), run),
+      tunnel: (nodeId, run) => poolTunnel(nodeId, (a) => client.tunnel(a, run)),
+      serve: (nodeId, body) => client.serve(addrOrThrow(nodeId), body),
+      tunnelTo: (nodeId, path) => poolTunnel(nodeId, (a) => client.tunnelTo(a, path)),
       seatsBlock: () => seats.poolBlock(),
     }, opts.pool);
     core.poolShare = () => core.pool?.published() ?? null;
@@ -321,6 +379,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   core.drainPending();
   core.reduceOverCapBoards();
   projects.start();
+  linearImport.start();
+  steward.start();
   restricted.rosterChanged();
   if (direct.mode() === "direct") {
     // A Direct node never opens the tailnet listener. The endpoint binds a local UDP socket; relays and
@@ -358,11 +418,30 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const vault = lazyVault(paths.home);
   core.vault = vault;
   core.vaultSharing = () => liveVaultSharing(paths.config);
+  // COMPANY POOL: the team's pool setting (newest owner setting seen, kept on disk; off when unknown).
+  const teamPool = new TeamPoolState(paths.home, paths.config);
+  core.teamPool = () => teamPool.current(core, sync);
   // Provider accounts the running sessions use, their usage left, shared on `vv` (src/accounts/service.ts).
   const accounts = opts.accounts !== false && config.accounts
-    ? new AccountsService(paths.home, log, (snap) => { core.accounts = snap; hub.accountsChanged(); }, { vault: vault, ...(opts.accounts || {}) })
+    ? new AccountsService(paths.home, log, (snap) => { core.accounts = snap; hub.accountsChanged(); }, { vault: vault, teamPolicy: () => localTeamPolicy(paths.config), poolOn: () => core.teamPolicy() === "company", ...(opts.accounts || {}) })
     : null;
+  if (!accounts) {
+    // An owner's machine with accounts off still tells the team its pool setting (an otherwise empty snapshot).
+    const advertise = () => {
+      const ad = localTeamPolicy(paths.config);
+      const next = ad ? { at: Date.now(), accounts: [], team_policy: ad } : null;
+      if (JSON.stringify(next?.team_policy ?? null) !== JSON.stringify(core.accounts?.team_policy ?? null)) { core.accounts = next; hub.accountsChanged(); }
+    };
+    advertise();
+    const t = setInterval(advertise, 30_000);
+    (t as { unref?: () => void }).unref?.();
+  }
   accountsRef = accounts;
+  if (accounts) {
+    core.vaultRoomLeft = (id, now) => accounts.roomLeft(id, now);
+    core.vaultRefresh = (id) => { accounts.refresh(id); };
+    core.vaultRenew = (id) => accounts.renewCodex(id);
+  }
   if (accounts && discovery) discovery.onScan = (found) => accounts.observe(found);
   accounts?.start();
   discovery?.start();
@@ -374,14 +453,19 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   orchestrator.init(); // resumes an orchestrator that ran here before a restart
   seats.init(); // takes seat requests again if this machine allows seats
   // This machine's memory and temperature, published to the team on `vv` (machine-stats/sampler.ts).
-  const sampler = opts.machineStats !== false && config.machine_stats
+  const sampler = statsSampler = opts.machineStats !== false && config.machine_stats
     ? new MachineStatsSampler((st) => { core.machineStats = st; hub.nodesChanged(); }, log, {
-      intervalMs: config.machine_stats_interval_s * 1_000, ...(opts.machineStats || {}),
+      intervalMs: config.machine_stats_interval_s * 1_000,
+      // Apple Silicon: Metal's working-set budget from the installed llama.cpp (POOL-REAL-1).
+      ...(process.platform === "darwin" ? { readAccel: () => readAccel({ metalBudget: () => metalBudget(locateRuntime(paths.home, config.pool_llama_dir)) }) } : {}),
+      ...(opts.machineStats || {}),
     })
     : null;
   sampler?.start();
   // Expires stale held events (unknown origins after 1 h, the rest after 24 h) and drains ready ones.
-  const housekeeping = setInterval(() => core.drainPending(), 5 * 60_000);
+  const housekeeping = setInterval(() => trackOp("housekeeping", () => core.drainPending()), 5 * 60_000);
+  // Names the operation behind any event-loop stall in the log (DAEMON-STALL-1).
+  const watchdog = startWatchdog(log);
   // The plan-clock floor moves at least hourly (audit M4); this node's integration slots on the chain
   // follow its settings (F3: a legacy enable asks for its slot, a queued enable turns on when it arrives).
   core.noteTime();
@@ -403,19 +487,22 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   return {
     home, paths, socket: paths.socket, nodeId: keys.nodeId, get peerPort() { return link.port; },
     localPort: local.tcpPort, get token() { return local.token; }, core, sync, config, log, integrations: manager, client, transport: direct, mobile,
-    projects,
+    projects, linearImport,
     async stop() {
       if (stopped) return;
       stopped = true;
       clearInterval(housekeeping);
+      stopWatchdog(watchdog);
       clearInterval(planClock);
       clearInterval(announce);
       await orchestrator.close();
       await seats.close();
       await core.pool?.stop().catch((err: unknown) => log.warn("pool_stop_failed", { err: (err as Error).message }));
       manager.stop();
+      linearImport.stop();
       mobile.stop();
       projects.stop();
+      steward.stop();
       restricted.stop();
       renewer?.stop();
       discovery?.stop();

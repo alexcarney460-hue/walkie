@@ -27,7 +27,7 @@
 // whether a session runs on an environment token by variable NAME only: the value is never read into a result.
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
-import { detectTask, repoContext, resolveAgentName, type Runtime } from "../agent/identity.ts";
+import { detectTask, repoContext, resolveAgentName } from "../agent/identity.ts";
 import { SHARE_NOTHING, type SharePolicy } from "../agent/share-policy.ts";
 import { readSmallFile } from "../agent/safe-read.ts";
 import { ACTIVITY_PHRASES, type StatusProvenance } from "../protocol/status-projection.ts";
@@ -38,9 +38,13 @@ import type { BodyOf } from "../protocol/schemas.ts";
 import { CPU_BUSY_RATIO, CpuTracker, judge, SESSION_ID_RE, SessionFiles, titleOf, type FileKind, type TailInfo } from "./activity.ts";
 import type { Core } from "./core.ts";
 import { RESERVED_AGENTS } from "./local-routes.ts";
+import { FLEET_AGENT, STEWARD_AGENT } from "../protocol/projects/steward-core.ts";
 import type { Logger } from "./logger.ts";
 import { SystemProcessProvider, type ProcessProvider, type ProcRow } from "./procs.ts";
+import { classifyAgent, modelServers, RELAUNCHING, runtimeName, wireRuntime, type AgentKind, type AgentRuntime, type Launch } from "./agent-procs.ts";
+import { assignKimiSessions, containedWire, listKimiSessions, ScanBudget, type KimiProc } from "./kimi-sessions.ts";
 import { observedAt } from "./views.ts";
+import { trackOp } from "./watchdog.ts";
 
 type Status = BodyOf<"agent.status">;
 
@@ -85,8 +89,25 @@ export const CWD_REFRESH_MS = 60_000;
 /** Sessions every scan examines even when its budget is spent. */
 export const MIN_EXAMINED = 4;
 const SWEEP_MAX_PER_TICK = 100;
+/** A Kimi process whose session isn't found yet is looked for again this often (Kimi writes it on its first turn). */
+export const KIMI_RETRY_MS = 30_000;
+/** How long a session file that can't be read keeps its last verdict (then CPU decides, as for a session without one). */
+export const READ_FAIL_HOLD_MS = 10 * 60_000;
+/** File operations (stats, small reads) Kimi's session lookup may spend in one scan, across all its directories. */
+export const KIMI_OPS_PER_SCAN = 2_000;
 const SWEEP_RUNTIMES: ReadonlySet<string> = new Set(["claude-code", "codex", "kimi"]);
+/** Cards owned by daemon hosts are authoritative only at their host, never by process discovery. */
+function daemonOwnsAgent(agent: string): boolean {
+  return agent === "orchestrator" || agent.startsWith("orchestrator.")
+    || agent === STEWARD_AGENT || agent === FLEET_AGENT || RESERVED_AGENTS.has(agent);
+}
+const ACCOUNT_RUNTIMES: ReadonlySet<AgentRuntime> = new Set(["claude-code", "codex", "kimi", "grok"]);
+/** A discovered session of a runtime whose login the accounts service knows. */
+export type AccountSession = DiscoveredAgent & { runtime: "claude-code" | "codex" | "kimi" | "grok" };
+const isAccountSession = (a: DiscoveredAgent): a is AccountSession => ACCOUNT_RUNTIMES.has(a.runtime);
 const OWNED_META = "discovery_owned";
+/** AGENT-SEE-1 / Codex p8 #2: which hook card each running unnamed process took over, by pid:start. */
+const ADOPTED_META = "discovery_adopted";
 const OWNED_MAX = 4_000;
 
 export interface DiscoveryOptions {
@@ -131,7 +152,9 @@ export interface SeenActivity {
 }
 
 export interface DiscoveredAgent {
-  agent: string; runtime: Extract<Runtime, "claude-code" | "codex" | "kimi"> | "grok"; pid: number;
+  agent: string; runtime: AgentRuntime; pid: number;
+  /** AGENT-SEE-1: how it runs, when known ("headless": `-p`, `exec`, no terminal; "acp": an editor's ACP adapter). */
+  launch?: Launch;
   /** pid:start of its process (local). */
   key?: string;
   session?: string; started_at?: number; repo?: string; branch?: string; cwd?: string;
@@ -144,9 +167,9 @@ export interface DiscoveredAgent {
   account?: string;
 }
 
-type AgentRuntime = DiscoveredAgent["runtime"];
-
 const SESSION_VARS = ["WALKIE_AGENT", "CLAUDE_CODE_SESSION_ID", "KIMI_SESSION_ID"] as const;
+/** Read from a Kimi process itself: where its sessions live (a seat may run with its own KIMI_CODE_HOME). */
+const KIMI_VARS = ["KIMI_CODE_HOME", "WALKIE_AGENT"] as const;
 /** Read from the session process itself (not its children): which login directory it uses. */
 const LOGIN_VARS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "WALKIE_ACCOUNT", "WALKIE_SWITCH_PID"] as const;
 /** Set in a session's environment, the CLI runs on that token, not on the config directory's login (names only). */
@@ -166,29 +189,10 @@ async function envNamesOf(provider: ProcessProvider, pids: readonly number[], na
 /** A parent process whose Claude children are not agents (claude-mem's worker runs its observer sessions). */
 const NON_AGENT_PARENT = /claude-mem|thedotmack\/.*worker-service/;
 
-/** Subcommands that are not an agent session. */
-const NOT_A_SESSION: Record<AgentRuntime, ReadonlySet<string>> = {
-  "claude-code": new Set(["mcp", "doctor", "update", "install", "config", "migrate-installer", "setup-token", "--version", "-v", "-h", "--help"]),
-  codex: new Set(["app-server", "mcp", "mcp-server", "login", "logout", "completion", "proto", "debug", "apply", "--version", "-V", "-h", "--help"]),
-  kimi: new Set(["mcp", "--version", "-V", "-h", "--help"]),
-  grok: new Set(["login", "logout", "mcp", "update", "completions", "--version", "-V", "-h", "--help"]),
-};
 const ROLLOUT_RE = /rollout-[^/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 
 /** Which agent runtime a process is, from its executable (never its environment, which children inherit). */
-export function runtimeOf(command: string): AgentRuntime | null {
-  const argv = command.trim().split(/\s+/);
-  const exe = basename(argv[0] ?? "");
-  const grok = exe === "grok" || /^grok-\d+\.\d+\.\d+-/.test(exe); // ~/.grok/downloads/grok-<version>-<os>-<arch>
-  let rt: AgentRuntime | null = exe === "claude" ? "claude-code" : exe === "codex" ? "codex" : exe === "kimi" ? "kimi" : grok ? "grok" : null;
-  let sub = argv[1];
-  if (!rt && (exe === "node" || exe === "bun") && /@anthropic-ai\/claude-code\/cli\.m?js$/.test(argv[1] ?? "")) {
-    rt = "claude-code";
-    sub = argv[2];
-  }
-  if (!rt) return null;
-  return sub && NOT_A_SESSION[rt].has(sub) ? null : rt;
-}
+export { runtimeOf } from "./agent-procs.ts";
 
 /** A `codex app-server` (the Codex desktop app / IDE) runs sessions discovery can't see as their own processes. */
 function isCodexHost(command: string): boolean {
@@ -215,6 +219,12 @@ function tokenLogin(rt: AgentRuntime, set: readonly string[] | undefined): boole
   return !!set?.some((name) => vars.includes(name));
 }
 
+/** A Kimi process's KIMI_CODE_HOME (an absolute path), else ~/.kimi-code. */
+function kimiHomeOf(env: Record<string, string> | undefined): string {
+  const v = env?.KIMI_CODE_HOME;
+  return v && v.startsWith("/") && v.length <= 1024 && !v.split("/").includes("..") ? v : join(homedir(), ".kimi-code");
+}
+
 function pidName(rt: AgentRuntime, pid: number): string {
   return `${rt === "claude-code" ? "claude" : rt}-pid${pid}`;
 }
@@ -222,6 +232,10 @@ function pidName(rt: AgentRuntime, pid: number): string {
 /** Per process (pid + start): what earlier scans learned about it. */
 interface Entry {
   ctx?: ReturnType<typeof repoContext>; cwdAbs?: string; thread?: string; file?: string | null;
+  /** Kimi (AGENT-SEE-1): when its session was last looked for, and the session's wire.jsonl and sessions directory. */
+  kimiAt?: number; kimiPath?: string; kimiRoot?: string;
+  /** The last verdict, and when the session file was last read (a read that fails later keeps the verdict for a while). */
+  seen?: SeenActivity; readAt?: number;
   lastBusyAt?: number; title?: string;
   /** Not an agent (a claude-mem observer): skipped from then on. */
   excluded?: boolean;
@@ -256,7 +270,8 @@ export class AgentDiscovery {
   private readonly cpu = new CpuTracker();
   private files: SessionFiles;
   /** Unnamed sessions (pid:start) that took over a hook card → that card's agent name (adopt). */
-  private readonly adopted = new Map<string, string>();
+  private adoptedMap: Map<string, string> | null = null;
+  private adoptedDirty = false;
   /** Runtimes with more sessions than maxPerRuntime in the last scan: their hook cards are not swept. */
   private truncated = new Set<string>();
   /** pid:start of every process of this user in the last successful scan (a session not reported is not gone). */
@@ -279,11 +294,13 @@ export class AgentDiscovery {
   /** Every pid of this user in the last scan (an MCP server's fallback name carries its parent's pid). */
   private minePids = new Set<number>();
   private owned: Map<string, Owned> | null = null;
+  /** Local model servers seen in the last scan (AGENT-SEE-1): machine load, published with the machine's stats. */
+  private models: { name: string; count: number }[] = [];
   private ownedDirty = false;
   /** Every scan's result, for the accounts service (which login each session uses). */
-  onScan: ((found: readonly DiscoveredAgent[]) => void) | null = null;
+  onScan: ((found: readonly AccountSession[]) => void) | null = null;
 
-  constructor(private readonly core: Core, private readonly log: Logger, opts: DiscoveryOptions = {}) {
+  constructor(private readonly publishingCore: Core | undefined, private readonly log: Logger, opts: DiscoveryOptions = {}) {
     this.provider = opts.provider ?? new SystemProcessProvider();
     this.uid = opts.uid ?? process.getuid?.() ?? -1;
     this.intervalMs = opts.intervalMs ?? 15_000;
@@ -299,6 +316,23 @@ export class AgentDiscovery {
     this.scanBudgetMs = opts.scanBudgetMs ?? SCAN_BUDGET_MS;
     this.concurrency = Math.max(1, opts.concurrency ?? SCAN_CONCURRENCY);
     this.files = new SessionFiles({ detail: this.share.activity }); // files of the daemon's own user only
+  }
+
+  /** A diagnostic scanner never opens a store or a daemon socket. */
+  private get core(): Core {
+    if (!this.publishingCore) throw new Error("read-only discovery cannot publish");
+    return this.publishingCore;
+  }
+
+  async report() {
+    const found = await this.scanOnce();
+    if (found === null) throw new Error("process listing unavailable");
+    return { agents: found.map((a) => ({ pid: a.pid, runtime: a.runtime, launch: a.launch ?? "interactive",
+      project: a.repo ?? (a.cwd ? basename(a.cwd) : undefined),
+      elapsed_ms: a.started_at === undefined ? null : Math.max(0, this.now() - a.started_at),
+      state: a.activity?.working ? "working" : "idle" })),
+      model_servers: this.models, incomplete: !!(this.unexamined.size || this.unselected),
+      unreported: this.unexamined.size + this.unselected };
   }
 
   start(): void {
@@ -324,32 +358,63 @@ export class AgentDiscovery {
     return this.nonAgentDirs.some((d) => cwd === d || cwd.startsWith(d.endsWith("/") ? d : d + "/"));
   }
 
-  /** The candidates of this scan: agent processes not run by a non-agent parent, at most maxPerRuntime per runtime. */
-  private candidatesOf(mine: readonly ProcRow[]): Array<{ p: ProcRow; rt: AgentRuntime }> {
+  /**
+   * The candidates of this scan: agent processes not run by a non-agent parent, at most maxPerRuntime per runtime.
+   * AGENT-SEE-1: one agent per top-level runtime process: a relaunched child of the same runtime (Gemini, opencode) is
+   * its parent's, and an ACP adapter counts only while it runs no agent process (that process is then the agent, marked
+   * "acp"). Helpers (MCP servers, tools, `codex-code-mode-host`) are no runtime at all (agent-procs.ts).
+   */
+  private candidatesOf(mine: readonly ProcRow[]): Array<{ p: ProcRow; rt: AgentRuntime; kind: AgentKind }> {
     const byPid = new Map(mine.map((p) => [p.pid, p]));
-    const byRt = new Map<AgentRuntime, ProcRow[]>();
+    const kinds = new Map<number, AgentKind>();
     for (const p of mine) {
       // This daemon's own children (the orchestrator's Claude) announce themselves (PROTOCOL §8).
       if (p.ppid === process.pid) continue;
-      const rt = runtimeOf(p.command);
-      if (!rt) continue;
+      const kind = classifyAgent(p.command, p.tty);
+      if (kind) kinds.set(p.pid, kind);
+    }
+    const kids = new Map<number, number[]>();
+    for (const p of mine) {
+      const list = kids.get(p.ppid);
+      if (list) list.push(p.pid); else kids.set(p.ppid, [p.pid]);
+    }
+    /** An agent process (not a host) below `pid`, within a few levels. */
+    const runsAgent = (pid: number): boolean => {
+      let level = kids.get(pid) ?? [];
+      for (let depth = 0; depth < 4 && level.length; depth++) {
+        if (level.some((k) => { const kk = kinds.get(k); return !!kk && !kk.host; })) return true;
+        level = level.flatMap((k) => kids.get(k) ?? []).slice(0, 400);
+      }
+      return false;
+    };
+    const byRt = new Map<AgentRuntime, ProcRow[]>();
+    const chosen = new Map<number, AgentKind>();
+    for (const p of mine) {
+      let kind = kinds.get(p.pid);
+      if (!kind) continue;
+      const rt = kind.runtime;
       const parent = byPid.get(p.ppid);
       if (parent && NON_AGENT_PARENT.test(parent.command)) continue;
       if (this.cache.get(`${p.pid}:${p.startedAt ?? 0}`)?.excluded) continue;
+      const parentKind = kinds.get(p.ppid);
+      if (parentKind && !parentKind.host && parentKind.runtime === rt && RELAUNCHING.has(rt)) continue;
+      if (kind.host && runsAgent(p.pid)) continue;
+      if (parentKind?.host) kind = { ...kind, launch: "acp" };
+      chosen.set(p.pid, kind);
       byRt.set(rt, [...(byRt.get(rt) ?? []), p]);
     }
     this.truncated = new Set();
     this.unselected = 0;
     const kept = new Map<number, AgentRuntime>();
     for (const [rt, list] of byRt) {
-      if (list.length > this.maxPerRuntime) { this.truncated.add(rt === "grok" ? "other" : rt); this.unselected += list.length - this.maxPerRuntime; }
+      if (list.length > this.maxPerRuntime) { this.truncated.add(wireRuntime(rt)); this.unselected += list.length - this.maxPerRuntime; }
       // Over the cap, the least recently examined go first (never examined: first of all, newest first), so the whole
       // population rotates through (Codex r4 #7); the rest keep their last status (keepAlive).
       const seenAt = (p: ProcRow) => this.cache.get(`${p.pid}:${p.startedAt ?? 0}`)?.examinedAt ?? 0;
       const picked = [...list].sort((a, b) => seenAt(a) - seenAt(b) || (b.startedAt ?? 0) - (a.startedAt ?? 0) || b.pid - a.pid).slice(0, this.maxPerRuntime);
       for (const p of picked) kept.set(p.pid, rt);
     }
-    return mine.flatMap((p) => { const rt = kept.get(p.pid); return rt ? [{ p, rt }] : []; }); // in listing order
+    return mine.flatMap((p) => { const rt = kept.get(p.pid); const kind = chosen.get(p.pid); return rt && kind ? [{ p, rt, kind }] : []; }); // in listing order
   }
 
   /** One scan; null when the process list could not be read (then nothing may change: Codex 5). */
@@ -364,9 +429,14 @@ export class AgentDiscovery {
 
   private async scanOnce(): Promise<DiscoveredAgent[] | null> {
     this.refreshPolicy();
+    // The scan's wall-clock budget counts from its start (Codex p8 #5): the listing, environment reads, Kimi's session
+    // lookup and the examinations all come out of it (every scan still examines MIN_EXAMINED sessions).
+    const deadline = Date.now() + this.scanBudgetMs;
     const all = await this.provider.list().catch(() => null);
     if (!all || !all.length) return null; // `ps` itself is always running: an empty list is a failed one
     const now = this.now();
+    // Local model servers are machine load, whoever runs them (ollama has its own user on Linux): names and counts only.
+    this.models = modelServers(all.map((p) => p.command));
     const mine = all.filter((p) => p.uid === this.uid);
     this.codexHost = mine.some((p) => isCodexHost(p.command));
     this.minePids = new Set(mine.map((p) => p.pid));
@@ -395,9 +465,12 @@ export class AgentDiscovery {
     // WALKIE_AGENT too: a seat's own process names it even before it has children (Opus seats r9 LOW).
     const loginEnv = loginPids.length ? await this.provider.envVars(loginPids, [...LOGIN_VARS, "WALKIE_AGENT"]) : new Map<number, Record<string, string>>();
     const tokenEnv = this.onScan ? await envNamesOf(this.provider, loginPids, ALL_TOKEN_VARS) : new Map<number, string[]>();
+    const kimiPids = candidates.filter(({ rt }) => rt === "kimi").map(({ p }) => p.pid);
+    const kimiEnv = kimiPids.length ? await this.provider.envVars(kimiPids, KIMI_VARS) : new Map<number, Record<string, string>>();
+    await this.bindKimi(candidates, kimiEnv, now, new ScanBudget(deadline, KIMI_OPS_PER_SCAN));
     const usedFiles = new Set<string>();
     const out: DiscoveredAgent[] = [];
-    const examine = async ({ p, rt }: { p: ProcRow; rt: AgentRuntime }): Promise<void> => {
+    const examine = async ({ p, rt, kind }: { p: ProcRow; rt: AgentRuntime; kind: AgentKind }): Promise<void> => {
       const key = `${p.pid}:${p.startedAt ?? 0}`;
       const entry = this.cache.get(key) ?? {};
       this.cache.set(key, entry);
@@ -424,9 +497,10 @@ export class AgentDiscovery {
       const agent = resolveAgentName(agentEnv) ?? pidName(rt, p.pid);
       // A seat running as this user (`--same-user`) is published by its host daemon, never as a discovered session
       // (Opus seats r9 LOW): its WALKIE_AGENT, or the runtime's own, names a seat.
-      if (RESERVED_AGENTS.has(agent) || isSeatAgent(agent) || isSeatAgent(loginEnv.get(p.pid)?.WALKIE_AGENT)) return;
+      // The daemon's own names (board steward, fleet desk) are never a discovered session (fix round 2, Opus LOW).
+      if (RESERVED_AGENTS.has(agent) || agent === STEWARD_AGENT || agent === FLEET_AGENT || isSeatAgent(agent) || isSeatAgent(loginEnv.get(p.pid)?.WALKIE_AGENT) || isSeatAgent(kimiEnv.get(p.pid)?.WALKIE_AGENT)) return;
       if (this.unnamedMinAgeMs > 0 && agent === pidName(rt, p.pid) && p.startedAt !== null && now - p.startedAt < this.unnamedMinAgeMs && !this.live.has(agent)) {
-        this.youngUnnamed.add(rt === "grok" ? "other" : rt);
+        this.youngUnnamed.add(wireRuntime(rt));
         return;
       }
       const ratio = cpu.get(p.pid);
@@ -434,11 +508,11 @@ export class AgentDiscovery {
       const busy = ratio !== null && ratio !== undefined && ratio >= CPU_BUSY_RATIO;
       entry.busyScans = busy ? (entry.busyScans ?? 0) + 1 : 0;
       if (entry.busyScans >= 2) entry.lastBusyAt = now;
-      const activity = await this.activityOf(p, rt, session, login, entry, now, usedFiles);
+      const activity = await this.activityOf(p, rt, session, login, entry, now, usedFiles, kind.launch === "headless");
       out.push({
-        agent, runtime: rt, pid: p.pid, key, ...(session ? { session: session.slice(0, 80) } : {}),
+        agent, runtime: rt, pid: p.pid, key, ...(kind.launch ? { launch: kind.launch } : {}), ...(session ? { session: session.slice(0, 80) } : {}),
         ...(p.startedAt ? { started_at: p.startedAt } : {}),
-        ...(entry.ctx?.repo ? { repo: entry.ctx.repo.slice(0, 120) } : {}),
+        ...(entry.ctx ? { repo: (entry.ctx.repo ?? basename(entry.cwdAbs ?? "")).slice(0, 120) } : {}),
         ...(entry.ctx?.branch ? { branch: entry.ctx.branch.slice(0, 120) } : {}),
         ...(entry.ctx?.cwd ? { cwd: entry.ctx.cwd.slice(0, 300) } : {}),
         ...(login ? { login_dir: login } : {}),
@@ -451,9 +525,8 @@ export class AgentDiscovery {
     // The least recently examined first: a budget that runs out never starves the same sessions (Codex r3 #4).
     const lastSeen = (c: { p: ProcRow }) => this.cache.get(`${c.p.pid}:${c.p.startedAt ?? 0}`)?.examinedAt ?? 0;
     const queue = [...candidates].sort((x, y) => lastSeen(x) - lastSeen(y));
-    // The budget starts now, after the process listing and environment reads, and every scan examines at least
-    // MIN_EXAMINED sessions whatever the budget, so a slow machine still makes progress (Codex r4 #7).
-    const deadline = Date.now() + this.scanBudgetMs;
+    // Every scan examines at least MIN_EXAMINED sessions whatever the budget, so a slow machine still makes progress
+    // (Codex r4 #7).
     let started = 0;
     const worker = async () => {
       for (let next = queue.shift(); next; next = queue.shift()) {
@@ -476,17 +549,74 @@ export class AgentDiscovery {
     return out;
   }
 
+  /**
+   * Binds running Kimi processes to their sessions on disk (kimi-sessions.ts), per directory: every unbound process of
+   * one directory and Kimi home is matched in one pass over that bucket, listed once, under the scan's budget. A process
+   * whose working directory isn't known yet has it looked up here (bounded by the same deadline). Unambiguous pairs
+   * only; a bound process keeps its session for its life.
+   */
+  private async bindKimi(candidates: ReadonlyArray<{ p: ProcRow; rt: AgentRuntime }>, kimiEnv: Map<number, Record<string, string>>, now: number, budget: ScanBudget): Promise<void> {
+    const kimi = candidates.filter(({ rt }) => rt === "kimi");
+    if (!kimi.length) return;
+    const taken = new Set<string>();
+    const groups = new Map<string, { home: string; cwd: string; procs: KimiProc[]; entries: Map<string, Entry>; due: boolean }>();
+    for (const { p } of kimi) {
+      const key = `${p.pid}:${p.startedAt ?? 0}`;
+      const entry = this.cache.get(key) ?? {};
+      this.cache.set(key, entry);
+      if (entry.thread) { taken.add(entry.thread); continue; }
+      if (!entry.cwdAbs) {
+        if (budget.spent) continue;
+        const cwd = await this.provider.cwd(p.pid).catch(() => undefined);
+        if (cwd) { entry.cwdAbs = cwd; entry.cwdAt = now; }
+      }
+      if (!entry.cwdAbs) continue;
+      const home = kimiHomeOf(kimiEnv.get(p.pid));
+      const gk = `${home}\n${entry.cwdAbs}`;
+      // Every unbound process of the directory takes part in its matching (a sibling tried recently still competes for
+      // the sessions it could own); the bucket is read only when one of them is due for a retry.
+      const g = groups.get(gk) ?? { home, cwd: entry.cwdAbs, procs: [], entries: new Map<string, Entry>(), due: false };
+      g.procs.push({ key, startedAt: p.startedAt });
+      g.entries.set(key, entry);
+      g.due ||= now - (entry.kimiAt ?? 0) >= KIMI_RETRY_MS;
+      groups.set(gk, g);
+    }
+    const uid = process.getuid?.() ?? null;
+    for (const g of groups.values()) {
+      if (!g.due) continue;
+      const sessions = listKimiSessions(g.home, g.cwd, uid, budget);
+      if (sessions === null) { this.log.warn("agent_discovery_kimi_budget", { processes: g.procs.length }); continue; } // next scan
+      for (const e of g.entries.values()) e.kimiAt = now;
+      for (const [key, s] of assignKimiSessions(g.procs, sessions, taken)) {
+        const entry = g.entries.get(key);
+        if (!entry || !containedWire(s)) continue;
+        taken.add(s.id);
+        entry.thread = s.id;
+        entry.kimiPath = s.file;
+        entry.kimiRoot = s.root;
+      }
+    }
+  }
+
   /** The session's file (transcript / rollout) and CPU, judged (activity.ts), with the idle hysteresis. */
-  private async activityOf(p: ProcRow, rt: AgentRuntime, session: string | undefined, login: string | undefined, entry: Entry, now: number, used: Set<string>): Promise<SeenActivity> {
+  private async activityOf(p: ProcRow, rt: AgentRuntime, session: string | undefined, login: string | undefined, entry: Entry, now: number, used: Set<string>, headless = false): Promise<SeenActivity> {
     let kind: FileKind = "other";
     if (rt === "claude-code" && session) {
       kind = "claude";
       entry.file = this.files.claudeTranscript(login ?? this.claudeDir, entry.cwdAbs, session, now);
     } else if (rt === "codex") {
       kind = "codex";
-    } else if (rt === "kimi" && entry.file === undefined) {
-      const open = await this.provider.openFiles(p.pid).catch(() => [] as string[]);
-      entry.file = open.map((f) => this.files.openFile(f)).find((f): f is string => !!f) ?? null;
+    } else if (rt === "kimi") {
+      // The session's wire.jsonl, found on disk by its directory and start (kimi-sessions.ts; Kimi holds no file open),
+      // re-validated every scan (this user's regular file, inside the sessions directory).
+      if (entry.kimiPath && entry.kimiRoot) {
+        entry.file = this.files.kimiFile(entry.kimiPath, entry.kimiRoot);
+        if (entry.file) kind = "kimi";
+      } else if (entry.file === undefined) {
+        // An older Kimi that holds its session file open.
+        const open = await this.provider.openFiles(p.pid).catch(() => [] as string[]);
+        entry.file = open.map((f) => this.files.openFile(f)).find((f): f is string => !!f) ?? null;
+      }
     }
     const path = entry.file ?? null;
     const read = path ? this.files.read(path, kind, entry.cwdAbs ?? "") : null;
@@ -506,9 +636,17 @@ export class AgentDiscovery {
     // A tool still running (Codex r2 #6 / r3 #3): a tool call with no result after it in the transcript / rollout, and
     // the session process alive (it is: it is being scanned). A long MCP call or a poll of an older command writes
     // nothing for minutes and starts no process; it is still work.
+    // A session file read before that can't be read now (a transient failure, Codex p8 #4): the last verdict stands, for
+    // at most READ_FAIL_HOLD_MS; never a change of state on missing evidence.
+    if (!read && entry.seen && entry.readAt !== undefined && now - entry.readAt < READ_FAIL_HOLD_MS) return entry.seen;
+    if (read) entry.readAt = now;
     const pending = !!info.toolRunning && !info.unknown && read !== null;
     const judged = judge(now, fileAt, info.midTurn, entry.lastBusyAt ?? null, !!read);
-    const v = pending ? { ...judged, working: true } : judged;
+    // AGENT-SEE-1 liveness (Codex p8 #6): a headless run (`-p`, `exec`, no terminal) exists only to do its one job, so
+    // while it runs and has no session file to judge by, it is working. An interactive session without one is judged
+    // by its CPU (MISSION-1): it may sit at its prompt, waiting for its person. A hook's own state still wins (decide).
+    const live = headless && !read && entry.readAt === undefined;
+    const v = pending || live ? { ...judged, working: true } : judged;
     // Hysteresis (Opus 8): working turns idle only after IDLE_SCANS idle scans and IDLE_HOLD_MS without activity.
     entry.idleScans = v.working ? 0 : (entry.idleScans ?? 0) + 1;
     const quiet = v.lastActiveAt === null ? Infinity : now - v.lastActiveAt;
@@ -520,7 +658,7 @@ export class AgentDiscovery {
       if (title) entry.title = title;
       else if (entry.title === undefined) entry.title = "";
     }
-    return {
+    const seen: SeenActivity = {
       working,
       ...(v.lastActiveAt !== null ? { last_active_at: Math.round(v.lastActiveAt) } : {}),
       ...(fileAt !== null ? { file_active_at: Math.round(fileAt) } : {}),
@@ -532,6 +670,8 @@ export class AgentDiscovery {
       ...(info.model ? { model: info.model } : {}),
       ...(this.share.prompts && entry.title ? { title: entry.title } : {}),
     };
+    entry.seen = seen;
+    return seen;
   }
 
   private async sessionOf(p: ProcRow, rt: AgentRuntime, kid: Record<string, string> | undefined, entry: Entry, login: string | undefined): Promise<string | undefined> {
@@ -543,8 +683,8 @@ export class AgentDiscovery {
       if (s && valid(s.sessionId) && (s.startedAt === undefined || p.startedAt === null || s.startedAt >= p.startedAt - 5_000)) return s.sessionId;
       return valid(kid?.CLAUDE_CODE_SESSION_ID);
     }
-    if (rt === "kimi") return valid(kid?.KIMI_SESSION_ID);
-    if (rt === "grok") return undefined;
+    if (rt === "kimi") return valid(kid?.KIMI_SESSION_ID) ?? entry.thread;
+    if (rt === "grok" || rt === "gemini" || rt === "opencode") return undefined;
     if (!entry.thread) {
       const files = await this.provider.openFiles(p.pid).catch(() => [] as string[]);
       const rollout = files.find((f) => ROLLOUT_RE.test(f));
@@ -572,8 +712,10 @@ export class AgentDiscovery {
       if (found === null) { this.log.warn("agent_discovery_scan_failed", {}); return; } // nothing changes (Codex 5)
       const unreported = this.unexamined.size + this.unselected;
       this.core.discoveryHealth = unreported ? { incomplete: true, unreported } : null;
-      this.apply(found);
-      try { this.onScan?.(found); } catch (err) { this.log.warn("agent_discovery_listener_failed", { err: (err as Error).message }); }
+      this.core.modelServers = this.models.length ? this.models : null;
+      trackOp("agent_discovery", () => this.apply(found));
+      // The accounts service knows the logins of Claude, Codex, Kimi and Grok only.
+      try { this.onScan?.(found.filter(isAccountSession)); } catch (err) { this.log.warn("agent_discovery_listener_failed", { err: (err as Error).message }); }
     } catch (err) {
       this.log.warn("agent_discovery_failed", { err: (err as Error).message });
     } finally {
@@ -622,13 +764,17 @@ export class AgentDiscovery {
       next.set(a.agent, (next.get(a.agent) ?? new Set()).add(a.key ?? `${a.pid}:${a.started_at ?? 0}`));
       byAgent.set(a.agent, [...(byAgent.get(a.agent) ?? []), a]);
     }
-    for (const [name, list] of byAgent) this.decide(name, merge(list), now);
+    for (const [name, list] of byAgent) {
+      const a = merge(list);
+      this.core.noteLocalCwd(name, a.cwd);
+      this.decide(name, a, now);
+    }
     // Not in this scan: exited (offline right away, whoever posted its status) only when its process is gone. A
     // process still running that wasn't reported (over the per-runtime cap, or not examined within the scan's budget)
     // keeps its agent and state (Codex r2 #8 / #12).
     for (const [name, keys] of this.live) {
       if (next.has(name)) continue;
-      if ([...keys].some((k) => this.runningKeys.has(k))) { next.set(name, keys); this.keepAlive(name, now); }
+      if ([...keys].some((k) => this.runningKeys.has(k) && ![...next.values()].some((v) => v.has(k)))) { next.set(name, keys); this.keepAlive(name, now); }
       else this.markOffline(name, true);
     }
     this.live = next;
@@ -645,9 +791,12 @@ export class AgentDiscovery {
    */
   private adopt(found: readonly DiscoveredAgent[], now: number): DiscoveredAgent[] {
     const key = (a: DiscoveredAgent) => `${a.pid}:${a.started_at ?? 0}`;
-    const unnamed = found.filter((a) => SWEEP_RUNTIMES.has(a.runtime) && a.agent === pidName(a.runtime, a.pid) && !!a.cwd);
-    for (const k of [...this.adopted.keys()]) if (!unnamed.some((a) => key(a) === k)) this.adopted.delete(k);
-    if (!unnamed.length) return [...found];
+    const unnamed = found.filter((a) => a.agent === pidName(a.runtime, a.pid) && !!a.cwd);
+    const adopted = this.adoptedByProcess();
+    // A takeover lasts as long as its process runs (Codex p8 #2): kept through a scan that didn't examine or report
+    // it (budget, cap) and across restarts (persisted); dropped once the process is gone from a successful listing.
+    for (const k of [...adopted.keys()]) if (!this.runningKeys.has(k)) { adopted.delete(k); this.adoptedDirty = true; }
+    if (!unnamed.length) { this.saveAdopted(); return [...found]; }
     const claimed = new Set(found.map((a) => a.agent)); // named sessions' cards are theirs
     const cards = this.core.store.agents().flatMap((row) => {
       if (row.node !== this.core.nodeId || claimed.has(row.agent)) return [];
@@ -657,23 +806,49 @@ export class AgentDiscovery {
       const cwd = this.core.localCwds?.get(row.agent) ?? prev.cwd;
       // A sub-agent's card (WALKIE-MISSION-SUB-1) is its session's child, never a process's to take over.
       if (prev.state === "offline" || prev.parent || !cwd || this.isOwned(row.agent, row, prev)) return [];
-      return [{ agent: row.agent, ts: row.ts, runtime: prev.runtime ?? "other", cwd }];
+      return [{ agent: row.agent, ts: row.ts, runtime: prev.runtime === "other" ? prev.runtime_name ?? "other" : prev.runtime, cwd }];
     }).sort((x, y) => y.ts - x.ts);
-    const taken = new Set<string>(this.adopted.values());
-    return found.map((a) => {
+    const taken = new Set<string>(adopted.values());
+    const out = found.map((a) => {
       if (!unnamed.includes(a)) return a;
       // Once taken over, the card stays this process's (its status is discovery's own from then on).
-      const kept = this.adopted.get(key(a));
+      const kept = adopted.get(key(a));
       if (kept && !claimed.has(kept)) return { ...a, agent: kept };
-      if (kept) this.adopted.delete(key(a)); // a session now reported under that name owns the card
+      if (kept) { adopted.delete(key(a)); this.adoptedDirty = true; } // a session now reported under that name owns the card
       // Same directory first; else one inside the other (the session cd'd into a subdirectory, Opus r2 #4).
-      const mine = cards.filter((c) => !taken.has(c.agent) && c.runtime === a.runtime);
+      const mine = cards.filter((c) => !taken.has(c.agent) && c.runtime === (runtimeName(a.runtime) ?? a.runtime));
       const card = mine.find((c) => c.cwd === a.cwd) ?? mine.find((c) => sameTree(c.cwd, a.cwd as string));
       if (!card) return a;
       taken.add(card.agent);
-      this.adopted.set(key(a), card.agent);
+      adopted.set(key(a), card.agent);
+      this.adoptedDirty = true;
       return { ...a, agent: card.agent };
     });
+    this.saveAdopted();
+    return out;
+  }
+
+  /** Takeovers by process (pid:start → the card's agent), from the store (persisted across restarts). */
+  private adoptedByProcess(): Map<string, string> {
+    if (this.adoptedMap) return this.adoptedMap;
+    const map = new Map<string, string>();
+    try {
+      const raw = this.core.store.getMeta(ADOPTED_META);
+      for (const [k, v] of Object.entries(raw ? (JSON.parse(raw) as Record<string, unknown>) : {})) {
+        if (/^\d+:\d+$/.test(k) && typeof v === "string" && /^[a-z0-9][a-z0-9._-]{0,47}$/.test(v)) map.set(k, v);
+      }
+    } catch { /* unreadable: start empty */ }
+    this.adoptedMap = map;
+    return map;
+  }
+
+  private saveAdopted(): void {
+    if (!this.adoptedDirty || !this.adoptedMap) return;
+    this.adoptedDirty = false;
+    const entries = [...this.adoptedMap].slice(-OWNED_MAX);
+    try { this.core.store.setMeta(ADOPTED_META, JSON.stringify(Object.fromEntries(entries))); } catch (err) {
+      this.log.warn("agent_discovery_adopted_save_failed", { err: (err as Error).message });
+    }
   }
 
   /**
@@ -749,7 +924,8 @@ export class AgentDiscovery {
     const model = act?.model ?? prev?.model;
     return {
       // Grok has no runtime value on the wire yet (v0.1.3 peers would reject one): it reports as "other".
-      agent: a.agent, state, runtime: a.runtime === "grok" ? "other" : a.runtime,
+      agent: a.agent, state, runtime: wireRuntime(a.runtime),
+      ...(runtimeName(a.runtime) ? { runtime_name: runtimeName(a.runtime) } : {}), ...(a.launch ? { launch: a.launch } : {}),
       activity: state === "working" ? act?.step ?? WORKING_ACTIVITY : DISCOVERED_ACTIVITY,
       ...(title ? { title } : {}), ...(task ? { task } : {}), ...(model ? { model } : {}),
       ...(a.repo ? { repo: a.repo } : {}), ...(a.branch ? { branch: a.branch } : {}), ...(a.cwd ? { cwd: a.cwd } : {}),
@@ -769,10 +945,12 @@ export class AgentDiscovery {
       activity: state === "working" ? act?.step ?? (prev.state === "working" ? prev.activity : undefined) ?? WORKING_ACTIVITY : DISCOVERED_ACTIVITY,
       ...(!prev.title && act?.title ? { title: act.title } : {}),
       ...(!prev.model && act?.model ? { model: act.model } : {}),
+      ...(!prev.launch && a.launch ? { launch: a.launch } : {}),
     };
   }
 
   private markOffline(name: string, exited: boolean): boolean {
+    if (daemonOwnsAgent(name)) return false;
     const row = this.core.store.agent(this.core.nodeId, name);
     const prev = row ? (JSON.parse(row.body) as Status) : null;
     if (!prev || prev.state === "offline") return false;
@@ -831,11 +1009,11 @@ export class AgentDiscovery {
     if (this.unexamined.size) return;
     const alive = new Set([...found.map((a) => a.agent), ...this.live.keys()]); // incl. running sessions not reported
     const sessionPids = new Map(found.map((a) => [a.pid, a.agent]));
-    const unnamed = new Set<string>([...found.filter((a) => a.agent === pidName(a.runtime, a.pid)).map((a) => (a.runtime === "grok" ? "other" : a.runtime)), ...this.youngUnnamed]);
+    const unnamed = new Set<string>([...found.filter((a) => a.agent === pidName(a.runtime, a.pid)).map((a) => wireRuntime(a.runtime)), ...this.youngUnnamed]);
     let n = 0;
     for (const row of this.core.store.agents()) {
       if (n >= SWEEP_MAX_PER_TICK) break;
-      if (row.node !== this.core.nodeId || alive.has(row.agent)) continue;
+      if (row.node !== this.core.nodeId || alive.has(row.agent) || isSeatAgent(row.agent)) continue;
       const prev = JSON.parse(row.body) as Status;
       const observed = observedAt(prev, row.ts);
       if (now - observed >= IDLE_ARCHIVE_MS) continue;

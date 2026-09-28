@@ -9,6 +9,7 @@ import { AGENT_ENV_MARKERS, type ProcRow } from "../../src/cli/agent-detect.ts";
 import type { Args } from "../../src/cli/args.ts";
 import { AGENT_TTY, addClaude, person, tokenReader, vaultCommand } from "../../src/cli/commands/vault.ts";
 import { importClaudeLogin } from "../../src/accounts/vault/import.ts";
+import { poolNoticeLines } from "../../src/cli/commands/accounts-pool.ts";
 import type { Ctx } from "../../src/cli/context.ts";
 import { setTtyForTests, type Tty } from "../../src/cli/tty.ts";
 
@@ -180,7 +181,7 @@ describe("pick and exec (scripts and agents)", () => {
   });
 });
 
-describe("RESET-CLOCK-1 at the command line", () => {
+describe("RESET-CLOCK-1 / COMPANY POOL at the command line", () => {
   test("pick routes by the remembered reset (from accounts.json, no daemon, no ping) and names the next account to free", async () => {
     const v = Vault.open(home, { keystore: fileKeyStore(home) });
     await v.addClaude({ id: "a".repeat(24), label: "al***@ex***.com", plan: null, token: TOKEN, linked: false });
@@ -201,6 +202,62 @@ describe("RESET-CLOCK-1 at the command line", () => {
     const x = ctx(["exec", "/usr/bin/true"], { provider: "claude" });
     expect(await vaultCommand(x.c, "exec")).toBe(75);
     expect(JSON.parse(x.err[0] as string)).toMatchObject({ walkie: "all_accounts_exhausted", next_free: { account: "b".repeat(24) } });
+  });
+
+  test("pool on|off: only a team owner (or an owner's agent); turning it on tells the team in #general", async () => {
+    const posts: Array<{ channel: string; text: string }> = [];
+    const client = (role: string) => () => ({ me: async () => ({ role }), post: async (b: { channel: string; text: string }) => { posts.push(b); return {}; } });
+    const asMember = ctx(["pool", "on"]);
+    (asMember.c as unknown as { client: unknown }).client = client("member");
+    await expect(vaultCommand(asMember.c, "pool")).rejects.toThrow(/only a team owner/);
+    process.env.CLAUDECODE = "1"; // the owner's agent may (agent setup is allowed by design)
+    const asOwner = ctx(["pool", "on"], {}, true);
+    (asOwner.c as unknown as { client: unknown }).client = client("owner");
+    expect(await vaultCommand(asOwner.c, "pool")).toBe(0);
+    delete process.env.CLAUDECODE;
+    expect(JSON.parse(asOwner.out[0] as string)).toMatchObject({ on: true, told_team: true });
+    expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).vault_team_policy.policy).toBe("company");
+    expect(posts).toEqual([{ channel: "general", text: expect.stringContaining("walkie accounts personal <account>") }]);
+    const off = ctx(["pool", "off"]);
+    (off.c as unknown as { client: unknown }).client = client("owner");
+    expect(await vaultCommand(off.c, "pool")).toBe(0);
+    expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).vault_team_policy.policy).toBe("per-account");
+    expect(posts.length).toBe(1);
+    await expect(vaultCommand(ctx(["pool", "everyone"]).c, "pool")).rejects.toThrow(/on, off or status/);
+  });
+
+  test("personal [off] and promote: a person confirms at the terminal; an agent only while agent admin is on (pre.8 merge)", async () => {
+    const v = Vault.open(home, { keystore: fileKeyStore(home) });
+    await v.addClaude({ id: "a".repeat(24), label: "al***@ex***.com", plan: null, token: TOKEN, linked: false });
+    v.close();
+    setTtyForTests(scripted(["y"]));
+    expect(await vaultCommand(ctx(["personal", "al***@ex***.com"]).c, "personal")).toBe(0);
+    const reopened = () => Vault.open(home, { keystore: fileKeyStore(home) }).get("a".repeat(24));
+    expect([reopened()?.personal, reopened()?.policy]).toEqual([true, "local"]); // its policy is untouched
+    setTtyForTests(scripted(["y"]));
+    expect(await vaultCommand(ctx(["personal", "a".repeat(24), "off"]).c, "personal")).toBe(0);
+    expect(reopened()?.personal).toBe(false);
+    setTtyForTests(scripted(["y"]));
+    expect(await vaultCommand(ctx(["promote", "a".repeat(24)]).c, "promote")).toBe(0);
+    expect(reopened()?.home_at).toBeGreaterThan(Date.now() - 60_000);
+    const agent = ctx(["personal", "a".repeat(24)], { "for-agent": true });
+    (agent.c as unknown as { agentSignals: () => unknown }).agentSignals = () => ({ marker: "--for-agent", inspection: "ok" });
+    expect(await vaultCommand(agent.c, "personal")).toBe(0); // agent admin is on by default: audited, like accounts policy
+    expect(reopened()?.personal).toBe(true);
+    writeFileSync(join(home, "config.json"), JSON.stringify({ agent_admin: false }));
+    await expect(vaultCommand(agent.c, "personal")).rejects.toThrow(/agent admin is off/);
+    const promoter = ctx(["promote", "a".repeat(24)], { "for-agent": true });
+    (promoter.c as unknown as { agentSignals: () => unknown }).agentSignals = () => ({ marker: "--for-agent", inspection: "ok" });
+    await expect(vaultCommand(promoter.c, "promote")).rejects.toThrow(/agent admin is off/);
+  });
+
+  test("the pool notice: shown to each person once per time an owner turned it on; nothing while it is off", () => {
+    expect(poolNoticeLines({ policy: "per-account", at: 5, by: "alex" }, home)).toEqual([]);
+    const first = poolNoticeLines({ policy: "company", at: 5, by: "alex" }, home);
+    expect(first.join("\n")).toContain("The company account pool is on");
+    expect(first.join("\n")).toContain("walkie accounts personal <account>");
+    expect(poolNoticeLines({ policy: "company", at: 5, by: "alex" }, home)).toEqual([]);
+    expect(poolNoticeLines({ policy: "company", at: 9, by: "alex" }, home).length).toBe(2); // turned on again later
   });
 });
 

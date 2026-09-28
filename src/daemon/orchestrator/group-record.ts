@@ -4,6 +4,7 @@
 // the group id, its start time and command) in orchestrator.json, and the next daemon start ends a recorded group
 // only once it is sure the group is still the one it started.
 import { spawnSync } from "node:child_process";
+import { killMarkedProcesses } from "./marked-processes.ts";
 
 export interface GroupRecord {
   /** The group id: the leader's (Claude's) pid. */
@@ -12,6 +13,7 @@ export interface GroupRecord {
   started: string;
   /** The leader's command as `ps -o comm=` prints it. */
   comm: string;
+  marker?: string;
 }
 
 export interface ProcRow { pid: number; pgid: number; uid: number; started: string; comm: string }
@@ -35,9 +37,9 @@ function ps(args: string[]): string {
 }
 
 /** The record for a group whose leader is `pid` (just spawned), or null when `ps` can't see it. */
-export function recordGroup(pid: number): GroupRecord | null {
+export function recordGroup(pid: number, marker?: string): GroupRecord | null {
   const row = parsePs(ps(["-o", "pid=,pgid=,uid=,lstart=,comm=", "-p", String(pid)])).find((r) => r.pid === pid);
-  return row && row.pgid === pid ? { pgid: pid, started: row.started, comm: row.comm } : null;
+  return row && row.pgid === pid ? { pgid: pid, started: row.started, comm: row.comm, ...(marker ? { marker } : {}) } : null;
 }
 
 /** `ps` start times ("Sat Sep 26 20:16:01 2026") as epoch ms (local time), or NaN. */
@@ -74,14 +76,17 @@ export async function endStaleGroups(recs: readonly GroupRecord[], graceMs = 2_0
   const uid = process.getuid?.() ?? -1;
   const before = Date.now();
   const rows = parsePs(ps(["-A", "-o", "pid=,pgid=,uid=,lstart=,comm="]));
-  const groups = recs.filter((rec) => stillOurs(rec, rows, uid, before).length > 0);
+  const marked = recs.filter((rec) => rec.marker);
+  const markedPids = marked.flatMap((rec) => killMarkedProcesses(
+    stillOurs(rec, rows, uid, before).includes(rec.pgid) ? rec.pgid : 0, rec.marker!));
+  const groups = recs.filter((rec) => !rec.marker && stillOurs(rec, rows, uid, before).length > 0);
   const pids = groups.flatMap((rec) => stillOurs(rec, rows, uid, before));
   for (const g of groups) { try { process.kill(-g.pgid, "SIGTERM"); } catch { /* gone */ } }
-  if (!groups.length) return [];
+  if (!groups.length) return markedPids;
   const deadline = Date.now() + graceMs;
   while (Date.now() < deadline && groups.some((g) => alive(-g.pgid))) await Bun.sleep(50);
   for (const g of groups) { try { process.kill(-g.pgid, "SIGKILL"); } catch { /* gone */ } }
-  return pids;
+  return [...markedPids, ...pids];
 }
 
 function alive(pidOrGroup: number): boolean {

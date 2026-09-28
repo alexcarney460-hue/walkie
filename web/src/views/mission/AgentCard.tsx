@@ -46,7 +46,7 @@ function AgentCardImpl({ agent, account, onOpen }: { agent: AgentView; account?:
     >
       <span className="agent-card-top">
         <span className="agent-name mono truncate">{agentDisplayName(agent.agent)}</span>
-        <RuntimeBadge runtime={s.runtime} />
+        <RuntimeBadge runtime={s.runtime} runtime_name={s.runtime_name} launch={s.launch} />
         {agent.agent === ORCHESTRATOR_AGENT && s.model && <span className="agent-model mono truncate" data-testid="orchestrator-model" title={s.model}>{modelLabel(s.model)}</span>}
         {account && <AccountChip account={account} now={now} />}
         <span className="agent-card-spacer" />

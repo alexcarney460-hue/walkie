@@ -8,12 +8,17 @@ import { HttpError, json, parseWith, readJson } from "../daemon/http.ts";
 import { LOCAL_BODY_MAX, limitWrite, requireTeam, route as addRoute, type Handler, type RouteCtx } from "../daemon/local-routes.ts";
 import { isConnectorId, type ConnectorId } from "./config.ts";
 import { CreateReq, parseKeys, type LinearService } from "./linear-service.ts";
+import type { LinearImportService } from "./linear-import/service.ts";
 import { ConfigureReq, type IntegrationManager } from "./manager.ts";
 import { PostError } from "./poster.ts";
 import { scrubMessage, scrubSecrets } from "./scrub.ts";
 import { setIntegrationSlot, type SlotDeps } from "../license/integrations.ts";
 
-export interface Integrations { readonly manager: IntegrationManager; readonly linear: LinearService }
+export interface Integrations {
+  readonly manager: IntegrationManager; readonly linear: LinearService;
+  /** The Linear import (LINEAR-IMPORT-1, src/integrations/linear-import/); absent in daemons started without it. */
+  readonly linearImport?: LinearImportService;
+}
 
 /** Connector ids whose posts count as meeting posts. */
 export const MEETING_SOURCES = ["fireflies", "wispr"] as const;
@@ -30,6 +35,10 @@ const MeetingsQuery = z.object({
  * secret-shaped tokens first, so an upstream echo can't reach a response or a log line. A success
  * body goes through the same scrubber (keys used + patterns), always, configured keys or not (#2).
  */
+export function integrationRoute(method: string, path: string | RegExp, h: Handler): void {
+  route(method, path, h);
+}
+
 function route(method: string, path: string | RegExp, h: Handler): void {
   addRoute(method, path, async (c, params) => {
     try {

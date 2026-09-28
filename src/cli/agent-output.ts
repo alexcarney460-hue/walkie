@@ -53,6 +53,7 @@ const BODY_FIELDS: Readonly<Record<string, Readonly<Record<string, Copy>>>> = {
   "agent.status": {
     agent: "raw", state: "raw", runtime: "raw", title: "line", task: "line", repo: "line", branch: "line", cwd: "line",
     activity: "line", model: "line", session: "line", started_at: "raw", ask_policy: "raw", parent: "raw", subagent_type: "line",
+    launch: "raw", runtime_name: "raw",
   },
   "artifact.share": { hash: "raw", name: "line", size: "raw", mime: "line", note: "wrap", thread: "raw" },
 };

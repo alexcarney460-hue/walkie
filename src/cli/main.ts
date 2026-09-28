@@ -20,10 +20,13 @@ import { orchestrator } from "./commands/orchestrator.ts";
 import { seat, seats } from "./commands/seats.ts";
 import { channel, directCmd, init, invite, join, status, teamCmd, whoCmd } from "./commands/team.ts";
 import { accounts } from "./commands/accounts.ts";
+import { discover } from "./commands/discover.ts";
 import { agentsCmd } from "./commands/archive.ts";
 import { mobile } from "./commands/mobile.ts";
 import { projectsCmd, taskCmd, tasksCmd } from "./commands/projects.ts";
+import { importCmd } from "./commands/import.ts";
 import { roomCmd } from "./commands/room.ts";
+import { boardCmd } from "./commands/steward.ts";
 import { wrap } from "./commands/wrap.ts";
 import { admin, runRemote, splitRemote } from "./commands/admin.ts";
 import { CLI_BOOLEANS } from "./booleans.ts";
@@ -55,7 +58,11 @@ team
                                            only share with people you trust with your computer: see SECURITY.md)
   pool run <model> [--quant q4|q8] [--machines a,b] | --file <x.gguf>   split one model across the sharing
                                            machines (llama.cpp RPC over Walkie); serves an OpenAI API on 127.0.0.1
-  pool status | stop | install             this machine's run and sharing; stop the run; install llama.cpp (pinned)
+  pool serve <model> [--quant q4|q8] [--on <machine>]   run a model whole on one machine's GPU (this one, the
+                                           named one, or the fastest one it fits); every member machine can use it
+  pool connect | disconnect <machine>      an OpenAI endpoint on 127.0.0.1 here for the model that machine serves
+  pool prepare <model> [--quant q4|q8]     keep a checked copy here so split runs load this machine's share from disk
+  pool status | stop [--on m] | install    this machine's run, served model and sharing; stop them; install llama.cpp
   accounts                                 model-provider accounts in use and usage left (5-hour, weekly), team-wide
   team add-machine <handle> [--json]       owner: a one-time link + install command for another of a member's machines
 switching accounts at usage limits (your own logins, in this machine's encrypted vault)
@@ -65,6 +72,11 @@ switching accounts at usage limits (your own logins, in this machine's encrypted
   accounts vault [--json]                  the vault: accounts, policy, sessions on each
   accounts remove <account>                forget a login
   accounts policy <account> local|own|shared [--with a,b]   who may use it (own = your other machines)
+  accounts pool [on|off]                   the team's company account pool (an owner sets it; off by default)
+  accounts personal <account> [off]        keep one of your logins out of the company pool (or let it back in)
+  accounts promote <account>               make this machine's own login of it the one teammates lease from
+  accounts --all [--json]                  every machine's accounts: window, used %, reset time, who uses what now
+  accounts split [--provider p] [--caps host=n,…] [--json]   suggest seats per login per machine
   accounts pick --provider claude|codex [--model m] [--json]    the account a new session would get (exit 75: none)
   accounts exec --provider claude|codex -- <command…>           run a command (a headless launcher) on the picked account
   accounts shims install|uninstall [--profile]                   make every claude / codex switch (PATH shims)
@@ -100,6 +112,11 @@ projects (kanban boards; every change is a signed post in the project's channel)
   task move <KEY> <column|n> · task assign <KEY> <@a|me|none> · task edit <KEY> [--title …]
   task start|review|done|unblock <KEY> · task block <KEY> [reason…] · task comment <KEY> <text…|->
   task archive|restore|delete <KEY>        (delete / restore: people only)
+  board steward run --project P [--dry-run] [--repo dir,dir] [--stale-hours n]   the board steward: moves cards to the
+                                           column their evidence says (live agents, branches, Linear, comments), each with a comment
+  board steward on|off --project P         the project's steward switch (its admins, people only)
+  board steward auto on|off [--project P] [--repo dir,dir]   run it on this machine every 15 min; --project makes this
+                                           machine the one that keeps P (a lease; people only)
   stale [--hours 4] [--agent-minutes 30] [--project p] [--json]
                                            what went stale: cards in progress/review with no update, agents silent
                                            while "working", online machines idle while cards wait
@@ -111,6 +128,15 @@ data room (each project's files; access = the project's members; agents add and 
   room <project> history <name|id>         every version: who added it and when
   room <project> rm|restore|pin|unpin <name|id> · rename <name|id> <new>   (people only)
   room <project> attach|detach <name|id> <KEY>   attach a file to a card (detach: people only)
+import (switch from Linear: projects, cards, history; one signed batch per 200 writes)
+  import linear --dry-run [--since 45d] [--include-closed] [--projects a,b] [--team T] [--map-users @a=Name,…]
+                [--stale-days 60] [--skip-stale] [--skip-duplicates] [--folder-by initiative|team] [-o plan.json]
+                                           read Linear, write a plan (JSON + table) to edit; agents may run it
+  import linear [same options] [--yes]     plan and import in one go (people only)
+  import linear --plan plan.json [--yes]   import an edited plan (people only) · --resume · --status · --cancel
+  import linear --sync [--two-way]         update imported cards from Linear now (two-way: card moves set the Linear state)
+  import linear --schedule 10m|off [--two-way] [--key-file f]   keep syncing in the background (people only)
+                                           key: the Linear integration's, else LINEAR_API_KEY, else --key-file <path>
 asks
   ask <@handle[/machine[/agent]]> <text…> [--timeout 300] [--channel c]
                                            block until answered (exit 2 on timeout/decline)
@@ -136,9 +162,12 @@ WalkieTalkie (your team's orchestrator: your own Claude Code session; walkie orc
   talkie model <default|opus|sonnet|haiku|fable|full-id>
                                            switch its model; the conversation continues (after the reply in progress)
   talkie access platform|full              platform: Walkie tools + walkie CLI always allowed; full: every tool
-  talkie stop                              stop it here; it stays stopped until you start it again
+  talkie lead-eligible on|off              permit this WSL machine to lead only when other owner machines are offline
+  talkie stop                              stop it here; it stays stopped until you start it again (or talkie auto)
+  talkie auto                              back to automatic: it runs here when this machine leads, else stands by
   talkie start [--here] [--access platform|full] [--model m] [--cwd path] [--permission-mode default|acceptEdits|bypassPermissions]
-           [--claude path]                 start it here by hand (asks first when another machine leads; --here: don't ask)
+           [--claude path]                 on the lead: run it (automatic); elsewhere: start it here too (asks first;
+                                           --here: don't ask)
   talkie log [--limit 20]                  this machine's conversation
 seats (agents a teammate starts on a machine whose person opted in; they run on that machine's own sign-in)
   seats enable [--yes] [--same-user] [--launchers …] [--max n] [--claude-token-stdin]
@@ -150,7 +179,7 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
   seats start <machine> [--count n (1-10)] [--provider claude|codex] (--prompt "…" | --brief <file|->)
               [--model m] [--permission-mode acceptEdits] [--timeout 3600]
                                            start n agents on a teammate's machine
-  seats allow [--launchers @alex,@alex/alex-mac/orchestrator] [--max n (default 3)] [--runtimes claude,codex]
+  seats allow [--launchers @alex,@alex/alex-mac/orchestrator] [--max n (default 3)] [--runtimes claude,codex,kimi]
               [--dir path] [--env NAME,NAME (extra variables seats get)]
                                            let launchers (default: the team's owners) start seats on THIS machine
   seats deny                               turn seats off here and stop every running seat
@@ -158,15 +187,20 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
                                            the newest are paused, new launches queue) until you resume or --for passes
   seats resume                             "I'm done": paused seats continue, queued ones start
   seats [list]                             this machine's setting, machines that take seats, recent seats
+  seats repo [list] | add <id> <path> | rm <id>   this machine's clones that v2 seats work in (by repo id)
   seat run --machine <host> [--runtime claude|codex] [--model m] [--permission-mode acceptEdits]
            [--repo <bundle|git dir|hash>] [--timeout 3600] [--max-concurrent 9] [--wait] -- <prompt…|->
                                            start a seat there (its commits come back as a git bundle)
-  seat show <id> [--follow] | stop <id> | fetch <id> [-o file.bundle]
+  seat run --machine <host> --brief-file <file|-> [--runtime claude|codex|kimi] [--label x] [--account <owner>:<id>]
+           [--repo-id id --ref <sha|branch> --mode branch|detached|fresh [--branch b] [--delta <bundle>]]
+           [--result-file rel/path]        a v2 seat: the brief as TASK.md, the host's own clone, a named account
+  seat show <id> [--follow] | stop <id> | fetch <id> [-o file.bundle] [--save (result file; --file=true deprecated)]
 artifacts
   share <file> [#chan] [--note text]       share a file (≤25 MB, content-addressed)
   fetch <hash> [-o path]                   fetch an artifact (from peers if needed)
 agent integration
-  hooks install|uninstall claude|codex|all [--dry-run]   status hooks + MCP tools for your agents
+  discover --once [--json]                         read-only local process census (no daemon)
+  hooks install|uninstall claude|codex|kimi|all [--dry-run]   status hooks + MCP tools for your agents (all = claude + codex)
   mcp                                      run the MCP server (stdio; used by agent configs)
   hook claude|codex                        hook entrypoint (called by Claude Code / Codex)
 integrations (run in this machine's daemon; keys stay on this machine)
@@ -203,8 +237,8 @@ exit codes: 0 ok · 1 error · 2 timeout/declined · 3 daemon unreachable`;
 
 const COMMANDS: Record<string, Command> = {
   init, invite, join, channel, team: teamCmd, who: whoCmd, pool: poolCmd, direct: directCmd, post, get, reply, subscribe, ask, inbox, answer, status,
-  share, fetch: fetchCmd, accounts, agents: agentsCmd, projects: projectsCmd, tasks: tasksCmd, task: taskCmd, room: roomCmd, mobile, dashboard, token, doctor, daemon, mcp, hook, hooks, setup, update, integrations, linear, license, upgrade,
-  orchestrator, talkie: orchestrator, seats, seat, admin, stale: staleCmd,
+  share, fetch: fetchCmd, accounts, agents: agentsCmd, projects: projectsCmd, tasks: tasksCmd, task: taskCmd, import: importCmd, room: roomCmd, mobile, dashboard, token, doctor, daemon, mcp, hook, hooks, setup, update, integrations, linear, license, upgrade,
+  orchestrator, talkie: orchestrator, seats, seat, admin, stale: staleCmd, discover, board: boardCmd,
 };
 
 const BOOLEANS = CLI_BOOLEANS;
@@ -283,5 +317,15 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 if (import.meta.main) {
+  if (process.argv[2] === "--internal-orchestrator-hook") {
+    const { validChildLease } = await import("../daemon/orchestrator/supervisor.ts");
+    const valid = validChildLease(process.argv[3] ?? "", process.env.WALKIE_TALKIE_RUN ?? "");
+    if (!valid) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "WalkieTalkie lease expired" } }));
+    process.exit(0);
+  }
+  if (process.argv[2] === "--internal-orchestrator-supervisor") {
+    const { superviseChild } = await import("../daemon/orchestrator/supervisor.ts");
+    process.exit(await superviseChild(process.argv[3] ?? "", process.argv.slice(4)));
+  }
   process.exit(await main(process.argv.slice(2)));
 }

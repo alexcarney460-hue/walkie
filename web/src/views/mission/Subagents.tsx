@@ -33,13 +33,14 @@ function SubagentRowImpl({ agent, onOpen }: { agent: AgentView; onOpen: (id: str
   const now = useNow();
   const s = agent.status;
   const title = s.title ?? subagentLabel(s.subagent_type);
+  const seat = s.parent === "seats";
   return (
     <li>
       <button
         type="button"
         className={`subagent-row is-${agent.effective_state}`}
         onClick={() => onOpen(agent.id)}
-        aria-label={`Sub-agent ${agent.agent} of ${s.parent ?? ""}: ${agent.effective_state}. ${title}`}
+        aria-label={`${seat ? "Seat" : "Sub-agent"} ${agent.agent} of ${s.parent ?? ""}: ${agent.effective_state}. ${title}`}
         data-testid={`subagent-${agent.agent}`}
       >
         <span className="subagent-line">
@@ -49,6 +50,7 @@ function SubagentRowImpl({ agent, onOpen }: { agent: AgentView; onOpen: (id: str
         </span>
         <span className="subagent-meta mono truncate">
           <span>{shortSubName(agent)}</span>
+          {seat && <span> · {s.runtime}{s.model ? ` · ${s.model}` : ""}{s.launcher ? ` · @${s.launcher}` : ""}</span>}
           {s.title && s.subagent_type && <span> · {s.subagent_type}</span>}
           {s.activity && <span> · {s.activity}</span>}
         </span>
@@ -66,7 +68,7 @@ export function AgentGroupView({ group, account, onOpen }: { group: AgentGroup; 
   return (
     <div className="agent-group" data-testid={`agent-group-${agent.agent}`}>
       <AgentCard agent={agent} account={account} onOpen={onOpen} />
-      <ul className="subagent-list" aria-label={`Sub-agents of ${agent.agent}`}>
+      <ul className="subagent-list" aria-label={`${agent.agent === "seats" ? "Seats" : "Sub-agents"} of ${agent.agent}`}>
         {subs.map((s) => <SubagentRow key={s.id} agent={s} onOpen={onOpen} />)}
       </ul>
     </div>

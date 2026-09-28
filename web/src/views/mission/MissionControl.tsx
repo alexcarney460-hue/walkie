@@ -3,6 +3,7 @@ import { Archive as ArchiveIcon, ArrowUpRight, ChevronRight, Laptop, Server } fr
 import type { AgentState, AgentView, ArchiveCount, NodeView } from "../../api/types.ts";
 import { PageHeader } from "../../components/Shell.tsx";
 import { LocalModelsCard } from "../../components/LocalModels.tsx";
+import { ModelServerLoad } from "../../components/MachineStats.tsx";
 import { Avatar, CopyCommand, EmptyState, StatePill, hueVar } from "../../components/primitives.tsx";
 import { STATE_LABEL, STATE_RANK, askBody, canAnswer, displayName, hueFor, machineHue, needsAttention } from "../../lib/format.ts";
 import { getRoute, hrefFor, navigate } from "../../lib/route.ts";
@@ -172,6 +173,7 @@ function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered }: {
         <span className="machine-stat tnum">{node.online ? (node.self ? "local" : `${node.rtt_ms ?? "?"} ms`) : "offline"}</span>
         <span className={`machine-stat ${node.online && node.sync.behind > 0 ? "is-warn" : ""} ${!node.online ? "is-bad" : ""}`}>{sync}</span>
       </div>
+      {!!node.stats?.model_servers?.length && <p className="machine-quiet"><ModelServerLoad stats={node.stats} /></p>}
       {agents.length > 0 && (
         <div className="agent-grid">
           {groupAgents(agents).map((g) => <AgentGroupView key={g.agent.id} group={g} account={accountForAgent(accounts, g.agent)} onOpen={onOpen} />)}

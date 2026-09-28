@@ -38,7 +38,7 @@ important — each teammate's **agents**, which hold real credentials and can ac
 | Phone link: a paired phone | the owner's phone (or whoever holds it) | a device key (256-bit PSK; on the phone a non-extractable CryptoKey in IndexedDB, on the daemon `~/.walkie/mobile/devices.json` 0600) proves the phone in every handshake, and the daemon drops a link that hasn't sent a valid encrypted frame within 10 s; requests run as the person (never an agent) on an allow-list: Mission Control reads, `post` (existing channels, no `raw`, no `artifacts`), `answer`, and the live stream; answers are projected for the phone (posts, asks and answers only; no plan, license, account, login, address or signature). Per device, across all its connections: 20 req/s, 8 in flight, 2 streams, 1 MiB/s of responses, 256 KB per response, 100 events per list, and its own write bucket. Ends 30 days unused, 90 days after pairing, on revocation or eviction (open links end at once), and when this machine stops belonging to a member |
 | Phone link: pairing | whoever sees the QR code or the code under it within 10 minutes | 128-bit secret in the URL **fragment** (no server receives it); the pairing's relay room is claimed with a random key only the daemon holds and the relay never hands a held room to a second claimant, so a code lets its holder pair a phone but never stand in for the computer; one use; five unregistered attempts void it; `walkie mobile pair` refuses to run under an agent and the route refuses `X-Walkie-Agent` |
 | The `claude` summarizer (Wispr, opt-in) | the user's own CLI, fed an external transcript | the transcript is redacted (configured keys + patterns) before it is written to the CLI's stdin; the CLI runs in its own process group with no tools or MCP servers; stdout is capped at 64 KB while streaming; on timeout, cap, failure or exit the whole group is SIGKILLed and reaped |
-| The orchestrator (PROTOCOL §9, opt-in: `walkie orchestrator start`) | the person's own `claude` CLI with tools on this machine, fed the person's messages | local only: the conversation is stored in this machine's database and shown only on its dashboard and CLI; never an event, never replicated, never served to a peer or a paired phone (no route, and its stream never carries it); only the person drives it (every orchestrator route refuses an agent header and a phone, the CLI refuses under an agent); each queued message is authorised again when it runs (signed out, past its session's deadline or token rotated: refused); replies are redacted and capped at 256 KiB; its team-wide status is generic; the child never inherits `ANTHROPIC_*` or a parent session's `CLAUDE_CODE_*` (subscription, not API billing), runs in its own process group, and its stderr is scrubbed before anything is cut, logged or shown |
+| The orchestrator (PROTOCOL §9, opt-in: `walkie orchestrator start`) | the person's own `claude` CLI with tools on this machine, fed the person's messages | local only: the conversation is stored in this machine's database and shown only on its dashboard and CLI; never an event, never replicated, never served to a peer or a paired phone (no route, and its stream never carries it); only the person drives its conversation; only a person can grant shell access or elevated permissions; WSL leadership needs a local person's opt-in and all other owner machines offline; each queued message is authorised again when it runs (signed out, past its session's deadline or token rotated: refused); replies are redacted and capped at 256 KiB; its team-wide status is generic; the child excludes inherited Claude setting sources, never inherits `ANTHROPIC_*` or a parent session's `CLAUDE_CODE_*` (subscription, not API billing), runs in its own process group, and its stderr is scrubbed before anything is cut, logged or shown |
 | Remote seats (PROTOCOL §11, opt-in per machine: `walkie seats enable`) | launchers (the team's owners by default) starting `claude`/`codex` with tools on the host, as the host's OS user | nothing runs on a machine whose person hasn't opted in locally (`config.json`, people only; `deny` stops every seat); the host judges each request itself: signed launch/stop posts in `seats-<node>`, the author an allowed launcher at request time (a person; an agent only when named `@h/<machine>/<agent>`), fresh (10 min), judged once, within the launcher's cap, the host's `max` and 10 launches/min; the channel must be private to the host's person and the launchers' people (the authority lets only the host's person shape it, owners included); the prompt is stdin data, never argv or a shell; the child drops API keys and parent-session markers, runs in its own process group with a wall-clock limit, and its output is scrubbed before it is posted |
 
 ## Threats and mitigations
@@ -474,8 +474,10 @@ important — each teammate's **agents**, which hold real credentials and can ac
    teammates' text is information, and hooks, the MCP push and `/v1/status` leave `seat-*` agents alone, so
    teammates' asks aren't injected into a seat and no team-wide status carries its prompt or tool arguments; the
    host's own `seats` status is generic. **Environment and billing:** the seat's environment is an allowlist
-   (`PATH`, `HOME`, `USER`, `SHELL`, `TMPDIR`, `LANG`/`LC_*`, `TERM`, `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_HOME` and the
-   names the person lists in `seats.env`), so GitHub, cloud or database credentials in the daemon's environment or
+   (`PATH`, `HOME`, `USER`, `SHELL`, `TMPDIR`, `LANG`/`LC_*`, `TERM`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`
+   and the names the person lists in `seats.env`; the two login-location variables let the machine's seat environment
+   point same-user seats at a worker login such as `~/.worker-claude`, away from the person's own `~/.claude`, and a seat
+   user's runner always overrides both with that run's fresh directories), so GitHub, cloud or database credentials in the daemon's environment or
    the seat env file don't reach it (files in the home still do, above); no `ANTHROPIC_*`, OpenAI/Codex or other
    provider's API key or endpoint ever passes, so it runs on the host person's subscription; as with the
    orchestrator, an `apiKeyHelper` or settings `env` in the person's own Claude or Codex configuration still applies.
@@ -604,7 +606,8 @@ the wire unchecked (`rpc_server::deserialize_tensor`, ggml-rpc.cpp:1417, read at
   stage while it is off, cancels one that is still starting, and kills a running one the moment it is turned off.
   Since AGENT-ADMIN-1 an agent of the machine's person may turn it on, start or stop a run while that person's agent
   admin switch is on (audited to #general; "Agent admin and remote admin" below); pairing a phone stays person-only
-  (the pairing code is a credential).
+  (the pairing code is a credential). The same gate covers serving a model, connecting to one and preparing
+  weights (POOL-REAL-1); installing the pinned, sha256-checked runtime also needs a NAMED agent (`403 agent_unnamed`).
   Same boundary as invites: a process that omits the header on the owner's own socket is the owner's own process.
 - **Only the run's head, only while it runs.** A tunnel is accepted only from the node that started the stage, while
   its lease lives (renewed every 10 s, 45 s max) and while that node may still head a run (not revoked, member not
@@ -634,6 +637,35 @@ the wire unchecked (`rpc_server::deserialize_tensor`, ggml-rpc.cpp:1417, read at
 - **Supply chain.** The llama.cpp build and the catalog GGUF files are pinned by sha256 (release asset digests; Hugging
   Face repository revision + LFS object id) and checked before use.
 
+
+## Served models (POOL-REAL-1)
+
+A model one machine serves whole on its GPU (PROTOCOL §3 "Served models"). Unlike a split run, no teammate's bytes
+reach llama.cpp's RPC server: members send OpenAI-style HTTP requests, which reach llama-server only through an
+allow-list proxy on the serving machine.
+
+- **Consent.** Another machine may start a model or connect only while the serving machine's owner shares it
+  (`walkie pool share on`, the same switch and warning as split runs); turning sharing off drops every other
+  machine's connection at once and stops a model another machine started. Seats on the machine stop it. Starting,
+  stopping, connecting and disconnecting are admin (AGENT-ADMIN-1): the person, or an agent of theirs while agent
+  admin is on, audited.
+  Once connected, any local process on the connecting machine that can read the key file can use the endpoint:
+  that is the point (agents use it), and it is why the key file is 0600 in the person's Walkie home.
+- **What reaches llama-server.** Only `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`,
+  `POST /v1/completions` (bodies ≤ 4 MiB, ≤ 4 in flight per key). Not reachable: `/slots` (other clients' prompts;
+  also `--no-slots`), `/props`, `/metrics`, LoRA, tokenizer, infill, the web UI (`--no-webui`). The prompt text and
+  sampling fields are passed to llama-server's HTTP/JSON parser and chat template as they are: a member can make the
+  serving machine's GPU work (bounded by the in-flight cap and the 8K context) and could reach bugs in that code.
+  Share only with people you trust with your computer.
+- **Keys.** llama-server's own key never leaves the serving daemon; each connected machine gets its own key (dropped
+  on disconnect, lease loss, sharing off, or the member being removed or made an observer); the serving machine's
+  person has a local key file. Requests with another key are refused before anything is forwarded.
+- **Loopback and the tunnel.** llama-server and the proxy bind 127.0.0.1; members reach the proxy only through
+  Walkie's authenticated transport, only after `connect`, ≤ 8 tunnels at once and 60 new a minute per machine.
+- **Files.** Only catalog models with pinned revisions and sha256 (never a path from another machine); downloads
+  resume after a broken connection and are checked whole before use.
+- **Resources.** One served model per machine, never alongside a stage; it must fit the GPU memory free now (the
+  owner's cap applies to another machine's start); no request for 30 minutes stops it.
 ## Projects (WALKIE-PROJECTS-1)
 
 Boards are folded from ordinary signed channel posts (PROTOCOL §10), so every existing defence applies to them
@@ -717,6 +749,38 @@ limits. What the Projects layer adds:
   daemon can exceed them, and every other daemon still folds what it sends. The extra-board checkout is a stub until
   the site sells the add-on.
 
+## Linear import (LINEAR-IMPORT-1)
+
+- **The key.** The import uses the Linear integration's stored key when it is on, else a key file (`--key-file`,
+  checked like an integration key file: a regular file you own, mode 600, no ACL, one token) or LINEAR_API_KEY, which
+  the CLI hands to the local daemon over the socket or loopback for that one operation. The key never enters a
+  response, a log line, the plan file, the import map (`~/.walkie/linear-import.json`, 0600) or a signed post: every
+  Linear response and error is scrubbed of it (and of every configured key) before anything else sees it, and
+  `/v1/import/linear/*` answers through the integrations scrubber. A scheduled sync keeps only a key FILE PATH, or
+  uses the integration's key; LINEAR_API_KEY can't be scheduled.
+- **Agents can read, not write.** A dry run (the plan) is open to agents (it reads Linear with the configured key, as
+  `walkie_linear` lookups already do; project names in its agent output are defanged). Starting, resuming or
+  cancelling an import, syncing, the schedule and `POST /v1/projects/:channel/batch` are people only: refused to
+  agent-marked callers by the daemon, and to agent-marked terminals by the CLI first. The bulk path therefore can't
+  be used to escape an agent's 20 writes a minute.
+- **A person can't flood the team either.** Bulk writes take tokens from a separate import budget (10 000 ops per
+  hour per person key; a paired phone has its own key), at most 250 ops per request, and the project bounds (2 000
+  open cards per board, 20 000 per project, 200 projects) apply to the batch as a whole before anything is signed.
+- **`ext` is not trusted from others.** The recovery that finds earlier imports by `ext`, and the adoption of an
+  earlier script's `[ALE-12]` cards, consider only roots authored by the importing person. A teammate who forges an
+  `ext` on their own card changes nothing: their card is neither updated from Linear nor written back.
+- **Sync writes as the person who turned it on.** Imported cards and every sync change are signed by that person's
+  machine without an agent name (an agent-signed move of a person's card would be ignored by the fold), so the
+  scheduled sync acts for them while they are away, like the connectors post as them.
+- **Two-way sync writes one thing.** Off by default; with it on, a card moved in Walkie sets its Linear issue's state
+  (`issueUpdate {stateId}`), only for cards this person imported (the import map, or their own earlier script import
+  adopted by its `[KEY-n]` title), only to one of the team's existing workflow states; titles, labels, assignees and everything else stay one-way. Anyone who can move a synced card changes the
+  issue's state through the enabling person's key: that is the feature. When both sides changed a field since the
+  last pass, the latest change wins (Linear's `updatedAt` against the card's) and the card gets a note naming both.
+- **Linear data is external.** Every response is validated (zod), capped (8 MB per response, 200 pages per query),
+  redacted with the post redactor before it is signed, and wrapped (§6) when card text reaches a model. The plan a
+  person edits is a selection only: the run re-reads Linear and re-validates every field.
+
 ## Data Room (DATA-ROOM-1)
 
 A project's Data Room is built from the same signed events as everything else (PROTOCOL §10 "Data Room"): each file
@@ -781,8 +845,8 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   the agent headers, "Known limits"); what changed is that honest agents are no longer refused, and every such action
   is recorded.
 - **What stays a person's.** A dashboard login link and a phone pairing code (credentials shown in plain text),
-  removing a member and revoking another member's machine, moving the roster authority, and turning an admin switch
-  back on. Talking to the local orchestrator and reading its conversation also stay a person's (an agent's words would
+  removing a member and revoking another member's machine, moving the roster authority, turning an admin switch
+  back on, and a project's board steward switch and lease (FO-6: an agent may only dry-run the steward). Talking to the local orchestrator and reading its conversation also stay a person's (an agent's words would
   be read as the person's). There is no "delete the team" command.
 - **Remote admin is not a shell.** One peer route (`POST /peer/v1/admin/run`) runs one allow-listed `walkie`
   subcommand (src/protocol/admin.ts), as the target machine's OS user, with stdin closed, a timeout (default 300 s,
@@ -841,6 +905,36 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   switches protect against remote admin and against agents that identify themselves (every runtime Walkie detects,
   and every seat, which runs as another OS user); they do not stop an actively hostile agent running as the person.
   An owner's machine that is compromised can administer every team machine that has remote admin on.
+
+## Seats v2 (FO-2)
+
+What a v2 seat request (PROTOCOL §11 "Seats v2") adds to threat 16, and what bounds it:
+- **Accounts.** A seat may run on a named router account instead of the host's default login. The host person's own
+  accounts (in this machine's vault, or `own`/`shared` in their vault on another of their machines) serve any
+  launcher allowed on their machine: allowing seats is that consent (FLEET-ORCH-1 §5.1). A teammate's account shared
+  with the host person serves a seat only when its launcher is also allowed by that account's share policy (the owner,
+  or listed in `share_with`), and the owner's machine checks its own policy and `vault_sharing` again before it hands
+  the token out. While the team's company pool is on, a pooled login (not personal) also serves a seat whose host
+  person and launcher are each an owner or member (never an observer), under the lender's 10 % reserve. Without a
+  named account a seat keeps the machine's own login. A Codex login from another machine is leased as an access-only
+  copy (never its refresh token), in a leased home deleted when the seat ends; Kimi logins aren't vault accounts. The
+  token is in that run's environment only and a router lease names the seat while it runs.
+- **The person's clone.** Walkie changes only what it owns there: worktrees under `.worktrees/<label>` it made (a
+  marker in the worktree's admin directory) and branches `lane/…`/`walkie/…` it created (an ownership ref under
+  `refs/walkie/lanes/`), moved only by fast-forward. A branch or directory of that name it didn't make is refused,
+  never reset or removed. `.worktrees` must be a real directory inside the clone. Refs served to a seat are branches,
+  tags or commits on them (never stashes or remote-tracking refs). Checkouts there run with the clone's filter drivers
+  neutralized and no in-tree attributes (git 2.42+), no hooks, no submodule recursion.
+- **The brief.** Never on argv or in a post: a blob, written 0600 as TASK.md, kept out of commits by info/exclude and
+  checked with `git check-ignore` (a seat refuses to start otherwise); commits that touch it aren't returned. It is
+  removed however the seat ends, and at the next start after a crash.
+- **Seat users' workspaces** are a bundle of exactly the requested commit, staged 0600 in the daemon's 0700
+  `seats-stage` directory (swept at every start), at most 1 GiB, streamed to the seat's runner over its stdin.
+- **Kimi** seats are full access only (its prompt mode runs tools unasked): they need `permission_mode
+  bypassPermissions` and the host person's explicit opt-in (`walkie seats allow --runtimes …,kimi`), and never run as a
+  seat user.
+- **Result files** are read without following a symlink (every directory on the way re-checked by device and inode
+  after the open), at most 64 KiB, redacted.
 
 ## Known limits
 
@@ -1136,8 +1230,8 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   session it starts, and steps aside entirely for a command that brings its own token. Codex: `CODEX_HOME` only.
   *What crosses machines.* Nothing, unless the owner sets a policy: `own` lets the owner's other machines, `shared`
   also the named teammates — and `shared` works only while that owner's `~/.walkie/config.json` has
-  `"vault_sharing": true` (off by default: the customer default is owner-only). Only Claude setup-tokens move (a copied
-  Codex login would fight its twin over the refresh token): `POST /peer/v1/vault/lease` on the owner's machine, over
+  `"vault_sharing": true` (off by default: the customer default is owner-only). Only Claude setup-tokens move whole (a copied
+  Codex login would fight its twin over the refresh token; a Codex login is lent as an access-token copy, see Company pool): `POST /peer/v1/vault/lease` on the owner's machine, over
   the authenticated peer channel (WireGuard; whois login must be a member; the calling node admitted, owned by that
   login, from its pinned IP), with a 60 s timestamp window, a nonce replay guard, 10 hand-outs per calling node per
   hour, and the reply sealed to a one-time X25519 key of the requesting daemon (HKDF-SHA256, AES-256-GCM, bound to the
@@ -1147,6 +1241,50 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   token's whole lifetime** (up to a year): anything running as that user on that machine can copy it while the session
   runs, and nothing Walkie does later (removing the account, turning sharing off) takes it back — only revoking the
   setup-token at the provider does. `vault_sharing` is read at every hand-out, so turning it off stops new ones at once.
+  *Company pool (RESET-CLOCK-1; Alex 2026-09-27: "Team setting, on for us").* A TEAM setting, OFF by default: an
+  owner (the person, or the owner's agent — agent setup is allowed by design) runs `walkie accounts pool on|off`; the
+  setting travels on the owner machine's accounts snapshot, every machine takes the newest OWNER setting it has seen
+  (its time moved onto the local clock by the measured peer skew), keeps it in `~/.walkie/team-pool.json` (0600) so a
+  restart or an offline owner does not forget it, and treats "unknown" as OFF. An owner's machine with accounts off
+  still advertises its setting. Nothing changes on upgrade: logins keep their policy, and nothing is pooled until an
+  owner turns the pool on. While it is on, every vault login its person has not marked personal (`walkie accounts
+  personal <account> [off]`, person-only, at any time) is lent to every admitted machine of every owner and member —
+  never an observer — with no share list and no `vault_sharing` flag; each login's own policy (local / own / shared
+  with `vault_sharing`) applies exactly as before alongside it. Turning it on posts a notice to #general; each member
+  also sees a dashboard banner and a one-time line in `walkie accounts`. Turning it off stops new leases at once (the
+  lender checks the setting at every hand-out); what was already handed out is not taken back (below).
+  **What a lease really is.** A Claude setup-token cannot refresh, so the "lease" of one IS the setup-token: a usable
+  bearer credential for the account until it expires (a year) or its person revokes it at claude.ai. The borrower's
+  wrapper keeps it in memory and hands it to the CLI on fd 3, but anything running as the borrower's OS user on that
+  machine can copy it while the session runs, and nothing Walkie does later (pool off, personal, remove) takes it back.
+  That is the owner's accepted trade-off for the company pool. A Codex login is lent as a copy with an access token
+  only: an EMPTY `refresh_token` (codex-cli 0.156.1 refuses the file without the field), an `id_token` rebuilt with
+  only the plan type and ChatGPT account id (no email or name; codex-cli accepts it), `last_refresh` set to the lease
+  time so Codex does not try to refresh it, no API key. It is lent only when its access token's expiry can be read and
+  has at least 30 minutes left; the borrower re-checks it (a reply carrying a refresh token is refused), writes it 0600
+  into a fresh 0700 `~/.walkie/vault/codex/lease-<grant>` and deletes it when the session ends (homes of sessions that
+  are gone — pid AND process start time, so a reused pid does not count — are swept by the daemon and the switcher).
+  The access token itself is a bearer token for the account until it expires (about ten days) and carries the
+  account's identity. **One refresher per login**: the refresh token never leaves the machine that holds the login;
+  that machine renews it through the user's own Codex CLI (`codex app-server`, which authenticates and refreshes on
+  its own; Walkie never reads or sends a token for it), one login at a time, when the access token has under 48 hours
+  left or cannot be read, at most hourly per login, so an idle home keeps serving the pool. A leased copy that stops
+  working is treated as expired (avoided for that run, never a lasting "needs re-login" mark). A login cannot be moved
+  off an offline machine; another machine holding its OWN login of the account (a separate `walkie accounts add`, a
+  separate token family) becomes the lender with `walkie accounts promote`, and borrowers try every online holder in
+  turn, newest home first, skipping a copy that needs a re-login. **The 10 % personal reserve** (Alex decision) is
+  enforced three times: the router never picks another person's pooled login whose last reading (any age; a window
+  past its reset counts as unused) shows 10 % or less left, or with no reading at all; the lender refuses such a lease
+  unless its own reading under an hour old shows more than 10 % (409 `reserved`); and a borrowed session is moved at
+  that line like at a limit, without marking the login (checked every minute from the session's own reading or the
+  team's pooled view). **The local lease route** (`POST /v1/vault/lease`, unix socket only) stays open to every
+  process of the OS user, agents included, on purpose: `walkie accounts exec -- <anything>` is meant for agents and
+  hands the same credential to any command, and code running as the user can read the vault's key and database
+  anyway (the OS user is the boundary, above), so limiting the route to the wrapper and the seats host would add no
+  boundary. **Downgrade**: a pre.8 daemon ignores `company`, `personal`, `home_at` and `team_policy` (it strips them)
+  and lends only by policy; a pre.8 lender never lends Codex. The vault's new `personal` column is ignored by older
+  versions. What crosses to the team: the badge (`company`, `personal`, `home_at`), readings, remembered reset times
+  and leases; never a token.
   *Borrowing.* A teammate's shared account is used only by a person who opted in (`walkie accounts borrow on`,
   config `borrow_shared`) and only when EVERY own account is affirmatively at its limit (a fresh exhausted reading, a
   window at 100 %, or a limit a session hit) — never because an own account is unknown, stale, near the threshold,
@@ -1221,7 +1359,8 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   own accounts are unreachable (their vault machine offline), the wait line says so by name rather than calling every
   account exhausted.
   *Terms.* Account sharing and automatic switching use each person's own subscriptions; check your providers' terms
-  for your plan. The product default stays owner-only (`local`, `vault_sharing` off).
+  for your plan. The product default stays owner-only (`local`, `vault_sharing` off, the company pool off); a team
+  owner turns the pool on deliberately (`walkie accounts pool on`).
 
 - **Machine stats are team-visible.** Every member's daemon, observers' included, reads each machine's memory
   (total, used, swap, pressure) and hottest CPU temperature from the `vv` answer, and every dashboard and `walkie who`

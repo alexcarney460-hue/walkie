@@ -3,6 +3,112 @@
 Releases are cut with `scripts/release.sh vX.Y.Z` (or the `release` workflow on a `v*` tag); both refuse a tag
 without a matching `## vX.Y.Z` section here. The section becomes the GitHub release notes.
 
+## v0.2.0-pre.8
+
+- **Faster, never-stuck daemon**: fixed indexes that made common queries walk every event; a watchdog names anything
+  that blocks for more than half a second. Store migration 13 is safe to replay.
+- **WalkieTalkie runs on its own on the lead machine.** No more pressing Start: on the machine that leads, a start by
+  hand now means "run automatically", and a pre.6 or pre.7 WalkieTalkie that was started by hand there becomes automatic
+  on upgrade. `walkie talkie auto` (and the dashboard's Resume button) returns a stopped machine to automatic; a start
+  by hand on a machine that doesn't lead still asks first.
+- **Only one WalkieTalkie leads at a time.** The team authority grants a renewable lease, and only the person at the
+  machine can give WalkieTalkie shell access. WalkieTalkie runs from its own folder without inheriting Claude settings,
+  and the dashboard keeps showing it as running while it works.
+
+### Seats v2
+
+- **Seats get a proper task, workspace and account.** A launcher can hand a seat a brief (written into its work tree
+  as `TASK.md`, never on the command line or in a post, removed however the seat ends), let it work in the host's own
+  clone of a repo (`walkie seats repo add <id> <path>`; a worktree on a `lane/…` branch, a detached checkout or a
+  fresh copy), run it on a named account (`--account <owner>:<id>`), and get a result file back (`--result-file`,
+  fetched with `walkie seat fetch <id> --save`; `--file=true` remains as a deprecated alias).
+- **Kimi seats.** Kimi runs only with full access, so a host person opts in explicitly
+  (`walkie seats allow --runtimes claude,codex,kimi`); Kimi seats run as the person, never as a seat user.
+- **Accounts for seats.** Without a named account a seat keeps using the machine's own login. With one, the usual
+  vault rules apply, and while the team's company account pool is on, a pooled login works too (for owners and
+  members, never observers). A Codex login from another machine is leased as an access-only copy.
+- **`CLAUDE_CONFIG_DIR` reaches same-user seats**, so the seat env file (`~/.walkie/seat-env`) can point seats at a
+  separate worker login instead of your own `~/.claude`.
+- **`--dir ~` fix:** `walkie seats allow --dir '~/work'` is stored as `~/work` (it used to become `~/~/work`).
+- **Seat requests stay safe across machines.** Replicas handle the newer seat requests consistently, and a borrowed
+  account's reserved capacity stays protected for the account owner while a seat is running. Empty macOS temporary
+  folder leftovers no longer take up seat slots. `walkie seat fetch <id> --save` saves the result file.
+- Your agents can set this machine's seats repos (with agent admin on, recorded in the audit trail).
+
+### Board steward
+
+- **Every project board keeps itself accurate.** The board steward moves cards from evidence: a live builder agent on a
+  card moves it to In progress; its branch's own commits plus a review request or an audit agent move it to Review; a
+  merge into a release branch or tag, its Linear issue Done, or a "done" comment move it to Done; work idle for a day
+  goes back to To do (or is marked blocked with its last error) and its owner is mentioned; duplicates are flagged
+  with a comment, never archived. Every move posts its evidence on the card; a person's move wins and pins the card
+  for 24 hours. `walkie board steward run --project P [--dry-run]`, `walkie board steward on|off --project P`, and
+  `walkie board steward auto on --project P` (this machine keeps P's board every 15 minutes). The steward's switch and
+  lease are a person's; an agent may only dry-run it.
+- Moving a person's card needs every machine on v0.2.0-pre.8; until then the steward says which machine to upgrade.
+  A machine that already had `steward.auto` on takes the lease of every project it stewards and nobody holds, once.
+
+### Company account pool
+
+- **Share the team's logins when you want to (a team setting, off by default).** A team owner turns it on with
+  `walkie accounts pool on`; everyone is told once. While it is on, every vault login not marked personal can be
+  leased by every owner's and member's machine (never an observer's); `walkie accounts personal <account>` keeps one
+  of yours out.
+- **A 10 % reserve** of every window is kept for the login's own person: a borrower never uses the last 10 %.
+- **Codex renewals happen on the account's own machine.** Other machines can use the access-only copy without taking
+  over renewal.
+- **Honest about what a lease is.** A Claude setup-token cannot refresh, so lending one hands out a bearer credential
+  for that account until it expires or its person revokes it at claude.ai; turning the pool off stops new leases but
+  cannot take one back. A Codex login is lent as an access-only copy (never its refresh token), and only its home
+  machine refreshes it.
+- `walkie accounts --all` shows every machine's accounts, windows and reset times and who uses what now;
+  `walkie accounts split` suggests how many seats each login can carry; `walkie accounts promote` makes this
+  machine's own login of an account the one teammates lease from. The dashboard has a company pool panel.
+
+### Team compute (local models)
+
+- **Serve a model on the best machine** (`walkie pool serve <model>`), and connect to it from any machine
+  (`walkie pool connect <machine>`: an OpenAI-compatible endpoint on 127.0.0.1).
+- **Split runs** load each machine's share from its own disk (`walkie pool prepare`), size shares by what each machine
+  really holds, and use one pool job per machine at a time.
+- **Macs with Apple Silicon join the pool** (Metal), and a machine under critical memory pressure stops its stage
+  instead of swapping.
+
+### Agent visibility
+
+- **Every agent shows up, hooks or not.** Mission Control and `walkie who` now find Kimi, headless `claude -p` and
+  `codex exec` runs, Grok, Gemini, opencode and ACP agents by their processes; `walkie hooks install kimi` adds Kimi's
+  status hooks; local model servers count as machine load. Prompts are never published. `walkie discover --once`
+  prints the local census without the daemon.
+
+### Linear import (one command to switch, then sync)
+
+- **`walkie import linear`: switch from Linear in one command.** A dry run reads the workspace and writes an editable
+  plan (JSON + a table): per Linear project the Walkie project it becomes (collision-safe prefix, folder from the
+  initiative or team), counts per column, and flags for completed or canceled projects (unticked), stale backlog,
+  likely duplicates and earlier imports. The run imports projects, cards (column by state, labels, assignee, estimate,
+  due date, parent, link back) and a history + comments digest per card; it re-runs safely (updates, never
+  duplicates), resumes after an interruption, and finds its cards in the signed log if its local map is lost.
+  Dashboard: Projects → Import from Linear (connect, plan with checkboxes, live progress, sync toggles). Dashboard
+  Linear import and model buttons now work.
+- **Board ops batch.** `POST /v1/projects/:channel/batch` signs up to 250 card writes in one transaction, from a
+  separate import budget (10 000 ops per hour, people only). Measured: 2 000 cards + 1 200 history comments imported
+  in 6.2 s and replicated to a second daemon in 17.6 s with production sync timings (3.96 MB); the interactive path
+  needed ~52 minutes for the same posts at a person's write rate. The batch changes no fold or validity rule: older daemons show the
+  cards as they are.
+- **Sync while switching.** `walkie import linear --sync` / `--schedule 10m`: new Linear issues become cards, moves and
+  renames reach imported cards; `--two-way` also sets the Linear issue's state when a card moves in Walkie. Both
+  changed: the latest change wins and the card gets a note.
+
+### Known limitation
+
+- **WalkieTalkie with shell access.** When a person lets WalkieTalkie run shell commands, a background job
+  that a short-lived shell starts and detaches can outlive a lease handoff on macOS: the machine that loses the lead
+  stops WalkieTalkie and every tool call is refused, but such a job keeps running until it ends or is stopped by hand.
+  WalkieTalkie's default setup runs no shell commands, so this arises only when a person turns on full access or the
+  bypassPermissions permission mode. A later
+  release will run full-access WalkieTalkie as its own OS user, so its processes can be found and stopped reliably.
+
 ## v0.2.0-pre.7
 
 - **Codex seats keep working**: the access-only Codex login a seat receives now carries an empty `refresh_token` field, which current Codex CLI versions require; the real refresh token is never copied.

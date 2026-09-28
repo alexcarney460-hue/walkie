@@ -1,6 +1,8 @@
 // Typed client for the local daemon API (unix socket). Used by the CLI, MCP server and hooks.
 import { REMOTE_AGENT, remoteRunToken } from "./remote-run.ts";
 import { readFileSync } from "node:fs";
+import type { BatchResult } from "../protocol/projects/batch.ts";
+import type { ImportStatus, JobView, Plan, Selection, SyncResult, SyncView } from "../integrations/linear-import/views.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -13,7 +15,7 @@ import type { StatusProvenance } from "../protocol/status-projection.ts";
 import { matchesSearch } from "../protocol/agent-roster.ts";
 import { runtimeLabel } from "../cli/agent-detect.ts";
 import type { RemoteRunRes } from "../protocol/admin.ts";
-import type { PoolLocalView, RunView } from "../protocol/pool.ts";
+import type { ConnectionView, InstallView, PoolLocalView, PrepareView, RunView, ServeView } from "../protocol/pool.ts";
 import type { MobileStatus, PairView } from "../daemon/mobile/manager.ts";
 import type { AddMachine } from "../protocol/add-machine.ts";
 import type { BoardView, CardDetail, CardView, ProjectsPayload, ProjectView, TimelineEntry } from "../protocol/projects/schema.ts";
@@ -24,7 +26,7 @@ export interface TasksPayload {
   tasks: CardView[]; total: number; truncated: boolean;
   projects: Array<{ channel: string; name: string; prefix: string; boards: BoardView[] }>;
 }
-import type { HostAvailability, SeatMode, SeatRuntime, SeatsLocalView, SeatsView } from "../protocol/seats.ts";
+import type { HostAvailability, SeatMode, SeatRuntime, SeatWorkspace, SeatsLocalView, SeatsView } from "../protocol/seats.ts";
 
 export function walkieHome(): string {
   return process.env.WALKIE_HOME ?? join(homedir(), ".walkie");
@@ -262,6 +264,15 @@ export class WalkieClient {
   poolShare(on: boolean, maxGb?: number | null) { return this.request<PoolLocalView>("POST", "/v1/pool/share", { on, ...(maxGb !== undefined ? { max_gb: maxGb } : {}) }); }
   poolRun(body: { model?: string; quant?: "q4" | "q8"; file?: string; machines?: string[] }) { return this.request<{ run: RunView }>("POST", "/v1/pool/run", body, 60_000); }
   poolStop() { return this.request<{ run: RunView | null }>("POST", "/v1/pool/stop", {}, 30_000); }
+  /** POOL-REAL-1: serve a catalog model whole on one machine (this one, `on`, or the best one), connect to it. */
+  poolServe(body: { model: string; quant?: "q4" | "q8"; on?: string }) {
+    return this.request<{ on: { node_id: string; hostname: string; self: boolean }; serve?: ServeView; connection?: ConnectionView }>("POST", "/v1/pool/serve", body, 60_000);
+  }
+  poolServeStop(on?: string) { return this.request<{ serve?: ServeView | null; connection?: ConnectionView | null }>("POST", "/v1/pool/serve/stop", on ? { on } : {}, 30_000); }
+  poolConnect(machine: string) { return this.request<{ connection: ConnectionView }>("POST", "/v1/pool/connect", { machine }, 30_000); }
+  poolInstall() { return this.request<{ install: InstallView }>("POST", "/v1/pool/install", {}, 30_000); }
+  poolPrepare(model: string, quant?: "q4" | "q8") { return this.request<{ prepare: PrepareView }>("POST", "/v1/pool/prepare", { model, ...(quant ? { quant } : {}) }, 30_000); }
+  poolDisconnect(machine: string) { return this.request<{ connection: ConnectionView | null }>("POST", "/v1/pool/disconnect", { machine }, 30_000); }
   /** 202 `{queued, request_id, integration}` while the roster authority is offline (the connector waits for its slot). */
   configureIntegration(id: string, body: Record<string, unknown>) {
     return this.request<{ integration: IntegrationView; queued?: boolean; request_id?: string }>("POST", `/v1/integrations/${encodeURIComponent(id)}`, body);
@@ -310,6 +321,26 @@ export class WalkieClient {
       throw new WalkieError(e.code ?? `http_${res.status}`, e.message ?? res.statusText, res.status);
     }
     return text;
+  }
+  /** Board ops batch (people only): many card writes signed in one transaction (LINEAR-IMPORT-1). */
+  batch(channel: string, ops: unknown[]) {
+    return this.request<{ batch: BatchResult }>("POST", `/v1/projects/${encodeURIComponent(channel)}/batch`, { ops }, Math.max(this.timeoutMs, 120_000));
+  }
+  // ---- Linear import (LINEAR-IMPORT-1) ----
+  linearImportPlan(body: { options: Record<string, unknown>; key?: string; key_file?: string }) {
+    return this.request<{ plan: Plan }>("POST", "/v1/import/linear/plan", body, Math.max(this.timeoutMs, 600_000));
+  }
+  linearImportRun(body: { selection: Selection; key?: string; key_file?: string }) {
+    return this.request<{ job: JobView }>("POST", "/v1/import/linear/run", body, Math.max(this.timeoutMs, 60_000));
+  }
+  linearImportResume(body: { key?: string; key_file?: string }) { return this.request<{ job: JobView }>("POST", "/v1/import/linear/resume", body); }
+  linearImportCancel() { return this.request<{ job: JobView | null }>("POST", "/v1/import/linear/cancel", {}); }
+  linearImportStatus() { return this.request<ImportStatus>("GET", "/v1/import/linear/status"); }
+  linearSync(body: { two_way?: boolean; key?: string; key_file?: string }) {
+    return this.request<{ result: SyncResult }>("POST", "/v1/import/linear/sync", body, Math.max(this.timeoutMs, 600_000));
+  }
+  linearSyncSettings(body: { enabled?: boolean; two_way?: boolean; interval_min?: number; key_file?: string | null }) {
+    return this.request<{ sync: SyncView }>("POST", "/v1/import/linear/settings", body);
   }
   tasks(q: { project?: string; board?: string; q?: string; assignee?: string; state?: string; role?: string; limit?: number } = {}) {
     const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
@@ -377,7 +408,8 @@ export class WalkieClient {
 
   peers() { return this.request<{ nodes: NodeView[] }>("GET", "/v1/peers"); }
   /** The team's provider accounts and usage left (ACCOUNTS-1, watch-only). */
-  accounts() { return this.request<{ accounts: AccountView[] }>("GET", "/v1/accounts"); }
+  /** `pool` (COMPANY POOL): the team accounts policy; absent from a pre-RESET-CLOCK daemon. */
+  accounts() { return this.request<{ accounts: AccountView[]; pool?: { policy: "company" | "per-account"; at: number | null; by: string | null } }>("GET", "/v1/accounts"); }
   /** Walkie on your phone (WALKIE-PWA-1): the relay link, pairing and paired devices. */
   mobile() { return this.request<MobileStatus>("GET", "/v1/mobile"); }
   mobilePair() { return this.request<PairView>("POST", "/v1/mobile/pair", {}, 15_000); }
@@ -393,11 +425,16 @@ export class WalkieClient {
     return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/config", body, 60_000);
   }
   seatRun(body: {
-    machine: string; runtime: SeatRuntime; model?: string; permission_mode?: SeatMode; prompt: string; bundle?: string;
+    machine: string; runtime: SeatRuntime; model?: string; permission_mode?: SeatMode; prompt?: string; bundle?: string;
     timeout_s?: number; max_concurrent?: number;
+    /** v2 (FO-2): any of these makes a v2 request (hosts announcing seats_v2 only). */
+    v?: 2; brief?: string; label?: string; workspace?: SeatWorkspace; account?: string; result_file?: string;
   }) {
     return this.request<{ event: Event; seat: string; host: { node: string; hostname: string; channel: string; availability?: HostAvailability } }>("POST", "/v1/seats/run", body);
   }
+  /** FO-2: this machine's repo clones for v2 seats (config.json `fleet.repos`). */
+  seatsRepos() { return this.request<{ repos: Record<string, string> }>("GET", "/v1/seats/repos"); }
+  seatsRepoSet(id: string, path: string | null) { return this.request<{ repos: Record<string, string> }>("POST", "/v1/seats/repos", { id, path }); }
   /** A repo bundle for a seat request, stored on this machine (POST /v1/seats/bundle) → its hash. */
   async seatsBundle(bytes: Uint8Array) {
     const h = this.headers({ "Content-Type": "application/octet-stream" });
@@ -422,6 +459,9 @@ export class WalkieClient {
   orchestratorModel(model: string) { return this.request<OrchestratorView>("POST", "/v1/orchestrator/model", { model }, 60_000); }
   /** ORCH-2: platform (Walkie tools) or full access, keeping the conversation. */
   orchestratorAccess(access: OrchestratorAccess) { return this.request<OrchestratorView>("POST", "/v1/orchestrator/access", { access }, 60_000); }
+  /** pre.8: back to automatic (clears a start or a stop by hand). */
+  orchestratorAuto() { return this.request<OrchestratorView>("POST", "/v1/orchestrator/auto", {}, 30_000); }
+  orchestratorLeadEligible(eligible: boolean) { return this.request<{ eligible: boolean }>("POST", "/v1/orchestrator/lead-eligible", { eligible }); }
   orchestratorStart(body: { model?: string; cwd?: string; permission_mode?: PermissionMode; access?: OrchestratorAccess; claude?: string; path?: string }) {
     return this.request<OrchestratorView>("POST", "/v1/orchestrator/start", body, 60_000);
   }
@@ -445,8 +485,9 @@ export class WalkieClient {
    * ACCOUNTS-2 phase 3: a Claude setup-token from another machine's vault, for one launch (unix socket only; the
    * owner's machine checks its policy, the reply is sealed to a key this daemon made for this request).
    */
-  vaultLease(body: { account: string; node: string; agent?: string }) {
-    return this.request<{ token: string; owner: string; grant: string; gen: string }>("POST", "/v1/vault/lease", body, 15_000);
+  /** A hand-out: Claude → `token` (a setup-token); Codex → `codex_auth` (an access-only auth.json, COMPANY POOL). */
+  vaultLease(body: { account: string; node: string; agent?: string; provider?: "claude" | "codex" }) {
+    return this.request<{ token?: string; codex_auth?: string; expires_at?: number | null; owner: string; grant: string; gen: string }>("POST", "/v1/vault/lease", body, 15_000);
   }
 
   async share(bytes: Uint8Array, meta: { name: string; mime: string; note?: string; channel?: string; thread?: string }) {

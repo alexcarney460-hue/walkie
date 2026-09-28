@@ -1,7 +1,7 @@
 // Which agents Mission Control shows and which live in the Agent archive (WALKIE-MISSION-1, PROTOCOL §4 "Agent
 // archive"). Pure: the daemon (views, pruning), the CLI and the dashboard all decide with these same functions.
 //
-// - Shown by default: working, or needing a person (waiting / blocked, "Stuck").
+// - Shown by default: working, needing a person (waiting / blocked, "Stuck"), or an idle running seat.
 // - Live roster: those, plus agents that went idle less than IDLE_ARCHIVE_MS ago or offline less than
 //   OFFLINE_GRACE_MS ago. The daemon's /v1/agents and the dashboard stream carry only the live roster.
 // - Archive: everything else (idle for a while, offline past the grace), on request. A daemon keeps at most
@@ -15,14 +15,17 @@ export const ARCHIVE_TTL_MS = 7 * 86_400_000;
 export const ARCHIVE_CAP_PER_NODE = 200;
 
 export interface RosterEntry {
+  readonly agent?: string;
+  readonly status?: { readonly parent?: string };
   readonly effective_state: AgentState; readonly updated_at: number;
   /** A session's sub-agents (WALKIE-MISSION-SUB-1): while one works, the session is shown and never archived. */
   readonly subagents?: { readonly working: number };
 }
 
 /** Working, waiting on a person, stuck, or a session whose sub-agents work: what Mission Control and `walkie who` show. */
-export function shownByDefault(a: Pick<RosterEntry, "effective_state" | "subagents">): boolean {
-  return a.effective_state === "working" || needsPerson(a.effective_state) || (a.subagents?.working ?? 0) > 0;
+export function shownByDefault(a: Pick<RosterEntry, "effective_state" | "subagents"> & { status?: { parent?: string } }): boolean {
+  return a.effective_state === "working" || needsPerson(a.effective_state) || (a.subagents?.working ?? 0) > 0
+    || (a.status?.parent === "seats" && a.effective_state === "idle");
 }
 
 /** Waiting on a person or stuck (blocked). */

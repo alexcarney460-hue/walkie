@@ -4,6 +4,8 @@ import type { OrchMessage } from "../protocol/orchestrator.ts";
 import type { Event, Stub } from "../protocol/schemas.ts";
 import { isBoardOp } from "../protocol/projects/schema.ts";
 
+const ROSTER_KIND_SQL = "('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')";
+
 export const MIGRATIONS: readonly string[] = [
   `CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
    CREATE TABLE events(
@@ -137,13 +139,41 @@ export const MIGRATIONS: readonly string[] = [
    CREATE INDEX events_hidden_general ON events(origin, seq) WHERE status = 'rejected' AND redacted = 0 AND bop = 0;`,
   // (The FTS5 search table board_fts is created by src/daemon/projects/store.ts when the SQLite build has FTS5; search
   // falls back to LIKE without it, so a build without FTS5 still starts.)
+  // 13 (DAEMON-STALL-1): indexes the query planner can't misuse. The store has no statistics, and SQLite picked
+  // events_redacted_channel (redacted, channel) for any `redacted = 0` filter: a thread's replies, an events page without a
+  // channel, the roster walk and blob references each walked every row (94% of them agent.status) in rowid order with a
+  // table seek per row, the multi-second sqlite3_step that stopped a daemon answering on a busy disk. The two indexes
+  // led by a column nearly every row shares (redacted, status) become partial indexes over the few rows that differ. The
+  // roster walk, an origin's newest ts (every emit) and a channel's visible rows get their own indexes, partial where a
+  // general index would attract other queries (events_origin_ts serves only a query that says `ts IS NOT NULL`;
+  // events_visible_channel carries redacted and status so the per-channel counts read the index alone).
+  // agents_latest remembers when its event was received (recv_id says for which event: an older build that updates the
+  // row leaves it naming the old one), so a roster read no longer seeks one events row per agent. Local, never replicated.
+  `DROP INDEX IF EXISTS events_redacted_channel;
+   DROP INDEX IF EXISTS events_status_origin;
+   CREATE INDEX IF NOT EXISTS events_stub_origin ON events(origin, seq) WHERE redacted = 1;
+   CREATE INDEX IF NOT EXISTS events_stub_channel ON events(channel) WHERE redacted = 1;
+   CREATE INDEX IF NOT EXISTS events_rejected ON events(origin, kind) WHERE status = 'rejected';
+   CREATE INDEX IF NOT EXISTS events_visible_channel ON events(channel, ts, redacted, status) WHERE channel IS NOT NULL AND redacted = 0 AND status = 'ok';
+   CREATE INDEX IF NOT EXISTS events_origin_ts ON events(origin, ts) WHERE ts IS NOT NULL;
+   CREATE INDEX IF NOT EXISTS events_roster ON events(origin, seq) WHERE kind IN ${ROSTER_KIND_SQL};`,
 ];
+
+/** Independently replayable migration 13, also used by the startup ledger. */
+export function migrate13(db: Database): void {
+  db.transaction(() => {
+    db.exec(MIGRATIONS[12] as string);
+    const columns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(agents_latest)").all().map((c) => c.name));
+    if (!columns.has("recv_id")) db.exec("ALTER TABLE agents_latest ADD COLUMN recv_id TEXT");
+    if (!columns.has("recv_at")) db.exec("ALTER TABLE agents_latest ADD COLUMN recv_at INTEGER");
+    db.exec("UPDATE agents_latest SET recv_id = event_id, recv_at = (SELECT e.received_at FROM events e WHERE e.id = agents_latest.event_id)");
+  })();
+}
 
 /** Indexes (0-based) of the orch_messages (11) and projects boards (12) migrations: see migrate(). */
 const ORCH_MIGRATION = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE orch_messages"));
 const BOARDS_MIGRATION = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE board_projects"));
 
-const ROSTER_KIND_SQL = "('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')";
 
 /**
  * A page of stored non-roster rows to re-judge (PROTOCOL §2 "Re-validation"), accepted or hidden:
@@ -169,7 +199,11 @@ export interface PendingRow {
   /** What the row waits for (PROTOCOL §2 rule 5): `origin:<id>`, `channel:<name>`, `ask:<id>`, `gap:<origin>`, `team`. */
   dep: string; relay: string | null; bytes: number;
 }
-export interface AgentRow { node: string; agent: string; handle: string; event_id: string; ts: number; body: string }
+export interface AgentRow {
+  node: string; agent: string; handle: string; event_id: string; ts: number; body: string;
+  /** When this node received the event `recv_id` (migration 13); trusted only while it names `event_id`. */
+  recv_id?: string | null; recv_at?: number | null;
+}
 export interface JoinRequest { node_id: string; login: string; pubkey: string; hostname: string; ip: string; port: number; requested_at: number }
 export interface BlobRow { hash: string; size: number; mime: string | null; name: string | null; created_at: number }
 export interface QueuedRequest { id: string; json: string; created_at: number; attempts: number; last_error: string | null }
@@ -292,6 +326,7 @@ export class Store {
     for (let i = current; i < MIGRATIONS.length; i++) {
       this.db.transaction(() => {
         if (i === BOARDS_MIGRATION && has("board_projects")) this.rebuildLaneBoards();
+        else if (i === 12) migrate13(this.db);
         else this.db.exec(MIGRATIONS[i] as string);
         this.db.query("INSERT INTO migrations(version, applied_at) VALUES (?, ?)").run(i + 1, Date.now());
       })();
@@ -423,7 +458,7 @@ export class Store {
   upgradeStub(ev: Event, status: "ok" | "rejected" = "ok", reason: string | null = null, fin = false): void {
     this.db.transaction(() => {
       this.db.query("DELETE FROM events WHERE id = ? AND redacted = 1").run(ev.id);
-      this.db.query("DELETE FROM stub_fill WHERE id = ?").run(ev.id);
+      if (status === "ok") this.db.query("DELETE FROM stub_fill WHERE id = ?").run(ev.id);
       this.insertFull(ev, status, reason, fin);
     })();
   }
@@ -465,7 +500,7 @@ export class Store {
       after = (rows[rows.length - 1] as { rid: number }).rid;
     }
     // Everything up to the last full row is examined (candidates or not); trailing stubs stay above the mark.
-    const top = this.db.query<{ m: number | null }, []>("SELECT MAX(rowid) AS m FROM events WHERE redacted = 0").get()?.m ?? 0;
+    const top = this.db.query<{ m: number }, []>("SELECT rowid AS m FROM events WHERE redacted = 0 ORDER BY rowid DESC LIMIT 1").get()?.m ?? 0;
     const mark = Math.max(after, from > 0 ? from : 0, top);
     this.setMeta("board_ops_rowid", String(mark));
     return { examined, marked };
@@ -505,8 +540,8 @@ export class Store {
    * remote copy of a self-originated event is ever accepted, so nobody else can move it.
    */
   selfSeq(origin: string): number {
-    return this.db.query<{ m: number | null }, [string]>(
-      "SELECT MAX(seq) AS m FROM events WHERE origin = ? AND redacted = 0").get(origin)?.m ?? 0;
+    return this.db.query<{ m: number }, [string]>(
+      "SELECT seq AS m FROM events WHERE origin = ? AND redacted = 0 ORDER BY seq DESC LIMIT 1").get(origin)?.m ?? 0;
   }
   /**
    * Drops stubs claiming this node's own origin that only a forger could have produced (a pre-D3
@@ -528,8 +563,9 @@ export class Store {
       `SELECT COUNT(*) AS n FROM events WHERE status = 'rejected' AND origin = ? AND redacted = 0
        AND kind IN ${ROSTER_KIND_SQL}`).get(origin)?.n ?? 0;
   }
+  /** The newest ts of an origin's rows (events_origin_ts: only a query saying `ts IS NOT NULL` uses it; MAX skips NULLs anyway). */
   maxTs(origin: string): number {
-    return this.db.query<{ m: number | null }, [string]>("SELECT MAX(ts) AS m FROM events WHERE origin = ?").get(origin)?.m ?? 0;
+    return this.db.query<{ m: number | null }, [string]>("SELECT MAX(ts) AS m FROM events WHERE origin = ? AND ts IS NOT NULL").get(origin)?.m ?? 0;
   }
   /** When this node stored a row (its own receipt clock), or null for an unknown id. */
   receivedAt(id: string): number | null {
@@ -634,7 +670,7 @@ export class Store {
   /** Channels that have fillable stubs (restricted events this node holds only as stubs). */
   stubChannels(): string[] {
     return this.db.query<{ channel: string }, []>(
-      "SELECT DISTINCT channel FROM events WHERE redacted = 1 AND status = 'ok' AND channel IS NOT NULL").all().map((r) => r.channel);
+      "SELECT DISTINCT channel FROM events WHERE redacted = 1 AND (status = 'ok' OR (status = 'junk' AND reason = 'hidden_cap' AND json_extract(json, '$.kind') = 'msg.post')) AND channel IS NOT NULL").all().map((r) => r.channel);
   }
   /**
    * Stubs in these channels that are due for a fill attempt from `peer` (PROTOCOL §3): never tried at
@@ -642,13 +678,14 @@ export class Store {
    * (baseMs * 2^attempts, at most maxMs). Attempts are per (stub, peer), so a peer that never serves
    * a stub can't use up the attempts meant for the peers that can (C4).
    */
-  dueStubIds(channels: readonly string[], peer: string, now: number, baseMs: number, maxMs: number, limit: number): string[] {
+  dueStubIds(channels: readonly string[], peer: string, now: number, baseMs: number, maxMs: number, limit: number, seatChannels: readonly string[] = [], validityVersion = ""): string[] {
     if (!channels.length) return [];
     return this.db.query<{ id: string }, (string | number)[]>(
       `SELECT e.id FROM events e LEFT JOIN stub_fill f ON f.id = e.id AND f.peer = ?
-       WHERE e.redacted = 1 AND e.status = 'ok' AND e.channel IN (${channels.map(() => "?").join(",")})
+       WHERE NOT EXISTS (SELECT 1 FROM meta r WHERE r.key = 'stub_recovery:' || e.id AND r.value = ?)
+       AND e.redacted = 1 AND (e.status = 'ok' OR (e.status = 'junk' AND e.reason = 'hidden_cap' AND json_extract(e.json, '$.kind') = 'msg.post' AND e.channel IN (${seatChannels.map(() => "?").join(",") || "NULL"}))) AND e.channel IN (${channels.map(() => "?").join(",")})
        AND (f.last_try IS NULL OR ? - f.last_try >= MIN(?, ? * (1 << MIN(f.attempts, 20))))
-       ORDER BY COALESCE(f.last_try, 0), e.origin, e.seq LIMIT ?`).all(peer, ...channels, now, maxMs, baseMs, limit).map((r) => r.id);
+       ORDER BY COALESCE(f.last_try, 0), e.origin, e.seq LIMIT ?`).all(peer, validityVersion, ...seatChannels, ...channels, now, maxMs, baseMs, limit).map((r) => r.id);
   }
   markStubsTried(ids: readonly string[], peer: string, now: number): void {
     const q = this.db.query(`INSERT INTO stub_fill(id, peer, attempts, last_try) VALUES (?, ?, 1, ?)
@@ -656,17 +693,30 @@ export class Store {
     this.db.transaction(() => { for (const id of ids) q.run(id, peer, now); })();
   }
 
-  /** Visible (ok, non-stub) events, newest first. Channel visibility is filtered by the caller. */
+  /**
+   * Visible (ok, non-stub) events, newest first. Channel visibility is filtered by the caller.
+   * The rows read are bounded by the query's shape (DAEMON-STALL-1): a channel or a thread bounds them, so its kind and
+   * agent filters are written `+col` (SQLite can't then walk the kind index instead, e.g. through every agent.status
+   * row); without one, several kinds are read one kind at a time, each newest first up to the limit, and merged.
+   */
   queryEvents(f: EventFilter): EventRow[] {
+    const scoped = !!(f.channel || f.thread);
+    const kinds = f.kinds?.length ? [...new Set(f.kinds)] : [];
+    if (scoped || kinds.length < 2) return this.queryEventsOnce(f, scoped);
+    return kinds.flatMap((k) => this.queryEventsOnce({ ...f, kinds: [k] }, false)).sort(newestFirst).slice(0, f.limit);
+  }
+
+  private queryEventsOnce(f: EventFilter, scoped: boolean): EventRow[] {
     const where = ["redacted = 0", "status = 'ok'"];
     const args: SQLQueryBindings[] = [];
+    const col = (c: string) => (scoped ? `+${c}` : c);
     if (f.channel) { where.push("channel = ?"); args.push(f.channel); }
     if (f.thread) { where.push("(thread = ? OR id = ?)"); args.push(f.thread, f.thread); }
-    if (f.kinds?.length) { where.push(`kind IN (${f.kinds.map(() => "?").join(",")})`); args.push(...f.kinds); }
+    if (f.kinds?.length) { where.push(`${col("kind")} IN (${f.kinds.map(() => "?").join(",")})`); args.push(...f.kinds); }
     if (f.before_ts !== undefined) { where.push("ts < ?"); args.push(f.before_ts); }
     if (f.since_ts !== undefined) { where.push("ts > ?"); args.push(f.since_ts); }
-    if (f.agents?.length) { where.push(`author_agent IN (${f.agents.map(() => "?").join(",")})`); args.push(...f.agents); }
-    if (f.roots) where.push("thread IS NULL");
+    if (f.agents?.length) { where.push(`${col("author_agent")} IN (${f.agents.map(() => "?").join(",")})`); args.push(...f.agents); }
+    if (f.roots) where.push("+thread IS NULL"); // never the thread index's NULL entries: every root, statuses included
     args.push(f.limit);
     return this.db.query<EventRow, SQLQueryBindings[]>(
       `SELECT id, origin, seq, ts, kind, channel, thread, sig, redacted, status, json FROM events
@@ -763,11 +813,16 @@ export class Store {
    */
   upsertAgent(ev: Event, maxTs = Number.MAX_SAFE_INTEGER): void {
     const b = ev.body as { agent: string };
-    this.db.query(`INSERT INTO agents_latest(node, agent, handle, event_id, ts, body) VALUES (?,?,?,?,?,?)
+    this.db.query(`INSERT INTO agents_latest(node, agent, handle, event_id, ts, body, recv_id, recv_at)
+      VALUES (?,?,?,?,?,?,?,(SELECT received_at FROM events WHERE id = ?))
       ON CONFLICT(node, agent) DO UPDATE SET handle = excluded.handle, event_id = excluded.event_id, ts = excluded.ts,
-      body = excluded.body WHERE excluded.ts > agents_latest.ts
+      body = excluded.body, recv_id = excluded.recv_id, recv_at = excluded.recv_at WHERE excluded.ts > agents_latest.ts
         OR (excluded.ts = agents_latest.ts AND excluded.event_id > agents_latest.event_id)`).run(
-      ev.origin, b.agent, ev.author.handle, ev.id, Math.min(ev.ts, maxTs), JSON.stringify(ev.body));
+      ev.origin, b.agent, ev.author.handle, ev.id, Math.min(ev.ts, maxTs), JSON.stringify(ev.body), ev.id, ev.id);
+  }
+  /** When this node received an agent row's latest status: remembered on the row, else read from its event. */
+  agentReceivedAt(row: AgentRow): number | null {
+    return row.recv_id === row.event_id && typeof row.recv_at === "number" ? row.recv_at : this.receivedAt(row.event_id);
   }
   agents(): AgentRow[] {
     return this.db.query<AgentRow, []>("SELECT * FROM agents_latest ORDER BY handle, node, agent").all();
@@ -883,6 +938,13 @@ export class Store {
   integrityCheck(): string {
     return this.db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get()?.integrity_check ?? "unknown";
   }
+}
+
+/** Newest first by (ts, id), as `ORDER BY ts DESC, id DESC` (ids are ASCII: code-unit order is SQLite's BINARY order). */
+function newestFirst(a: EventRow, b: EventRow): number {
+  const ta = a.ts ?? -Infinity, tb = b.ts ?? -Infinity;
+  if (ta !== tb) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
 interface OrchRow {

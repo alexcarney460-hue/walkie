@@ -88,13 +88,13 @@ describe("vault", () => {
     v.close();
   });
 
-  test("policy: local by default; Codex logins never leave their machine; shared needs handles", async () => {
+  test("policy: local by default; a Codex login may be lent (leased, never copied); shared needs handles", async () => {
     const home = join(tmp(), "w");
     const v = Vault.open(home, { keystore: fileKeyStore(home) });
     await v.addClaude({ id: ID_A, label: "Claude account", plan: null, token: TOKEN_A, linked: false });
     v.addCodex({ id: ID_B, label: "ChatGPT account", plan: "Pro", home: join(home, "vault", "codex", ID_B) });
     expect(v.get(ID_A)?.policy).toBe("local");
-    expect(() => v.setPolicy(ID_B, "own")).toThrow(/Codex logins stay/);
+    expect(v.setPolicy(ID_B, "own").policy).toBe("own"); // a Codex login may be lent too (a lease, never a copy)
     expect(() => v.setPolicy(ID_A, "shared")).toThrow(/--with/);
     expect(() => v.setPolicy(ID_A, "shared", ["Not A Handle"])).toThrow();
     expect(v.setPolicy(ID_A, "shared", ["kira", "kira"]).share_with).toEqual(["kira"]);

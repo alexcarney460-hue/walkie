@@ -19,6 +19,7 @@ import {
   type Automations, type BoardView, type CardOpT, type CardView, type Column, type ColumnRole,
   type PathRule, type ProjectView,
 } from "../../protocol/projects/schema.ts";
+import type { Ext } from "../../protocol/projects/batch.ts";
 import type { Core } from "../core.ts";
 import { HttpError } from "../http.ts";
 import { submitRequest, type CatchUp } from "../requests.ts";
@@ -34,6 +35,11 @@ export interface WriteCtx {
    * an agent by every rule here (never a person), and it can't write (a post must name its agent). PRE4 RC, Codex 2.
    */
   readonly underAgent?: boolean;
+  /**
+   * FO-6: this daemon's own board steward is writing (steward-run.ts; never set from a request: the local API refuses
+   * the agent name). It may move any card, a person's included, and close cards whatever agents_can_close says.
+   */
+  readonly steward?: true;
 }
 
 /** An agent is calling, named or not. */
@@ -71,7 +77,7 @@ export function selfAddress(w: Pick<WriteCtx, "core" | "agent">): string {
   return w.agent ? `@${h}/${w.core.hostname}/${w.agent}` : `@${h}`;
 }
 
-function clean(w: WriteCtx, s: string): string {
+export function clean(w: Pick<WriteCtx, "core">, s: string): string {
   return w.core.config.redact ? redactSecrets(s).text : s;
 }
 function cleanOpt(w: WriteCtx, s: string | null | undefined): string | null | undefined {
@@ -157,7 +163,7 @@ function ambiguous(ref: string, cards: readonly CardView[]): HttpError {
 // ---- emission -----------------------------------------------------------------------------------------------------
 
 /** `board` null: a plain post (a comment in a card's thread). */
-function post(w: WriteCtx, channel: string, text: string, board: Record<string, unknown> | null, extra: { thread?: string; mentions?: string[] } = {}): Event {
+export function post(w: WriteCtx, channel: string, text: string, board: Record<string, unknown> | null, extra: { thread?: string; mentions?: string[] } = {}): Event {
   const make = (t: string) => ({
     text: t || "board update", ...(board ? { board } : {}),
     ...(extra.thread ? { thread: extra.thread } : {}), ...(extra.mentions?.length ? { mentions: extra.mentions } : {}),
@@ -195,7 +201,7 @@ function opaquePrefix(taken: ReadonlySet<string>): string {
   }
 }
 
-function derivePrefix(name: string, taken: ReadonlySet<string>): string {
+export function derivePrefix(name: string, taken: ReadonlySet<string>): string {
   const letters = name.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").trim();
   const words = letters.split(/\s+/).filter(Boolean);
   let base = (words.length > 1 ? words.map((x) => x[0]).join("") : letters.replace(/\s/g, "")).replace(/^[0-9]+/, "").slice(0, 4);
@@ -247,6 +253,8 @@ function checkProjectQuota(w: Pick<WriteCtx, "core" | "idx">): void {
 export interface CreateProject {
   name: string; prefix?: string; folder?: string; description?: string; private?: boolean;
   paths?: PathRule[]; columns?: Column[]; meter?: "count" | "points"; automations?: Automations; board?: string;
+  /** Where the project came from (LINEAR-IMPORT-1; set by the importer only, never by the API body). */
+  ext?: Ext;
 }
 
 /**
@@ -289,6 +297,7 @@ async function createProjectNow(w: WriteCtx, req: CreateProject): Promise<Projec
     v: 1, rev: 0, op: "project", name, prefix, ...(req.folder ? { folder: clean(w, req.folder) } : {}),
     ...(req.description ? { description: clean(w, req.description) } : {}), ...(req.paths?.length ? { paths: req.paths } : {}),
     ...(req.meter ? { meter: req.meter } : {}), ...(req.automations ? { automations: req.automations } : {}),
+    ...(req.ext ? { ext: req.ext } : {}),
   });
   post(w, channel, `Board "${req.board ?? "Board"}" added`, { v: 1, rev: 0, op: "board", name: req.board ?? "Board", columns: req.columns ?? DEFAULT_COLUMNS });
   w.idx.markFull(channel);
@@ -299,6 +308,8 @@ async function createProjectNow(w: WriteCtx, req: CreateProject): Promise<Projec
 export interface UpdateProject {
   name?: string; folder?: string; description?: string; prefix?: string; paths?: PathRule[]; meter?: "count" | "points";
   automations?: Automations; state?: "active" | "archived" | "deleted"; private?: boolean;
+  /** FO-6: the board steward on or off for this project, and the machine whose loop keeps it. */
+  steward?: "on" | "off"; steward_node?: string;
 }
 
 /** Settings, archive / delete, visibility: the project's admins (owners and its creator), people only. */
@@ -335,7 +346,9 @@ async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject
     const s = w.idx.settingsOf(channel);
     const rev = (s.project?.rev ?? 0) + 1;
     const after = s.project?.head;
-    const what = changes.state === "deleted" ? "deleted" : changes.state === "archived" ? "archived" : changes.state === "active" ? "restored" : `settings changed (${Object.keys(changes).join(", ")})`;
+    const what = changes.state === "deleted" ? "deleted" : changes.state === "archived" ? "archived" : changes.state === "active" ? "restored"
+      : Object.keys(changes).length === 1 && changes.steward ? `board steward turned ${String(changes.steward)}`
+      : Object.keys(changes).length === 1 && changes.steward_node !== undefined ? "board steward machine set" : `settings changed (${Object.keys(changes).join(", ")})`;
     post(w, channel, `Project "${p.name}" ${what}`, { v: 1, rev, op: "project", ...(after ? { after } : {}), ...changes }, { thread: p.id });
   }
   w.idx.touchSettings(channel);
@@ -394,7 +407,7 @@ export function updateBoard(w: WriteCtx, channel: string, boardId: string, req: 
 
 // ---- cards --------------------------------------------------------------------------------------------------------
 
-function boardOf(p: ProjectView, id?: string): BoardView {
+export function boardOf(p: ProjectView, id?: string): BoardView {
   const b = id ? p.boards.find((x) => x.id === id) : p.boards.find((x) => x.state === "active") ?? p.boards[0];
   if (!b) throw new HttpError(404, "not_found", id ? "no such board in this project" : "the project has no board");
   return b;
@@ -415,7 +428,7 @@ export function firstOfRole(b: BoardView, role: ColumnRole): Column {
 }
 
 /** A position in `column`: before `before`, after `after`, else at the end. */
-function positionIn(w: WriteCtx, p: ProjectView, board: string, column: string, opts: { before?: string; after?: string; self?: string }): string {
+export function positionIn(w: WriteCtx, p: ProjectView, board: string, column: string, opts: { before?: string; after?: string; self?: string }): string {
   const cards = w.idx.db.cards(p.channel, { board, states: ["open"], limit: MAX_LIVE_CARDS_PER_BOARD })
     .filter((c) => c.column === column && c.id !== opts.self)
     .sort((a, b) => (a.pos < b.pos ? -1 : a.pos > b.pos ? 1 : a.n - b.n));
@@ -472,12 +485,13 @@ export function updateCard(w: WriteCtx, ref: string, req: UpdateCard): CardView 
   const moves = req.board !== undefined || req.column !== undefined || req.before !== undefined || req.after !== undefined;
   const reassigns = req.assignee !== undefined || req.reviewer !== undefined;
   if ((req.state === "deleted" || card.state === "deleted") && req.state !== undefined && req.state !== card.state) requirePerson(w, "deleting or restoring a card");
-  if (isAgentCaller(w) && (moves || reassigns) && isPersonAddress(card.assignee)) {
+  const steward = !!w.steward && !reassigns;
+  if (isAgentCaller(w) && !steward && (moves || reassigns) && isPersonAddress(card.assignee)) {
     throw new HttpError(403, "forbidden", `${card.key} is assigned to ${card.assignee}: only a person can move or reassign it`);
   }
   const b = boardOf(p, req.board ?? card.board);
   const col = req.column ? columnOf(b, req.column) : moves ? b.columns.find((c) => c.id === card.column) ?? b.columns[0] as Column : undefined;
-  if (isAgentCaller(w) && col?.role === "done" && !p.automations.agents_can_close) {
+  if (isAgentCaller(w) && !steward && col?.role === "done" && !p.automations.agents_can_close) {
     const was = boardOf(p, card.board).columns.find((c) => c.id === card.column)?.role;
     if (was !== "done") throw new HttpError(403, "forbidden", `agents can't close cards in ${p.name} (automations.agents_can_close is off); a person moves it to done`);
   }
@@ -523,9 +537,9 @@ export function cardAction(w: WriteCtx, ref: string, action: CardAction, reason?
   }
 }
 
-export function comment(w: WriteCtx, ref: string, text: string): Event {
+export function comment(w: WriteCtx, ref: string, text: string, mentions?: string[]): Event {
   const { project: p, card } = findCard(w, ref);
-  const ev = post(w, p.channel, clean(w, text), null, { thread: card.id });
+  const ev = post(w, p.channel, clean(w, text), null, { thread: card.id, ...(mentions?.length ? { mentions } : {}) });
   w.idx.flushAll();
   return ev;
 }

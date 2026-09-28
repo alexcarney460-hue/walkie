@@ -1,0 +1,50 @@
+#!/usr/bin/env bun
+// A fake `kimi` for v2 seat tests (FO-2): `kimi -p <prompt> --output-format text …`, no model. It logs its launch to
+// FAKE_KIMI_LOG ({argv, cwd, task, env names, stdin}) and acts on the brief it finds where the prompt points
+// (./TASK.md or ./.walkie/TASK.md): "commit" commits a file with `git add -A` (the brief must not be committed);
+// "verdict" writes .audit-private/verdict.json; "symlink-verdict" makes verdict.json a symlink to a file outside the
+// tree; "slow" works for ~30 s (after writing any verdict); "fail" exits 3. Anything else prints "kimi: done".
+import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const argv = process.argv.slice(2);
+const fail = (m: string) => { process.stderr.write(`fake kimi: ${m}\n`); process.exit(2); };
+const i = argv.indexOf("-p");
+if (i < 0 || argv[i + 1] === undefined) fail("-p <prompt> required");
+const prompt = argv[i + 1] as string;
+const m = /^Read \.\/(\S+) and do it$/.exec(prompt);
+const cwd = process.cwd();
+const taskPath = m ? join(cwd, m[1] as string) : null;
+const task = taskPath && existsSync(taskPath) ? readFileSync(taskPath, "utf8") : null;
+const stdin = await new Response(Bun.stdin.stream()).text();
+const SEEN = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY", "GEMINI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+  "CODEX_HOME", "UNIT_MARK", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "WALKIE_HOME", "WALKIE_SEAT_TOKEN_FILE", "WALKIE_AGENT"];
+const log = process.env.FAKE_KIMI_LOG;
+if (log) {
+  appendFileSync(log, JSON.stringify({
+    pid: process.pid, argv, cwd, task, stdin, env: SEEN.filter((k) => process.env[k] !== undefined), token_tail: (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "").slice(-6),
+  }) + "\n");
+}
+const say = (t: string) => process.stdout.write(`${t}\n`);
+if (task === null) fail(`no brief at ${m?.[1] ?? "(no pointer)"}`);
+const brief = task as string;
+say("\u001b[1mkimi\u001b[0m: reading the brief");
+if (brief.includes("commit")) {
+  writeFileSync(join(cwd, "kimi-output.txt"), "made by a kimi seat\n");
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-c", "user.email=seat@example.com", "-c", "user.name=Seat", ...a], { cwd });
+  git("add", "-A");
+  git("commit", "-q", "-m", "seat: add kimi-output.txt");
+  say("committed kimi-output.txt");
+}
+if (brief.includes("symlink-verdict")) {
+  mkdirSync(join(cwd, ".audit-private"), { recursive: true });
+  const outside = join(process.env.HOME ?? "/tmp", "outside-secret.txt");
+  writeFileSync(outside, "not for the launcher\n");
+  symlinkSync(outside, join(cwd, ".audit-private", "verdict.json"));
+} else if (brief.includes("verdict")) {
+  mkdirSync(join(cwd, ".audit-private"), { recursive: true });
+  writeFileSync(join(cwd, ".audit-private", "verdict.json"), JSON.stringify({ verdict: "PASS_WITH_FINDINGS", high: 0 }) + "\n");
+}
+if (brief.includes("slow")) await Bun.sleep(30_000);
+if (brief.includes("fail")) { say("giving up"); process.exit(3); }
+say("kimi: done");

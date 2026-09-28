@@ -121,6 +121,21 @@ describe("seats as a separate OS user", () => {
     expect(cwd.endsWith("/repo")).toBe(true);
   }, 60_000);
 
+  test("separate-user seat is reported by its host as an agent", async () => {
+    await person(arvid).seatsConfig({ allow: true, ephemeral: true, same_user: false, env: ["FAKE_CODEX_LOG"] });
+    await waitFor(async () => (await alex.client().seats()).hosts.some((h) => h.node === arvid.d.nodeId && h.allows), { what: "seat host" });
+    const id = await launch("slow separate-user card");
+    await inState(id, "running");
+    const name = `seat-${id.split(":")[0]?.slice(0, 6)}-${id.split(":")[1]}`;
+    const row = await waitFor(() => {
+      const body = arvid.d.core.store.agent(arvid.d.nodeId, name)?.body;
+      return body ? JSON.parse(body) as Record<string, unknown> : null;
+    }, { what: "separate-user card" });
+    expect(row).toMatchObject({ agent: name, parent: "seats", launcher: "alex", runtime: "codex", started_at: expect.any(Number) });
+    await person(alex).seatStop(id);
+    await waitFor(() => arvid.d.core.store.agent(arvid.d.nodeId, name)?.body.includes('"state":"offline"'), { what: "seat offline" });
+  }, 60_000);
+
   test("busy pauses the seat user's runtime through the runner (process stopped), resume continues it; stop ends its group", async () => {
     // Its child a bun worker in a session of its own (the fake uid scope sees bun processes, not macOS's own binaries).
     const id = await launch("setsid-worker ticker 600");

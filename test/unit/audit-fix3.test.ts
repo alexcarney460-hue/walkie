@@ -124,7 +124,7 @@ describe("C1/F1: grants after restrictions never change pre-anchor verdicts (pro
     const d = withWmMember(team, a, m, "observer", { [m.keys.nodeId]: 1 });
     const u = withWmMember(team, a, m, "observer", { [m.keys.nodeId]: 1 }); // the same restriction again
     const p2 = ev(team, m, "msg.post", { text: "after" }, { channel: "general" });
-    // hestia's replicas: A receives P → D → U, B receives D → U → P; both hold the full set.
+    // worker-b's replicas: A receives P → D → U, B receives D → U → P; both hold the full set.
     const early = await replicate(tnode("A"), team, [...setup, p, d, u, p2]);
     const late = await replicate(tnode("B"), team, [...setup, d, u, p, p2]);
     for (const core of [early, late]) {

@@ -243,7 +243,7 @@ describe("WSL detection", () => {
     expect(await findPowershell({ exists: async () => true, realpath: async (p) => p, dev: async () => "0:69", readText: async (p) => (p === "/proc/self/mountinfo" ? info : null) })).toBeNull();
   });
 
-  test("hestia's real /proc/self/mountinfo (root listed after some of its children): /mnt/c is the C: drive", async () => {
+  test("worker-b's real /proc/self/mountinfo (root listed after some of its children): /mnt/c is the C: drive", async () => {
     const info = fx("mountinfo-hestia-wsl.txt");
     expect(isWindowsDriveMount(info, "/mnt/c")).toBe(true);
     expect(onWindowsDrive(info, "/mnt/c", POWERSHELL_PATH)).toBe(true);
@@ -487,7 +487,7 @@ describe("Windows thermal sampling cadence", () => {
 });
 
 describe("interop routes (the systemd service has no WSL_INTEROP)", () => {
-  // A /run/WSL listing like hestia's under systemd-run --user (daemon uid 1000).
+  // A /run/WSL listing like worker-b's under systemd-run --user (daemon uid 1000).
   const listing = ["1_interop", "2_interop", "784190_interop", "2459744_interop", "3043279_interop", "600_interop", "601_interop", "602_interop", "603_interop", "604_interop", "evil;rm_interop", "../x_interop", "notes"];
   const sock = (uid: number, mtimeMs: number, extra: Partial<PathInfo> = {}): PathInfo => ({ socket: true, symlink: false, uid, mtimeMs, ...extra });
   const files: Record<string, PathInfo> = {

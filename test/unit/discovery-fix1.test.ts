@@ -244,7 +244,7 @@ describe("Opus 6: non-agent sessions and bounded discovery", () => {
     expect(status(w.core, "codex-hooked")?.state).toBe("working"); // it may be one of the seven not reported
   });
 
-  test("hestia's 787 idle agent-<pid> MCP cards: swept (parent gone) a bounded batch per scan, then held to the archive cap", async () => {
+  test("worker-b's 787 idle agent-<pid> MCP cards: swept (parent gone) a bounded batch per scan, then held to the archive cap", async () => {
     const w = world(cleanups);
     w.fx.procs = w.fx.procs.filter((p) => p.pid < 100);
     const t0 = w.clock.t;

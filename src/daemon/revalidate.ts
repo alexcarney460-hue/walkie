@@ -9,6 +9,7 @@ import type { BodyOf } from "../protocol/schemas.ts";
 import type { ChainEntry } from "./chain.ts";
 import type { Roster } from "./roster.ts";
 import type { EventRow, RevalJob, Store } from "./store.ts";
+import { trackOp } from "./watchdog.ts";
 
 /** Hidden (signed, curable) non-roster rows kept per origin: the lowest seqs; beyond that only a header stub. */
 export const HIDDEN_PER_ORIGIN_CAP = 1_000;
@@ -113,7 +114,7 @@ export class Revalidator {
     if (!this.jobs.length || this.stopped || this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      try { this.run(); } catch (err) { this.onError(err); }
+      try { trackOp("revalidate", () => this.run()); } catch (err) { this.onError(err); }
     }, 0);
   }
 

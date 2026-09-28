@@ -28,7 +28,7 @@ test("events the new seats-channel rules forbid, accepted by an older release, a
   await settle(core);
   expect(statusOf(core, ask.id)).toBe("rejected");
   expect(statusOf(core, loose.id)).toBe("rejected");
-  expect(core.store.getMeta("validity_version")).toBe("10"); // 10: seats + projects rules, seats mark (pre.4)
+  expect(core.store.getMeta("validity_version")).toBe("11"); // 10: seats + projects rules, seats mark (pre.4)
 });
 
 test("Opus r11 INFO: the seats-channel content rule covers the names the reservation rule reserves, known nodes only", () => {
@@ -69,7 +69,7 @@ test("Kimi r11 LOW 9 (golden): legitimate seats-channel history, emitted and rec
   core.store.setMeta("validity_version", "7");
   core = reopen(core, arvid);
   await settle(core);
-  expect(core.store.getMeta("validity_version")).toBe("10"); // 10: seats + projects rules, seats mark (pre.4)
+  expect(core.store.getMeta("validity_version")).toBe("11"); // 10: seats + projects rules, seats mark (pre.4)
   for (const e of all) expect(statusOf(core, e.id)).toBe("ok");
 });
 
@@ -88,7 +88,7 @@ test("pre.4 merge: a store at validity 8 (a seats-only or projects-only build) i
   core = reopen(core, arvid);
   await settle(core);
   expect(statusOf(core, ask.id)).toBe("rejected");
-  expect(core.store.getMeta("validity_version")).toBe("10");
+  expect(core.store.getMeta("validity_version")).toBe("11");
 });
 
 test("PRE4 RC (Codex 5): a pre.3 ordinary channel named seats-<node> keeps its history; the rule starts where the host marks it", async () => {
@@ -106,7 +106,7 @@ test("PRE4 RC (Codex 5): a pre.3 ordinary channel named seats-<node> keeps its h
   core.store.setMeta("validity_version", "7");
   core = reopen(core, arvid);
   await settle(core);
-  expect(core.store.getMeta("validity_version")).toBe("10");
+  expect(core.store.getMeta("validity_version")).toBe("11");
   expect([statusOf(core, oldAsk.id), statusOf(core, oldPost.id)]).toEqual(["ok", "ok"]);
   // The seats host marks it (its upsert carries `seats: true`; the authority's watermark anchors what came before).
   const mark = ev(id, alex, "channel.upsert", { name, members: ["arvid", "alex"], seats: true, wm: { [alex.keys.nodeId]: alex.seq } });
@@ -151,7 +151,7 @@ test("PRE4 delta: a store left at 9 (name-keyed seats rule) re-judges an unmarke
   expect(statusOf(core, post.id)).toBe("rejected");
   core = reopen(core, arvid);
   await settle(core);
-  expect(core.store.getMeta("validity_version")).toBe("10");
+  expect(core.store.getMeta("validity_version")).toBe("11");
   expect(statusOf(core, post.id)).toBe("ok");
 });
 

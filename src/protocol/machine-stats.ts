@@ -63,6 +63,12 @@ export const MachineAccel = z.object({
   /** Bytes; null = the OS default. */
   gpu_limit: Bytes.max(MAX_MEM_BYTES).nullable(),
   gpus: cappedArray(z.object({ name: HwName, vram: Vram }), MAX_GPUS),
+  /**
+   * Apple Silicon (POOL-REAL-1): the GPU's Metal working-set budget in bytes (MTLDevice recommendedMaxWorkingSetSize),
+   * as the installed llama.cpp reports it (`llama-server --list-devices`, MTL0 total); absent without the runtime.
+   * Older daemons strip it; a malformed one is dropped alone.
+   */
+  metal_budget: Bytes.max(MAX_MEM_BYTES).optional().catch(undefined),
 });
 export type MachineAccel = z.infer<typeof MachineAccel>;
 
@@ -78,6 +84,11 @@ export const MachineSys = z.object({
   version: z.string().max(48).regex(/^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:-[0-9A-Za-z.-]{1,20})?(?:\+[0-9A-Za-z.-]{1,20})?$/).optional().catch(undefined),
   cpus: z.number().int().min(1).max(4096),
   load1: z.number().min(0).max(100_000).nullable(),
+  /**
+   * What this daemon's version can do for teammates (FO-2: `seats_v2` = it runs v2 seat requests). Absent from older
+   * daemons; malformed: dropped (the rest kept).
+   */
+  caps: z.array(z.string().regex(/^[a-z0-9_]{1,32}$/)).max(16).optional().catch(undefined),
 });
 export type MachineSys = z.infer<typeof MachineSys>;
 
@@ -139,6 +150,15 @@ export const MachineStats = z.object({
     .refine((r) => Object.keys(r).length <= 64, { message: "too many peers" }).optional().catch(undefined),
   /** Platform, Walkie version and CPU load (MachineSys); absent from older daemons. Malformed: dropped, the rest kept. */
   sys: MachineSys.optional().catch(undefined),
+  /**
+   * AGENT-SEE-1: local model servers running on the machine (ollama, llama-server, rpc-server, vllm, mlx-lm), by name
+   * and count: machine load, not agents. Absent: none seen, or an older daemon (which drops it). Malformed: dropped.
+   */
+  model_servers: cappedArray(z.object({ name: cappedName(24).pipe(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,23}$/)), count: z.number().int().min(1).max(1_000) }), 8).optional().catch(undefined),
 });
 export type MachineStats = z.infer<typeof MachineStats>;
 
+/** Whether a machine's announced facts say it runs v2 seat requests (FO-2); an older daemon (no caps) does not. */
+export function hasCap(stats: { sys?: MachineSys } | null | undefined, cap: string): boolean {
+  return stats?.sys?.caps?.includes(cap) === true;
+}

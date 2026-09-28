@@ -14,7 +14,7 @@ import { sweepVerified, type OwnedFn, type SweepRoot } from "./sweep.ts";
 /** Tests only (never a release build): the roots a fake seat user's sweep walks, as a JSON array of paths. */
 export const SWEEP_ROOTS_ENV = "WALKIE_SEAT_SWEEP_ROOTS";
 
-export interface SweepAnswer { verified: boolean; left: number; removed: number; samples: string[]; notes: string[]; error?: string }
+export interface SweepAnswer { verified: boolean; left: number; removed: number; samples: string[]; notes: string[]; leftoverDirs: string[]; error?: string }
 
 /**
  * Its own per-user folder under /private/var/folders (macOS), from confstr. A failure to tell is a problem, never a
@@ -40,7 +40,7 @@ export function realRoots(home: string, uid: number, extra: readonly string[] = 
     return {
       roots: [
         { path: "/private/tmp" }, { path: "/private/var/tmp" }, { path: "/Users/Shared" }, { path: "/Library/Caches" }, ...more,
-        ...("folder" in f ? [{ path: f.folder, owned: true }] : []), { path: home, owned: true },
+        ...("folder" in f ? [{ path: f.folder, owned: true, sunlnk: true }] : []), { path: home, owned: true },
       ],
       problems: "problem" in f ? [f.problem] : [],
     };
@@ -72,7 +72,7 @@ export function sweepOp(home: string, env: NodeJS.ProcessEnv = process.env, extr
   const scope = fakeScope(env);
   if (!scope && !RELEASE_BUILD) throw new Error("the seat sweep runs only as a seat user");
   const layout = selfTest();
-  if (layout) return { verified: false, left: 0, removed: 0, samples: [], notes: [], error: layout };
+  if (layout) return { verified: false, left: 0, removed: 0, samples: [], notes: [], leftoverDirs: [], error: layout };
   let roots: SweepRoot[];
   let owned: OwnedFn;
   let problems: string[] = [];
@@ -89,6 +89,6 @@ export function sweepOp(home: string, env: NodeJS.ProcessEnv = process.env, extr
   const bad = [...problems, ...r.left, ...r.problems];
   return {
     verified: r.verified && problems.length === 0, left: bad.length, removed: r.removed,
-    samples: bad.slice(0, 10), notes: r.notes.slice(0, 10),
+    samples: bad.slice(0, 10), notes: r.notes.slice(0, 10), leftoverDirs: r.leftoverDirs,
   };
 }

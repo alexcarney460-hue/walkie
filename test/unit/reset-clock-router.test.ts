@@ -53,7 +53,7 @@ describe("routing by remembered reset times (never pings)", () => {
 });
 
 describe("the switcher's candidates carry the remembered reset times", () => {
-  const entry: VaultEntry = { id: A, provider: "claude", label: "al***@ex***.com", plan: null, policy: "own", share_with: [], created_at: 1, expires_at: null, home: null, linked: false, gen: "ab12" };
+  const entry: VaultEntry = { id: A, provider: "claude", label: "al***@ex***.com", plan: null, policy: "own", share_with: [], created_at: 1, expires_at: null, home: null, linked: false, gen: "ab12", home_at: 1, personal: false };
   const base = { provider: "claude" as const, entries: [entry], saved: new Map(), marks: {}, localLeases: new Map<string, number>() };
   const view = (over: Partial<AccountView> = {}): AccountView => ({
     key: `alex:${A}`, id: A, provider: "claude", label: "al***@ex***.com", plan: null, owners: ["alex"], claimed_by: [], usage: null, usage_host: null, last_seen: 1,

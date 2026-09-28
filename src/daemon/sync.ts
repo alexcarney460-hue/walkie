@@ -1,3 +1,4 @@
+import { PeerCapabilities } from "../protocol/capabilities.ts";
 // Replication (PROTOCOL §3): push on local write, anti-entropy pull on connect
 // and every interval, liveness + rtt per peer, stubs for restricted channels.
 import { stubOf } from "../protocol/header.ts";
@@ -11,6 +12,7 @@ import { PeerCallError, type PeerAddr, type PeerClient } from "./peer-client.ts"
 import { addrLabel } from "./transport.ts";
 import { flushRequests } from "./requests.ts";
 import { activeNodes, canSeeChannel, isRestricted, nodeMember, pickTransport, type NodeRec } from "./roster.ts";
+import { trackOp } from "./watchdog.ts";
 
 export interface SyncOptions { intervalMs?: number; livenessMs?: number; pushTimeoutMs?: number }
 
@@ -58,7 +60,7 @@ export class SyncManager {
   start(): void {
     this.stopped = false;
     if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => this.tick(), this.intervalMs);
+    this.timer = setInterval(() => trackOp("sync", () => this.tick()), this.intervalMs);
     this.tick();
   }
 
@@ -86,6 +88,19 @@ export class SyncManager {
   }
 
   peerState(nodeId: string): PeerState | undefined { return this.peers.get(nodeId); }
+
+  peerCapabilities(nodeId: string): PeerCapabilities | undefined {
+    const raw = this.core.store.getMeta(`peer_capabilities:${nodeId}`);
+    if (!raw) return undefined;
+    try { return PeerCapabilities.parse(JSON.parse(raw)); } catch { return undefined; }
+  }
+
+  rememberCapabilities(nodeId: string, value: PeerCapabilities | undefined): void {
+    if (!value) return; // No telemetry is not evidence of an old protocol version.
+    const serialized = JSON.stringify(PeerCapabilities.parse(value));
+    const key = `peer_capabilities:${nodeId}`;
+    if (this.core.store.getMeta(key) !== serialized) this.core.store.setMeta(key, serialized);
+  }
 
   isOnline(nodeId: string, now = Date.now()): boolean {
     if (nodeId === this.core.nodeId) return true;
@@ -283,6 +298,9 @@ export class SyncManager {
       s.rtt = Math.round(performance.now() - t0);
       if (typeof peerVv.ts === "number") s.skewMs = Math.round(peerVv.ts - (w0 + Date.now()) / 2);
       s.stats = peerVv.stats;
+      this.rememberCapabilities(n.node_id, peerVv.capabilities ?? (peerVv.stats?.sys ? {
+        version: peerVv.stats.sys.version, caps: peerVv.stats.sys.caps ?? [],
+      } : undefined));
       s.pool = peerVv.pool;
       if (JSON.stringify(s.accounts ?? null) !== JSON.stringify(peerVv.accounts ?? null)) {
         s.accounts = peerVv.accounts;

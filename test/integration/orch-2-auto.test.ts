@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { WalkieClient } from "../../src/client/index.ts";
 import { hostFor } from "../../src/daemon/orchestrator/host.ts";
 import type { Logins } from "../../src/daemon/orchestrator/logins.ts";
 import type { OrchestratorView } from "../../src/protocol/orchestrator.ts";
@@ -33,8 +34,8 @@ const launches = (root: string, name: string) => {
   return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter((l) => (JSON.parse(l) as { argv?: string[] }).argv?.includes("-p")).length : 0;
 };
 const view = async (n: TestNode) => (await n.client("").orchestrator()).local;
-async function cli(n: TestNode, args: string[]) {
-  return runAsPerson([process.execPath, CLI, ...args], { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: n.home, WALKIE_SOCKET: n.socket });
+async function cli(n: TestNode, args: string[], tty = false) {
+  return runAsPerson([process.execPath, CLI, ...args], { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: n.home, WALKIE_SOCKET: n.socket }, { tty });
 }
 
 describe("one machine: auto-start, first run, crash, sticky stop, rename", () => {
@@ -102,7 +103,7 @@ describe("one machine: auto-start, first run, crash, sticky stop, rename", () =>
     expect((await cli(solo, ["help"])).out).toContain("talkie status [--json]");
   }, 60_000);
 
-  test("a stop by hand sticks (ticks and a daemon restart leave it stopped) until it is started by hand", async () => {
+  test("a stop by hand sticks (ticks and a daemon restart leave it stopped); on the lead, Start means automatic (pre.8)", async () => {
     const st = await cli(solo, ["talkie", "stop"]);
     expect(st.out).toContain("stays stopped until you start it");
     await Bun.sleep(600);
@@ -110,10 +111,48 @@ describe("one machine: auto-start, first run, crash, sticky stop, rename", () =>
     await solo.restart();
     await Bun.sleep(800);
     expect((await view(solo)).running).toBe(false);
-    expect((await cli(solo, ["talkie", "status"])).out).toContain("stopped by hand");
-    await solo.client("").orchestratorStart({ cwd: c.root });
+    expect((await cli(solo, ["talkie", "status"])).out).toContain("stopped by you");
+    await waitFor(async () => { await solo.client("").orchestratorStart({ cwd: c.root }); return true; }, { what: "start after authority quarantine" });
     await waitFor(async () => (await view(solo)).running, { what: "started by hand" });
     expect((await view(solo)).stopped_by_hand).toBeUndefined();
+    // pre.8: this machine leads, so Start means "run automatically": no manual mode, and it runs again after a restart
+    expect((await view(solo)).auto).toBe(true);
+    expect((JSON.parse(readFileSync(join(solo.home, "orchestrator.json"), "utf8")) as { mode?: string }).mode).toBe("auto");
+    await solo.restart();
+    await waitFor(async () => (await view(solo)).running, { what: "runs on its own after a restart" });
+  }, 60_000);
+
+  test("an owner's agent stop through admin is sticky across ticks and restart", async () => {
+    const agent = new WalkieClient({ socket: solo.socket, underAgent: true });
+    await agent.orchestratorStop();
+    await Bun.sleep(600);
+    expect(await view(solo)).toMatchObject({ running: false, stopped_by_hand: true });
+    await solo.restart();
+    await Bun.sleep(600);
+    expect(await view(solo)).toMatchObject({ running: false, stopped_by_hand: true });
+    await waitFor(async () => { await solo.client("").orchestratorStart({ cwd: c.root }); return true; }, { what: "start after authority quarantine" });
+    await waitFor(async () => (await view(solo)).running, { what: "explicit start clears agent stop" });
+  }, 30_000);
+
+  test("walkie talkie auto (and the dashboard's Resume route) returns a stopped machine to automatic", async () => {
+    await cli(solo, ["talkie", "stop"]);
+    await waitFor(async () => (await view(solo)).stopped_by_hand === true, { what: "stopped" });
+    expect((await view(solo)).running).toBe(false);
+    const r = await cli(solo, ["talkie", "auto"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("automatic");
+    await waitFor(async () => (await view(solo)).running, { what: "running again, automatically" });
+    expect(await view(solo)).toMatchObject({ auto: true });
+    expect((await view(solo)).stopped_by_hand).toBeUndefined();
+    // the dashboard's Resume: the route is on the dashboard allow-list
+    await solo.client("").orchestratorStop();
+    const { nonce } = await solo.client().authNonce();
+    const res = await fetch(`http://127.0.0.1:${solo.d.localPort as number}/auth?nonce=${nonce}`, { redirect: "manual" });
+    const sess = /#s=([0-9a-f]{64})$/.exec(res.headers.get("location") ?? "")?.[1] ?? "";
+    const h = { "X-Walkie-Session": sess, Origin: `http://127.0.0.1:${solo.d.localPort as number}`, "Content-Type": "application/json" };
+    const resume = await fetch(`http://127.0.0.1:${solo.d.localPort as number}/v1/orchestrator/auto`, { method: "POST", headers: h, body: "{}" });
+    expect(resume.status).toBe(200);
+    await waitFor(async () => (await view(solo)).running, { what: "resumed from the dashboard" });
     await solo.client("").orchestratorStop();
   }, 60_000);
 });
@@ -145,31 +184,74 @@ describe("one lead per team: the authority leads, an owner machine stands by, ta
     expect((await cli(kira, ["talkie", "status"])).out).toContain("standby (lead: alex-mbp)");
   }, 60_000);
 
-  test("the lead goes away: the standby takes over; it comes back: the standby hands back", async () => {
+  test("authority outage: standby stays fenced until the authority returns", async () => {
     const before = launches(c.root, "kira");
     await alex.stop();
-    await waitFor(async () => (await view(kira)).running, { what: "kira takes over", timeoutMs: 20_000 });
-    await waitFor(async () => launches(c.root, "kira") > before, { what: "kira's Claude launched" });
+    await Bun.sleep(3_000);
+    expect((await view(kira)).running).toBe(false);
+    expect(launches(c.root, "kira")).toBe(before);
     await alex.start();
     await waitFor(async () => (await view(alex)).running, { what: "alex leads again", timeoutMs: 20_000 });
     await waitFor(async () => (await view(kira)).state === "standby", { what: "kira hands back", timeoutMs: 20_000 });
     expect((await view(kira)).running).toBe(false);
   }, 90_000);
 
+  test("a partitioned lease holder stops its child and cannot post or spawn under its old identity", async () => {
+    await alex.client("").orchestratorStop();
+    await waitFor(async () => (await view(kira)).running, { what: "standby holds lease" });
+    const h = hostFor(kira.d.core)!;
+    const token = await waitFor(() => { const t = (h as unknown as { childToken: string }).childToken; return t && h.acceptsToken(t) ? t : null; }, { what: "lease-bound child token" });
+    const child = (h as unknown as { child: { alive: boolean; reaped: Promise<void> } }).child;
+    expect(h.acceptsToken(token)).toBe(true);
+    const request = kira.d.client.leadLease.bind(kira.d.client);
+    kira.d.client.leadLease = async () => { throw new Error("partition"); };
+    try {
+      await alex.client("").orchestratorAuto();
+      for (let i = 0; i < 25; i++) {
+        expect(Number((await view(alex)).running) + Number((await view(kira)).running)).toBeLessThanOrEqual(1);
+        await Bun.sleep(30);
+      }
+      expect((await view(kira)).running).toBe(false);
+      expect(h.acceptsToken(token)).toBe(false);
+      await child.reaped;
+      expect(child.alive).toBe(false);
+      for (const path of ["/v1/seats/run", "/v1/post", "/v1/tasks"]) {
+        const res = await fetch(`http://127.0.0.1:${kira.d.localPort}${path}`, {
+          method: "POST", headers: { Authorization: `Bearer ${kira.d.token}`, "Content-Type": "application/json",
+            "X-Walkie-Agent": "orchestrator", "X-Walkie-Orchestrator-Token": token }, body: "{}",
+        });
+        expect(res.status).toBe(403);
+      }
+    } finally { kira.d.client.leadLease = request; }
+    await waitFor(async () => (await view(alex)).running, { what: "authority holds next lease" });
+  }, 30_000);
+
   test("the lead stopped by hand drops out: the next owner machine leads", async () => {
     await alex.client("").orchestratorStop();
     await waitFor(async () => (await view(kira)).running, { what: "kira leads", timeoutMs: 20_000 });
     expect((await view(alex)).running).toBe(false);
-    // A start by hand here now would mean two running: the CLI asks first (no terminal: refused unless --here).
-    await waitFor(async () => (await view(alex)).lead === "kiras-mbp", { what: "alex knows the lead" });
-    const asked = await cli(alex, ["talkie", "start", "--cwd", c.root]);
+    // Returning the authority to auto waits for the standby lease to end before taking over.
+    expect((await cli(alex, ["talkie", "auto"])).code).toBe(0);
+    await waitFor(async () => (await view(alex)).running, { what: "alex leads again" });
+    expect((await view(alex)).auto).toBe(true);
+    await waitFor(async () => (await view(kira)).state === "standby", { what: "kira hands back", timeoutMs: 20_000 });
+    // On kira (not the lead) a start by hand would mean two running: the CLI asks first (no terminal: refused unless --here).
+    await waitFor(async () => (await view(kira)).lead === "alex-mbp", { what: "kira knows the lead" });
+    const asked = await cli(kira, ["talkie", "start"]);
     expect(asked.code).not.toBe(0);
-    expect(asked.err).toContain("WalkieTalkie is already running on kiras-mbp; start here anyway?");
-    expect((await view(alex)).running).toBe(false);
-    const here = await cli(alex, ["talkie", "start", "--here", "--cwd", c.root]);
-    expect(here.code).toBe(0);
-    await waitFor(async () => (await view(alex)).running, { what: "alex started by hand" });
-  }, 60_000);
+    expect(asked.err).toContain("WalkieTalkie is already running on alex-mbp; start here anyway?");
+    const agentHere = await cli(kira, ["talkie", "start", "--here"]);
+    expect(agentHere.err).toContain("exclusive lease");
+    const agentBinary = await cli(kira, ["talkie", "start", "--here", "--claude", "/bin/sh"]);
+    expect(agentBinary.err).toContain("only a person can choose WalkieTalkie");
+    const here = await cli(kira, ["talkie", "start", "--here", "--cwd", c.root], true);
+    expect(here.code).not.toBe(0);
+    expect(here.err + here.out).toContain("exclusive lease");
+    expect((await view(kira)).running).toBe(false);
+    // walkie talkie auto: back to automatic: kira stands by again
+    expect((await cli(kira, ["talkie", "auto"])).code).toBe(0);
+    await waitFor(async () => (await view(kira)).state === "standby" && !(await view(kira)).running, { what: "kira automatic (standby)", timeoutMs: 20_000 });
+  }, 90_000);
 });
 
 describe("its walkie CLI mints an add-machine link under agent admin (Walkie Direct)", () => {
@@ -216,7 +298,8 @@ describe("pre.7 RC fixes (Codex): a stop beats a stale auto decision; pre.6 stat
   afterAll(async () => { await c.close(); });
   type Stale = { kind: "run" } | { kind: "standby"; lead: string | null } | { kind: "needs_login"; found: string[] };
   const host = () => hostFor(node.d.core) as unknown as {
-    stopByHand(): Promise<void>; start(req: { cwd: string }): Promise<void>; serial<T>(op: () => Promise<T>): Promise<T>; applyAuto(d: Stale): Promise<void>;
+    stopByHand(): Promise<void>; start(req: { cwd: string }): Promise<void>; serial<T>(op: () => Promise<T>): Promise<T>; applyAuto(d: Stale, gen?: number): Promise<void>;
+    handGen: number;
   };
   const ownStatus = () => (JSON.parse(node.d.core.store.agent(node.d.core.nodeId, "orchestrator")?.body ?? "{}") as { state?: string }).state;
   const legacy = (active: boolean) => JSON.stringify({ active, owner: "rc", started_at: Date.now(), cwd: c.root, permission_mode: "default", claude: join(FAKE_DIR, "claude"), sessions: {} });
@@ -231,18 +314,28 @@ describe("pre.7 RC fixes (Codex): a stop beats a stale auto decision; pre.6 stat
     expect(await view(node)).toMatchObject({ running: false, stopped_by_hand: true });
   }, 60_000);
 
-  test("HIGH 2: a pre.6 state file: stopped stays stopped (sticky); running keeps running as a start by hand", async () => {
+  test("HIGH 2 + pre.8: a pre.6 idle state clears its invented stop; running on the lead remains automatic", async () => {
     await node.stop();
     writeFileSync(join(node.home, "orchestrator.json"), legacy(false));
     await node.start();
-    await Bun.sleep(800);
-    expect(await view(node)).toMatchObject({ running: false, stopped_by_hand: true });
+    await waitFor(async () => (await view(node)).running, { what: "legacy idle becomes automatic" });
+    expect((await view(node)).stopped_by_hand).not.toBe(true);
     await node.stop();
     writeFileSync(join(node.home, "orchestrator.json"), legacy(true));
     await node.start();
     await waitFor(async () => (await view(node)).running, { what: "resumed as before" });
-    expect((await view(node)).auto).toBe(false); // a start by hand: outside the election
-    expect((JSON.parse(readFileSync(join(node.home, "orchestrator.json"), "utf8")) as { mode?: string }).mode).toBe("manual");
+    // this machine leads: no manual mode on the lead (pre.8), so it becomes automatic on the first check
+    await waitFor(async () => (JSON.parse(readFileSync(join(node.home, "orchestrator.json"), "utf8")) as { mode?: string }).mode === "auto", { what: "auto on the lead" });
+    expect((await view(node)).auto).toBe(true);
+  }, 60_000);
+
+  test("pre.8 upgrade: a pre.7 manual file on the lead becomes automatic", async () => {
+    await node.stop();
+    writeFileSync(join(node.home, "orchestrator.json"), JSON.stringify({ ...JSON.parse(legacy(true)), mode: "manual", access: "platform" }));
+    await node.start();
+    await waitFor(async () => (JSON.parse(readFileSync(join(node.home, "orchestrator.json"), "utf8")) as { mode?: string }).mode === "auto", { what: "auto on the lead" });
+    await waitFor(async () => (await view(node)).running, { what: "running" });
+    expect((await view(node)).auto).toBe(true);
   }, 60_000);
 
   test("MEDIUM 3: a vault-only Claude login reaches the child on a boot and on a crash retry", async () => {
@@ -255,11 +348,11 @@ describe("pre.7 RC fixes (Codex): a stop beats a stale auto decision; pre.6 stat
     let n = launches(c.root, "rc");
     await node.client("").orchestratorStop();
     await node.client("").orchestratorStart({ cwd: c.root }); // a boot
-    await waitFor(async () => launches(c.root, "rc") > n, { what: "booted" });
-    expect(envOf()).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    await waitFor(async () => launches(c.root, "rc") > n && envOf().includes("CLAUDE_CODE_OAUTH_TOKEN"), { what: "booted with the vault login" });
     n = launches(c.root, "rc");
     await node.client("").orchestratorSay("crash please"); // a retry
     await waitFor(async () => launches(c.root, "rc") > n, { what: "retried" });
+    await Bun.sleep(300); // the retry's own log line
     expect(envOf()).toContain("CLAUDE_CODE_OAUTH_TOKEN");
     await node.client("").orchestratorStop();
   }, 60_000);
@@ -270,29 +363,44 @@ describe("pre.7 RC fixes (Codex): a stop beats a stale auto decision; pre.6 stat
     for (const stale of [{ kind: "standby", lead: "kiras-mbp" }, { kind: "needs_login", found: [] }] as Stale[]) {
       // queued behind a start by hand: it keeps running
       await h.stopByHand();
+      const g = h.handGen; // decided before the start
       const start = h.start({ cwd: c.root });
-      const late = h.serial(() => h.applyAuto(stale));
+      const late = h.serial(() => h.applyAuto(stale, g));
       await Promise.all([start, late]);
       await Bun.sleep(400);
-      expect({ stale: stale.kind, v: await view(node) }).toMatchObject({ stale: stale.kind, v: { running: true, auto: false } });
+      expect({ stale: stale.kind, v: await view(node) }).toMatchObject({ stale: stale.kind, v: { running: true } });
       expect((await view(node)).state).not.toBe(stale.kind);
       // queued behind a stop by hand: it stays stopped, and its team status stays offline (not able to lead)
+      const g2 = h.handGen;
       const stop = h.stopByHand();
-      const late2 = h.serial(() => h.applyAuto(stale));
+      const late2 = h.serial(() => h.applyAuto(stale, g2));
       await Promise.all([stop, late2]);
       await Bun.sleep(400);
       expect({ stale: stale.kind, v: await view(node) }).toMatchObject({ stale: stale.kind, v: { running: false, state: "stopped", stopped_by_hand: true } });
+      // (the offline status may wait for the status rate limit; nothing may republish over it afterwards)
+      await waitFor(async () => ownStatus() === "offline", { what: `offline (${stale.kind})` });
+      await Bun.sleep(600);
       expect({ stale: stale.kind, status: ownStatus() }).toEqual({ stale: stale.kind, status: "offline" });
     }
   }, 60_000);
 
-  test("Opus RC LOW: a migrated pre.6 stop also publishes offline, so peers don't keep electing it", async () => {
+  test("pre.8 clears a pre.7 invented stop flag", async () => {
     await host().start({ cwd: c.root }); // pre.6 ran it by hand: its status is live (idle)
     await waitFor(async () => ownStatus() === "idle", { what: "a live status" });
     await node.stop(); // a daemon stop leaves that status live
-    writeFileSync(join(node.home, "orchestrator.json"), legacy(false)); // what pre.6 wrote after a stop
+    writeFileSync(join(node.home, "orchestrator.json"), JSON.stringify({ ...JSON.parse(legacy(false)), stopped_by_hand: true }));
     await node.start();
-    await waitFor(async () => ownStatus() === "offline", { what: "offline after the migration" });
-    expect(await view(node)).toMatchObject({ running: false, stopped_by_hand: true });
+    await waitFor(async () => (await view(node)).running, { what: "pre.7 invented stop cleared" });
+    expect((await view(node)).stopped_by_hand).not.toBe(true);
   }, 60_000);
+});
+
+test("a promotion decided before a hand start cannot change the newer manual state", async () => {
+  const { OrchestratorHost } = await import("../../src/daemon/orchestrator/host.ts");
+  const proto = OrchestratorHost.prototype as unknown as { autoHost: (this: unknown) => { promote: (leads: boolean, gen: number) => Promise<void> } };
+  const h = { state: { mode: "manual", active: true }, handGen: 2, serial: (f: () => unknown) => Promise.resolve(f()), save: () => {}, log: { info: () => {} } };
+  await proto.autoHost.call(h).promote(true, 1);
+  expect(h.state.mode).toBe("manual");
+  await proto.autoHost.call(h).promote(true, 2);
+  expect(h.state.mode).toBe("auto");
 });

@@ -24,7 +24,10 @@ if (!argv.includes("--json")) fail("--json required");
 if (argv[argv.length - 1] !== "-") fail("the prompt must come from stdin (-)");
 const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const cwd = flag("-C") ?? process.cwd();
-const prompt = await new Response(Bun.stdin.stream()).text();
+const stdinPrompt = await new Response(Bun.stdin.stream()).text();
+// A v2 seat (FO-2): the prompt only points at the brief in the work tree; act on the brief.
+const pointer = /^Read \.\/(\S+) and do it$/.exec(stdinPrompt.trim());
+const prompt = pointer ? readFileSync(join(cwd, pointer[1] as string), "utf8") : stdinPrompt;
 const SEEN = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_HOME", "UNIT_MARK",
   "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "UNIT_EXTRA", "WALKIE_HOME", "WALKIE_SEAT_TOKEN", "WALKIE_SEAT_TOKEN_FILE"];
 const logFile = process.env.FAKE_CODEX_LOG;
@@ -32,6 +35,12 @@ if (logFile) {
   appendFileSync(logFile, JSON.stringify({
     pid: process.pid, argv, cwd, prompt, walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined),
     codex_home: process.env.CODEX_HOME ?? null, home: process.env.HOME ?? null, uid: process.getuid?.() ?? null, user: userInfo().username,
+    // v2 (FO-2): the raw stdin prompt and the work tree's branch and commit as the seat found them.
+    ...(pointer ? {
+      stdin_prompt: stdinPrompt,
+      head_ref: Bun.spawnSync(["git", "symbolic-ref", "-q", "HEAD"], { cwd, stdout: "pipe" }).stdout.toString().trim(),
+      head: Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd, stdout: "pipe" }).stdout.toString().trim(),
+    } : {}),
   }) + "\n");
 }
 const out = (o: Record<string, unknown>) => process.stdout.write(JSON.stringify(o) + "\n");

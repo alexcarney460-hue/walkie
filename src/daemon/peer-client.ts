@@ -1,3 +1,4 @@
+import { LeadGrant } from "./orchestrator/lease.ts";
 // HTTP client for other daemons' peer API (PROTOCOL §4), over Tailscale or Walkie Direct (src/daemon/transport.ts).
 // A peer is not trusted to send well-formed or small responses: bodies are read with a streaming byte cap and
 // validated with zod.
@@ -6,12 +7,13 @@ import {
   MAX_IDS_PER_FETCH, PeerEventsRes, PeerHelloRes, PeerJoinResSchema, PeerPushResSchema, PeerVvRes, RosterRequestRes,
   type PeerHello, type PeerJoinRes, type PeerPushRes, type PeerVv, type RosterRequest,
 } from "../protocol/schemas.ts";
-import { pickTransport, type NodeRec } from "./roster.ts";
+import { pickTransport, reachableOver, type NodeRec } from "./roster.ts";
+import type { TransportKind } from "../protocol/schemas.ts";
 import { Transports, addrLabel, peerUrl, type PeerAddr } from "./transport.ts";
-import { StageRes, type StageReq } from "../protocol/pool.ts";
+import { ServeRes, StageRes, type ServeReq, type StageReq } from "../protocol/pool.ts";
 import { TunnelRefused } from "./direct/net.ts";
 import { WsEnd, type End } from "../pool/run/tunnel.ts";
-import { PeerLeaseRes, type PeerLeaseReq } from "./vault-lease.ts";
+import { BorrowedUsageRes, PeerLeaseRes, type PeerLeaseReq } from "./vault-lease.ts";
 import { RemoteRunRes } from "../protocol/admin.ts";
 
 export { peerUrl, type PeerAddr } from "./transport.ts";
@@ -114,6 +116,15 @@ export class PeerClient {
     return via === "direct" ? { ip: n.ip, port: n.port, pubkey: n.pubkey } : null;
   }
 
+  /**
+   * POOL-REAL-1: `n`'s address over one given transport, when both machines serve it now (Direct only while this
+   * daemon's endpoint runs), else null. Pool tunnels pick their transport with it (main.ts poolAddr).
+   */
+  addrVia(n: PeerNode, kind: TransportKind): PeerAddr | null {
+    if (!reachableOver(this.localTransports()).includes(kind) || !reachableOver(n).includes(kind)) return null;
+    return kind === "tailscale" ? { ip: n.ip, port: n.port } : { ip: n.ip, port: n.port, pubkey: n.pubkey };
+  }
+
   /** Whether this daemon can reach `n` directly at all. */
   reaches(n: PeerNode): boolean { return this.addrOf(n) !== null; }
 
@@ -195,6 +206,12 @@ export class PeerClient {
     return this.call(addr, "POST", "/peer/v1/events", PeerPushResSchema, { events }, timeoutMs);
   }
   /** ACCOUNTS-2: asks the owner's machine for a setup-token hand-out (reply sealed to our ephemeral key). */
+  leadLease(addr: PeerAddr): Promise<LeadGrant> {
+    return this.call(addr, "POST", "/peer/v1/orchestrator/lease", LeadGrant, {}, 5_000);
+  }
+  borrowedUsage(addr: PeerAddr, account: string, grant: string) {
+    return this.call(addr, "POST", "/peer/v1/vault/usage", BorrowedUsageRes, { account, grant }, 5_000);
+  }
   vaultLease(addr: PeerAddr, body: PeerLeaseReq): Promise<PeerLeaseRes> {
     return this.call(addr, "POST", "/peer/v1/vault/lease", PeerLeaseRes, body, 10_000);
   }
@@ -219,7 +236,16 @@ export class PeerClient {
    * `tailscale whois` on the source address before upgrading).
    */
   async tunnel(addr: PeerAddr, run: string): Promise<End> {
-    const path = `/peer/v1/pool/tunnel/${run}`;
+    return this.tunnelTo(addr, `/peer/v1/pool/tunnel/${run}`);
+  }
+
+  /** POOL-REAL-1: start / connect to / renew / disconnect from / stop a model a machine serves whole. */
+  serve(addr: PeerAddr, body: ServeReq): Promise<ServeRes> {
+    return this.call(addr, "POST", "/peer/v1/pool/serve", ServeRes, body, body.action === "start" ? 30_000 : 10_000);
+  }
+
+  /** A tunnel connection to any tunnel path of a peer (split-run stages, served models' proxies). */
+  async tunnelTo(addr: PeerAddr, path: string): Promise<End> {
     if (addr.pubkey) {
       const t = this.transports.direct;
       if (!t?.openTunnel) throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (Walkie Direct is not running on this machine)`);

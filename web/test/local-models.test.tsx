@@ -74,8 +74,8 @@ test("Mission Control card labels an unmeasured GPU and uses free VRAM when it i
   measured.stats = { ...measured.stats!, gpu_free: [2 * GiB] };
   const busy = renderToStaticMarkup(<LocalModelsCard nodes={[measured]} />);
   expect(busy).not.toContain("isn&#x27;t measured");
-  // 22 of 24 GiB VRAM in use: 1 GiB usable now, so nothing fits now; the whole card only if idle.
-  expect(busy).toContain("1.0 GB free for a model now");
+  // 22 of 24 GiB VRAM in use: 1.5 GiB usable now (0.5 GiB reserve, POOL-REAL-1), so nothing fits now; the whole card only if idle.
+  expect(busy).toContain("1.5 GB free for a model now");
   expect(busy).toContain("Nothing in the catalog fits in the memory free right now.");
   expect(busy).toContain("otherwise idle</span>: <strong>Qwen3 32B · 4-bit</strong> on rig");
 });
@@ -91,7 +91,7 @@ const fleet: NodeView[] = [
   node("maren-mbp", { self: true, rtt_ms: 0, pool: { share: false, cap: null, runtime: true, busy: false } }, 16, 9, "Apple M5"),
   node("tobias-mbp", { rtt_ms: 24, pool: { share: true, cap: null, runtime: true, busy: false } }, 36, 14, "Apple M3 Pro"),
   node("atlas", { rtt_ms: 31, pool: { share: true, cap: null, runtime: true, busy: false } }, 64, 12, "AMD Ryzen 9 7950X", [{ name: "NVIDIA GeForce RTX 4090", vram: 24 * GiB }]),
-  node("sol-x1", { rtt_ms: 38 }, 96, 7, "Intel(R) Core(TM) Ultra 7 155H"), // big, and not shared
+  node("sol-x1", { rtt_ms: 38 }, 48, 7, "Intel(R) Core(TM) Ultra 7 155H"), // big-ish, and not shared
   node("ines-studio", { rtt_ms: 27, pool: { share: true, cap: null, runtime: true, busy: false } }, 24, 10, "Apple M4"),
 ];
 
@@ -109,4 +109,14 @@ test("card headline: all our machines together, the placement, who starts it, wh
   const section = renderToStaticMarkup(<LocalModelsSection nodes={fleet} />);
   expect(section).toContain("With all our machines together");
   expect(section).toContain("a person starts the run");
+});
+
+test("POOL-REAL-1: a model one machine runs at least as fast as the split is shown on that machine, not split", () => {
+  const withBig = fleet.map((n) => (n.hostname === "sol-x1" ? node("sol-x1", { rtt_ms: 38 }, 96, 7, "Intel(R) Core(TM) Ultra 7 155H") : n));
+  const out = renderToStaticMarkup(<LocalModelsCard nodes={withBig} />);
+  expect(out).toMatch(/gpt-oss-120b · 4-bit/);
+  expect(out).toContain("on one machine");
+  expect(out).not.toMatch(/about [\d.]+ tokens\/s, split across \d machines/);
+  // And the serve block offers the fastest GPU a model fits on whole.
+  expect(out).toContain("Serve on one machine");
 });

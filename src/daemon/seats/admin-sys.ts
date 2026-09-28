@@ -293,7 +293,7 @@ export function realAdminSys(): AdminSys {
       // root → the seat user through sudo (initgroups: its own groups only), cwd /, a fixed environment.
       const r = await runnerOp(["sudo", "-n", "-u", name, "--", runnerPath, "seat-runner"], "sweep", 30 * 60_000, { roots });
       if (!r) return { ok: false, left: ["the seat user's sweep didn't answer"] };
-      return { ok: r.verified, left: r.verified ? [] : [...(r.samples ?? []), ...(r.why ? [r.why] : []), ...(r.left !== undefined ? [`${r.left} left`] : [])] };
+      return { ok: r.verified, left: r.verified ? [] : [...(r.samples ?? []), ...(r.why ? [r.why] : []), ...(r.left !== undefined ? [`${r.left} left`] : [])], leftoverDirs: r.verified ? r.leftoverDirs : [] };
     },
     sleep: (ms) => Bun.sleep(ms),
   };

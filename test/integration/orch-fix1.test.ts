@@ -59,7 +59,7 @@ beforeAll(async () => {
   launches = join(c.root, "fake-launches.jsonl");
   path = `${FAKE_DIR}:${process.env.PATH ?? "/usr/bin:/bin"}`;
   const orchestrator = {
-    restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, interruptGraceMs: 400,
+    autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, interruptGraceMs: 400,
     env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator });

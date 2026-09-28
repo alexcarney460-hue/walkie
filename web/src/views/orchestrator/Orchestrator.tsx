@@ -10,7 +10,7 @@ import { Composer, type ComposerHandle } from "./Composer.tsx";
 import { Message, MessageBoundary, Pending } from "./Messages.tsx";
 import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
 import { HeaderModel } from "./ModelPicker.tsx";
-import { standingDown, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
+import { notRunningKind, ResumeButton, standingDown, StoppedCard, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
 import { awaitingReply, conversations, dayGroup, localOrchestrator, modelLabel, threadMessages, type Conversation, type DayGroup } from "./model.ts";
 
 const SUGGESTIONS = [
@@ -92,7 +92,9 @@ export function Orchestrator() {
   const status = localOrchestrator(agents, me?.node.id);
   // ORCH-2: a machine standing by (or without a model login) publishes a status too; its host isn't running here.
   const talkie = useTalkieView(`${status?.effective_state ?? ""}|${status?.updated_at ?? ""}`);
-  const host = standingDown(talkie) ? null : status;
+  // The host's running flag is authoritative; the replicated agent card can be stale or swept by older peers.
+  const hostRunning = talkie?.running === true && !standingDown(talkie);
+  const host = hostRunning ? status : null;
   const reconnecting = conn.status === "reconnecting";
   const thread = route.thread;
   const [load, setLoad] = useState<"loading" | "ok" | "error">("loading");
@@ -117,7 +119,7 @@ export function Orchestrator() {
   const messages = useMemo(() => (thread ? threadMessages(orch, thread) : []), [orch, thread]);
   const waiting = awaitingReply(messages, now);
   const liveTurn = waiting ? live[waiting.id] : undefined;
-  const busy = !!waiting && !!host;
+  const busy = !!waiting && hostRunning;
   const activity = host?.effective_state === "working" && host.status.activity ? host.status.activity : "Thinking…";
 
   // Stick to the bottom while the reader is there; a new conversation starts at the bottom.
@@ -169,17 +171,17 @@ export function Orchestrator() {
   const empty = !thread;
   const where = !host && talkie?.state === "standby" ? <span>standby{talkie.lead ? ` · lead: ${talkie.lead}` : ""}</span>
     : !host && talkie?.state === "needs_login" ? <span>needs a model login</span>
-    : host ? (
+    : hostRunning ? (
     <>
-      <span className={`orch-dot orch-dot-${host.effective_state}`} aria-hidden="true" />
-      <span>on this machine · {modelLabel(host.status.model)}</span>
+      <span className={`orch-dot orch-dot-${status?.effective_state ?? talkie?.state ?? "idle"}`} aria-hidden="true" />
+      <span>on this machine · {modelLabel(status?.status.model ?? talkie?.model)}</span>
     </>
   ) : <span>not running on this machine</span>;
 
   const composerEl = (
     <div className="orch-dock">
       {error && <ErrorState message={error} compact />}
-      {reconnecting && host && (
+      {reconnecting && hostRunning && (
         <div className="orch-offline" role="status">
           <CloudOff size={15} strokeWidth={1.75} aria-hidden="true" />
           <span>Reconnecting to Walkie on this machine… Sending is paused until it's back.</span>
@@ -191,7 +193,7 @@ export function Orchestrator() {
           <span>{host.status.activity || "WalkieTalkie is stuck."} It retries on its own; check <span className="mono">walkie talkie status</span>.</span>
         </div>
       )}
-      {host ? (
+      {hostRunning ? (
         <Composer
           ref={composer} busy={busy} disabled={reconnecting} onSend={send} onStop={stop}
           placeholder={empty ? "Ask WalkieTalkie anything" : "Message WalkieTalkie"}
@@ -201,6 +203,17 @@ export function Orchestrator() {
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
           <span>{talkie.state === "standby" ? `WalkieTalkie is on standby here${talkie.lead ? `; it runs on ${talkie.lead}` : ""}.` : talkie.needs ?? "WalkieTalkie needs a model login."}</span>
         </div>
+      ) : !empty && notRunningKind(talkie) === "stopped_by_you" ? (
+        <div className="orch-offline orch-offline-start" role="status">
+          <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
+          <span>WalkieTalkie is stopped (by you). Resume to continue: it runs on its own again.</span>
+          <ResumeButton size="sm" />
+        </div>
+      ) : !empty && notRunningKind(talkie) === "starting" ? (
+        <div className="orch-offline" role="status">
+          <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
+          <span>WalkieTalkie is starting on its own…</span>
+        </div>
       ) : !empty ? (
         <div className="orch-offline orch-offline-start" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -208,7 +221,7 @@ export function Orchestrator() {
           <StartOrchestrator size="sm" />
         </div>
       ) : null}
-      {host && <p className="orch-foot">Runs Claude Code on this machine with your sign-in; the conversation stays here. It can use tools; check its work.</p>}
+      {hostRunning && <p className="orch-foot">Runs Claude Code on this machine with your sign-in; the conversation stays here. It can use tools; check its work.</p>}
     </div>
   );
 
@@ -261,7 +274,8 @@ export function Orchestrator() {
                     ))}
                   </ul>
                 </div>
-              ) : talkie && standingDown(talkie) ? <TalkieStateCard view={talkie} /> : <NotRunning />
+              ) : talkie && standingDown(talkie) ? <TalkieStateCard view={talkie} />
+                : notRunningKind(talkie) !== "manual" ? <StoppedCard kind={notRunningKind(talkie) as "stopped_by_you" | "starting"} /> : <NotRunning />
             ) : (
               <div className="orch-thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
                 {load === "loading" && !messages.length && (

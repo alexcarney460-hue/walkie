@@ -108,7 +108,7 @@ export function AgentDrawer({ id }: { id: string }) {
         <header className="drawer-head">
           <div className="drawer-head-text">
             <div className="drawer-kicker">
-              {s && <RuntimeBadge runtime={s.runtime} />}
+              {s && <RuntimeBadge runtime={s.runtime} runtime_name={s.runtime_name} launch={s.launch} />}
               <span className="mono muted truncate">{agent ? agentAddress(agent) : id}</span>
             </div>
             <h2 className="drawer-title mono" id="drawer-title">{agent?.agent ?? id.split("/").pop()}</h2>

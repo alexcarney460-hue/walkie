@@ -54,7 +54,19 @@ export function parseNvidiaSmi(text: string | null): MachineAccel["gpus"] {
   return out;
 }
 
+/**
+ * `llama-server --list-devices` on Apple Silicon: "  MTL0: Apple M5 (12124 MiB, 12123 MiB free)". The total is Metal's
+ * recommendedMaxWorkingSetSize, the most the GPU may wire; bytes, or null when no Metal device is listed.
+ */
+export function parseMetalBudget(text: string | null): number | null {
+  const m = /^\s*MTL0:[^(\n]*\((\d+) MiB/m.exec(text ?? "");
+  const mib = m ? Number(m[1]) : NaN;
+  return Number.isInteger(mib) && mib > 0 && mib * MIB <= 2 ** 42 ? mib * MIB : null;
+}
+
 export interface AccelDeps {
+  /** Apple Silicon: Metal's working-set budget in bytes, when it can be read (main.ts: the installed llama-server). */
+  metalBudget?: () => Promise<number | null>;
   platform?: NodeJS.Platform;
   run?: Runner;
   readText?: (path: string) => Promise<string | null>;
@@ -139,7 +151,9 @@ export async function readAccel(deps: AccelDeps = {}): Promise<MachineAccel | nu
     const [brand, arm64, wired, gpus] = await Promise.all([
       sysctl("machdep.cpu.brand_string"), sysctl("hw.optional.arm64"), sysctl("iogpu.wired_limit_mb"), nvidiaGpus(run, exists),
     ]);
-    return { ...parseDarwinAccel(brand, arm64, wired), gpus };
+    const base = { ...parseDarwinAccel(brand, arm64, wired), gpus };
+    const metal = base.unified && deps.metalBudget ? await deps.metalBudget().catch(() => null) : null;
+    return metal ? { ...base, metal_budget: metal } : base;
   }
   if (platform === "linux") {
     const [cpuinfo, gpus] = await Promise.all([(deps.readText ?? readTextFile)("/proc/cpuinfo"), nvidiaGpus(run, exists)]);

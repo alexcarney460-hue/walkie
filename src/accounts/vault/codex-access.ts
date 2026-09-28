@@ -51,3 +51,64 @@ export function codexAccessOnly(text: string, now?: number): CodexAccess | null 
   });
   return { json, expiresAt };
 }
+
+/** A leased Codex access token must have at least this long left (the home renews it before: service.ts). */
+export const CODEX_LEASE_MIN_LEFT_MS = 30 * 60_000;
+
+const b64url = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+/**
+ * An id_token for a lease with only what codex-cli reads to run (the plan type and ChatGPT account id), never the
+ * person's email or name: codex-cli 0.156.1 refuses an auth.json without `tokens.id_token` but accepts an unsigned
+ * one with just these claims (checked offline with fake tokens). The borrower never sends it anywhere.
+ */
+function leaseIdToken(idToken: unknown): string {
+  let auth: Record<string, unknown> = {};
+  if (typeof idToken === "string") {
+    const part = idToken.split(".")[1];
+    try {
+      const claims = JSON.parse(Buffer.from((part ?? "").replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")) as Record<string, unknown>;
+      const a = claims["https://api.openai.com/auth"];
+      if (a && typeof a === "object") auth = a as Record<string, unknown>;
+    } catch { /* unreadable: no claims */ }
+  }
+  const keep: Record<string, string> = {};
+  for (const k of ["chatgpt_plan_type", "chatgpt_account_id"]) if (typeof auth[k] === "string" && (auth[k] as string).length <= 200) keep[k] = auth[k] as string;
+  return `${b64url({ alg: "none", typ: "JWT" })}.${b64url({ "https://api.openai.com/auth": keep })}.lease`;
+}
+
+/**
+ * The copy of a Codex login another machine LEASES (COMPANY POOL): access token + a claims-only id_token (no email),
+ * an empty refresh_token, `last_refresh` = now (so Codex does not try to refresh it for the lease's life), no API key.
+ * Null when the access token's expiry cannot be read or it has less than CODEX_LEASE_MIN_LEFT_MS left: never lent blind.
+ */
+export function codexLeaseCopy(text: string, now: number): CodexAccess | null {
+  let o: { auth_mode?: unknown; tokens?: Record<string, unknown> };
+  try { o = JSON.parse(text) as typeof o; } catch { return null; }
+  const t = o?.tokens;
+  if (!t || typeof t !== "object" || typeof t.access_token !== "string" || !t.access_token) return null;
+  const expiresAt = jwtExpiry(t.access_token);
+  if (expiresAt === null || expiresAt < now + CODEX_LEASE_MIN_LEFT_MS) return null;
+  const json = JSON.stringify({
+    ...(typeof o.auth_mode === "string" ? { auth_mode: o.auth_mode } : {}),
+    OPENAI_API_KEY: null,
+    tokens: {
+      access_token: t.access_token, id_token: leaseIdToken(t.id_token), refresh_token: "",
+      ...(typeof t.account_id === "string" ? { account_id: t.account_id } : {}),
+    },
+    last_refresh: new Date(now).toISOString(),
+  });
+  return { json, expiresAt };
+}
+
+/** Whether a borrower-side auth.json is an access-only copy (no refresh token, no API key) — checked before writing. */
+export function isAccessOnly(json: string): boolean {
+  try {
+    const o = JSON.parse(json) as { OPENAI_API_KEY?: unknown; tokens?: Record<string, unknown> };
+    const t = o.tokens;
+    return !!t && typeof t.access_token === "string" && t.access_token.length > 0 && t.access_token.length <= 16_384
+      && t.refresh_token === "" && (o.OPENAI_API_KEY === null || o.OPENAI_API_KEY === undefined);
+  } catch {
+    return false;
+  }
+}

@@ -31,7 +31,7 @@ async function loadSnapshot(me: MeView, dispatch: (a: Action) => void): Promise<
   const [team, agents, peers, events, asks, accounts] = await Promise.all([
     api.team(), api.agents(), api.peers(), api.events({ limit: 500 }), api.asks(),
     // An older daemon has no /v1/accounts: the dashboard works without it.
-    api.accounts().catch(() => ({ accounts: [] })),
+    api.accounts().catch(() => ({ accounts: [], pool: undefined })),
   ]);
   const teamId = me.team?.id ?? "none";
   const baselineKey = `walkie.readBaseline.${teamId}`;
@@ -42,7 +42,7 @@ async function loadSnapshot(me: MeView, dispatch: (a: Action) => void): Promise<
   }
   dispatch({
     // An older daemon sends no archive counts (it sends every agent): treat that as an empty archive.
-    type: "boot/ready", me, team, agents: agents.agents, archive: agents.archive ?? [], archiveRev: agents.archive_rev ?? null, nodes: peers.nodes, accounts: accounts.accounts, events: events.events,
+    type: "boot/ready", me, team, agents: agents.agents, archive: agents.archive ?? [], archiveRev: agents.archive_rev ?? null, nodes: peers.nodes, accounts: accounts.accounts, accountsPool: accounts.pool ?? null, events: events.events,
     asks: asks.asks, readMarks: load<Record<string, number>>(`walkie.read.${teamId}`, {}), readBaseline,
   });
 }
@@ -94,7 +94,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "team", team });
       dispatch({ type: "asks", asks: asks.asks });
       dispatch({ type: "events", events: events.events });
-      void api.accounts().then((r) => dispatch({ type: "accounts", accounts: r.accounts })).catch(() => {});
+      void api.accounts().then((r) => dispatch({ type: "accounts", accounts: r.accounts, pool: r.pool ?? null })).catch(() => {});
       void resyncOrch();
       projectsStore.resync();
     };

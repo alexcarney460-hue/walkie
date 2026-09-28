@@ -107,7 +107,7 @@ export interface TailInfo {
   prompt?: string;
 }
 
-export type FileKind = "claude" | "codex" | "other";
+export type FileKind = "claude" | "codex" | "kimi" | "other";
 
 interface Rec { [k: string]: unknown }
 
@@ -304,6 +304,72 @@ function codexTail(recs: readonly Rec[], detail: boolean): TailInfo {
   return { ...info, ...(open > 0 ? { toolRunning: true, midTurn: true } : {}) };
 }
 
+// ---- Kimi Code (AGENT-SEE-1) ---------------------------------------------------------------------------------
+// Kimi's wire.jsonl: {"type": "agent.turn.started" | "turn.prompt" | "llm.request" | "context.append_loop_event"
+// (event.type "step.begin" | "tool.call" | "tool.result" | "step.end" | "content.part") | ... | "turn.ended" |
+// "prompt.completed", "time": <ms>}. A `kimi -p` run is one long turn: started → steps → ended.
+
+const KIMI_END = new Set(["turn.ended", "agent.turn.ended", "prompt.completed", "prompt.aborted"]);
+const KIMI_START = new Set(["agent.turn.started", "turn.prompt"]);
+const KIMI_TURN = new Set([...KIMI_END, ...KIMI_START, "context.append_loop_event", "llm.request", "agent.message.appended",
+  "context.append_message", "turn.step.retrying"]);
+/** Kimi's tool names that differ from Claude Code's (describeTool speaks Claude's). */
+const KIMI_TOOL_ALIAS: Readonly<Record<string, string>> = { FetchURL: "WebFetch", TodoList: "TodoWrite", ReadMediaFile: "Read" };
+
+function kimiKind(r: Rec): "end" | "start" | "turn" | null {
+  const t = typeof r.type === "string" ? r.type : "";
+  if (!KIMI_TURN.has(t)) return null;
+  return KIMI_END.has(t) ? "end" : KIMI_START.has(t) ? "start" : "turn";
+}
+
+function kimiTime(r: Rec): number | undefined {
+  return typeof r.time === "number" && Number.isFinite(r.time) ? r.time : undefined;
+}
+
+/** Tool calls of the tail with no result after them (and no turn end since). */
+export function openKimiCalls(recs: readonly Rec[], init: ReadonlySet<string> = new Set()): Set<string> {
+  const open = new Set(init);
+  for (const r of recs) {
+    const kind = kimiKind(r);
+    if (kind === "end" || kind === "start") { open.clear(); continue; }
+    if (r.type !== "context.append_loop_event") continue;
+    const ev = obj(r.event);
+    const id = typeof ev.toolCallId === "string" ? ev.toolCallId : "";
+    if (ev.type === "tool.call") open.add(id || `anon-${open.size}`);
+    else if (ev.type === "tool.result") { if (id) open.delete(id); else open.clear(); }
+  }
+  return open;
+}
+
+function kimiPrompt(r: Rec): string | undefined {
+  if (r.type !== "turn.prompt" || !Array.isArray(r.input)) return undefined;
+  return promptText(r.input);
+}
+
+function kimiTail(recs: readonly Rec[], cwd: string, detail: boolean): TailInfo {
+  const info: TailInfo = { midTurn: false, newestIsTurn: false };
+  let decided = false;
+  let newest = true;
+  for (let i = recs.length - 1; i >= 0; i--) {
+    const r = recs[i] as Rec;
+    const kind = kimiKind(r);
+    if (newest) { info.newestIsTurn = kind !== null; newest = false; }
+    if (r.type === "llm.request" && !info.model && typeof r.model === "string") info.model = r.model.slice(0, 60);
+    if (kind === null) continue;
+    info.turnSeen = true;
+    if (info.lastTurnAt === undefined) { const t = kimiTime(r); if (t !== undefined) info.lastTurnAt = t; }
+    if (!decided) { info.midTurn = kind !== "end"; decided = true; }
+    const ev = obj(r.event);
+    if (!info.step && r.type === "context.append_loop_event" && ev.type === "tool.call" && typeof ev.name === "string") {
+      info.step = describeTool(KIMI_TOOL_ALIAS[ev.name] ?? ev.name, obj(ev.args), cwd, detail);
+    }
+    if (!info.prompt) info.prompt = kimiPrompt(r);
+    if (decided && info.step && info.model && info.prompt && info.lastTurnAt !== undefined) break;
+  }
+  const open = openKimiCalls(recs).size;
+  return open > 0 ? { ...info, toolRunning: true, midTurn: true } : info;
+}
+
 /**
  * What the end of a session file says. `detail` (share_activity): the activity line is the tool call's redacted text;
  * otherwise a fixed phrase ("Running a command").
@@ -311,7 +377,7 @@ function codexTail(recs: readonly Rec[], detail: boolean): TailInfo {
 export function parseTail(text: string, kind: FileKind, fromStart = false, cwd = "", detail = false): TailInfo {
   if (kind === "other") return { midTurn: false, newestIsTurn: true };
   const recs = records(text, fromStart);
-  return kind === "claude" ? claudeTail(recs, cwd, detail) : codexTail(recs, detail);
+  return kind === "claude" ? claudeTail(recs, cwd, detail) : kind === "kimi" ? kimiTail(recs, cwd, detail) : codexTail(recs, detail);
 }
 
 /**
@@ -372,7 +438,7 @@ function readBytes(path: string, start: number, length: number, uid: number | nu
 }
 
 /** Up to `max` names in a directory, without reading the whole directory first (Codex r2 #12). */
-function listDir(dir: string, max: number): string[] {
+export function listDir(dir: string, max: number): string[] {
   const out: string[] = [];
   let d: ReturnType<typeof opendirSync> | null = null;
   try {
@@ -477,6 +543,13 @@ export class SessionFiles {
     return path.endsWith(".jsonl") && statFile(path, this.uid) ? path : null;
   }
 
+  /** A Kimi session's wire.jsonl found on disk (kimi-sessions.ts): this user's regular file inside `root`, checked on every read. */
+  kimiFile(path: string, root: string): string | null {
+    if (!path.endsWith(".jsonl") || !statFile(path, this.uid) || !inside(root, path)) return null;
+    this.roots.set(path, root);
+    return path;
+  }
+
   /** Newest write among a Claude session's subagent transcripts (<project>/<session>/subagents/*.jsonl). */
   subagentsMtime(transcript: string): number | null {
     const dir = join(transcript.replace(/\.jsonl$/, ""), "subagents");
@@ -521,7 +594,7 @@ export class SessionFiles {
    */
   private openCalls(path: string, size: number, kind: FileKind, root?: string): number | null {
     const prev = this.calls.get(path);
-    const track = (recs: Rec[], init: ReadonlySet<string>) => (kind === "claude" ? openClaudeTools(recs, init) : openCodexCalls(recs, init));
+    const track = (recs: Rec[], init: ReadonlySet<string>) => (kind === "claude" ? openClaudeTools(recs, init) : kind === "kimi" ? openKimiCalls(recs, init) : openCodexCalls(recs, init));
     if (prev && size >= prev.parsedTo) {
       // Follow the growth in consecutive chunks from a record boundary, never resetting what is known (Codex r5 #3).
       let at = prev.parsedTo;
@@ -578,6 +651,7 @@ export class SessionFiles {
     let prompt: string | undefined;
     for (const r of text ? records(text, true) : []) {
       if (kind === "claude" && claudeKind(r) === "turn-user") prompt = promptText(obj(r.message).content);
+      if (kind === "kimi") prompt = kimiPrompt(r);
       if (kind === "codex" && r.type === "event_msg" && obj(r.payload).type === "user_message") {
         const m = obj(r.payload).message;
         prompt = typeof m === "string" ? m : undefined;

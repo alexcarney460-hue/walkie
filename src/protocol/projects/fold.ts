@@ -25,7 +25,8 @@
 //   - board create: any member, a person or an agent (fold 8); board changes: a person who is the board's creator,
 //     an owner or the project's creator
 //   - delete / restore a card: a person
-//   - moving or reassigning a card whose assignee is a person (an address with no agent part): a person
+//   - moving or reassigning a card whose assignee is a person (an address with no agent part): a person, or (moving
+//     only) the project's board steward (fold 9, FO-6: CardContext.steward)
 // An op that fails is kept in the signed log and shown in the timeline as ignored; the fold skips it. (A project's
 // `agents_can_close` is a guardrail the local API applies to agent requests, not a fold rule: any member's machine can
 // sign an op without an agent name, and a fold rule keyed on a setting's history would re-judge accepted ops.)
@@ -173,6 +174,7 @@ export interface ProjectState {
   /** Every prefix an applied op ever gave the project (the current one included): old keys stay masked (Opus r4 M4). */
   prefixes: string[];
   meter: "count" | "points"; automations: Required<Automations>; state: "active" | "archived" | "deleted";
+  steward: "on" | "off"; steward_node: string;
   creator: string; created_at: number; updated_at: number;
   /** Highest applied rank, and the op new settings changes name as their parent. */
   rev: number; head: string;
@@ -180,7 +182,7 @@ export interface ProjectState {
 }
 
 const DEFAULT_AUTOMATIONS: Required<Automations> = { pr_opened: true, pr_merged: false, agents_can_close: true };
-const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state"] as const;
+const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node"] as const;
 
 function isAdmin(ev: OpEvent, env: FoldEnv, creator: string): boolean {
   if (!isPerson(ev)) return false;
@@ -216,7 +218,7 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
   let s: ProjectState = {
     id: root.ev.id, name: r.name as string, folder: r.folder ?? "", description: r.description ?? "", prefix: r.prefix as string, prefixes: [r.prefix as string],
     paths: r.paths ?? [], meter: r.meter ?? "count", automations: { ...DEFAULT_AUTOMATIONS, ...(r.automations ?? {}) },
-    state: r.state ?? "active", creator, created_at: root.ev.ts, updated_at: root.ev.ts, rev: 0, head: refOf(root.ev), timeline: [],
+    state: r.state ?? "active", steward: r.steward ?? "on", steward_node: r.steward_node ?? "", creator, created_at: root.ev.ts, updated_at: root.ev.ts, rev: 0, head: refOf(root.ev), timeline: [],
   };
   const { applied, waiting } = order(root, replies);
   const timeline: TimelineEntry[] = waitingEntries(waiting, PROJECT_FIELDS);
@@ -238,6 +240,8 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
       ...(p.meter !== undefined ? { meter: p.meter } : {}),
       ...(p.automations !== undefined ? { automations: { ...s.automations, ...p.automations } } : {}),
       ...(p.state !== undefined ? { state: p.state } : {}),
+      ...(p.steward !== undefined ? { steward: p.steward } : {}),
+      ...(p.steward_node !== undefined ? { steward_node: p.steward_node } : {}),
       updated_at: Math.max(s.updated_at, o.ev.ts),
     };
   }
@@ -310,6 +314,12 @@ export interface CardState {
 export interface CardContext {
   /** The project's boards by id (a card on an unknown board isn't shown until the board arrives). */
   readonly boards: ReadonlyMap<string, Pick<BoardState, "id" | "columns">>;
+  /**
+   * FO-6: whether an op's author is the project's board steward (steward.ts isStewardAuthor: the reserved `steward`
+   * agent of an owner, or of the project's creator). The steward may MOVE a card assigned to a person; it still can't
+   * reassign one or delete anything. Absent: nobody is (pre.6 folds, which ignore such a move as person_card).
+   */
+  readonly steward?: (ev: OpEvent) => boolean;
 }
 
 export const DEFAULT_POS = "i";
@@ -320,7 +330,7 @@ function cardDenial(ev: OpEvent, op: CardOpT, cur: CardState, ctx: CardContext):
   if (op.state !== undefined && op.state !== cur.state && (op.state === "deleted" || cur.state === "deleted") && !person) return "person_only";
   const moves = op.board !== undefined || op.column !== undefined || op.pos !== undefined;
   const reassigns = op.assignee !== undefined || op.reviewer !== undefined;
-  if (!person && (moves || reassigns) && isPersonAddress(cur.assignee)) return "person_card";
+  if (!person && (moves || reassigns) && isPersonAddress(cur.assignee) && !(moves && !reassigns && ctx.steward?.(ev))) return "person_card";
   if (op.board !== undefined && !ctx.boards.has(op.board)) return "unknown_board";
   return null;
 }
@@ -533,7 +543,7 @@ export function projectView(
   return {
     channel, id: p.id, name: p.name, folder: p.folder, description: p.description, prefix: p.prefix, paths: p.paths,
     ...(p.prefixes.length > 1 ? { prior_prefixes: p.prefixes.filter((x) => x !== p.prefix) } : {}),
-    meter_mode: p.meter, automations: p.automations, state: p.state, private: opts.private, admins, creator: p.creator,
+    meter_mode: p.meter, automations: p.automations, state: p.state, steward: p.steward, steward_node: p.steward_node, private: opts.private, admins, creator: p.creator,
     created_at: p.created_at, boards: boardViews,
     meter: sumMeters(boardViews.filter((b) => b.state === "active").map((b) => b.meter), p.meter),
     cards, last_activity: Math.max(opts.lastActivity, p.updated_at),

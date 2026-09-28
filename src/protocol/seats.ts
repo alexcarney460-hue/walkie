@@ -16,8 +16,11 @@ export const SEATS_AGENT = "seats";
 /** A running seat's agent name (`seat-<short id>`): its WALKIE_AGENT, so its own Walkie calls are an agent's. */
 export const SEAT_AGENT_PREFIX = "seat-";
 
-export const SEAT_RUNTIMES = ["claude", "codex"] as const;
+/** Every runtime a host may allow. Kimi runs only in a v2 request (FO-2: a v1 body keeps claude|codex). */
+export const SEAT_RUNTIMES = ["claude", "codex", "kimi"] as const;
 export type SeatRuntime = (typeof SEAT_RUNTIMES)[number];
+/** The runtimes of a v1 request (what released pre.5 hosts parse). */
+export const SEAT_RUNTIMES_V1 = ["claude", "codex"] as const;
 
 /**
  * What the seat may do without asking (it can't ask: nobody is at the terminal). Claude: its --permission-mode.
@@ -56,7 +59,7 @@ export const SeatModel = z.string().min(1).max(100).regex(/^[A-Za-z0-9._\[\]:-]+
 export const SeatRun = z.object({
   op: z.literal("run"),
   v: z.literal(1),
-  runtime: z.enum(SEAT_RUNTIMES),
+  runtime: z.enum(SEAT_RUNTIMES_V1),
   model: SeatModel.optional(),
   permission_mode: z.enum(SEAT_MODES).optional(),
   prompt: z.string().min(1).max(MAX_SEAT_PROMPT),
@@ -66,6 +69,77 @@ export const SeatRun = z.object({
   max_concurrent: z.number().int().min(1).max(MAX_CONCURRENT_LIMIT),
 }).strict();
 export type SeatRun = z.infer<typeof SeatRun>;
+
+// ---- seats v2 (FO-2, FLEET-ORCH-1 §3.4) ------------------------------------------------------------------
+// A `v: 2` run body carries what a fleet lane needs: Kimi, a brief as a blob (never inline, never on argv), a
+// workspace in the host's own clone of a repo, a vault account, and a result file. The strict v1 schema treats it as
+// "not a request", so a released pre.5 host ignores it; launchers send v2 only to hosts announcing SEATS_V2_CAP.
+
+/** The capability a host's daemon announces (MachineSys.caps) when it runs v2 seat requests. */
+export const SEATS_V2_CAP = "seats_v2";
+/** Where the brief lands in the seat's work tree, and the fixed prompt that points at it (the only argv text). */
+export const SEAT_TASK_FILE = "TASK.md";
+export const SEAT_TASK_PROMPT = "Read ./TASK.md and do it";
+/** When the work tree already has a TASK.md of its own: the brief's place and prompt instead (also fixed). */
+export const SEAT_TASK_FILE_ALT = ".walkie/TASK.md";
+export const SEAT_TASK_PROMPT_ALT = "Read ./.walkie/TASK.md and do it";
+/** The largest brief (bytes of UTF-8). */
+export const MAX_SEAT_BRIEF = 200_000;
+/** The largest result file returned (bytes). */
+export const MAX_RESULT_FILE = 64 * 1024;
+export const SEAT_WORKSPACE_MODES = ["branch", "detached", "fresh"] as const;
+export type SeatWorkspaceMode = (typeof SEAT_WORKSPACE_MODES)[number];
+
+/** A lane label: the worktree's name (`.worktrees/<label>`) and its branch (`lane/<label>`). */
+export const SeatLabel = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/).refine((s) => !s.includes(".."), "no ..");
+/** A repo id the host maps to its own clone (config.json `fleet.repos`). */
+export const SeatRepoId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
+/** A commit id, or a ref name (no option-like or path-escaping names: they reach git as a plain argument). */
+export const SeatRef = z.string().min(1).max(200)
+  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9._/-]*)$/)
+  .refine((s) => !s.includes("..") && !s.includes("//") && !s.endsWith("/") && !s.endsWith(".lock") && !s.endsWith("."), "not a ref name");
+/**
+ * A branch for a build worktree (default `lane/<label>`): only in Walkie's own namespaces (`lane/…`, `walkie/…`), so a
+ * seat never takes over one of the person's branches (FO-2 r1 HIGH 1). The host also refuses a branch of that name it
+ * didn't create itself (its ownership record, v2.ts).
+ */
+export const SeatBranch = z.string().min(6).max(120).regex(/^(?:lane|walkie)\/[a-z0-9][a-z0-9._-]{0,63}(?:\/[a-z0-9][a-z0-9._-]{0,63})?$/)
+  .refine((s) => !s.includes("..") && !s.endsWith(".lock") && !s.endsWith("."), "a lane/… or walkie/… branch name");
+/** `<owner handle>:<24 hex account id>`: an account of the router (never a credential). */
+export const SeatAccountKey = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}:[0-9a-f]{24}$/);
+/** A result file: a relative path inside the work tree (no `..`, no absolute path, plain characters). */
+export const SeatResultFile = z.string().min(1).max(200).regex(/^[A-Za-z0-9._-][A-Za-z0-9._/-]*$/)
+  .refine((s) => s.split("/").every((seg) => seg !== "" && seg !== "." && seg !== ".." && seg !== ".git"), "a relative path inside the work tree");
+
+export const SeatWorkspace = z.object({
+  repo: SeatRepoId,
+  ref: SeatRef,
+  mode: z.enum(SEAT_WORKSPACE_MODES),
+  branch: SeatBranch.optional(),
+  /** A delta bundle (`<ref> ^<host head>`, same channel provenance as v1's bundle) fetched into the host's clone first. */
+  bundle: BlobHash.optional(),
+}).strict();
+export type SeatWorkspace = z.infer<typeof SeatWorkspace>;
+
+export const SeatRunV2 = z.object({
+  op: z.literal("run"),
+  v: z.literal(2),
+  runtime: z.enum(SEAT_RUNTIMES),
+  model: SeatModel.optional(),
+  permission_mode: z.enum(SEAT_MODES).optional(),
+  /** The brief, a blob (UTF-8 text, at most MAX_SEAT_BRIEF bytes) the request references like a v1 bundle. */
+  brief: BlobHash,
+  label: SeatLabel.optional(),
+  workspace: SeatWorkspace.optional(),
+  account: SeatAccountKey.optional(),
+  result_file: SeatResultFile.optional(),
+  timeout_s: z.number().int().min(MIN_SEAT_TIMEOUT_S).max(MAX_SEAT_TIMEOUT_S),
+  max_concurrent: z.number().int().min(1).max(MAX_CONCURRENT_LIMIT),
+}).strict().refine((r) => !r.workspace || r.workspace.mode === "fresh" || r.label !== undefined, { message: "a branch or detached workspace needs a label" });
+export type SeatRunV2 = z.infer<typeof SeatRunV2>;
+/** Either request version. */
+export type AnySeatRun = SeatRun | SeatRunV2;
+export function isV2(run: AnySeatRun): run is SeatRunV2 { return run.v === 2; }
 
 /** A stop request (by a launcher): `seat` = the launch request's event id. */
 export const SeatStop = z.object({ op: z.literal("stop"), v: z.literal(1), seat: EventId }).strict();
@@ -93,6 +167,10 @@ export const SeatState = z.object({
   dirty: z.number().int().nonnegative().optional(),
   /** queued/paused: when the host's person said they'd be done (ms), if they set a timer. */
   until: z.number().int().nonnegative().optional(),
+  /** v2: the result file as an artifact (same channel, same thread), on done, failed, stopped and timeout alike. */
+  file: BlobHash.optional(),
+  /** v2: why the result file isn't returned (missing, a symlink, too large…). */
+  file_error: z.string().max(200).optional(),
 }).strict();
 export type SeatState = z.infer<typeof SeatState>;
 
@@ -131,14 +209,15 @@ export const SeatOutput = z.object({
 }).strict();
 export type SeatOutput = z.infer<typeof SeatOutput>;
 
-export type SeatBody = SeatRun | SeatStop | SeatState | SeatOutput | SeatHost;
+export type SeatBody = AnySeatRun | SeatStop | SeatState | SeatOutput | SeatHost;
 
 /** The `seat` field of a post, validated (null for an ordinary post or a malformed one). */
 export function seatOf(body: unknown): SeatBody | null {
   const raw = typeof body === "object" && body !== null ? (body as { seat?: unknown }).seat : undefined;
   if (typeof raw !== "object" || raw === null) return null;
   const op = (raw as { op?: unknown }).op;
-  const schema = op === "run" ? SeatRun : op === "stop" ? SeatStop : op === "state" ? SeatState : op === "output" ? SeatOutput
+  const v = (raw as { v?: unknown }).v;
+  const schema = op === "run" ? (v === 2 ? SeatRunV2 : SeatRun) : op === "stop" ? SeatStop : op === "state" ? SeatState : op === "output" ? SeatOutput
     : op === "host" ? SeatHost : null;
   const res = schema?.safeParse(raw);
   return res?.success ? (res.data as SeatBody) : null;
@@ -195,7 +274,7 @@ export function seatRequestText(body: unknown): boolean {
   const keys = Object.keys(b).sort().join(",");
   if (s.op === "stop") return keys === "seat,text,thread" && b.thread === s.seat && b.text === `Stop seat ${s.seat}`;
   if (s.op !== "run" || keys !== "seat,text" || typeof b.text !== "string") return false;
-  const full = runText(s, "\u0000");
+  const full = s.v === 2 ? runTextV2(s, "\u0000") : runText(s, "\u0000");
   const at = full.indexOf("\u0000"); // the hostname's place (a prompt's own NUL comes after it)
   const pre = full.slice(0, at);
   const post = full.slice(at + 1);
@@ -204,11 +283,16 @@ export function seatRequestText(body: unknown): boolean {
   return TEXT_HOST.test(text.slice(pre.length, text.length - post.length));
 }
 
-/** The repo bundle a seat request in a seats channel names (its reference: the request authorizes the fetch), or null. */
-export function seatBundleRef(ev: { kind: string; channel?: string; body: unknown }): string | null {
-  if (ev.kind !== "msg.post" || !seatsChannelNode(ev.channel)) return null;
+/**
+ * The blobs a seat request in a seats channel names (its reference: the request authorizes the fetch): v1's repo
+ * bundle; v2's brief and workspace delta bundle.
+ */
+export function seatBlobRefs(ev: { kind: string; channel?: string; body: unknown }): string[] {
+  if (ev.kind !== "msg.post" || !seatsChannelNode(ev.channel)) return [];
   const s = seatOf(ev.body);
-  return s?.op === "run" && s.bundle ? s.bundle : null;
+  if (s?.op !== "run") return [];
+  if (s.v === 2) return [s.brief, ...(s.workspace?.bundle ? [s.workspace.bundle] : [])];
+  return s.bundle ? [s.bundle] : [];
 }
 
 /** Whether an agent name is one the host daemon owns (its own `seats`, or a running seat's). */
@@ -243,6 +327,17 @@ export function runText(run: SeatRun, hostname: string): string {
   return `${head}\n\n${preview.split("\n").map((l) => `> ${l}`).join("\n")}`;
 }
 
+/**
+ * A v2 request post's text: who asked for what, where. Never the brief (a blob hash only), never a path: the brief
+ * stays in the blob, which only this channel's members can fetch.
+ */
+export function runTextV2(run: SeatRunV2, hostname: string): string {
+  const ws = run.workspace ? ` · ${run.workspace.mode} workspace in repo ${run.workspace.repo}${run.workspace.bundle ? " (+ delta bundle)" : ""}` : "";
+  return `Seat request (v2): ${run.runtime}${run.model ? ` (${run.model})` : ""} on ${hostname} · ${run.permission_mode ?? DEFAULT_SEAT_MODE}`
+    + `${run.label ? ` · lane ${run.label}` : ""}${ws}${run.account ? " · on a named account" : ""}${run.result_file ? ` · returns ${run.result_file}` : ""}`
+    + ` · limit ${Math.round(run.timeout_s / 60)} min · brief ${run.brief.slice(0, 12)}`;
+}
+
 export function stateText(s: SeatState): string {
   const label: Record<SeatStateName, string> = {
     refused: "Seat refused", queued: "Seat queued", running: "Seat running", paused: "Seat paused", done: "Seat finished", failed: "Seat failed",
@@ -251,7 +346,7 @@ export function stateText(s: SeatState): string {
   const bits = [
     s.reason, s.dir ? `in ${s.dir}` : "", s.exit_code !== undefined && s.exit_code !== null ? `exit ${s.exit_code}` : "",
     s.commits ? `${s.commits} commit${s.commits === 1 ? "" : "s"} (bundle attached)` : "", s.dirty ? `${s.dirty} uncommitted file${s.dirty === 1 ? "" : "s"}` : "",
-    s.until ? `until ${clock(s.until)}` : "",
+    s.until ? `until ${clock(s.until)}` : "", s.file ? "result file attached" : "", s.file_error ? `result file: ${s.file_error}` : "",
   ].filter(Boolean);
   return `${label[s.state]}${bits.length ? `: ${bits.join(" · ")}` : ""}`;
 }
@@ -280,12 +375,17 @@ export interface SeatView {
   host: { node: string; hostname: string; handle: string };
   launcher: { handle: string; hostname: string; agent?: string };
   runtime: SeatRuntime; model?: string; permission_mode: SeatMode;
+  /** v1: the prompt; v2: "" (the brief is the `brief` blob). */
   prompt: string; bundle?: string; timeout_s: number; max_concurrent: number;
+  /** v2 only (FO-2). */
+  v?: 2; brief?: string; label?: string; workspace?: SeatWorkspace; account?: string; result_file?: string;
   requested_at: number;
   /** "requested" until the host answers. */
   state: SeatStateName | "requested";
   reason?: string; dir?: string; exit_code?: number | null;
   result_bundle?: string; commits?: number; dirty?: number;
+  /** v2: the returned result file (an artifact hash), or why it isn't. */
+  result_file_blob?: string; file_error?: string;
   started_at?: number; ended_at?: number;
   /** queued/paused: when the host's person said they'd be done (ms). */
   until?: number;

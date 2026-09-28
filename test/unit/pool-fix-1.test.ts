@@ -133,15 +133,15 @@ describe("finding 5: free VRAM for 'now', total VRAM for 'if idle'", () => {
     expect(MachineStats.parse({ ...base, gpu_free: Array(9).fill(GiB) }).gpu_free).toBeUndefined();
   });
 
-  test("a 24 GiB GPU with 22 GiB in use: 1 GiB usable now, 23 GiB if idle; never suggested a model that needs more now", () => {
+  test("a 24 GiB GPU with 22 GiB in use: 1.5 GiB usable now, 23.5 GiB if idle (0.5 GiB reserve, POOL-REAL-1); never suggested a model that needs more now", () => {
     const busy = node("rig", 32, 28, nv(24), { gpu_free: [2 * GiB] });
     const cap = machineCapacity(busy)!;
-    expect(cap.backends[0]).toMatchObject({ kind: "nvidia", memory: "GPU memory", usable: GiB, usableIdle: 23 * GiB, measured: true });
+    expect(cap.backends[0]).toMatchObject({ kind: "nvidia", memory: "GPU memory", usable: 1.5 * GiB, usableIdle: 23.5 * GiB, measured: true });
     expect(cap.notes[0]).toBe("GPU: 2.0 of 24.0 GB VRAM free now");
     const s = suggestTeam([{ ...busy, self: true }]).suggestions[0]!;
     for (const p of [s.single, s.pooled, ...s.alternatives].filter((x) => x?.fits)) {
       const onGpu = p!.placement.some((x) => x.memory === "GPU memory");
-      if (onGpu) expect(p!.need).toBeLessThanOrEqual(GiB);
+      if (onGpu) expect(p!.need).toBeLessThanOrEqual(1.5 * GiB);
     }
     expect(s.single?.model.id).not.toBe("qwen3-32b");
     expect(s.ifIdle?.placement[0]?.memory).toBe("GPU memory"); // idle: the whole card
@@ -149,7 +149,7 @@ describe("finding 5: free VRAM for 'now', total VRAM for 'if idle'", () => {
 
   test("free VRAM not reported: the GPU counts only if idle, and every surface says so", () => {
     const cap = machineCapacity(node("rig", 32, 28, nv(24)))!;
-    expect(cap.backends[0]).toMatchObject({ usable: 0, usableIdle: 23 * GiB, measured: false });
+    expect(cap.backends[0]).toMatchObject({ usable: 0, usableIdle: 23.5 * GiB, measured: false });
     expect(cap.notes[0]).toContain("Free GPU memory not measured");
     const t = poolFromTeam(team([node("rig", 32, 28, nv(24), {}, { self: true, rtt_ms: null })]));
     expect(renderPool(t)).toContain("Free GPU memory not measured");

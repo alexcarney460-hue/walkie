@@ -14,6 +14,10 @@ interface Seed {
   usage: (now: number) => AccountUsage | null;
   /** RESET-CLOCK-1: remembered reset times (default: the reading's own). */
   clock?: (now: number) => ResetClock[];
+  /** COMPANY POOL: in its first machine's vault, pooled for every machine. */
+  pooled?: true;
+  /** COMPANY POOL: sessions on other machines running on it through the pool (host, agent, minutes ago). */
+  borrowed?: Array<[host: string, agent: string, minAgo: number]>;
 }
 
 const rc = (kind: ResetClock["kind"], resetsIn: number | null, observedAgo: number, now: number, exhausted = false): ResetClock => ({
@@ -31,17 +35,17 @@ const ok = (now: number, windows: AccountWindow[], ago = 40_000, source: Account
 const SEEDS: Seed[] = [
   {
     id: "a1c0ffee0000000000000001", provider: "claude", label: "ma***@ke***.example", plan: "Max 20x",
-    on: [["maren-mbp", ["ux-seat"]], ["atlas", ["api-seat"]]],
+    on: [["maren-mbp", ["ux-seat"]], ["atlas", ["api-seat"]]], pooled: true, borrowed: [["sol-x1", "cc-batch", 25]],
     usage: (now) => ok(now, [w("session", 38, 2 * H + 45 * MIN, now), w("weekly", 71, 3 * 24 * H + 4 * H, now), w("weekly_model", 82, 3 * 24 * H + 4 * H, now, "Opus")]),
   },
   {
     id: "a1c0ffee0000000000000002", provider: "codex", label: "ma***@ke***.example", plan: "Pro",
-    on: [["maren-mbp", ["review"]], ["atlas", ["migrator"]]],
+    on: [["maren-mbp", ["review"]], ["atlas", ["migrator"]]], pooled: true, borrowed: [["ines-studio", "cx-lint", 8]],
     usage: (now) => ({ ...ok(now, [w("weekly", 13, 6 * 24 * H + 22 * H, now)], 90_000), resets: { available: 2, applicable: 1 } }),
   },
   {
     id: "a1c0ffee0000000000000003", provider: "claude", label: "to***@ke***.example", plan: "Pro",
-    on: [["tobias-mbp", ["infra", "docs"]]],
+    on: [["tobias-mbp", ["infra", "docs"]]], pooled: true,
     usage: (now) => ok(now, [w("session", 93, 58 * MIN, now), w("weekly", 55, 4 * 24 * H, now)]),
   },
   {
@@ -51,7 +55,7 @@ const SEEDS: Seed[] = [
   },
   {
     id: "a1c0ffee0000000000000005", provider: "claude", label: "in***@ke***.example", plan: "Max 5x",
-    on: [["ines-studio", ["design-sys"]]],
+    on: [["ines-studio", ["design-sys"]]], pooled: true,
     usage: (now) => ({ at: now - 50_000, state: "exhausted", reason: "limit_reached", source: "api", until: now + H + 12 * MIN, windows: [w("session", 100, H + 12 * MIN, now), w("weekly", 64, 2 * 24 * H, now)] }),
   },
   {
@@ -90,15 +94,21 @@ export function seedAccounts(world: World): void {
   const now = Date.now();
   for (const s of SEEDS) {
     const usage = s.usage(now);
-    const machines = s.on.map(([host, agents]) => {
+    const machines = s.on.map(([host, agents], i) => {
       const n = world.node(host);
-      return { node_id: n.node_id, hostname: host, handle: n.handle, online: true, self: host === world.meNodeHost, agents, usage };
+      const vault = s.pooled && i === 0 ? { vault: { policy: "own" as const, company: true as const, home_at: now - 3 * 24 * H } } : {};
+      return { node_id: n.node_id, hostname: host, handle: n.handle, online: true, self: host === world.meNodeHost, agents, usage, ...vault };
     });
     const clock = s.clock ? s.clock(now) : clockFromReading(usage);
     const owner = machines[0]?.handle ?? "?";
+    const leases = (s.borrowed ?? []).map(([host, agent, minAgo]) => {
+      const n = world.node(host);
+      return { handle: n.handle, hostname: host, node_id: n.node_id, agent, since: now - minAgo * MIN, verified: true };
+    });
     world.accounts.push({
       key: `${owner}:${s.id}`, id: s.id, provider: s.provider, label: s.label, plan: s.plan, owners: [owner], claimed_by: [],
       machines, usage, usage_host: usage ? s.on[0]![0] : null, last_seen: now, ...(clock.length ? { clock } : {}),
+      ...(s.pooled ? { vault: { policy: "own" as const, company: true as const } } : {}), ...(leases.length ? { leases } : {}),
     });
   }
 }

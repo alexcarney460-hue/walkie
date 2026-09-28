@@ -26,6 +26,10 @@ import { SEATS_POOL_CODE, SEATS_POOL_CONFLICT } from "../../protocol/seats.ts";
 import { freeLoopbackPort, minimalEnv, residentBytes, spawnChild, waitForPort, type Child, type ChildRegistry } from "./child.ts";
 import { guardSelfTest, RpcGuard } from "./rpc-guard.ts";
 import { hasRuntime, INSTALL_HINT, verifyPinnedRpc, type Runtime } from "./runtime.ts";
+import { filesFor } from "./gguf.ts";
+import { PoolJobs, type Reservation } from "./jobs.ts";
+import { PressureWatch, startBlocked, type MemNow } from "./pressure.ts";
+import { preparedDir } from "./weights.ts";
 import { ByteBucket, splice, tcpEnd, type End } from "./tunnel.ts";
 
 export type { StageView } from "../../protocol/pool.ts";
@@ -56,6 +60,11 @@ export interface StageDeps {
   hostnameOf: (nodeId: string) => string;
   /** Bytes of memory free on this machine now (total - used), measured here; null when it can't be read. */
   freeMemory: () => Promise<number | null>;
+  /**
+   * POOL-REAL-1: GPU memory a stage may use here now (free VRAM less the GPU reserve, capacity.ts), or null on a
+   * machine without an NVIDIA GPU: rpc-server allocates the share on its first device, the GPU.
+   */
+  gpuFree?: () => Promise<number | null>;
   /** Called when the stage starts or stops (the published `pool.busy` changes). */
   changed: () => void;
   registry?: ChildRegistry;
@@ -64,6 +73,10 @@ export interface StageDeps {
    * verifyPinnedRpc). Tests with stand-in rpc-servers replace it; nothing a user can configure does.
    */
   verifyRuntime?: (rt: Runtime) => string | null;
+  /** POOL-REAL-1: this machine's memory now (pressure.ts policy). Default: never under pressure. */
+  mem?: () => MemNow;
+  /** POOL-REAL-1 fix round: the machine's single pool-job reservation (jobs.ts). Default: a private one. */
+  jobs?: PoolJobs;
   /** Extra rpc-server arguments (tests pin the CPU device). */
   rpcArgs?: readonly string[];
   leaseMs?: number;
@@ -78,20 +91,24 @@ interface Current {
   tunnels: Set<End>; reserved: number; opens: number[]; bucket: ByteBucket; startedAt: number; stopping: boolean;
   /** Bytes the head sent into the rpc-server through the tunnels (weights, activations). */
   bytesIn: number;
+  /** Bytes the rpc-server sent back to the head (results, activations). */
+  bytesOut: number;
+  job: Reservation; pressure: PressureWatch;
 }
 
-interface Pending { run: string; head: string; cancelled: string | null; child: Child | null }
+interface Pending { run: string; head: string; cancelled: string | null; child: Child | null; job: Reservation }
 
 export class PoolStages {
   private cur: Current | null = null;
   private pending: Pending | null = null;
-  constructor(private readonly d: StageDeps) {}
+  private readonly jobs: PoolJobs;
+  constructor(private readonly d: StageDeps) { this.jobs = d.jobs ?? new PoolJobs(); }
 
   busy(): boolean { return !!this.cur || !!this.pending; }
 
   view(): StageView | null {
     const c = this.cur;
-    return c ? { run: c.run, head: c.head, head_hostname: this.d.hostnameOf(c.head), model: c.model, bytes: c.bytes, started_at: c.startedAt, tunnels: c.tunnels.size, pid: c.child.pid, bytes_in: c.bytesIn } : null;
+    return c ? { run: c.run, head: c.head, head_hostname: this.d.hostnameOf(c.head), model: c.model, bytes: c.bytes, started_at: c.startedAt, tunnels: c.tunnels.size, pid: c.child.pid, bytes_in: c.bytesIn, bytes_out: c.bytesOut } : null;
   }
 
   /** The published sharing state (vv answer, NodeView). */
@@ -121,7 +138,7 @@ export class PoolStages {
       c.lease = this.leaseTimer();
       return { ok: true, lease_ms: this.leaseMs() };
     }
-    return this.start(req.run, req.bytes, req.model, caller);
+    return this.start(req.run, req.bytes, req.model, caller, req.weights);
   }
 
   private leaseMs(): number { return this.d.leaseMs ?? LEASE_MS; }
@@ -133,6 +150,10 @@ export class PoolStages {
 
   /** The most this stage may use here: the owner's cap, and never more than what is free now minus the reserve. */
   private async budget(share: ShareConfig): Promise<number> {
+    // POOL-REAL-1: on an NVIDIA machine rpc-server holds its share on the GPU (its first device), so the GPU's free
+    // memory is the budget; hestia-wsl (8 GB GPU, 7.6 GB RAM) was refused a 4.3 GB GPU share for want of system RAM.
+    const gpu = (await this.d.gpuFree?.()) ?? null;
+    if (gpu !== null) return share.maxBytes === null ? gpu : Math.min(share.maxBytes, gpu);
     const free = await this.d.freeMemory();
     if (free === null) {
       if (share.maxBytes === null) throw new HttpError(503, "memory_unknown", "this machine can't read its free memory; its owner can set a cap: walkie pool share on --max-gb N");
@@ -150,13 +171,14 @@ export class PoolStages {
     return null;
   }
 
-  private async start(run: string, bytes: number, model: string, caller: string): Promise<StageRes> {
+  private async start(run: string, bytes: number, model: string, caller: string, weights?: { model: string; quant: "q4" | "q8" }): Promise<StageRes> {
     const share = this.d.share();
     if (!share.on) throw new HttpError(403, "not_sharing", "this machine's owner hasn't turned sharing on (walkie pool share on)");
     const block = this.d.seatsBlock?.();
     if (block) throw new HttpError(409, SEATS_POOL_CODE, `this machine runs seats, so it serves no stages: ${block}`);
     if (this.cur?.run === run && this.cur.head === caller) return { ok: true, lease_ms: this.leaseMs() }; // idempotent
-    if (this.busy()) throw new HttpError(409, "busy", "this machine is already running a stage of another split run");
+    const pressed = startBlocked(this.d.mem?.());
+    if (pressed) throw new HttpError(503, "memory_pressure", pressed);
     if (!this.d.mayHead(caller)) throw new HttpError(403, "forbidden", "this machine may not head a split run here");
     const rt = this.d.runtime();
     if (!hasRuntime(rt) || !rt.rpc) throw new HttpError(409, "no_runtime", `the llama.cpp runtime isn't installed on this machine (its owner runs: ${INSTALL_HINT})`);
@@ -171,10 +193,13 @@ export class PoolStages {
     if (share.maxBytes !== null && bytes > share.maxBytes) {
       throw new HttpError(413, "over_cap", `this stage needs ${(bytes / GiB).toFixed(1)} GB; the owner shares at most ${(share.maxBytes / GiB).toFixed(1)} GB`);
     }
-    const p: Pending = { run, head: caller, cancelled: null, child: null };
+    // The machine's one pool job, taken before the first await (jobs.ts); kept until the stage has fully stopped.
+    const job = this.jobs.reserve("stage", run);
+    const p: Pending = { run, head: caller, cancelled: null, child: null, job };
     this.pending = p;
     this.d.changed();
     let home: string | null = null;
+    let started = false;
     try {
       const budget = await this.budget(share);
       if (bytes > budget) throw new HttpError(507, "insufficient_memory", `this stage needs ${(bytes / GiB).toFixed(1)} GB; this machine can give ${(budget / GiB).toFixed(1)} GB now`);
@@ -182,7 +207,13 @@ export class PoolStages {
       const port = await freeLoopbackPort();
       mkdirSync(join(this.d.home, "pool"), { recursive: true, mode: 0o700 });
       home = mkdtempSync(join(this.d.home, "pool", "stage-"));
-      p.child = await spawnChild([rt.rpc, "-H", "127.0.0.1", "-p", String(port), ...(this.d.rpcArgs ?? [])], minimalEnv(home, rt.dir), { registry: this.d.registry, role: "rpc-server" });
+      // POOL-REAL-1: a model this machine prepared loads its share from disk (rpc-server -c, read-only for the head:
+      // the guard clears SET_TENSOR's cache flag); anything else arrives over the tunnel as before.
+      const mf = weights ? filesFor(weights.model, weights.quant) : null;
+      const cache = mf ? preparedDir(this.d.home, mf) : null;
+      const env = { ...minimalEnv(home, rt.dir), ...(cache ? { LLAMA_CACHE: cache } : {}) };
+      p.child = await spawnChild([rt.rpc, "-H", "127.0.0.1", "-p", String(port), ...(cache ? ["-c"] : []), ...(this.d.rpcArgs ?? [])], env, { registry: this.d.registry, role: "rpc-server" });
+      if (cache) this.d.log.info("pool_stage_local_weights", { run, model: weights!.model, quant: weights!.quant });
       const up = await waitForPort(port, START_WAIT_MS, p.child.exited, () => !!p.cancelled);
       const gone = p.cancelled ?? this.consentGone(caller);
       if (!up || gone) {
@@ -194,16 +225,19 @@ export class PoolStages {
       child.confirm(); // it listens: it is rpc-server now, not the shell that started it
       const cur: Current = {
         run, head: caller, model, bytes, budget, port, child, home, lease: this.leaseTimer(), watch: setInterval(() => this.watch(), WATCH_MS),
-        tunnels: new Set(), reserved: 0, opens: [], bucket: new ByteBucket(budget + GiB, REFILL_BYTES_PER_S), startedAt: Date.now(), stopping: false, bytesIn: 0,
+        tunnels: new Set(), reserved: 0, opens: [], bucket: new ByteBucket(budget + GiB, REFILL_BYTES_PER_S), startedAt: Date.now(), stopping: false, bytesIn: 0, bytesOut: 0,
+        job, pressure: new PressureWatch(() => this.d.mem?.()),
       };
       (cur.watch as { unref?: () => void }).unref?.();
       this.cur = cur;
       home = null; // owned by the stage now
       void child.exited.then((code) => { if (this.cur === cur && !cur.stopping) void this.stop(`rpc_server_exited (${code})`); });
       this.d.log.info("pool_stage_started", { run, head: caller, model, bytes, budget, pid: child.pid, port });
+      started = true;
       return { ok: true, lease_ms: this.leaseMs() };
     } finally {
       if (home) rmSync(home, { recursive: true, force: true });
+      if (!started) job.release(); // never started: its child (if any) was stopped above
       if (this.pending === p) this.pending = null;
       this.d.changed();
     }
@@ -222,6 +256,12 @@ export class PoolStages {
     if (!c) return;
     const gone = this.consentGone(c.head);
     if (gone) { void this.stop(gone); return; }
+    const pressed = c.pressure.check();
+    if (pressed) {
+      this.d.log.warn("pool_stage_memory_pressure", { run: c.run, why: pressed });
+      void this.stop(pressed);
+      return;
+    }
     const limit = c.budget * 1.1 + 512 * 1024 * 1024;
     const rss = residentBytes(c.child.pid);
     if (rss !== null && rss > limit) {
@@ -270,7 +310,7 @@ export class PoolStages {
         c.tunnels.add(remote);
         this.d.log.info("pool_tunnel_open", { run, tunnel: id, head: caller });
         const guard = new RpcGuard({ maxMessage: c.budget + GiB });
-        const r = await splice(remote, local, (n) => { c.bytesIn += n; return c.bucket.take(n); }, (b) => guard.feed(b));
+        const r = await splice(remote, local, (n) => { c.bytesIn += n; return c.bucket.take(n); }, (b) => guard.feed(b), (n) => { c.bytesOut += n; });
         c.tunnels.delete(remote);
         this.d.log.info("pool_tunnel_closed", { run, tunnel: id, in_bytes: r.up, out_bytes: r.down, ...(r.error ? { err: r.error } : {}) });
       },
@@ -288,6 +328,7 @@ export class PoolStages {
     await c.child.stop();
     rmSync(c.home, { recursive: true, force: true });
     if (this.cur === c) this.cur = null;
+    c.job.release(); // the child is gone: the machine is free for another pool job
     this.d.log.info("pool_stage_stopped", { run: c.run, head: c.head, reason, pid: c.child.pid });
     this.d.changed();
   }

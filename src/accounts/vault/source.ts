@@ -17,5 +17,7 @@ export function lazyVault(walkieHome: string): VaultSource & { get(): Vault | nu
       if (!v) throw new Error("no vault on this machine");
       return v.claudeToken(id);
     },
+    codexAccess: (id, now) => get()?.codexAccess(id, now) ?? null,
+    codexExpiry: (id) => get()?.codexExpiry(id) ?? null,
   };
 }

@@ -275,3 +275,17 @@
   .sheet { width: 100%; border-radius: var(--r-sheet) var(--r-sheet) 0 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
   .sheet-actions .btn { flex: 1 1 140px; justify-content: center; }
 }
+
+/* COMPANY POOL / RESET-CLOCK-1: the pool panel above the tiles. */
+.acct-pool { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0 0 16px; max-width: 100%; }
+.acct-pool-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acct-pool-title { margin: 0; font-size: var(--fs-14); font-weight: 600; }
+.acct-pool-policy.is-on { color: var(--signal); border-color: var(--signal-line); background: var(--signal-soft); }
+.acct-pool-intro { margin: 6px 0 8px; font-size: var(--fs-12); max-width: 80ch; }
+.acct-pool-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: var(--fs-12); line-height: 1.45; overflow-wrap: anywhere; }
+.acct-pool-k { font-weight: 600; }
+.acct-pool-list time { cursor: help; }
+.acct-pool-split-h { margin-top: 2px; }
+.acct-pool-uses { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.pool-banner { margin: 12px 16px 0; }
+.pool-banner .btn { margin-left: 6px; }

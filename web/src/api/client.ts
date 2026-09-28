@@ -3,10 +3,11 @@
 // sent and never authorize anything. Nothing here ever sees the daemon's durable token.
 import { forgetSession, sessionHeaders } from "../lib/session.ts";
 import type {
-  AccountView, AgentsPayload, AgentView, AskView, BoardView, CardDetail, CardView, Column, Event, IntegrationView, InviteCode, LinearIssueInfo,
+  AccountsPool, AccountView, AgentsPayload, AgentView, AskView, BoardView, CardDetail, CardView, Column, Event, IntegrationView, InviteCode, LinearIssueInfo,
   MeView, MobileStatus, NodeView, OrchestratorAccess, OrchestratorView, OrchMessage, PairView, PendingJoin, PlanLimitDetails, PlanView, ProjectView, ProjectsPayload,
   ResetAttemptView, ResetResult, Role, RoomFileDetail, RoomFileView, TeamView, TimelineEntry,
   SeatMode, SeatRuntime, SeatsLocalView, SeatsView,
+  ImportOptions, ImportPlan, ImportSelection, ImportStatus, JobView, SyncResult, SyncView,
 } from "./types.ts";
 import type { ActivationResult } from "../lib/plan.ts";
 import type { AddMachine } from "../../../src/protocol/add-machine.ts";
@@ -198,7 +199,7 @@ export const api = {
   agents: (p: { scope?: "live" | "archive" | "all"; node?: string; q?: string; states?: string; limit?: number; offset?: number } = {}) =>
     request<AgentsPayload>("GET", `/v1/agents${qs({ ...p })}`),
   peers: () => request<{ nodes: NodeView[] }>("GET", "/v1/peers"),
-  accounts: () => request<{ accounts: AccountView[] }>("GET", "/v1/accounts"),
+  accounts: () => request<{ accounts: AccountView[]; pool?: AccountsPool }>("GET", "/v1/accounts"),
   /** The attempt the confirmation sheet confirms: minted and bound to the account by the daemon (or an earlier one). */
   prepareReset: (account: string) => request<{ attempt: ResetAttemptView }>("POST", "/v1/accounts/reset/prepare", { account }),
   /** Uses one limit reset on an account held on this machine (Codex); `request_id` is the prepared attempt's id. */
@@ -226,6 +227,8 @@ export const api = {
   orchestratorStart: (access?: OrchestratorAccess, model?: string) =>
     request<OrchestratorView>("POST", "/v1/orchestrator/start", { ...(access ? { access } : {}), ...(model && model !== "default" ? { model } : {}) }, 60_000),
   /** ORCH-2: switches the model; the conversation continues (after the reply in progress). */
+  /** pre.8: Resume = back to automatic (runs here when this machine leads, else stands by). */
+  orchestratorAuto: () => request<OrchestratorView>("POST", "/v1/orchestrator/auto", {}, 30_000),
   orchestratorModel: (model: string) => request<OrchestratorView>("POST", "/v1/orchestrator/model", { model }, 60_000),
   /** ORCH-2: platform (Walkie tools only) or full access; the conversation continues (after the reply in progress). */
   orchestratorAccess: (access: OrchestratorAccess) => request<OrchestratorView>("POST", "/v1/orchestrator/access", { access }, 60_000),
@@ -272,6 +275,18 @@ export const api = {
   mobile: () => request<MobileStatus>("GET", "/v1/mobile"),
   mobilePair: () => request<PairView>("POST", "/v1/mobile/pair", {}, 15_000),
   mobileRevoke: (id: string) => request<{ revoked: true }>("DELETE", `/v1/mobile/devices/${encodeURIComponent(id)}`),
+  // ---- Linear import (LINEAR-IMPORT-1) ----
+  linearImportStatus: () => request<ImportStatus>("GET", "/v1/import/linear/status"),
+  /** A dry run: reads Linear, writes nothing (the key: the Linear integration's, or a key file path). */
+  linearImportPlan: (options: Partial<ImportOptions>, keyFile?: string) =>
+    request<{ plan: ImportPlan }>("POST", "/v1/import/linear/plan", { options, ...(keyFile ? { key_file: keyFile } : {}) }, 600_000),
+  linearImportRun: (selection: ImportSelection, keyFile?: string) =>
+    request<{ job: JobView }>("POST", "/v1/import/linear/run", { selection, ...(keyFile ? { key_file: keyFile } : {}) }, 60_000),
+  linearImportCancel: () => request<{ job: JobView | null }>("POST", "/v1/import/linear/cancel", {}),
+  linearSync: (twoWay?: boolean, keyFile?: string) =>
+    request<{ result: SyncResult }>("POST", "/v1/import/linear/sync", { ...(twoWay !== undefined ? { two_way: twoWay } : {}), ...(keyFile ? { key_file: keyFile } : {}) }, 600_000),
+  linearSyncSettings: (b: { enabled?: boolean; two_way?: boolean; interval_min?: number; key_file?: string | null }) =>
+    request<{ sync: SyncView }>("POST", "/v1/import/linear/settings", b),
   // ---- projects (WALKIE-PROJECTS-1) ----
   projects: () => request<ProjectsPayload>("GET", "/v1/projects"),
   project: (channel: string) => request<{ project: ProjectView; cards: CardView[]; timeline: TimelineEntry[] }>("GET", `/v1/projects/${encodeURIComponent(channel)}`, undefined, 30_000),

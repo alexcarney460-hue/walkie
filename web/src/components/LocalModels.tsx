@@ -10,6 +10,7 @@ import { alternativeLabel, groupTitle, IDLE_HINT, pickTitle, SPEED_HINT, speedTe
 import { suggestTeam, type GroupSuggestion, type Pick, type TeamSuggestion } from "../../../src/pool/suggest.ts";
 import { hrefFor } from "../lib/route.ts";
 import { CombinedBlock, useCombined } from "./LocalModelsSplit.tsx";
+import { ServeBlock } from "./LocalModelsServe.tsx";
 
 export function useTeamSuggestion(nodes: readonly NodeView[]): TeamSuggestion {
   return useMemo(() => suggestTeam(nodes), [nodes]);
@@ -66,6 +67,7 @@ export function LocalModelsCard({ nodes }: { nodes: readonly NodeView[] }) {
         <p className="lm-empty">No machine has reported its memory yet. Machines share it once they run a Walkie newer than v0.1.3.</p>
       ) : (
         <>
+          <ServeBlock nodes={nodes} />
           <CombinedBlock cs={cs} />
           <p className="lm-fast-h">Fast options: one machine, or machines on one network</p>
           <p className="lm-card-meta">
@@ -127,7 +129,7 @@ export function LocalModelsSection({ nodes }: { nodes: readonly NodeView[] }) {
   const cs = useCombined(nodes);
   return (
     <div className="lm-section">
-      {t.suggestions.length > 0 && <article className="lm-group-card lm-all-card"><CombinedBlock cs={cs} detail /></article>}
+      {t.suggestions.length > 0 && <article className="lm-group-card lm-all-card"><ServeBlock nodes={nodes} /><CombinedBlock cs={cs} detail /></article>}
       <p className="lm-intro">
         Open-weight models your machines could run themselves, from the memory they have free now (memory already in
         use, by agents, apps or anything else, is left alone; on NVIDIA GPUs, the free VRAM each GPU reports). "If

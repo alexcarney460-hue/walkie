@@ -32,6 +32,8 @@ export interface NodeSpec {
   localPort?: number | false; autoAdmit?: boolean;
   /** Connector options (fake HTTP layer, manual runs). */
   integrations?: ManagerOptions;
+  /** Linear import options (a fast schedule tick). */
+  linearImport?: { url?: string; tickMs?: number };
   /** Verify licenses against a throwaway vendor key (test/helpers/license.ts). */
   licenseVerifier?: LicenseVerifier;
   /** The license service's fetch (e.g. the site's handlers in-process, test/integration/license-e2e.test.ts). */
@@ -123,6 +125,7 @@ export class TestNode {
       ...(direct ? { direct: { preset: "minimal" as const, bindAddr: "127.0.0.1:0", addressBook: this.cluster.addressBook }, peerLink: { retryBaseMs: 60_000, retryMaxMs: 60_000 } } : {}),
       ...(this.spec.dual ? { direct: { preset: "minimal" as const, bindAddr: "127.0.0.1:0", addressBook: this.cluster.addressBook } } : {}),
       ...(this.spec.pool ? { pool: this.spec.pool } : {}),
+      ...(this.spec.linearImport ? { linearImport: this.spec.linearImport } : {}),
     });
     this.peerPort = this.daemon.peerPort ?? this.peerPort;
     if (!direct) this.cluster.identities.set(this.daemon.nodeId, { login: this.spec.login, nodeName: this.hostname });

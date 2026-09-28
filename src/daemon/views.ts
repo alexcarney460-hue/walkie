@@ -193,7 +193,7 @@ function rawAgentsView(core: Core, sync: SyncManager, now: number): AgentView[] 
     });
     // Time-in-state never starts before this node received the status (Opus r1 LOW): a peer's `observed_at` (or ts)
     // can't make a card claim hours in a state. This node's own statuses keep their observed time (re-signed copies).
-    const received = row.node === core.nodeId ? null : core.store.receivedAt(row.event_id);
+    const received = row.node === core.nodeId ? null : core.store.agentReceivedAt(row);
     starts.set(`${member.handle}/${node.hostname}/${row.agent}`, received === null ? observed : Math.max(observed, received));
   }
   return withSince(core, out, starts, now);

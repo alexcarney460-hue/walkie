@@ -38,3 +38,15 @@ export function keysAfter(last: string | null, n: number): string[] {
   }
   return out;
 }
+
+/**
+ * `n` strictly increasing keys between `lo` and `hi` (null = the start / the end), spread by bisection so that a bulk
+ * import of n cards into one column gets keys of about log36(n) + 2 characters instead of the n-long chain keysAfter
+ * would grow (LINEAR-IMPORT-1: 2 000 appends reach the 128-character cap).
+ */
+export function spreadKeys(lo: string | null, hi: string | null, n: number): string[] {
+  if (n <= 0) return [];
+  const m = keyBetween(lo, hi);
+  const left = Math.floor((n - 1) / 2);
+  return [...spreadKeys(lo, m, left), m, ...spreadKeys(m, hi, n - 1 - left)];
+}

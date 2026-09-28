@@ -9,8 +9,17 @@ import { groupMachines, LAN_RTT_MS, type GroupInput, type Grouping, type PoolGro
 
 /** Share of theoretical memory bandwidth token generation achieves (llama.cpp Apple Silicon results: 0.45–0.84). */
 export const EFFICIENCY = 0.6;
-/** Per hop between machines on top of the measured round trip: moving activations, synchronisation. */
+/** Per hop between machines on top of the measured round trips: moving activations, synchronisation. */
 export const HOP_OVERHEAD_MS = 2;
+/**
+ * Round trips llama.cpp RPC makes to a remote stage per generated token (POOL-REAL-1, measured on hestia-wsl with a
+ * counting proxy between llama-server and rpc-server, Llama 3.1 8B split 1:1: 16 for 16 tokens, 162 for 128), plus
+ * about 100 while loading and a dozen on a first request (alloc-size queries it then caches).
+ */
+export const RPC_ROUND_TRIPS_PER_TOKEN = 1.3;
+
+/** Milliseconds a token spends on one remote stage's network hop. */
+export const hopMs = (rttMs: number): number => RPC_ROUND_TRIPS_PER_TOKEN * Math.max(1, rttMs) + HOP_OVERHEAD_MS;
 /** tokens/s: at or above FAST reads faster than a person; below USABLE is painful for chat. */
 export const SPEED_FAST = 20;
 export const SPEED_USABLE = 5;
@@ -94,7 +103,7 @@ export function singleSpeed(bpt: number, bandwidthGBs: number): number {
  */
 export function pooledSpeed(bpt: number, parts: readonly { share: number; bandwidth: number }[], rttMs: number): number {
   const compute = parts.reduce((s, p) => s + (p.share * bpt) / (EFFICIENCY * p.bandwidth * 1e9), 0);
-  const hops = Math.max(0, parts.length - 1) * (Math.max(1, rttMs) + HOP_OVERHEAD_MS) / 1000;
+  const hops = Math.max(0, parts.length - 1) * hopMs(rttMs) / 1000;
   return 1 / (compute + hops);
 }
 
@@ -121,14 +130,35 @@ function singlePick(c: Candidate, s: Slot, field: Field, context: number): Pick 
 /** Every (machine, backend): a machine with a GPU and system RAM offers both, each considered on its own. */
 const slots = (machines: readonly MachineCapacity[]): Slot[] => machines.flatMap((m) => m.backends.map((b) => ({ m, b })));
 
-/** Largest candidate that fits on one machine's backend (by `field`), the fastest backend on a tie. */
-function bestSingle(cands: readonly Candidate[], machines: readonly MachineCapacity[], field: Field, context: number): Pick | null {
+/**
+ * Largest candidate that fits on one machine's backend (by `field`), the fastest backend on a tie; with `preferUsable`
+ * (POOL-REAL-1) the largest one that isn't slow, when any fits: a 32B model on a CPU at 2 tokens/s is not what a
+ * machine with a 12 GB GPU should suggest first (the slow bigger one is listed as an alternative).
+ */
+function bestSingle(cands: readonly Candidate[], machines: readonly MachineCapacity[], field: Field, context: number, preferUsable: boolean | "gpu" = false): Pick | null {
   const all = slots(machines);
-  for (const c of cands) {
-    const fitting = all.filter((s) => c.need <= s.b[field]).sort((a, b) => b.b.bandwidth - a.b.bandwidth);
-    if (fitting.length) return singlePick(c, fitting[0]!, field, context);
-  }
-  return null;
+  const onGpu = all.filter((s) => s.b.kind !== "cpu");
+  const find = (from: readonly Slot[], usable: boolean): Pick | null => {
+    for (const c of cands) {
+      const fitting = from.filter((s) => c.need <= s.b[field]).sort((a, b) => b.b.bandwidth - a.b.bandwidth);
+      if (!fitting.length) continue;
+      const p = singlePick(c, fitting[0]!, field, context);
+      if (!usable || p.speed !== "slow") return p;
+    }
+    return null;
+  };
+  if (preferUsable === "gpu") return find(onGpu, true);
+  return preferUsable ? find(all, true) ?? find(all, false) : find(all, false);
+}
+
+/**
+ * The backend a split-run part runs on there: llama.cpp puts a stage (rpc-server) or the head's own part on the
+ * machine's FIRST device: its GPU (the first one, when it has several) or Apple unified memory; the CPU only when there
+ * is no accelerator. Planning, admission and suggestions all use this one rule (POOL-REAL-1 p8-3/5).
+ */
+export function deviceSlot(m: MachineCapacity): Slot {
+  const b = m.backends.find((x) => x.kind !== "cpu") ?? m.backends[0]!;
+  return { m, b: b.device ? { ...b, usable: b.device.usable, usableIdle: b.device.usableIdle } : b };
 }
 
 /** The backend with the most memory (by `field`), the faster one on a tie: what a machine adds to a split at most. */
@@ -187,7 +217,8 @@ function pooledPick(c: Candidate, g: PoolGroup, field: Field, context: number, o
 
 /**
  * Largest candidate the whole group holds, only when it's bigger than what one machine runs. When the 8-bit split
- * would be slow and the 4-bit one of the same model is faster, the 4-bit one is suggested.
+ * would be slow and the 4-bit one of the same model is faster, the 4-bit one is suggested. POOL-REAL-1: a split is
+ * suggested only when needed: a slow split is not offered over a model one machine runs at a usable speed.
  */
 function bestPooled(cands: readonly Candidate[], g: PoolGroup, field: Field, beat: Pick | null, context: number, overhead: number): Pick | null {
   if (g.machines.length < 2) return null;
@@ -195,12 +226,14 @@ function bestPooled(cands: readonly Candidate[], g: PoolGroup, field: Field, bea
     if (beat && c.model.params_b <= beat.model.params_b) return null;
     const p = pooledPick(c, g, field, context, overhead);
     if (!p?.pooled) continue;
+    let pick = p;
     if (p.quant !== "q4" && p.speed === "slow") {
       const q4 = cands.find((x) => x.model.id === c.model.id && x.quant === "q4");
       const alt = q4 ? pooledPick(q4, g, field, context, overhead) : null;
-      if (alt && SPEED_RANK[alt.speed] < SPEED_RANK[p.speed]) return alt;
+      if (alt && SPEED_RANK[alt.speed] < SPEED_RANK[p.speed]) pick = alt;
     }
-    return p;
+    if (pick.speed === "slow" && beat && beat.speed !== "slow") continue;
+    return pick;
   }
   return null;
 }
@@ -217,13 +250,19 @@ export function suggestForGroup(g: PoolGroup, cat: Catalog = CATALOG, context = 
   const cands = candidates(cat, context);
   const usable = groupFree(g.machines, "usable");
   const usableIdle = groupFree(g.machines, "usableIdle");
-  const single = bestSingle(cands, g.machines, "usable", context);
+  const single = bestSingle(cands, g.machines, "usable", context, true);
   const overhead = cat.overhead_gib * 1024 ** 3;
   const pooled = bestPooled(cands, g, "usable", single, context, overhead);
   const top = pooled ?? single;
 
   const alternatives: Pick[] = [];
-  if (single && single.speed !== "fast") {
+  // POOL-REAL-1: when the pick runs on a CPU, the largest model a GPU runs at a usable speed (what `walkie pool serve` runs).
+  const gpu = single && single.placement[0]?.memory === CPU_MEMORY ? bestSingle(cands, g.machines, "usable", context, "gpu") : null;
+  if (gpu) alternatives.push(gpu);
+  // A bigger model that fits one machine only on its CPU or only slowly (a GPU machine's system RAM, say).
+  const biggest = bestSingle(cands, g.machines, "usable", context);
+  if (biggest && single && biggest.model.params_b > (top?.model.params_b ?? 0)) alternatives.push(biggest);
+  if (single && single.speed !== "fast" && !gpu) {
     const faster = cands
       .filter((c) => c.model.params_b < single.model.params_b)
       .map((c) => bestSingle([c], g.machines, "usable", context))
@@ -233,7 +272,7 @@ export function suggestForGroup(g: PoolGroup, cat: Catalog = CATALOG, context = 
   const next = [...cands].reverse().find((c) => c.quant === "q4" && c.model.params_b > (top?.model.params_b ?? 0) && c.need > usable);
   if (next) alternatives.push(tooBig(next, usable, g.machines.length === 1 ? g.machines[0]!.hostname : "the group", context));
 
-  const idleSingle = bestSingle(cands, g.machines, "usableIdle", context);
+  const idleSingle = bestSingle(cands, g.machines, "usableIdle", context, true);
   const idleTop = bestPooled(cands, g, "usableIdle", idleSingle, context, overhead) ?? idleSingle;
   const ifIdle = idleTop && (!top || idleTop.model.params_b > top.model.params_b) ? idleTop : null;
   return { group: g, usable, usableIdle, single, pooled, alternatives, ifIdle };

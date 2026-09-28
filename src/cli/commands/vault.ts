@@ -19,6 +19,7 @@ import { defaultSource } from "../../switch/accounts.ts";
 import { installShims, profileFile, realCli, shimsFirst, uninstallShims } from "../../switch/shims.ts";
 import { recordTrusted, sameObjects, trustedRecipient } from "../../switch/trusted.ts";
 import { credentialEnv, EXIT_ALL_EXHAUSTED, exhaustedLine, proxyAllowed } from "../../switch/wrapper.ts";
+import { personalCommand, poolCommand, promoteCommand, splitCommand } from "./accounts-pool.ts";
 import { absTime } from "../../protocol/accounts-format.ts";
 import { planCodexArgv, routingOverride } from "../../switch/codex-routing.ts";
 import { agentSignals, type ProcRow } from "../agent-detect.ts";
@@ -202,7 +203,8 @@ async function add(ctx: Ctx, walkieHome: string): Promise<number> {
     const e = prov === "claude" ? await addClaude(ctx, vault, tty, walkieHome) : await addCodex(ctx, vault, tty, walkieHome);
     writeMark(walkieHome, e.id, null); // a new credential: what sessions learned about the old one no longer applies
     const ks = await vault.keyStore();
-    ctx.out(`${c.green("added")} ${PROVIDER[e.provider]} ${safeTerm(e.label)} ${c.dim(`(${e.id.slice(0, 8)}, policy local${e.provider === "claude" ? `, key in ${ks.kind}` : ""})`)}`);
+    ctx.out(`${c.green("added")} ${PROVIDER[e.provider]} ${safeTerm(e.label)} ${c.dim(`(${e.id.slice(0, 8)}, policy ${e.policy}${e.provider === "claude" ? `, key in ${ks.kind}` : ""})`)}`);
+    ctx.out(c.dim("While the team's company account pool is on (walkie accounts pool), every member's machines can lease it; keep it out with: walkie accounts personal <account>"));
     if (ks.warning && e.provider === "claude") ctx.err(c.yellow(`note: ${ks.warning}`));
     if (e.provider === "codex") ctx.out(c.dim("Codex logins are protected like Codex protects them (a 0600 auth.json in the account's own 0700 directory, not encrypted by Walkie); Claude tokens are encrypted."));
     if (!shimsFirst(walkieHome)) ctx.out(c.dim("Sessions switch when started with `walkie claude` / `walkie codex`, or everywhere after: walkie accounts shims install"));
@@ -214,6 +216,7 @@ async function add(ctx: Ctx, walkieHome: string): Promise<number> {
 }
 
 const PROVIDER: Record<VaultProvider, string> = { claude: "Claude", codex: "Codex" };
+
 
 // ---- remove / policy / vault ------------------------------------------------------------------
 
@@ -243,7 +246,7 @@ async function remove(ctx: Ctx, walkieHome: string): Promise<number> {
 async function policy(ctx: Ctx, walkieHome: string): Promise<number> {
   const ref = need(ctx.args, 1, "account (id or label)");
   const pol = need(ctx.args, 2, "policy (local|own|shared)") as Policy;
-  if (!POLICIES.includes(pol)) throw new UsageError("policy must be local, own or shared");
+  if (!POLICIES.includes(pol)) throw new UsageError("policy must be local, own or shared (the company pool is a team setting: walkie accounts pool)");
   const tty = await admitted(ctx, "walkie accounts policy");
   const vault = Vault.open(walkieHome);
   try {
@@ -273,7 +276,7 @@ async function list(ctx: Ctx, walkieHome: string): Promise<number> {
     const leases = activeLeases(walkieHome);
     if (ctx.json) {
       ctx.out(JSON.stringify({
-        accounts: entries.map((e) => ({ id: e.id, provider: e.provider, label: e.label, plan: e.plan, policy: e.policy, share_with: e.share_with, expires_at: e.expires_at, linked: e.linked, leases: leases.filter((l) => l.account === e.id).length })),
+        accounts: entries.map((e) => ({ id: e.id, provider: e.provider, label: e.label, plan: e.plan, policy: e.policy, share_with: e.share_with, expires_at: e.expires_at, linked: e.linked, home_at: e.home_at, personal: e.personal, leases: leases.filter((l) => l.account === e.id).length })),
         shims: shimsFirst(walkieHome),
       }));
       return EXIT.ok;
@@ -325,14 +328,13 @@ export function thresholdPct(walkieHome: string, env: NodeJS.ProcessEnv = proces
 }
 
 function pickJson(p: Candidate & { room: number | null }): Record<string, unknown> {
-  return { account: p.id, provider: p.provider, label: p.label, room_pct: p.room, source: p.source, owner: p.owner, leases: p.leases };
+  return { account: p.id, provider: p.provider, label: p.label, room_pct: p.room, source: p.source, owner: p.owner, leases: p.leases, pooled: p.pooled === true };
 }
 
 async function pick(ctx: Ctx, walkieHome: string): Promise<number> {
   const prov = provider(str(ctx.args, "provider") ?? ctx.args.pos[1]);
   const { sel } = await pickFor(prov, str(ctx.args, "model") ?? null, walkieHome);
   if (!sel.pick) {
-    // RESET-CLOCK-1: which account frees first (remembered reset times), machine-readable for an orchestrator.
     const line = exhaustedLine(sel);
     if (ctx.json) ctx.out(JSON.stringify({ account: null, waiting_until: sel.waitUntil, next_free: line.next_free, excluded: sel.excluded.map((e) => ({ account: e.id, label: e.label, owner: e.owner ?? null, why: e.why, until: e.until })) }));
     else ctx.out(`no ${prov} account has room${sel.nextFree ? `; next account frees at ${absTime(sel.nextFree.at, Date.now())}, ${safeTerm(sel.nextFree.label)}${sel.nextFree.owner ? ` (@${safeTerm(sel.nextFree.owner)})` : ""}` : sel.waitUntil ? `; the earliest is usable again at ${absTime(sel.waitUntil, Date.now())}` : ""}`);
@@ -390,7 +392,13 @@ async function exec(ctx: Ctx, walkieHome: string): Promise<number> {
   }
   env.WALKIE_ACCOUNT = p.id;
   env.WALKIE_NO_SWITCH = "1"; // the command's own claude/codex must not re-pick through the shims
-  const lease = writeLease(walkieHome, execLease(prov, p, creds, process.pid, process.env.WALKIE_AGENT));
+  let lease: ReturnType<typeof writeLease>;
+  try {
+    lease = writeLease(walkieHome, execLease(prov, p, creds, process.pid, process.env.WALKIE_AGENT));
+  } catch (err) {
+    creds.release?.();
+    throw err;
+  }
   try {
     ctx.err(c.dim(`walkie: running on ${p.label}`));
     const child = Bun.spawn(cmd, { stdio: ["inherit", "inherit", "inherit"], env });
@@ -408,6 +416,7 @@ async function exec(ctx: Ctx, walkieHome: string): Promise<number> {
     }
   } finally {
     releaseLease(walkieHome, lease);
+    creds.release?.(); // COMPANY POOL: a leased Codex home goes with the command
   }
 }
 
@@ -536,6 +545,10 @@ export async function vaultCommand(ctx: Ctx, sub: string): Promise<number | null
     case "borrow": return borrow(ctx, home);
     case "allow-proxy": return allowProxy(ctx, home);
     case "trust-cli": return trustCli(ctx, home);
+    case "split": return splitCommand(ctx);
+    case "pool": return poolCommand(ctx, home);
+    case "personal": return personalCommand(ctx, admitted, home);
+    case "promote": return promoteCommand(ctx, admitted, home);
     default: return null;
   }
 }

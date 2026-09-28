@@ -6,18 +6,22 @@
 //   WALKIE_MOCK_TRANSPORT=direct          a Walkie Direct team (invite codes, no tailnet IPs)
 //   WALKIE_MOCK_POOL=fleet                five machines shaped like our real fleet at four sites (split runs)
 //   WALKIE_MOCK_POOL_RUN=serving          a split run already serving (with WALKIE_MOCK_POOL=fleet)
+//   WALKIE_MOCK_POOL_SERVE=remote         atlas serves Qwen3 32B whole on its GPU (Connect, POOL-REAL-1)
+//   WALKIE_MOCK_POOL_RUNTIME=missing      this machine lacks the llama.cpp runtime (the Install button)
 //   WALKIE_MOCK_POOL=lan                  maren's office on one network (a big local group for local models;
 //                                         default: a scattered team, every machine on its own)
 //   WALKIE_MOCK_FLEET=busy               ~36 more working agents, one-shot churn on atlas, a flapping seat (LIVE-2)
 //   WALKIE_MOCK_PLAN=free|trial|team|business|grace   the team's plan (default trial); license keys
 //                                         "mock-team-<seats>" / "mock-business-<seats>" activate
 // Implements PROTOCOL.md §5 read endpoints + post/answer/admit/invite/channels/stream, and the
-// integrations routes with fictional connector data (mock/integrations.ts), and Projects (mock/projects.ts).
+// integrations routes with fictional connector data (mock/integrations.ts), Projects (mock/projects.ts) and the Linear
+// import (mock/linear-import.ts: a fictional workspace, a job that progresses with time).
 // Auth, Host and Origin checks are intentionally not enforced here. /v1/stream?agents=delta sends roster deltas.
 import { join } from "node:path";
 import { AnswerReq, ChannelReq, EventsQuery, InviteReq, PostReq, type StreamMessage } from "../../src/protocol/schemas.ts";
 import { MockIntegrations, seedIntegrationPosts } from "./integrations.ts";
 import { MockProjects } from "./projects.ts";
+import { MockLinearImport } from "./linear-import.ts";
 import { mockActivate, parseMode, planLimitBody, seedPlan } from "./plan.ts";
 import { mockPrepareReset, mockRefresh, mockUseReset, resetUses } from "./accounts.ts";
 import { seedWorld } from "./seed.ts";
@@ -43,6 +47,7 @@ if (process.env.WALKIE_MOCK_ROLE === "member" || process.env.WALKIE_MOCK_ROLE ==
 if (world.hasTeam) seedIntegrationPosts(world);
 const integrations = new MockIntegrations();
 const projects = new MockProjects();
+const linearImport = new MockLinearImport();
 if (process.env.WALKIE_MOCK_TRANSPORT === "direct") world.transport = "direct";
 const planMode = parseMode(process.env.WALKIE_MOCK_PLAN);
 world.planState = seedPlan(planMode);
@@ -146,7 +151,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (path === "/v1/peers") return json({ nodes: world.nodeViews() });
   if (path === "/v1/license" && method === "GET") return json(world.planView());
   if (path === "/v1/agents") return json(world.agentsPayload(q));
-  if (path === "/v1/accounts") return json({ accounts: world.accountViews() });
+  if (path === "/v1/accounts") return json({ accounts: world.accountViews(), pool: { policy: "company", at: Date.now() - 3_600_000, by: "maren" } });
   if (path === "/v1/pool" && method === "GET") return json(pool.view());
   if (path === "/v1/pool/share" && method === "POST") {
     const b = (await body(req)) as { on?: unknown; max_gb?: unknown } | undefined;
@@ -160,6 +165,27 @@ async function api(req: Request, url: URL): Promise<Response> {
     return run ? json({ run }, 202) : fail(409, "does_not_fit", "nothing fits in the memory the sharing machines have free");
   }
   if (path === "/v1/pool/stop" && method === "POST") return json({ run: pool.stop() });
+  // POOL-REAL-1: serve / connect / install (people only, like the daemon's; install also for named agents).
+  if (path === "/v1/pool/install" && method === "POST") {
+    if (req.headers.get("x-walkie-under-agent") === "1" && !req.headers.has("x-walkie-agent")) return fail(403, "agent_unnamed", "an agent installing the runtime must name itself");
+    return json({ install: pool.startInstall() }, 202);
+  }
+  if (path.startsWith("/v1/pool/") && method === "POST" && (req.headers.has("x-walkie-agent") || req.headers.has("x-walkie-under-agent"))) {
+    return fail(403, "forbidden", "that is for a person, not an agent");
+  }
+  if (path === "/v1/pool/serve" && method === "POST") {
+    const b = (await body(req)) as { model?: string; quant?: "q4" | "q8"; on?: string } | undefined;
+    const on = b?.on ? world.nodeViews().find((n) => n.node_id === b.on || n.hostname === b.on) ?? null : null;
+    const r = b?.model ? pool.startServe(b.model, b.quant ?? "q4", on) : null;
+    return r ? json(r, 202) : fail(400, "unknown_model", "no such model");
+  }
+  if (path === "/v1/pool/serve/stop" && method === "POST") return json({ serve: pool.stopServe() });
+  if ((path === "/v1/pool/connect" || path === "/v1/pool/disconnect") && method === "POST") {
+    const b = (await body(req)) as { machine?: string } | undefined;
+    const n = world.nodeViews().find((x) => x.node_id === b?.machine || x.hostname === b?.machine);
+    if (!n) return fail(404, "unknown_machine", "no such machine");
+    return json({ connection: path.endsWith("/connect") ? pool.connect(n) : pool.disconnect(n.node_id) });
+  }
   // Remote seats (PROTOCOL §11): the routes the dashboard's Seats view calls, person-only like the daemon's.
   if (path.startsWith("/v1/seats") && method === "POST" && (req.headers.has("x-walkie-agent") || req.headers.has("x-walkie-under-agent"))) {
     return fail(403, "forbidden", "seats are set up and used by a person here, not an agent");
@@ -218,6 +244,8 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (integ) return integ;
   const proj = await projects.handle(req, path, json, fail);
   if (proj) return proj;
+  const li = await linearImport.handle(req, path, json, fail);
+  if (li) return li;
 
   if (path === "/v1/team/pending") {
     if (!isOwner()) return fail(403, "forbidden", "owners only");

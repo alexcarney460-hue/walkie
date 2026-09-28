@@ -23,8 +23,11 @@ import { ensureFiles, filesFor } from "./gguf.ts";
 import { catalogNeed, fileNeed, planRun, PlanError, type PlannedStage } from "./plan.ts";
 import { hasRuntime, INSTALL_HINT, type Runtime } from "./runtime.ts";
 import { splice, tcpEnd, type End } from "./tunnel.ts";
+import { PoolJobs, type Reservation } from "./jobs.ts";
+import { PressureWatch, startBlocked, type MemNow } from "./pressure.ts";
 
 export const RENEW_MS = 10_000;
+const PRESSURE_WATCH_MS = 3_000;
 /** How often a run re-asks the seats gate (like the stage watchdog): seats coming on stop it (Opus r11). */
 export const SEATS_WATCH_MS = 3_000;
 const METRICS_MS = 5_000;
@@ -43,6 +46,10 @@ export class RunError extends Error {
 export interface RunnerDeps {
   /** Why seats keep the pool off here (service.ts seatsBlock): no run is headed from this machine meanwhile. */
   seatsBlock?: () => string | null;
+  /** POOL-REAL-1 fix round: the machine's single pool-job reservation (jobs.ts). Default: a private one. */
+  jobs?: PoolJobs;
+  /** This machine's memory now (pressure.ts policy). Default: never under pressure. */
+  mem?: () => MemNow;
   /** Tests: how often a run re-asks seatsBlock (default SEATS_WATCH_MS). */
   seatsWatchMs?: number;
   home: string;
@@ -60,18 +67,24 @@ export interface RunnerDeps {
 
 interface Remote {
   plan: PlannedStage; state: StageView["state"]; listener: NetServer | null; port: number;
+  /** Models this worker prepared locally (its published `pool.prepared`, POOL-REAL-1). */
+  prepared: readonly string[];
   conns: Set<Socket>; ends: Set<End>; renewFails: number;
 }
 
 interface Active {
   view: RunView; remotes: Remote[]; server: Child | null; abort: AbortController;
   timers: ReturnType<typeof setInterval>[]; locked: boolean; stopping: boolean;
+  job: Reservation; pressure: PressureWatch;
+  /** The teardown in progress (every stop awaits the same one). */
+  down: Promise<void> | null;
 }
 
 
 export class PoolRunner {
   private cur: Active | null = null;
-  constructor(private readonly d: RunnerDeps) {}
+  private readonly jobs: PoolJobs;
+  constructor(private readonly d: RunnerDeps) { this.jobs = d.jobs ?? new PoolJobs(); }
 
   view(): RunView | null { return this.cur ? { ...this.cur.view, stages: this.cur.view.stages.map((s) => ({ ...s })) } : null; }
 
@@ -98,8 +111,23 @@ export class PoolRunner {
     const block = this.d.seatsBlock?.() ?? null;
     if (block) throw new RunError(409, SEATS_POOL_CODE, block);
     if (this.cur && !["stopped", "failed"].includes(this.cur.view.state)) throw new RunError(409, "run_active", "a split run is already running here; stop it first (walkie pool stop)");
-    const rt = this.d.runtime();
-    if (!hasRuntime(rt)) throw new RunError(409, "no_runtime", `the llama.cpp runtime isn't installed on this machine: ${INSTALL_HINT}`);
+    // The machine's one pool job (jobs.ts), taken synchronously; held until this run's teardown has finished.
+    const id = randomBytes(16).toString("hex");
+    let job: Reservation;
+    try { job = this.jobs.reserve("head", id); } catch (err) { throw new RunError(409, "busy", (err as Error).message); }
+    try {
+      const rt = this.d.runtime();
+      if (!hasRuntime(rt)) throw new RunError(409, "no_runtime", `the llama.cpp runtime isn't installed on this machine: ${INSTALL_HINT}`);
+      const pressed = startBlocked(this.d.mem?.());
+      if (pressed) throw new RunError(503, "memory_pressure", pressed);
+      return this.begin(req, nodes, rt, id, job);
+    } catch (err) {
+      job.release();
+      throw err;
+    }
+  }
+
+  private begin(req: RunRequest, nodes: readonly NodeView[], rt: Runtime, id: string, job: Reservation): RunView {
     let model: RunView["model"];
     let need: number;
     let file: string | null = null;
@@ -123,15 +151,29 @@ export class PoolRunner {
       if (err instanceof PlanError) throw new RunError(409, err.code, err.message);
       throw err;
     }
-    const id = randomBytes(16).toString("hex");
     const view: RunView = {
       id, state: file ? "starting" : "downloading", error: null, model, download: null,
       stages: stages.map((s) => ({ ...s, state: s.self ? "ready" : "starting" })),
       endpoint: null, api_key_file: null, example: null, tokens_per_s: null, started_at: Date.now(), serving_at: null, server_pid: null,
     };
-    const remotes: Remote[] = stages.filter((s) => !s.self).map((plan) => ({ plan, state: "starting", listener: null, port: 0, conns: new Set(), ends: new Set(), renewFails: 0 }));
-    const run: Active = { view, remotes, server: null, abort: new AbortController(), timers: [], locked: false, stopping: false };
+    const remotes: Remote[] = stages.filter((s) => !s.self).map((plan) => ({
+      plan, state: "starting", listener: null, port: 0, conns: new Set(), ends: new Set(), renewFails: 0,
+      prepared: nodes.find((n) => n.node_id === plan.node_id)?.pool?.prepared ?? [],
+    }));
+    const run: Active = {
+      view, remotes, server: null, abort: new AbortController(), timers: [], locked: false, stopping: false,
+      job, pressure: new PressureWatch(() => this.d.mem?.()), down: null,
+    };
     this.cur = run;
+    // The memory-pressure policy for the head as for every pool job (pressure.ts).
+    {
+      const t = setInterval(() => {
+        const why = run.pressure.check();
+        if (why && this.live(run)) this.fail(run, `stopped: ${why.replaceAll("_", " ")} on this machine`);
+      }, PRESSURE_WATCH_MS);
+      (t as { unref?: () => void }).unref?.();
+      run.timers.push(t);
+    }
     // Seats coming on (or found on disk after a restart) stop the run, whatever phase it is in (Opus seats r11 MEDIUM).
     if (this.d.seatsBlock) {
       const t = setInterval(() => {
@@ -173,7 +215,12 @@ export class PoolRunner {
     // Stages first (each worker checks sharing, its cap and its runtime), then a listener per worker.
     await Promise.all(run.remotes.map(async (r) => {
       try {
-        await this.d.stage(r.plan.node_id, { action: "start", run: run.view.id, bytes: r.plan.bytes, model: run.view.model.name.slice(0, 120) });
+        const key = run.view.model.id && run.view.model.quant ? `${run.view.model.id}:${run.view.model.quant}` : null;
+        const local = key !== null && r.prepared.includes(key);
+        await this.d.stage(r.plan.node_id, {
+          action: "start", run: run.view.id, bytes: r.plan.bytes, model: run.view.model.name.slice(0, 120),
+          ...(local ? { weights: { model: run.view.model.id!, quant: run.view.model.quant! } } : {}),
+        });
       } catch (err) {
         throw new Error(`${r.plan.hostname}: ${(err as Error).message}`);
       }
@@ -237,8 +284,12 @@ export class PoolRunner {
     // The planned parts must be what runs: without a device here, the head's part would silently land on the workers
     // (-ngl all over the RPC devices) and push them past what they agreed to hold.
     if (head && head.bytes > 0 && !local) throw new Error("this machine has no GPU llama.cpp can use, so it can't hold its planned part; name machines that hold the whole model with --machines");
-    const names = [...(local ? [local] : []), ...(rpc as string[])];
-    const bytes = [...(local ? [head!.bytes] : []), ...run.remotes.map((r) => r.plan.bytes)];
+    // The head's own device LAST (POOL-REAL-1): llama.cpp puts the output layer on the last device, so the logits
+    // (vocabulary x 4 bytes a token, 513 KB for Llama 3) stay on the head instead of crossing the network each token.
+    // Measured on hestia-wsl through a counting proxy: 29 KB instead of 523 KB worker->head per token, same speed.
+    const names = [...(rpc as string[]), ...(local ? [local] : [])];
+    // Proportional to each device's share of the MODEL, not its runtime overhead (POOL-REAL-1 p8-4).
+    const bytes = [...run.remotes.map((r) => r.plan.model_bytes ?? r.plan.bytes), ...(local ? [head!.model_bytes ?? head!.bytes] : [])];
     if (!names.length) return [];
     return ["--device", names.join(","), "-ngl", "all", ...(names.length > 1 ? ["--tensor-split", tensorSplit(bytes)] : [])];
   }
@@ -338,12 +389,17 @@ export class PoolRunner {
 
   async stop(): Promise<RunView | null> {
     const run = this.cur;
-    if (!run || run.stopping) return this.view();
-    await this.teardown(run, "stopped", null);
+    if (!run) return this.view();
+    if (run.stopping || !["stopped", "failed"].includes(run.view.state)) await this.teardown(run, "stopped", null);
     return this.view();
   }
 
-  private async teardown(run: Active, end: "stopped" | "failed", error: string | null): Promise<void> {
+  private teardown(run: Active, end: "stopped" | "failed", error: string | null): Promise<void> {
+    if (!run.down) run.down = this.doTeardown(run, end, error).finally(() => run.job.release());
+    return run.down;
+  }
+
+  private async doTeardown(run: Active, end: "stopped" | "failed", error: string | null): Promise<void> {
     run.stopping = true;
     this.set(run, { state: "stopping", ...(error ? { error } : {}) });
     run.abort.abort();

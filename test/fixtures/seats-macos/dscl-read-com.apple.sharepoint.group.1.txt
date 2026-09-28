@@ -5,6 +5,6 @@ GeneratedUID: 5904C48C-484C-41DB-8C16-29F39DF3AE6A
 NestedGroups: ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C
 PrimaryGroupID: 701
 RealName:
- Alex Carney’s Public Folder
+ Avery Quinn’s Public Folder
 RecordName: com.apple.sharepoint.group.1
 RecordType: dsRecTypeStandard:Groups

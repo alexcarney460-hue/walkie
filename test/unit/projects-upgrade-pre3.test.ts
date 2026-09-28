@@ -29,10 +29,10 @@ const PRE3 = MIGRATIONS.slice(0, ORCH + 1);
 const CH = "p-0e1c7ed0";
 
 describe("migration order", () => {
-  test("orch_messages is 11 and the projects boards are 12, the last one", () => {
+  test("orch_messages is 11 and the projects boards are 12; DAEMON-STALL-1's indexes are 13, the last one", () => {
     expect(ORCH + 1).toBe(11);
     expect(BOARDS + 1).toBe(12);
-    expect(MIGRATIONS.length).toBe(12);
+    expect(MIGRATIONS.length).toBe(13);
   });
 
   test("a fresh store runs every migration once", () => {
@@ -123,9 +123,9 @@ describe("PRE4 RC (Codex 1, Opus 3): a projects-lane store, and a rollback to pr
     const dir = pre3Store(dave, w.team, w.events, lane, "8");
     const s = await start(dir, dave);
     cleanups.push(() => { s.stop(); s.store.close(); });
-    expect(versionsOf(s.store)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+    expect(versionsOf(s.store)).toEqual(Array.from({ length: MIGRATIONS.length }, (_, i) => i + 1));
     s.store.db.query("INSERT INTO orch_messages(id, thread, role, text, ts) VALUES ('m2', 't1', 'person', 'works', 2)").run();
-    expect(s.store.getMeta("validity_version")).toBe("10");
+    expect(s.store.getMeta("validity_version")).toBe("11");
     s.idx.flushAll();
     expect(s.idx.db.card(w.card.id)).toMatchObject({ title: "Ship pre.4", column: "todo" });
   });
@@ -142,9 +142,9 @@ describe("PRE4 RC (Codex 1, Opus 3): a projects-lane store, and a rollback to pr
     raw.close();
     const s2 = await start(dir, dave);
     cleanups.push(() => { s2.stop(); s2.store.close(); });
-    expect(versionsOf(s2.store)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+    expect(versionsOf(s2.store)).toEqual(Array.from({ length: MIGRATIONS.length }, (_, i) => i + 1));
     expect([bopOf(s2.store, w.root.id), bopOf(s2.store, w.card.id), bopOf(s2.store, w.chat.id)]).toEqual([1, 1, 0]);
-    expect(s2.store.getMeta("validity_version")).toBe("10");
+    expect(s2.store.getMeta("validity_version")).toBe("11");
     s2.idx.flushAll();
     expect(s2.idx.db.card(w.card.id)).toMatchObject({ title: "Ship pre.4", column: "todo" });
   });
@@ -199,7 +199,7 @@ describe("a pre.3 store upgrades to pre.4", () => {
 
     const store = new Store(join(dir, "walkie.db"));
     const versions = store.db.query<{ version: number }, []>("SELECT version FROM migrations ORDER BY version").all().map((r) => r.version);
-    expect(versions).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+    expect(versions).toEqual(Array.from({ length: MIGRATIONS.length }, (_, i) => i + 1));
     expect(store.db.query<{ text: string }, []>("SELECT text FROM orch_messages WHERE id = 'm1'").get()?.text).toBe("keep me");
 
     const paths = pathsFor(dir);
@@ -219,7 +219,7 @@ describe("a pre.3 store upgrades to pre.4", () => {
     // The existing rows are classified once (the three board ops, not the chat post) and re-judged (validity 10).
     const bop = (id: string) => store.db.query<{ bop: number }, [string]>("SELECT bop FROM events WHERE id = ?").get(id)?.bop;
     expect([bop(w.root.id), bop(w.board.id), bop(w.card.id), bop(w.chat.id)]).toEqual([1, 1, 1, 0]);
-    expect(store.getMeta("validity_version")).toBe("10"); // 10 since the seats mark (PRE4 delta)
+    expect(store.getMeta("validity_version")).toBe("11"); // 10 since the seats mark (PRE4 delta)
     for (const e of w.events) expect(`${e.kind} ${statusOf(core, e.id)} ${store.getRow(e.id)?.reason ?? ""}`).toBe(`${e.kind} ok `);
 
     idx.flushAll();

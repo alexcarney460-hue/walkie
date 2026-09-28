@@ -1,9 +1,5 @@
-// ORCH-2: which machine of the team runs WalkieTalkie on its own (the lead), so a team runs ONE, not one per machine.
-// Pure; every machine computes the same answer from the replicated roster, its heartbeats and each machine's
-// WalkieTalkie status. Order: the roster authority, then the owners' other machines by node id. A machine counts
-// while it has a model login and wasn't stopped by its person (its WalkieTalkie status is not "offline"), and while
-// it was seen within `offlineMs` (5 min): a standby takes over only after the lead has been gone that long, and hands
-// back as soon as the lead is seen again.
+// Candidate ordering only: divergent heartbeat views may choose different candidates during a partition.
+// Acting requires an exclusive renewable lease from the roster authority (leadership.ts), including manual starts.
 
 export const LEAD_OFFLINE_MS = 5 * 60_000;
 
@@ -37,7 +33,7 @@ function fresh(n: LeadNode, i: LeadInput): boolean {
   return n.last_seen !== null && i.now - n.last_seen < (i.offlineMs ?? LEAD_OFFLINE_MS);
 }
 
-/** The lead machine, or null when no machine in the order may lead. */
+/** Preferred candidate; this result alone never authorizes leadership. */
 export function electLead(i: LeadInput): LeadNode | null {
   return leadOrder(i).find((n) => fresh(n, i) && i.eligible(n.node_id)) ?? null;
 }

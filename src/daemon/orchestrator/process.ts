@@ -1,6 +1,10 @@
 // One `claude -p` child in stream-json mode: spawn, line reader, stdin writes, graceful close. The supervisor
 // (host.ts) decides when to start, restart and switch sessions.
-import { existsSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { walkieArgv } from "../../hooks/install.ts";
+import { HEARTBEAT_MS } from "./supervisor.ts";
+import { killMarkedProcesses } from "./marked-processes.ts";
+import { existsSync, statSync, writeFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { PermissionMode } from "../../protocol/orchestrator.ts";
@@ -45,6 +49,7 @@ export function claudeArgs(s: ArgsSpec): string[] {
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     s.resume ? "--resume" : "--session-id", s.session,
     "--permission-mode", s.permissionMode,
+    "--setting-sources", "",
     // One value, so the variadic option can't swallow what follows it.
     ...(s.allowedTools.length ? [`--allowedTools=${s.allowedTools.join(",")}`] : []),
     ...(s.mcpConfig ? [`--mcp-config=${s.mcpConfig}`] : []),
@@ -52,6 +57,12 @@ export function claudeArgs(s: ArgsSpec): string[] {
     ...(s.model ? ["--model", s.model] : []),
     "--append-system-prompt", s.systemPrompt,
   ];
+}
+
+/** Claude blocks a tool when its hook exits 2; finish before Claude's own 15-second timeout. */
+export function leaseHookCommand(argv: readonly string[], seconds = 10): string {
+  const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+  return ["/usr/bin/perl", "-e", `$SIG{ALRM}=sub{exit 2}; alarm ${seconds}; system @ARGV; exit($? == 0 ? 0 : 2)`, "--", ...argv].map(quote).join(" ") + " || exit 2";
 }
 
 function executable(p: string): boolean {
@@ -147,11 +158,12 @@ const REAP_POLL_MS = 50;
 const REAP_KILL_WAIT_MS = 1_000;
 
 /**
- * Claude runs as the leader of its own process group (`detached`: setsid), so everything its tools start (shells,
- * test runners, servers) is in that group: stopping, a crash or a supersede ends the whole group, not only Claude.
+ * Claude runs under a detached supervisor. Tools may create their own sessions; the per-run marker
+ * and process-tree cleanup keep them tied to this lease.
  */
 export class ClaudeChild<S = ClaudeSignal> {
   private readonly proc: ReturnType<typeof Bun.spawn>;
+  private readonly runMarker: string;
   private stderr = "";
   private stderrCut = false;
   /** Key blocks in all of stderr, so a window that starts inside one is known (ORCH-FIX-4). */
@@ -171,8 +183,36 @@ export class ClaudeChild<S = ClaudeSignal> {
   constructor(
     bin: string, args: string[], cwd: string, env: Record<string, string>, private readonly h: ChildHandlers<S>,
     private readonly parse: (line: string) => S | null = parseClaudeLine as unknown as (line: string) => S | null,
+    lease?: { directory: string; expires: () => number; epoch?: number; hook?: boolean },
   ) {
-    this.proc = Bun.spawn([bin, ...args], { cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true });
+    const file = lease ? join(lease.directory, `orchestrator-lease-${randomUUID()}.json`) : null;
+    const run = lease ? `${lease.epoch ?? 0}.${randomUUID()}` : "";
+    this.runMarker = run;
+    let serial = 0;
+    const renew = () => {
+      if (!lease || !file) return;
+      writeFileSync(`${file}.tmp`, JSON.stringify({ expires: lease.expires(), renewed: Date.now(), serial: serial++, epoch: lease.epoch ?? 0, run }), { mode: 0o600 });
+      renameSync(`${file}.tmp`, file);
+    };
+    renew();
+    try {
+      const hookCommand = file ? leaseHookCommand([...walkieArgv(), "--internal-orchestrator-hook", file]) : "";
+      const hook = file && lease?.hook ? JSON.stringify({ hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand, timeout: 15 }] }] } }) : null;
+      if (lease) mkdirSync(join(lease.directory, "talkie"), { recursive: true, mode: 0o700 });
+      this.proc = Bun.spawn(file ? [...walkieArgv(), "--internal-orchestrator-supervisor", file, bin, ...args, ...(hook ? ["--settings", hook] : [])] : [bin, ...args],
+        { cwd: lease ? join(lease.directory, "talkie") : cwd, env: { ...env, ...(file ? { WALKIE_TALKIE_RUN: run } : {}) }, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true });
+    } catch (err) {
+      if (file) rmSync(file, { force: true });
+      throw err;
+    }
+    const heartbeat = file ? setInterval(() => {
+      try { renew(); } catch { this.terminate(); }
+    }, HEARTBEAT_MS) : null;
+    heartbeat?.unref();
+    void this.proc.exited.finally(() => {
+      if (heartbeat) clearInterval(heartbeat);
+      if (file) { rmSync(file, { force: true }); rmSync(`${file}.tmp`, { force: true }); }
+    });
     void this.readStdout();
     void this.readStderr();
     this.exited = this.proc.exited.then(async (code) => {
@@ -199,6 +239,11 @@ export class ClaudeChild<S = ClaudeSignal> {
    * any of them left. Resolves when the group is gone or has been sent SIGKILL.
    */
   private async reap(): Promise<void> {
+    if (this.runMarker) {
+      killMarkedProcesses(this.proc.pid, this.runMarker);
+      this.signalGroup("SIGKILL");
+      return;
+    }
     if (!this.signalGroup("SIGTERM")) return;
     if (await this.groupGone(REAP_GRACE_MS)) return;
     this.signalGroup("SIGKILL");
@@ -216,6 +261,7 @@ export class ClaudeChild<S = ClaudeSignal> {
   }
 
   get pid(): number { return this.proc.pid; }
+  get marker(): string { return this.runMarker; }
   get alive(): boolean { return !this.closed && this.proc.exitCode === null; }
 
   write(line: string): boolean {
@@ -239,14 +285,22 @@ export class ClaudeChild<S = ClaudeSignal> {
    * Ends stdin (claude exits after the current turn), then SIGTERM, then SIGKILL, each to the whole process group.
    * Returns once the group is reaped too, also when Claude had already exited on its own.
    */
+  /** Lease fencing: stop the process group immediately, without a graceful drain beyond the deadline. */
+  terminate(): void {
+    if (this.runMarker) killMarkedProcesses(this.proc.pid, this.runMarker);
+    this.signalGroup("SIGKILL");
+    try { this.proc.kill("SIGKILL"); } catch { /* already exited */ }
+  }
+
   async close(graceMs = 3_000): Promise<void> {
     if (this.closed) { await this.reaped; return; }
     try { (this.proc.stdin as import("bun").FileSink).end(); } catch { /* already closed */ }
     const done = await Promise.race([this.exited.then(() => true), Bun.sleep(graceMs).then(() => false)]);
     if (!done) {
-      if (!this.signalGroup("SIGTERM")) this.proc.kill("SIGTERM");
+      if (this.runMarker) this.terminate();
+      else if (!this.signalGroup("SIGTERM")) this.proc.kill("SIGTERM");
       const termed = await Promise.race([this.exited.then(() => true), Bun.sleep(REAP_GRACE_MS).then(() => false)]);
-      if (!termed && !this.signalGroup("SIGKILL")) this.proc.kill("SIGKILL");
+      if (!termed) this.terminate();
     }
     await this.reaped;
   }

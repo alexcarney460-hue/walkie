@@ -26,6 +26,7 @@ import type { PeerAddr } from "./transport.ts";
 import { saveConfigField } from "./config.ts";
 import { ADMIN_AGENT } from "./admin/audit.ts";
 import { adminGate, agentCaller, personOnly } from "./admin/gate.ts";
+import { FLEET_AGENT, STEWARD_AGENT } from "../protocol/projects/steward-core.ts";
 import type { SyncManager } from "./sync.ts";
 import { parseProvenance, projectStatus } from "../protocol/status-projection.ts";
 import { accountsView, agentsPayload, ARCHIVE_PAGE_MAX, askView, cutAskView, isLiveSubagentRow, liveSubagents, meView, nodesView, teamView } from "./views.ts";
@@ -102,6 +103,7 @@ export function hasRoute(method: string, path: string): boolean {
 }
 
 export async function dispatch(c: RouteCtx): Promise<Response> {
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") refuseReservedAgent(c);
   for (const r of routes) {
     const m = r.re.exec(c.url.pathname);
     if (!m) continue;
@@ -654,6 +656,7 @@ route("POST", "/v1/status", async (c) => {
   if (c.agent && c.agent !== b.agent) throw new HttpError(403, "forbidden", "status agent must match X-Walkie-Agent");
   if (RESERVED_AGENTS.has(b.agent)) throw new HttpError(403, "forbidden", `agent name "${b.agent}" is reserved for the ${b.agent} integration`);
   if (b.agent === ORCHESTRATOR_AGENT) throw new HttpError(403, "forbidden", "the orchestrator's status is set by its host daemon only");
+  if (b.agent === STEWARD_AGENT || b.agent === FLEET_AGENT) throw new HttpError(403, "forbidden", `the name "${b.agent}" is reserved for this daemon`);
   if (isSeatAgent(b.agent)) throw new HttpError(403, "forbidden", "seats' status is set by the host daemon only (PROTOCOL §11)");
   if (b.parent && !namedUnder(b.agent, b.parent)) throw new HttpError(400, "invalid", `a sub-agent of ${b.parent} is named "${b.parent}.<id>"`);
   // The seats host card (and a seat's) has no sub-agents a local process may add (Opus seats r9 LOW).
@@ -704,7 +707,7 @@ route("GET", "/v1/agents", (c) => {
 // ACCOUNTS-1: the team's provider accounts and usage left, pooled (watch-only; no token is ever part of it).
 route("GET", "/v1/accounts", (c) => {
   requireTeam(c);
-  return json({ accounts: accountsView(c.core, c.sync) });
+  return json({ accounts: accountsView(c.core, c.sync), pool: c.core.teamPool() });
 });
 
 function ownerAddr(c: RouteCtx, node: NodeRec): PeerAddr {
@@ -839,6 +842,8 @@ export function validAgentHeader(v: string | null): string | undefined {
   if (RESERVED_AGENTS.has(v)) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for the ${v} integration`);
   if (v === SEATS_AGENT) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for the seats host daemon`);
   if (v === ADMIN_AGENT) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for the admin audit trail`);
+  // FO-6: the board steward's moves are trusted by the fold (it may move a person's card); only the daemon signs as it.
+  if (v === STEWARD_AGENT || v === FLEET_AGENT) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for this daemon's ${v === FLEET_AGENT ? "fleet desk" : "board steward"}`);
   // A running seat speaks only through the seats' own socket (seats/seat-api.ts), so a `seat-*` post is always one.
   if (isSeatAgent(v)) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for remote seats`);
   return v;

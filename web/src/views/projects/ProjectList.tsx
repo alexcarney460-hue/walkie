@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FolderKanban, Lock, Plus } from "lucide-react";
+import { Download, FolderKanban, Lock, Plus } from "lucide-react";
 import type { AgentView, ProjectView } from "../../api/types.ts";
 import { PageHeader } from "../../components/Shell.tsx";
 import { Avatar, EmptyState, ErrorState, RelTime, SkeletonRows, hueVar } from "../../components/primitives.tsx";
@@ -9,6 +9,7 @@ import { byFolder, presence } from "../../lib/projects.ts";
 import { useProjects, projectsStore } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
 import { CreateProject } from "./CreateProject.tsx";
+import { LinearImport } from "./LinearImport.tsx";
 import { Meter } from "./Meter.tsx";
 
 /** Up to four live agents on a project (avatars), then a count. */
@@ -55,6 +56,7 @@ export function ProjectList() {
   const s = useProjects();
   const { agents } = useStore();
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const live = s.projects.filter((p) => p.state !== "deleted");
   const who = useMemo(() => presence(agents, live, () => true).byProject, [agents, live]);
   const groups = byFolder(live);
@@ -65,7 +67,10 @@ export function ProjectList() {
       <PageHeader
         title="Projects"
         meta={s.status === "ready" ? `${live.length} project${live.length === 1 ? "" : "s"}${working ? ` · ${working} agent${working === 1 ? "" : "s"} on them now` : ""}` : undefined}
-        actions={<button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} />New project</button>}
+        actions={<>
+          <button type="button" className="btn btn-sm" onClick={() => setImporting(true)}><Download size={14} strokeWidth={2} />Import from Linear</button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} />New project</button>
+        </>}
       />
       {s.status === "error" ? (
         <ErrorState message={s.error ?? "Couldn't load projects."} onRetry={() => void projectsStore.refresh()} />
@@ -74,6 +79,7 @@ export function ProjectList() {
       ) : !live.length && !s.stubs.length ? (
         <EmptyState icon={<FolderKanban size={22} strokeWidth={1.5} />} title="No projects yet" command='walkie projects create "Website" --folder Acme'>
           <p>A project is a kanban board your whole team and its agents share: cards, columns, who is on what, and how far along it is.</p>
+          <p><button type="button" className="btn btn-sm" onClick={() => setImporting(true)}><Download size={14} strokeWidth={2} />Import from Linear</button></p>
         </EmptyState>
       ) : (
         <>
@@ -91,6 +97,7 @@ export function ProjectList() {
         </>
       )}
       {creating && <CreateProject onClose={() => setCreating(false)} />}
+      {importing && <LinearImport onClose={() => { setImporting(false); void projectsStore.refresh(); }} />}
     </div>
   );
 }

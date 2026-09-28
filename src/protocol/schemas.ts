@@ -3,6 +3,7 @@
 import type { OrchMessage } from "./orchestrator.ts";
 import { z } from "zod";
 import type { ArchiveCount } from "./agent-roster.ts";
+import { PeerCapabilities } from "./capabilities.ts";
 import { MachineStats } from "./machine-stats.ts";
 import { PoolShare } from "./pool.ts";
 import { AccountsSnapshot } from "./accounts.ts";
@@ -208,10 +209,24 @@ export const Bodies = {
     observed_at: z.number().int().nonnegative().optional(),
     /**
      * A sub-agent's row (WALKIE-MISSION-SUB-1, src/protocol/subagents.ts): the agent name of the session that started
-     * it (its own name is "<parent>.<id>"), and its type. Older nodes ignore both and show it as an agent of its own.
+     * it (its own name is "<parent>.<id>"), or the host's `seats` card for a `seat-*` agent. Older nodes ignore
+     * the parent and show each child as an agent of its own.
      */
     parent: AgentName.optional(),
+    /** Handle that requested a host-owned seat; older peers ignore this optional field. */
+    launcher: Handle.optional(),
     subagent_type: z.string().min(1).max(60).optional(),
+    /**
+     * AGENT-SEE-1: how the agent runs, when known: "headless" (a one-shot run: `claude -p`, `codex exec`, `kimi -p`, or
+     * no terminal) or "acp" (through an editor's ACP adapter). A short word, not an enum, so a later value never makes a
+     * newer node reject the status; malformed: dropped. Older nodes ignore it.
+     */
+    launch: z.string().regex(/^[a-z][a-z0-9-]{0,15}$/).optional().catch(undefined),
+    /**
+     * AGENT-SEE-1: the runtime's own name when `runtime` is "other" (grok, gemini, opencode): the wire enum has no value
+     * for them, and adding one would make older nodes reject the status. Malformed: dropped. Older nodes ignore it.
+     */
+    runtime_name: z.string().regex(/^[a-z][a-z0-9-]{0,23}$/).optional().catch(undefined),
   }),
   /** Artifact announcement; content lives in the blob store, fetched on demand. */
   "artifact.share": z.object({
@@ -307,6 +322,7 @@ export const PeerHelloRes = z.object({
   authority: PeerOwnerAddrSchema.nullable(),
 });
 export const PeerVvRes = z.object({
+  capabilities: PeerCapabilities.optional().catch(undefined),
   node: z.string().max(64), vv: z.record(z.number().int().nonnegative()), ts: z.number(),
   /** The peer's machine stats (PROTOCOL §3 "Machine stats"); a malformed value is dropped, never fails the sync. */
   stats: MachineStats.optional().catch(undefined),
@@ -349,7 +365,7 @@ export interface PeerOwnerAddr {
   pubkey?: string; transports?: string[]; relay?: string;
 }
 export interface PeerHello { team: string; name: string; node_id: string; hostname: string; authority: PeerOwnerAddr | null }
-export interface PeerVv { node: string; vv: Record<string, number>; ts: number; stats?: MachineStats; accounts?: AccountsSnapshot; online?: string[]; pool?: PoolShare }
+export interface PeerVv { capabilities?: PeerCapabilities; node: string; vv: Record<string, number>; ts: number; stats?: MachineStats; accounts?: AccountsSnapshot; online?: string[]; pool?: PoolShare }
 export interface PeerJoinRes {
   admitted: boolean; team?: string; node_id?: string;
   reason?: "not_member" | "not_authority" | "pending_approval"; authority?: PeerOwnerAddr;

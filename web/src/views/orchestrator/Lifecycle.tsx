@@ -81,7 +81,7 @@ export function StopOrchestrator() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stop = async () => {
-    if (!window.confirm("Stop WalkieTalkie on this machine? A reply in progress ends, and it stays stopped (it no longer starts on its own) until you start it again. Your conversations stay here.")) return;
+    if (!window.confirm("Stop WalkieTalkie on this machine? A reply in progress ends, and it stays stopped (it no longer starts on its own) until you resume it. Your conversations stay here.")) return;
     setError(null);
     setBusy(true);
     try {

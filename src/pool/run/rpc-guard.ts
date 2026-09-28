@@ -208,6 +208,9 @@ export class RpcGuard {
       checkViews(shapes);
       ops = shapes.map((t) => t.op);
     }
+    // POOL-REAL-1: a head never makes the worker write its tensor cache (rpc-server -c); only Walkie's own prepare
+    // (weights.ts, from a checked file) writes it. SET_TENSOR's cache flag sits right after its rpc_tensor.
+    if (st.cmd === CMD.SET_TENSOR) st.buf[9 + RPC_TENSOR_SIZE] = 0;
     const size = Number(view(st.buf).getBigUint64(1, true));
     this.o.observe?.({ cmd: st.cmd, size, ops });
     if (st.whole) this.next();

@@ -13,8 +13,9 @@ export const REMOTE_COMMANDS: Readonly<Record<string, readonly string[]>> = {
   pool: ["", "install", "share", "status", "stop", "run"],
   hooks: ["install", "uninstall"],
   // `access` (platform|full) is how much the person's own Claude may do: theirs, like `start --access` (pre.7 merge).
-  orchestrator: ["start", "stop", "status", "model"],
-  talkie: ["start", "stop", "status", "model"],
+  // `auto` (pre.8, ORCH-2): back to automatic after a start or stop by hand.
+  orchestrator: ["start", "stop", "status", "model", "auto"],
+  talkie: ["start", "stop", "status", "model", "auto"],
   invite: ["*"],
   team: ["add-machine"],
   direct: ["enable"],

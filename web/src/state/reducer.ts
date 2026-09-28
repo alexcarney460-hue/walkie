@@ -1,4 +1,4 @@
-import type { AccountView, AgentView, ArchiveCount, AskView, Event, MeView, NodeView, OrchMessage, OrchestratorLive, TeamView } from "../api/types.ts";
+import type { AccountsPool, AccountView, AgentView, ArchiveCount, AskView, Event, MeView, NodeView, OrchMessage, OrchestratorLive, TeamView } from "../api/types.ts";
 
 export type ConnStatus = "connecting" | "live" | "reconnecting";
 /** Why the stream is being replaced: it ended, failed, went silent (no heartbeat), or skipped a roster delta. */
@@ -26,6 +26,8 @@ export interface State {
   nodes: NodeView[];
   /** The team's provider accounts and usage left (GET /v1/accounts, SSE `accounts`). */
   accounts: AccountView[];
+  /** COMPANY POOL: the team accounts policy (GET /v1/accounts `pool`; null from an older daemon = the default). */
+  accountsPool: AccountsPool | null;
   /** Recent events of every kind, newest first, capped. */
   events: Event[];
   asks: AskView[];
@@ -42,7 +44,7 @@ export type Action =
   | { type: "boot/start" }
   | { type: "boot/error"; error: string; signedOut?: boolean }
   | { type: "boot/no-team"; me: MeView }
-  | { type: "boot/ready"; me: MeView; team: TeamView; agents: AgentView[]; archive: ArchiveCount[]; archiveRev?: number | null; nodes: NodeView[]; accounts: AccountView[]; events: Event[]; asks: AskView[]; readMarks: Record<string, number>; readBaseline: number }
+  | { type: "boot/ready"; me: MeView; team: TeamView; agents: AgentView[]; archive: ArchiveCount[]; archiveRev?: number | null; nodes: NodeView[]; accounts: AccountView[]; accountsPool?: AccountsPool | null; events: Event[]; asks: AskView[]; readMarks: Record<string, number>; readBaseline: number }
   | { type: "me"; me: MeView }
   | { type: "team"; team: TeamView }
   | { type: "agents"; agents: AgentView[]; archive?: ArchiveCount[]; archiveRev?: number | null }
@@ -51,7 +53,7 @@ export type Action =
   /** `append`: a further page (Load more) of the same query. */
   | { type: "archive/loaded"; agents: AgentView[]; append?: boolean }
   | { type: "nodes"; nodes: NodeView[] }
-  | { type: "accounts"; accounts: AccountView[] }
+  | { type: "accounts"; accounts: AccountView[]; pool?: AccountsPool | null }
   | { type: "asks"; asks: AskView[] }
   | { type: "events"; events: Event[] }
   /** The stream's `hidden`: events a roster change made invalid (e.g. a removed member's), dropped by id. */
@@ -78,6 +80,7 @@ export const initialState: State = {
   archiveRev: null,
   nodes: [],
   accounts: [],
+  accountsPool: null,
   events: [],
   asks: [],
   conn: { status: "connecting", attempt: 0, retryAt: null },
@@ -178,7 +181,7 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state, phase: "ready", error: null, signedOut: false, me: action.me, team: withoutProjectChannels(action.team), agents: action.agents, archive: action.archive,
         archiveRev: action.archiveRev ?? null,
-        nodes: action.nodes, accounts: action.accounts, events: mergeEvents([], action.events), asks: action.asks,
+        nodes: action.nodes, accounts: action.accounts, accountsPool: action.accountsPool ?? null, events: mergeEvents([], action.events), asks: action.asks,
         readMarks: action.readMarks, readBaseline: action.readBaseline,
       };
     case "me":
@@ -200,7 +203,7 @@ export function reducer(state: State, action: Action): State {
     case "nodes":
       return { ...state, nodes: action.nodes, team: state.team ? { ...state.team, nodes: action.nodes } : state.team };
     case "accounts":
-      return { ...state, accounts: action.accounts };
+      return { ...state, accounts: action.accounts, accountsPool: action.pool === undefined ? state.accountsPool : action.pool };
     case "asks":
       return { ...state, asks: action.asks };
     case "events": {

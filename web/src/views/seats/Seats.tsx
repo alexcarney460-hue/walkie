@@ -74,7 +74,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
           {local.quarantined.filter((u) => local.quarantine_why?.[u]).map((u) => (
             <p key={u} className="mono">{u}: {local.quarantine_why?.[u]}</p>
           ))}
-          <p>If one stays, see INSTALL.md §8, "A seat user that stays quarantined".</p>
+          <p>If one stays, see <a href="https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional" target="_blank" rel="noopener noreferrer">seat troubleshooting</a>.</p>
         </div>
       ) : null}
       {local.allow ? (

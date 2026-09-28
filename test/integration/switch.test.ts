@@ -14,7 +14,9 @@ import { defaultSource } from "../../src/switch/accounts.ts";
 import type { Child, Spawner } from "../../src/switch/launch.ts";
 import { ANSWER_PROMPT, CONTINUE_PROMPT } from "../../src/switch/summary.ts";
 import { codexPinArgs } from "../../src/switch/codex-routing.ts";
-import { EXIT_ALL_EXHAUSTED, runWrapped } from "../../src/switch/wrapper.ts";
+import { EXIT_ALL_EXHAUSTED, refusalMarksAccount, runWrapped } from "../../src/switch/wrapper.ts";
+import type { AccountSource } from "../../src/switch/accounts.ts";
+import type { AccountUsage } from "../../src/protocol/accounts.ts";
 
 const FAKES = join(import.meta.dir, "..", "fixtures", "switch");
 const TOK = { a: ("sk" + "-ant-oat01-FAKESWITCHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), b: ("sk" + "-ant-oat01-FAKESWITCHBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB") };
@@ -703,3 +705,40 @@ describe("round 5: Codex routing, refused tokens", () => {
     expect(readMarks(join(d, "w"))[IDS.a]).toMatchObject({ state: "relogin", strikes: 1 });
   }, 30_000);
 });
+
+describe("COMPANY POOL: the personal reserve during a borrowed session (Codex p8 HIGH 2)", () => {
+  test("a pooled teammate login whose room falls to the last 10 % is left like at a limit — resumed elsewhere, no mark on it", async () => {
+    const d = tmp();
+    const state = { aOut: true, bLeft: 50 };
+    const at = (now: number, left: number): AccountUsage => ({ at: now, state: "ok", reason: null, source: "api", until: null, windows: [{ kind: "session", used_pct: 100 - left, resets_at: now + 3_600_000, window_s: 18_000, scope: null }] });
+    const source: AccountSource = {
+      hasAccounts: () => true,
+      available: async () => true,
+      gather: async (_p, now) => [
+        { id: IDS.a, provider: "claude", label: "al***@ex***.com", owner: null, own: true, source: "local", leases: 0,
+          usage: state.aOut ? { at: now, state: "exhausted", reason: "limit_reached", source: "api", windows: [], until: now + 3_600_000 } : at(now, 80) },
+        { id: IDS.b, provider: "claude", label: "bo***@ex***.com", owner: "kira", own: false, pooled: true, source: "peer", node: "n-kira", leases: 0, usage: at(now, state.bLeft) },
+      ],
+      credentials: async (c) => ({ token: c.id === IDS.a ? TOK.a : TOK.b, grant: "00000000000000aa" }),
+    };
+    const launched: Driven[] = [];
+    const run = runWrapped({ ...opts(d, "claude", [], launched), source, reserveCheckMs: 100 });
+    await until(() => launched.length === 1 && logOf(d).some((l) => l.start));
+    expect(logOf(d).filter((l) => l.start).at(-1)?.fp).toBe(fp(TOK.b)); // own account out: the pooled one
+    state.bLeft = 6; // its person's last 10 % reached
+    state.aOut = false;
+    await until(() => launched.length === 2 && logOf(d).filter((l) => l.start).length === 2);
+    expect(logOf(d).filter((l) => l.start).at(-1)?.fp).toBe(fp(TOK.a));
+    expect(says.some((x) => x.includes("bo***@ex***.com reached the last 10% kept for @kira"))).toBe(true);
+    launched[1]?.write("/exit");
+    expect(await run).toBe(0);
+    expect(readMarks(join(d, "w"))).toEqual({}); // the login is not out for its person: nothing marked
+  }, 30_000);
+
+  test("a leased Codex copy that is refused has expired: avoided for the run, never a lasting re-login mark (Codex p8 MEDIUM 3)", () => {
+    expect(refusalMarksAccount({ source: "peer", provider: "codex" })).toBe(false);
+    expect(refusalMarksAccount({ source: "peer", provider: "claude" })).toBe(true); // a setup-token does not expire so
+    expect(refusalMarksAccount({ source: "local", provider: "codex" })).toBe(true);
+  });
+});
+

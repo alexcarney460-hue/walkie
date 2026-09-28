@@ -1,6 +1,5 @@
 // ORCH-FIX-13 (Opus r13 MEDIUM): a daemon that dies abruptly (killed by its exact PID with SIGKILL, so no shutdown runs)
-// leaves Claude's process group behind: Claude and whatever its tools started. The next daemon start on the same home
-// ends that group, once it has confirmed the group is still the one it started (group-record.ts).
+// is covered by the independent supervisor even before restart. Startup also removes the stale group record.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -38,7 +37,7 @@ afterAll(async () => {
 });
 
 describe("a daemon crash doesn't leave Claude's tools running", () => {
-  test("killed by PID mid-turn: the next start on the same home ends the recorded group, and only that", async () => {
+  test("killed by PID mid-turn: supervisor ends its tools before restart; startup preserves unrelated processes", async () => {
     const first = await daemon("first");
     const pid = first.out.pid as number;
     const grandchild = first.out.grandchild as number;
@@ -51,8 +50,9 @@ describe("a daemon crash doesn't leave Claude's tools running", () => {
 
     process.kill(pid, "SIGKILL"); // exactly this daemon's process: no shutdown, no reap
     await first.proc.exited;
-    await Bun.sleep(300);
-    expect(alive(grandchild)).toBe(true); // what the old daemon never ended
+    const supervisedDeadline = Date.now() + 3_000;
+    while (alive(grandchild) && Date.now() < supervisedDeadline) await Bun.sleep(25);
+    expect(alive(grandchild)).toBe(false); // independent of a replacement daemon
     // an unrelated process of ours, in its own group, must survive the cleanup
     const bystander = Bun.spawn(["sleep", "60"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
     extra.push(bystander.pid);

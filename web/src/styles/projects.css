@@ -423,3 +423,60 @@
   .card-file-attach { width: 100%; margin-left: 0; }
   .dialog-row { grid-template-columns: 1fr; }
 }
+
+/* ---- Switch from Linear (LINEAR-IMPORT-1) ---- */
+.li-dialog { width: min(980px, 100%); max-height: min(760px, 88vh); }
+.li-body { gap: 12px; }
+.li-steps { display: flex; gap: 6px; margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--line-soft); list-style: none; overflow-x: auto; }
+.li-steps li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: var(--r-pill); color: var(--text-3); font-size: var(--fs-12); white-space: nowrap; }
+.li-steps li.is-on { background: var(--surface-2); color: var(--text); font-weight: 500; }
+.li-steps li.is-done { color: var(--text-2); }
+.li-step-n { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 50%; font-size: var(--fs-11); }
+.li-steps li.is-on .li-step-n { border-color: var(--signal); color: var(--signal); }
+.li-steps li.is-done .li-step-n { border-color: var(--signal); background: var(--signal); color: var(--bg); }
+.li-ok { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+.li-ok svg { color: var(--signal); flex: none; }
+.li-summary { color: var(--text-2); }
+.li-table-wrap { max-height: 46vh; overflow: auto; }
+.li-table td { height: 38px; padding: 6px 10px; }
+.li-table th { padding: 0 10px; position: sticky; top: 0; z-index: 1; }
+.li-table .li-folder th { position: static; height: 28px; background: transparent; color: var(--text-2); font-weight: 600; border-bottom: 1px solid var(--line-soft); }
+.li-check { width: 34px; }
+.li-check input { accent-color: var(--signal); }
+.li-prefix { color: var(--text-2); font-size: var(--fs-12); white-space: nowrap; }
+.li-name { min-width: 240px; }
+.li-expand { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
+.li-expand:disabled { cursor: default; }
+.li-expand:disabled svg { visibility: hidden; }
+.li-target { margin-left: 8px; font-size: var(--fs-12); }
+.li-flags-row, .li-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.li-flags-row:empty { display: none; }
+.li-col-total { display: none; }
+.li-issues-row td { padding: 0 10px 10px 44px; background: color-mix(in oklch, var(--surface) 40%, transparent); }
+.li-issues { display: grid; gap: 2px; max-height: 280px; margin: 0; padding: 6px 0 0; overflow-y: auto; list-style: none; }
+.li-issues li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-12); }
+.li-issues li.is-off .li-issue-title { color: var(--text-3); text-decoration: line-through; }
+.li-issues .check { flex: 1 1 320px; align-items: center; min-width: 0; }
+.li-issue-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.li-progress { display: grid; gap: 10px; padding: 8px 0; }
+.li-bar { height: 8px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
+.li-bar span { display: block; height: 100%; background: var(--signal); transition: width var(--dur-3) var(--ease-out); }
+.li-errors { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.li-done-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-13); }
+.li-done-list .mono { color: var(--text-2); font-size: var(--fs-12); }
+/* Phones: each project is a compact row card (checkbox · key + name + flags · cards), not the generic stacked table. */
+@media (max-width: 860px) {
+  .li-table-wrap { max-height: none; overflow: visible; }
+  .li-table tr { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: start; gap: 2px 8px; margin-bottom: 6px; padding: 8px 10px; }
+  .li-table td { height: auto; padding: 0; }
+  .li-table td.li-col-count { display: none; }
+  .li-table td.li-col-total { display: block; width: auto; font-weight: 500; }
+  .li-table td.li-check { width: auto; margin: 0; padding-top: 3px; }
+  .li-table td.li-prefix { display: none; }
+  .li-table td.li-name { min-width: 0; }
+  .li-table tr.li-folder { display: block; margin: 8px 0 4px; padding: 0; border: 0; background: none; box-shadow: none; }
+  .li-table tr.li-folder th { display: block; height: auto; padding: 0; border: 0; }
+  .li-table tr.li-issues-row { display: block; margin-top: -4px; padding: 4px 8px 8px; }
+  .li-table tr.li-issues-row td { padding: 0; background: none; }
+  .li-issues .check { flex-basis: 100%; }
+}

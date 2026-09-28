@@ -52,7 +52,7 @@ beforeAll(async () => {
   mkdirSync(state, { recursive: true });
   launches = join(c.root, "fake-launches.jsonl");
   const orchestrator = {
-    restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
+    autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
     env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator });
@@ -138,7 +138,7 @@ describe("ORCH-2 access", () => {
 
   test("an agent may set the access while agent admin is on (AGENT-ADMIN-1), audited with the access", async () => {
     const n = countLaunches();
-    const v = await alex.client("cc-agent1").orchestratorStart({ cwd: c.root, access: "platform" });
+    const v = await alex.client("cc-agent1").orchestratorStart({ access: "platform" });
     expect(v.local.access).toBe("platform");
     await launchedAfter(n);
     const audit = readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8");

@@ -15,6 +15,11 @@ export interface ProcRow {
   command: string;
   /** CPU time used so far (ms), from `ps -o time=`; absent when the listing had no time column. */
   cpuMs?: number;
+  /**
+   * AGENT-SEE-1: the controlling terminal (`ps -o tty=`), null when it has none ("?" on Linux, "??" on macOS): a
+   * process with no terminal runs headless. Absent when the listing had no tty column.
+   */
+  tty?: string | null;
 }
 
 export interface ProcessProvider {
@@ -110,20 +115,24 @@ export async function runBounded(argv: string[], timeoutMs = TIMEOUT_MS, max = O
 }
 
 /**
- * Parses `ps -A -o pid=,ppid=,uid=,time=,lstart=,args=` (LC_ALL=C; time is "12:34.56" on macOS, "[DD-]HH:MM:SS" on
- * Linux; lstart is "Sat Sep 26 08:24:59 2026"). The time column is optional (older listings had none).
+ * Parses `ps -A -o pid=,ppid=,uid=,tty=,time=,lstart=,args=` (LC_ALL=C; tty is "ttys003" / "pts/3", or "??" / "?" for
+ * none; time is "12:34.56" on macOS, "[DD-]HH:MM:SS" on Linux; lstart is "Sat Sep 26 08:24:59 2026"). The tty and time
+ * columns are optional (older listings had neither). A tty name is lower case and lstart starts with a capitalised
+ * weekday, so the two never read as each other.
  */
 export function parsePs(out: string): ProcRow[] {
   const rows: ProcRow[] = [];
-  const re = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(?:((?:\d+-)?\d+(?::\d+)+(?:\.\d+)?)\s+)?(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/;
+  const re = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(?:(\?\??|[a-z][a-z0-9/]{0,31})\s+)?(?:((?:\d+-)?\d+(?::\d+)+(?:\.\d+)?)\s+)?([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/;
   for (const line of out.split("\n")) {
     const m = re.exec(line);
     if (!m) continue;
-    const t = new Date((m[5] as string).replace(/\s+/g, " ")).getTime();
-    const cpu = m[4] ? parseCpuTime(m[4]) : null;
+    const t = new Date((m[6] as string).replace(/\s+/g, " ")).getTime();
+    const cpu = m[5] ? parseCpuTime(m[5]) : null;
+    const tty = m[4];
     rows.push({
-      pid: Number(m[1]), ppid: Number(m[2]), uid: Number(m[3]), startedAt: Number.isFinite(t) ? t : null, command: m[6] as string,
+      pid: Number(m[1]), ppid: Number(m[2]), uid: Number(m[3]), startedAt: Number.isFinite(t) ? t : null, command: m[7] as string,
       ...(cpu !== null ? { cpuMs: cpu } : {}),
+      ...(tty !== undefined ? { tty: tty.startsWith("?") ? null : tty } : {}),
     });
   }
   return rows;
@@ -188,7 +197,7 @@ export class SystemProcessProvider implements ProcessProvider {
 
   /** Null when `ps` timed out, overflowed, failed or printed nothing parseable: never "no processes". */
   async list(): Promise<ProcRow[] | null> {
-    const out = await runBounded(["ps", "-A", "-o", "pid=,ppid=,uid=,time=,lstart=,args="]);
+    const out = await runBounded(["ps", "-A", "-o", "pid=,ppid=,uid=,tty=,time=,lstart=,args="]);
     const rows = out ? parsePs(out) : [];
     return rows.length ? rows : null;
   }

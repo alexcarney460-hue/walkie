@@ -4,7 +4,7 @@
 import type { Event } from "../../protocol/schemas.ts";
 import {
   DEFAULT_SEAT_MODE, SEATS_AGENT, SEATS_PREFIX, TERMINAL_STATES, seatOf, seatsChannel, seatsChannelNode,
-  type HostAvailability, type SeatHostView, type SeatRun, type SeatView,
+  type AnySeatRun, type HostAvailability, type SeatHostView, type SeatView,
 } from "../../protocol/seats.ts";
 import type { Core } from "../core.ts";
 import { seatsFor } from "./host.ts";
@@ -110,6 +110,8 @@ export function seatsList(core: Core, only?: string): SeatView[] {
       if (s.bundle) seat.result_bundle = s.bundle;
       if (s.commits !== undefined) seat.commits = s.commits;
       if (s.dirty !== undefined) seat.dirty = s.dirty;
+      if (s.file) seat.result_file_blob = s.file;
+      if (s.file_error) seat.file_error = s.file_error;
       if (s.state === "running" && seat.started_at === undefined) seat.started_at = ev.ts;
       if (TERMINAL_STATES.has(s.state)) seat.ended_at = ev.ts;
     }
@@ -119,12 +121,16 @@ export function seatsList(core: Core, only?: string): SeatView[] {
   return filtered.sort((a, b) => b.requested_at - a.requested_at).slice(0, MAX_SEATS);
 }
 
-function runView(ev: Event, run: SeatRun, host: SeatView["host"], hostname: string): SeatView {
+function runView(ev: Event, run: AnySeatRun, host: SeatView["host"], hostname: string): SeatView {
+  const v2 = run.v === 2 ? {
+    v: 2 as const, prompt: "", brief: run.brief, ...(run.label ? { label: run.label } : {}), ...(run.workspace ? { workspace: run.workspace } : {}),
+    ...(run.account ? { account: run.account } : {}), ...(run.result_file ? { result_file: run.result_file } : {}),
+  } : { prompt: run.prompt, ...(run.bundle ? { bundle: run.bundle } : {}) };
   return {
     id: ev.id, host,
     launcher: { handle: ev.author.handle, hostname, ...(ev.author.agent ? { agent: ev.author.agent } : {}) },
     runtime: run.runtime, ...(run.model ? { model: run.model } : {}), permission_mode: run.permission_mode ?? DEFAULT_SEAT_MODE,
-    prompt: run.prompt, ...(run.bundle ? { bundle: run.bundle } : {}), timeout_s: run.timeout_s, max_concurrent: run.max_concurrent,
+    ...v2, timeout_s: run.timeout_s, max_concurrent: run.max_concurrent,
     requested_at: ev.ts, state: "requested", output: [],
   };
 }

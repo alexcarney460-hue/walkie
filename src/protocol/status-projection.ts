@@ -12,10 +12,11 @@
 // activity: a phrase of the closed ACTIVITY_PHRASES set always; a tool call's or a notification's text only with
 //           share_activity; a reply's text only with share_prompts. Anything else becomes the state's fixed phrase.
 // cwd:      only with share_paths.
-// parent:   a sub-agent's session (WALKIE-MISSION-SUB-1), only when the agent is named under it ("<parent>.<id>").
+// parent:   a sub-agent's session when named under it, or a host-owned seat's `seats` card.
 // subagent_type: a built-in type always; a custom agent's name only with share_prompts, else "custom".
 // Allowed text is redacted again here (discovery's statuses don't pass the local API's redaction).
 import { detectTask } from "../agent/identity.ts";
+import { SEATS_AGENT, SEAT_AGENT_PREFIX } from "./seats.ts";
 import { redactSecrets } from "./safety.ts";
 import { BUILTIN_SUBAGENT_TYPES, cleanSubagentType, namedUnder, shareableSubagentType } from "./subagents.ts";
 import type { AgentState, BodyOf } from "./schemas.ts";
@@ -62,7 +63,12 @@ export const STATUS_FIELDS: ReadonlySet<string> = new Set([
   "agent", "state", "runtime", "repo", "branch", "started_at", "model", "session", "ask_policy", "title", "task", "activity", "cwd",
   "observed_at", // only on a status re-signed later (Core.reprojectOwnStatuses)
   "parent", "subagent_type", // sub-agents (WALKIE-MISSION-SUB-1)
+  "launcher", // host-owned seats
+  "launch", "runtime_name", // how it runs, and a runtime without a wire value (AGENT-SEE-1)
 ]);
+
+const LAUNCH_RE = /^[a-z][a-z0-9-]{0,15}$/;
+const RUNTIME_NAME_RE = /^[a-z][a-z0-9-]{0,23}$/;
 
 const SESSION_RE = /^[A-Za-z0-9._:-]{1,80}$/;
 
@@ -132,7 +138,8 @@ export function projectStatus(body: Status, prov: StatusProvenance | undefined, 
   const activity = body.activity === undefined ? undefined
     : activityOk(body.activity, pv, p) ? clean(body.activity, 200) : STATE_PHRASE[body.state];
   const session = body.session && SESSION_RE.test(body.session) ? body.session : undefined;
-  const parent = body.parent && namedUnder(body.agent, body.parent) ? body.parent : undefined;
+  const seat = body.agent.startsWith(SEAT_AGENT_PREFIX);
+  const parent = body.parent && (namedUnder(body.agent, body.parent) || (seat && body.parent === SEATS_AGENT)) ? body.parent : undefined;
   const rawType = parent ? cleanSubagentType(body.subagent_type) : undefined;
   const subType = rawType ? shareableSubagentType(rawType, p.prompts) : undefined;
   return {
@@ -148,7 +155,11 @@ export function projectStatus(body: Status, prov: StatusProvenance | undefined, 
     ...(activity !== undefined ? { activity } : {}),
     ...(p.paths && body.cwd ? { cwd: clean(body.cwd, 300) } : {}),
     ...(parent ? { parent } : {}),
+    ...(seat && parent === SEATS_AGENT && body.launcher ? { launcher: body.launcher } : {}),
     ...(subType ? { subagent_type: subType } : {}),
+    // Fixed words (a mode, a runtime's name), never text from a prompt or a command line.
+    ...(body.launch && LAUNCH_RE.test(body.launch) ? { launch: body.launch } : {}),
+    ...(body.runtime === "other" && body.runtime_name && RUNTIME_NAME_RE.test(body.runtime_name) ? { runtime_name: body.runtime_name } : {}),
   };
 }
 

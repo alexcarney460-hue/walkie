@@ -2,9 +2,9 @@
 // dashboard session header like api/client.ts. Kept in its own file so the pool card owns its calls.
 import { sessionHeaders } from "../lib/session.ts";
 import { ApiError } from "./client.ts";
-import type { PoolLocalView, RunView } from "../../../src/protocol/pool.ts";
+import type { ConnectionView, PoolLocalView, RunView, ServeView } from "../../../src/protocol/pool.ts";
 
-export type { RunView, PoolLocalView };
+export type { RunView, PoolLocalView, ServeView, ConnectionView };
 
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
   let res: Response;
@@ -33,4 +33,10 @@ export const poolApi = {
   share: (on: boolean, maxGb?: number | null) => call<PoolLocalView>("POST", "/v1/pool/share", { on, ...(maxGb !== undefined ? { max_gb: maxGb } : {}) }),
   run: (model: string, quant: "q4" | "q8") => call<{ run: RunView }>("POST", "/v1/pool/run", { model, quant }),
   stop: () => call<{ run: RunView | null }>("POST", "/v1/pool/stop", {}),
+  // POOL-REAL-1: serve a model whole on one machine; connect to one another machine serves.
+  serve: (model: string, quant: "q4" | "q8", on?: string) => call<{ on: { node_id: string; hostname: string; self: boolean }; serve?: ServeView; connection?: ConnectionView }>("POST", "/v1/pool/serve", { model, quant, ...(on ? { on } : {}) }),
+  serveStop: (on?: string) => call<{ serve?: ServeView | null; connection?: ConnectionView | null }>("POST", "/v1/pool/serve/stop", on ? { on } : {}),
+  install: () => call<{ install: unknown }>("POST", "/v1/pool/install", {}),
+  connect: (machine: string) => call<{ connection: ConnectionView }>("POST", "/v1/pool/connect", { machine }),
+  disconnect: (machine: string) => call<{ connection: ConnectionView | null }>("POST", "/v1/pool/disconnect", { machine }),
 };

@@ -239,3 +239,27 @@ export async function redeemCodexReset(launch: AppServerLauncher, login: Login, 
     session.close();
   }
 }
+
+/**
+ * COMPANY POOL: lets the Codex CLI renew a vault login's tokens itself — the home machine is the login's one refresher.
+ * Walkie starts the user's own `codex app-server` on that CODEX_HOME and asks it to read the account's limits; the CLI
+ * authenticates on its own and refreshes a stale login as it does for any use. Walkie never reads, holds or sends a
+ * token here. Returns whether the app-server answered. Never throws.
+ */
+export async function renewCodexLogin(launch: AppServerLauncher, login: Login): Promise<boolean> {
+  let session: AppServerSession;
+  try { session = await launch(login); } catch { return false; }
+  try {
+    await session.request("initialize", {
+      clientInfo: { name: "walkie", title: "Walkie", version: VERSION },
+      capabilities: { experimentalApi: false, requestAttestation: false },
+    }, INIT_TIMEOUT_MS);
+    session.notify("initialized");
+    await session.request("account/rateLimits/read", {}, READ_TIMEOUT_MS);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    session.close();
+  }
+}

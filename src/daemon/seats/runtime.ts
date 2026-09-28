@@ -36,6 +36,27 @@ export function claudeSeatArgs(o: { session: string; mode: SeatMode; model?: str
   ];
 }
 
+/**
+ * `kimi -p <fixed text>` (FO-2): Kimi reads no prompt from stdin, so its only prompt is the fixed pointer to the
+ * brief in the work tree (SEAT_TASK_PROMPT), never the brief itself. Kimi's prompt mode runs its tools on its own
+ * with no read-only or ask-first variant (kimi 0.43.1: "Cannot combine --prompt with --plan"; -p takes no -y/--auto),
+ * so a Kimi seat is full access: it runs only when the launch says so (`bypassPermissions`), else it is refused
+ * (KIMI_FULL_ACCESS_ONLY; FO-2 r1 MEDIUM 7).
+ */
+export function kimiSeatArgs(o: { prompt: string; model?: string }): string[] {
+  return ["-p", o.prompt, "--output-format", "text", ...(o.model ? ["-m", o.model] : [])];
+}
+
+/** Why a Kimi seat that isn't launched full-access is refused. */
+export const KIMI_FULL_ACCESS_ONLY = "a Kimi seat runs its tools without asking (its prompt mode has no read-only or ask-first mode): launch it with permission_mode bypassPermissions, or use another runtime";
+
+/** Kimi's text output → seat text signals (one per non-empty line, terminal escapes removed). */
+export function kimiSeatLine(line: string): SeatSignal[] | null {
+  // eslint-disable-next-line no-control-regex
+  const text = line.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trimEnd();
+  return text.trim() ? [{ kind: "text", text }] : null;
+}
+
 const CODEX_MODE: Record<SeatMode, string[]> = {
   default: ["--sandbox", "read-only"],
   acceptEdits: ["--sandbox", "workspace-write"],
@@ -131,7 +152,10 @@ export function dropFromSeat(name: string): boolean {
  * daemon's own WALKIE_*), whatever they are called.
  */
 export const SEAT_ENV_ALLOW: ReadonlySet<string> = new Set([
-  "PATH", "HOME", "USER", "SHELL", "TMPDIR", "LANG", "TERM", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_HOME",
+  // CLAUDE_CONFIG_DIR / CODEX_HOME: where a runtime's login lives, so a machine's seat environment can point same-user
+  // seats at a worker login (e.g. ~/.worker-claude) instead of the person's own ~/.claude. (A seat user's runner always
+  // sets both to that run's fresh directories.)
+  "PATH", "HOME", "USER", "SHELL", "TMPDIR", "LANG", "TERM", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
 ]);
 
 function allowedInSeat(name: string, extra: readonly string[]): boolean {
@@ -208,10 +232,10 @@ function executable(p: string): boolean {
   try { return existsSync(p) && statSync(p).isFile() && (statSync(p).mode & 0o111) !== 0; } catch { return false; }
 }
 
-/** The runtime's binary: the first on the environment's PATH, then (Codex) `$CODEX_HOME/bin`, else the usual install locations. */
+/** The runtime's binary: the first on the environment's PATH, then (Codex) `$CODEX_HOME/bin` or (Kimi) `~/.kimi-code/bin`, else the usual install locations. */
 export function findRuntime(runtime: SeatRuntime, path: string | undefined, home: string, codexHome?: string): string | null {
-  const name = runtime === "claude" ? "claude" : "codex";
-  const extra = runtime === "codex" && codexHome ? [join(codexHome, "bin")] : [];
+  const name = runtime;
+  const extra = runtime === "codex" && codexHome ? [join(codexHome, "bin")] : runtime === "kimi" ? [join(home, ".kimi-code", "bin")] : [];
   for (const dir of [...(path ?? "").split(delimiter).filter(Boolean), ...extra, ...fallbackDirs(home)]) {
     const p = join(dir, name);
     if (executable(p)) return p;

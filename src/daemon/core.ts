@@ -15,7 +15,7 @@ import type { PlanView } from "../protocol/schemas.ts";
 import type { MachineStats } from "../protocol/machine-stats.ts";
 import type { PoolShare } from "../protocol/pool.ts";
 import type { PoolService } from "../pool/run/service.ts";
-import type { AccountsSnapshot } from "../protocol/accounts.ts";
+import { DEFAULT_TEAM_POLICY, type AccountsSnapshot, type TeamPolicy } from "../protocol/accounts.ts";
 import type { VaultSource } from "../accounts/service.ts";
 import { GrantBook, NonceBook } from "./vault-lease.ts";
 import { Chain, type Decision, type RosterSource } from "./chain.ts";
@@ -36,9 +36,10 @@ import type { Hub } from "./sse.ts";
 import { StatusCoalescer } from "./status-coalesce.ts";
 import { SharePolicyFile } from "../agent/share-policy.ts";
 import { ACTIVITY_PHRASES, parseProvenance, projectStatus, type StatusProvenance } from "../protocol/status-projection.ts";
-import { seatBundleRef } from "../protocol/seats.ts";
+import { SEATS_AGENT, isSeatAgent, seatBlobRefs, seatOf } from "../protocol/seats.ts";
 import type { EventRow, PendingRow, RevalJob, Store } from "./store.ts";
 import { isBoardOp, isProjectChannel as isProjectChannelName } from "../protocol/projects/schema.ts";
+import { trackOp } from "./watchdog.ts";
 
 export type IngestStatus = "accepted" | "duplicate" | "pending" | "rejected";
 export interface IngestResult { readonly status: IngestStatus; readonly reason?: string }
@@ -73,12 +74,14 @@ export const MAX_CHANNELS_PER_TEAM = 500;
 const DRAIN_PAGE = 500;
 /**
  * Bumped when validity rules change: stored events are re-judged once on startup.
+ * 11 (FO-2 seats v2): the seats content rule also takes a `v: 2` run request exactly as the daemon writes it
+ * (runTextV2), so one an older build stored as rejected is accepted after the upgrade. Local only (never on the wire).
  * 10 (PRE4 delta): the seats content rule applies only to a channel marked `seats: true` (from the mark on), so an
  * unmarked `seats-<node>` channel's posts are ordinary again. 9 (pre.4 merge of both 8s): a seats channel carries no
  * asks/answers and only the daemon's own request text (seats r9; Codex r10 MEDIUM 3), and final hidden board ops are
  * marked (PROJECTS round 6); 7: team.integration is a roster kind (LICENSE-FIX-2 F3).
  */
-const VALIDITY_VERSION = "10";
+const VALIDITY_VERSION = "11";
 /** Which shapes `isBoardOp` counts (2: Data Room file ops too, DATA-ROOM-1): a change re-examines stored rows once. */
 const BOARD_OPS_CLASS = "2";
 /**
@@ -155,18 +158,18 @@ export class Core {
   private readonly boardCurableBytes: number;
   /** Latest-wins status bursts are held and emitted when the per-agent bucket refills. */
   readonly statuses = new StatusCoalescer({
-    tryEmit: (agent, body, provenance) => {
+    tryEmit: (agent, body, provenance, final = false) => {
       // A session's sub-agents share one more bucket (WALKIE-MISSION-SUB-1): many at once can't flood the team's log.
       // Checked first without taking, so a refusal there never spends the agent's own token.
-      const shared = body.parent ? `subagents:${body.parent}` : null;
+      const shared = body.parent && !(body.parent === SEATS_AGENT && isSeatAgent(agent)) ? `subagents:${body.parent}` : null;
       // The per-session cap, again where the status is signed (a held one was admitted before others were emitted).
-      if (body.parent && body.state !== "offline" && !isLiveSubagentRow(this.store.agent(this.nodeId, agent)) && liveSubagents(this, body.parent, agent) >= MAX_SUBAGENTS_PER_PARENT) {
+      if (shared && body.parent && body.state !== "offline" && !isLiveSubagentRow(this.store.agent(this.nodeId, agent)) && liveSubagents(this, body.parent, agent) >= MAX_SUBAGENTS_PER_PARENT) {
         throw new HttpError(429, "rate_limited", `${body.parent} already shows ${MAX_SUBAGENTS_PER_PARENT} live sub-agents`);
       }
       const sharedSpec = this.limits.subagentStatus ?? SUBAGENT_STATUS_LIMIT;
-      if (shared && !this.limiter.can(shared, sharedSpec)) return null;
-      if (!this.limiter.take(`status:${agent}`, this.limits.status)) return null;
-      if (shared) this.limiter.take(shared, sharedSpec);
+      if (!final && shared && !this.limiter.can(shared, sharedSpec)) return null;
+      if (!final && !this.limiter.take(`status:${agent}`, this.limits.status)) return null;
+      if (!final && shared) this.limiter.take(shared, sharedSpec);
       return this.emit("agent.status", body, { agent, ...(provenance ? { provenance } : {}) });
     },
   });
@@ -217,6 +220,8 @@ export class Core {
   machineStats: MachineStats | null = null;
   /** Agent discovery's last scan was incomplete (discovery.ts): shown with this machine's stats. */
   discoveryHealth: { incomplete: boolean; unreported: number } | null = null;
+  /** AGENT-SEE-1: local model servers discovery saw running on this machine (machine load), published with its stats. */
+  modelServers: { name: string; count: number }[] | null = null;
 
   /** This machine's stats as published (vv answer, NodeView): machine stats plus discovery health when incomplete. */
   publishedStats(): MachineStats | null {
@@ -225,6 +230,7 @@ export class Core {
     return {
       ...this.machineStats,
       ...(this.discoveryHealth?.incomplete ? { discovery: this.discoveryHealth } : {}),
+      ...(this.modelServers?.length ? { model_servers: this.modelServers } : {}),
       ...(Object.keys(rtt).length ? { peer_rtt: rtt } : {}),
     };
   }
@@ -254,6 +260,13 @@ export class Core {
   vault: VaultSource | null = null;
   /** Read at each hand-out (round 1, Opus 7): turning `vault_sharing` off takes effect at once. */
   vaultSharing: () => boolean = () => false;
+  /** COMPANY POOL: the team's pool setting (newest owner setting seen; off when unknown), read at each hand-out. */
+  teamPool: () => { policy: TeamPolicy; at: number | null; by: string | null } = () => ({ policy: DEFAULT_TEAM_POLICY, at: null, by: null });
+  teamPolicy: () => TeamPolicy = () => this.teamPool().policy;
+  /** COMPANY POOL: this machine's accounts service's room on a vault login (the lender's reserve check), and renewal. */
+  vaultRoomLeft: (id: string, now: number) => number | null = () => null;
+  vaultRefresh: (id: string) => void = () => undefined;
+  vaultRenew: (id: string) => void = () => undefined;
   readonly vaultNonces = new NonceBook();
   readonly vaultGrants = new GrantBook();
 
@@ -308,6 +321,9 @@ export class Core {
   get roster(): Roster { return this.chain.roster; }
   /** The roster authority's node id (PROTOCOL §2); null before the team exists. */
   get authority(): string | null { return this.chain.authority; }
+  /** Ordered authority transfers give each lease authority a disjoint, increasing epoch range. */
+  get authorityLeaseTerm(): number { return this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").length; }
+  orchestratorCanAct?: () => boolean;
   /** Entries in the roster chain (tests). */
   get chainLength(): number { return this.chain.length; }
   isAuthority(): boolean { return this.chain.authority === this.nodeId; }
@@ -351,7 +367,7 @@ export class Core {
   fillableStubIds(limit: number, peer: string): string[] {
     const handle = this.myHandle();
     const channels = this.store.stubChannels().filter((ch) => this.roster.channels.has(ch) && canSeeChannel(this.roster, ch, handle));
-    return this.store.dueStubIds(channels, peer, Date.now(), STUB_RETRY_BASE_MS, STUB_RETRY_MAX_MS, limit);
+    return this.store.dueStubIds(channels, peer, Date.now(), STUB_RETRY_BASE_MS, STUB_RETRY_MAX_MS, limit, channels.filter((ch) => !!this.roster.channels.get(ch)?.seats), VALIDITY_VERSION);
   }
 
   // ---- chain -------------------------------------------------------------------------
@@ -784,7 +800,9 @@ export class Core {
    */
   private fillStub(ev: Event, existing: EventRow, team: string, relay: string | null): IngestResult {
     const junk = existing.status === "junk";
-    if (ROSTER_KINDS.has(ev.kind) || (junk && !(CAP_REASONS.has(existing.reason ?? "") && isBoardOp(ev)))) return { status: "duplicate" };
+    if (ROSTER_KINDS.has(ev.kind) || (junk && !(CAP_REASONS.has(existing.reason ?? "") && (isBoardOp(ev) || (existing.reason === "hidden_cap" && ev.kind === "msg.post" && !!seatOf(ev.body) && !!this.roster.channels.get(ev.channel ?? "")?.seats))))) return { status: "duplicate" };
+    if (canonicalJson(stubOf(ev)) !== canonicalJson(JSON.parse(existing.json))) return { status: "rejected", reason: "stub_header_mismatch" };
+    if (junk && this.store.getMeta(`stub_recovery:${ev.id}`) === VALIDITY_VERSION) return { status: "duplicate" };
     const auth = this.authenticate(ev, team); // FINAL-2 Codex 1: authenticated before any hold
     if (auth.status !== "ok") return { status: auth.status === "pending" ? "duplicate" : "rejected", reason: auth.reason };
     if (this.futureHeld(ev)) return this.hold(ev, "future_ts", "remote", this.store.hasPending(ev.id), relay);
@@ -800,6 +818,7 @@ export class Core {
       return { status: "accepted" };
     }
     if (v.status === "pending") return this.hold(ev, v.reason, "remote", this.store.hasPending(ev.id), relay);
+    if (junk && !isBoardOp(ev)) this.store.setMeta(`stub_recovery:${ev.id}`, VALIDITY_VERSION);
     if (PERMANENT_REASONS.has(v.reason)) {
       if (!junk) this.store.markStubJunk(ev.id, v.reason);
     } else if (isBoardOp(ev)) {
@@ -856,9 +875,9 @@ export class Core {
     }
     const hash = (ev.body as { hash?: unknown }).hash;
     if (ev.kind === "artifact.share" && typeof hash === "string") this.store.addBlobRef(hash, ev.id);
-    // A seat request names its repo bundle: that (validated) request is the bundle's reference in its seats channel.
-    const bundle = seatBundleRef(ev);
-    if (bundle) this.store.addBlobRef(bundle, ev.id);
+    // A seat request names its repo bundle (v2: its brief and delta bundle): that (validated) request is their
+    // reference in its seats channel.
+    for (const hash of seatBlobRefs(ev)) this.store.addBlobRef(hash, ev.id);
     // Publication and the peer push wait for the outermost store transaction to commit (#1): an emit
     // inside a ledger transaction that then fails leaves no trace anywhere, and its seq is reused.
     this.store.afterCommit(() => {
@@ -903,7 +922,7 @@ export class Core {
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
       try {
-        this.drainSome(DRAIN_PAGE);
+        trackOp("drain_pending", () => this.drainSome(DRAIN_PAGE));
       } catch (err) {
         this.log.warn("drain_failed", { err: err instanceof Error ? err.message : String(err) });
       }
@@ -1026,6 +1045,9 @@ export class Core {
   }
 
   emit<K extends Kind>(kind: K, body: BodyOf<K>, opts: EmitOptions = {}): Event {
+    if (opts.agent === "orchestrator" && kind !== "agent.status" && this.orchestratorCanAct && !this.orchestratorCanAct()) {
+      throw new Error("orchestrator leadership lease expired");
+    }
     const team = this.teamId;
     const me = this.me();
     if (!team) throw new HttpError(409, "no_team", "this node is not in a team (run: walkie init or walkie join)");

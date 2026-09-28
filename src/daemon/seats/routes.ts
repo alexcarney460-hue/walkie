@@ -6,15 +6,16 @@ import { z } from "zod";
 import { BlobHash, EventId, type BodyOf, type Event } from "../../protocol/schemas.ts";
 import {
   DEFAULT_MAX_CONCURRENT, DEFAULT_SEAT_TIMEOUT_S, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, MAX_SEAT_PROMPT, MAX_SEAT_TIMEOUT_S, MIN_SEAT_TIMEOUT_S,
-  SEAT_MODES, SEAT_RUNTIMES, SeatModel, parseLauncher, runText, seatOf, seatsChannel, seatsChannelNode, type SeatRun, type SeatsView,
+  MAX_SEAT_BRIEF, SEATS_V2_CAP, SEAT_MODES, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SeatAccountKey, SeatLabel, SeatModel, SeatResultFile, SeatRunV2, SeatWorkspace, parseLauncher, runText, runTextV2,
+  seatOf, seatsChannel, seatsChannelNode, type SeatRun, type SeatRuntime, type SeatsView,
 } from "../../protocol/seats.ts";
 import type { SeatsConfig } from "../config.ts";
 import { HttpError, json, parseWith, readBytes, readJson } from "../http.ts";
 import { MAX_BLOB_BYTES, readBlob, writeBlob } from "../blobs.ts";
 import { LOCAL_BODY_MAX, limitWrite, requireTeam, route, type RouteCtx } from "../local-routes.ts";
-import { activeNodes } from "../roster.ts";
+import { activeNodes, canSeeChannel } from "../roster.ts";
 import { seatsFor } from "./host.ts";
-import { seatEnvNameProblem } from "./runtime.ts";
+import { KIMI_FULL_ACCESS_ONLY, seatEnvNameProblem } from "./runtime.ts";
 import { hostAvailability, seatHosts, seatsList } from "./view.ts";
 
 function host(c: RouteCtx) {
@@ -38,7 +39,7 @@ const ConfigReq = z.object({
   /** null = back to the default (the team's owners at the time of each request). */
   launchers: z.array(z.string().min(1).max(140)).max(50).nullable().optional(),
   max: z.number().int().min(1).max(MAX_CONCURRENT_LIMIT).nullable().optional(),
-  runtimes: z.array(z.enum(SEAT_RUNTIMES)).min(1).max(2).nullable().optional(),
+  runtimes: z.array(z.enum(SEAT_RUNTIMES)).min(1).max(3).nullable().optional(),
   dir: z.string().min(1).max(1_000).nullable().optional(),
   env: z.array(z.string().min(1).max(64)).max(50).nullable().optional(),
   /** Every seat as a fresh OS user made for it and destroyed after it (walkie seats setup-user). */
@@ -100,7 +101,8 @@ route("POST", "/v1/seats/config", async (c) => {
     // would stay allowed after the reset (Codex HIGH 1).
     ...pick("launchers", b.launchers === null ? null : b.launchers?.map((l) => l.trim())),
     ...pick("max", b.max),
-    ...pick("runtimes", b.runtimes),
+    // Kimi goes to its own key (config.json stays readable by an older daemon after a rollback: FO-2).
+    ...runtimesPick(b.runtimes, prev),
     ...pick("dir", b.dir),
     ...pick("env", b.env === null ? null : b.env ? [...new Set(b.env)] : undefined),
     ...pick("ephemeral", b.ephemeral), ...pick("admin", b.admin), ...pick("runner", b.runner), ...pick("runtime_dir", b.runtime_dir), ...pick("same_user", b.same_user),
@@ -112,6 +114,15 @@ route("POST", "/v1/seats/config", async (c) => {
   c.noTimeout();
   return json({ local: await h.configure(next) });
 });
+
+/** `runtimes` as config.json keeps it: Claude/Codex in `runtimes`, Kimi as `kimi` (a Kimi-only list is refused). */
+function runtimesPick(list: SeatRuntime[] | null | undefined, prev: SeatsConfig): Partial<SeatsConfig> {
+  if (list === undefined) return { ...(prev.runtimes ? { runtimes: prev.runtimes } : {}), ...(prev.kimi !== undefined ? { kimi: prev.kimi } : {}) };
+  if (list === null) return {};
+  const v1 = [...new Set(list.filter((r): r is "claude" | "codex" => r !== "kimi"))];
+  if (!v1.length) throw new HttpError(400, "invalid", "list claude or codex too: a Kimi-only machine isn't supported yet (leaving --runtimes out allows Claude and Codex, not Kimi)");
+  return { runtimes: v1, kimi: list.includes("kimi") };
+}
 
 const TokenReq = z.object({ token: z.string().regex(/^[A-Za-z0-9._~+/=-]{20,4096}$/, "not a token").nullable() }).strict();
 
@@ -131,11 +142,29 @@ const RunReq = z.object({
   runtime: z.enum(SEAT_RUNTIMES),
   model: SeatModel.optional(),
   permission_mode: z.enum(SEAT_MODES).optional(),
-  prompt: z.string().min(1).max(MAX_SEAT_PROMPT),
+  /** v1: the prompt (inline in the request). v2: the brief's text, when `brief` isn't given. */
+  prompt: z.string().min(1).max(MAX_SEAT_PROMPT).optional(),
   bundle: BlobHash.optional(),
   timeout_s: z.number().int().min(MIN_SEAT_TIMEOUT_S).max(MAX_SEAT_TIMEOUT_S).optional(),
   max_concurrent: z.number().int().min(1).max(MAX_CONCURRENT_LIMIT).optional(),
+  // ---- v2 (FO-2): any of these (or runtime kimi) makes a `v: 2` request, which only hosts announcing seats_v2 run.
+  v: z.literal(2).optional(),
+  /** The brief's text (stored here as a blob; the request carries its hash, never the text). */
+  brief: z.string().min(1).max(MAX_SEAT_BRIEF).optional(),
+  label: SeatLabel.optional(),
+  workspace: SeatWorkspace.optional(),
+  account: SeatAccountKey.optional(),
+  result_file: SeatResultFile.optional(),
 }).strict();
+
+/** Stores a v2 brief as a blob on this machine (the request is its reference; the host fetches it from here). */
+function storeBrief(c: RouteCtx, text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.byteLength > MAX_SEAT_BRIEF) throw new HttpError(400, "invalid", `the brief is over ${MAX_SEAT_BRIEF / 1000} KB`);
+  const hash = writeBlob(c.core.paths.blobs, bytes);
+  c.core.store.addBlob(hash, bytes.byteLength, "text/markdown", "seat-brief.md");
+  return hash;
+}
 
 /** The admitted machine a launcher names (node id or hostname) and its seats channel, which I must be in. */
 function target(c: RouteCtx, machine: string): { node: string; hostname: string; channel: string } {
@@ -168,6 +197,19 @@ route("POST", "/v1/seats/bundle", async (c) => {
   return json({ hash });
 });
 
+/** Last-known pre-v2 replicas block dispatch, including offline and same-person nodes. */
+export function requireV2Replicas(c: Pick<RouteCtx, "core" | "sync">, channel: string): void {
+  for (const n of activeNodes(c.core.roster)) {
+    if (n.node_id === c.core.nodeId) continue;
+    const handle = c.core.roster.members.get(n.login)?.handle ?? null;
+    if (!canSeeChannel(c.core.roster, channel, handle)) continue;
+    const known = c.sync.peerCapabilities(n.node_id);
+    if (known && !known.caps.includes(SEATS_V2_CAP)) {
+      throw new HttpError(409, "seats_v2_replica_unsupported", `${n.hostname} replicates this seats channel but last advertised a pre-v2 version: update every channel replica before sending a v2 request`);
+    }
+  }
+}
+
 route("POST", "/v1/seats/run", async (c) => {
   requireTeam(c);
   const b = parseWith(RunReq, await readJson(c.req, LOCAL_BODY_MAX));
@@ -176,17 +218,58 @@ route("POST", "/v1/seats/run", async (c) => {
   if (b.bundle && !readBlob(c.core.paths.blobs, b.bundle)) {
     throw new HttpError(400, "invalid", "that repo bundle isn't on this machine (send it with POST /v1/seats/bundle, or walkie seat run --repo)");
   }
-  const run: SeatRun = {
-    op: "run", v: 1, runtime: b.runtime, ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
-    prompt: b.prompt, ...(b.bundle ? { bundle: b.bundle } : {}),
-    timeout_s: b.timeout_s ?? DEFAULT_SEAT_TIMEOUT_S, max_concurrent: b.max_concurrent ?? DEFAULT_MAX_CONCURRENT,
-  };
-  const body = { text: runText(run, t.hostname), seat: run } as unknown as BodyOf<"msg.post">;
+  const v2 = b.v === 2 || b.runtime === "kimi" || b.brief !== undefined || b.label !== undefined || b.workspace !== undefined || b.account !== undefined || b.result_file !== undefined;
+  let seat: SeatRun | SeatRunV2;
+  let text: string;
+  // Never to a host whose daemon says it can't (a released pre.5 one ignores a v2 body): refused here instead.
+  // The execution host must positively advertise support; protocol features do not depend on machine stats.
+  if (v2 && t.node !== c.core.nodeId) {
+    const capabilities = c.sync.peerCapabilities(t.node);
+    if (!capabilities) {
+      throw new HttpError(409, "seats_v2_unknown", `${t.hostname}'s Walkie hasn't said yet whether it takes v2 seat requests (no capabilities from it): retry in a minute`);
+    }
+    if (!capabilities.caps.includes(SEATS_V2_CAP)) {
+      throw new HttpError(409, "seats_v2_unsupported", `${t.hostname} runs a Walkie that doesn't take v2 seat requests (Kimi, a brief, a workspace, an account or a result file): update it first`);
+    }
+  }
+  if (v2) {
+    requireV2Replicas(c, t.channel);
+    if (b.bundle) throw new HttpError(400, "invalid", "a v2 request carries its repo as workspace (workspace.bundle for a delta bundle), not bundle");
+    if (b.workspace?.bundle && !readBlob(c.core.paths.blobs, b.workspace.bundle)) {
+      throw new HttpError(400, "invalid", "that workspace delta bundle isn't on this machine (send it with POST /v1/seats/bundle)");
+    }
+    if (b.runtime === "kimi" && b.permission_mode !== "bypassPermissions") throw new HttpError(400, "invalid", KIMI_FULL_ACCESS_ONLY);
+    const briefSrc = b.brief ?? b.prompt;
+    if (!briefSrc) throw new HttpError(400, "invalid", "a v2 request needs a brief (brief, or prompt)");
+    const parsed = SeatRunV2.safeParse({
+      op: "run", v: 2, runtime: b.runtime, ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
+      brief: storeBrief(c, briefSrc), ...(b.label ? { label: b.label } : {}), ...(b.workspace ? { workspace: b.workspace } : {}),
+      ...(b.account ? { account: b.account } : {}), ...(b.result_file ? { result_file: b.result_file } : {}),
+      timeout_s: b.timeout_s ?? DEFAULT_SEAT_TIMEOUT_S, max_concurrent: b.max_concurrent ?? DEFAULT_MAX_CONCURRENT,
+    });
+    if (!parsed.success) throw new HttpError(400, "invalid", parsed.error.issues.map((i) => i.message).join("; ").slice(0, 300));
+    seat = parsed.data;
+    text = runTextV2(parsed.data, t.hostname);
+  } else {
+    if (!b.prompt) throw new HttpError(400, "invalid", "prompt is required");
+    const run: SeatRun = {
+      op: "run", v: 1, runtime: b.runtime as (typeof SEAT_RUNTIMES_V1)[number], ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
+      prompt: b.prompt, ...(b.bundle ? { bundle: b.bundle } : {}),
+      timeout_s: b.timeout_s ?? DEFAULT_SEAT_TIMEOUT_S, max_concurrent: b.max_concurrent ?? DEFAULT_MAX_CONCURRENT,
+    };
+    seat = run;
+    text = runText(run, t.hostname);
+  }
+  const body = { text, seat } as unknown as BodyOf<"msg.post">;
   // An agent's request carries its name (hosts accept agents they name, never an unnamed one as its person: the CLI
   // under an agent's runtime marks its requests, add-machine's agent-detect.ts).
   if (c.underAgent && !c.agent) throw new HttpError(403, "agent_unnamed", "a seat request from an agent must name it (WALKIE_AGENT=<name>, or --agent): the host allows agents only by name");
   const event = c.core.emit("msg.post", body, { channel: t.channel, agent: c.agent });
-  if (b.bundle) c.core.store.addProvenance(t.channel, b.bundle); // served to the host: we hold these bytes for this request
+  // Served to the host: we hold these bytes for this request (v2: the brief and the delta bundle).
+  if (seat.v === 2) {
+    c.core.store.addProvenance(t.channel, seat.brief);
+    if (seat.workspace?.bundle) c.core.store.addProvenance(t.channel, seat.workspace.bundle);
+  } else if (seat.bundle) c.core.store.addProvenance(t.channel, seat.bundle);
   // Whether its person is using it (the host decides; a busy host queues the launch unless it is below its limit).
   const availability = hostAvailability(c.core, t.node);
   return json({ event, seat: event.id, host: { ...t, ...(availability ? { availability } : {}) } });

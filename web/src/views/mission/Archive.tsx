@@ -186,7 +186,7 @@ export function ArchiveView({ machine }: { machine?: string }) {
                     <button type="button" className="archive-row" onClick={() => open(a.id)} aria-label={`${a.agent} on ${a.hostname}: ${a.effective_state}, last seen ${agoLong(a.updated_at, now)}`}>
                       <StatePill state={a.effective_state} />
                       <span className="archive-agent mono truncate">{a.agent}</span>
-                      <RuntimeBadge runtime={a.status.runtime} />
+                      <RuntimeBadge runtime={a.status.runtime} runtime_name={a.status.runtime_name} launch={a.status.launch} />
                       <span className="archive-title truncate">{a.status.title ?? <span className="muted">No status title</span>}</span>
                       <span className="archive-repo mono truncate">
                         {a.status.repo && <><GitBranch size={11} strokeWidth={1.75} aria-hidden="true" />{a.status.repo}{a.status.branch ? `@${a.status.branch}` : ""}</>}

@@ -43,7 +43,7 @@ function alive(pid: number): boolean {
 }
 
 const orchestratorOpts = () => ({
-  restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, interruptGraceMs: 400,
+  autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, interruptGraceMs: 400,
   env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: join(c.root, "fake-state"), FAKE_CLAUDE_LOG: launches },
 });
 
@@ -107,7 +107,8 @@ describe("no channel names are involved (ORCH-FIX-12): orch-<h> and orchestrator
     const dave = await c.add({ name: "dave", login: "dave@example.com", hostname: "daves-mbp", orchestrator: orchestratorOpts() });
     await alex.client().invite("dave@example.com", "dave", "member");
     expect((await dave.client().join(alex.peerAddr)).admitted).toBe(true);
-    await person(dave).orchestratorStart({ cwd: c.root, path });
+    await person(kira).orchestratorStop();
+    await waitFor(async () => { await person(dave).orchestratorStart({ cwd: c.root, path }); return true; }, { what: "dave acquires the exclusive lease" });
     await waitFor(() => hostFor(dave.d.core)?.view().state === "idle", { what: "dave's orchestrator running" });
     await Bun.sleep(300);
     for (const n of [alex, kira, dave]) expect([...n.d.core.roster.channels.keys()].some((x) => x.startsWith("orch"))).toBe(false);
@@ -118,6 +119,7 @@ describe("no channel names are involved (ORCH-FIX-12): orch-<h> and orchestrator
     expect(turnsSeen().some((t) => t.includes("rm -rf"))).toBe(false);
     expect((await person(dave).orchestratorMessages({})).messages).toEqual([]);
     await person(dave).orchestratorStop();
+    await waitFor(async () => { await person(kira).orchestratorStart({ cwd: c.root, path }); return true; }, { what: "kira reacquires the lease" });
   }, 60_000);
 });
 
@@ -126,7 +128,7 @@ describe("Codex MEDIUM 5: daemon shutdown waits for the descendants of a Claude 
     await waitFor(() => hostFor(kira.d.core)?.view().state === "idle", { what: "kira's orchestrator running" });
     await person(kira).orchestratorSay("orphan please");
     const pid = await waitFor(() => logLines().find((l) => typeof l.orphan === "number")?.orphan as number | undefined, { what: "orphan pid" });
-    expect(alive(pid)).toBe(true);
+    // The independent supervisor may already have reaped it before daemon shutdown.
     await kira.stop();
     expect(alive(pid)).toBe(false);
   }, 30_000);

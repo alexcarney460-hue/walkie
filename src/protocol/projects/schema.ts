@@ -89,6 +89,17 @@ export const ProjectOp = z.object({
   meter: z.enum(["count", "points"]).optional(),
   automations: Automations.optional(),
   state: z.enum(["active", "archived", "deleted"]).optional(),
+  /**
+   * FO-6: the board steward (steward.ts) keeps this project's cards in the right columns unless "off". Unknown to
+   * pre.6 peers, whose schema drops it and applies the op's other fields (ProjectOp is not strict).
+   */
+  steward: z.enum(["on", "off"]).optional(),
+  /**
+   * FO-6: the one machine (node id) whose steward loop keeps this board (a lease a project admin sets with `walkie board
+   * steward auto on --project P` on that machine); "" = none. A loop run re-checks it before every write, so a
+   * moved lease stops the old holder's writes (two machines' plans can still overlap in time). Pre.6 drops it too.
+   */
+  steward_node: z.string().regex(/^(?:[0-9a-f]{16})?$/).optional(),
 });
 export const BoardOp = z.object({
   ...Base, op: z.literal("board"),
@@ -167,7 +178,7 @@ export type FileOpT = z.infer<typeof FileOp>;
 export const CARD_FIELDS = [
   "title", "body", "board", "column", "pos", "assignee", "reviewer", "labels", "estimate", "due", "blocked", "blocked_reason", "state",
 ] as const;
-export const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state"] as const;
+export const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node"] as const;
 export const BOARD_FIELDS = ["name", "columns", "state"] as const;
 
 export const DEFAULT_COLUMNS: readonly Column[] = [
@@ -208,6 +219,10 @@ export interface ProjectView {
   prior_prefixes?: string[];
   paths: PathRule[]; meter_mode: "count" | "points"; automations: Required<Automations>;
   state: "active" | "archived" | "deleted";
+  /** FO-6 board steward: "off" = the steward leaves this project's cards alone (a project admin's setting). */
+  steward: "on" | "off";
+  /** FO-6: the machine whose steward loop keeps this board ("" = none: no loop runs it; people can still run it). */
+  steward_node: string;
   /** Restricted channel: the team's owners only (Alex 2026-09-26). */
   private: boolean;
   /** Owners and the creator: who may change settings. */

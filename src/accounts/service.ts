@@ -30,15 +30,24 @@ import { provisionalKimiIdentity } from "./adapters/kimi.ts";
 import type { FetchLike } from "./http.ts";
 import { accountId } from "./mask.ts";
 import { pollAccount, POLL_MS } from "./poll.ts";
-import { launchCodexAppServer, redeemCodexReset, type AppServerLauncher, type ResetResult } from "./resets.ts";
+import { launchCodexAppServer, redeemCodexReset, renewCodexLogin, type AppServerLauncher, type ResetResult } from "./resets.ts";
+import { freshRoomOf } from "./select.ts";
+import { sweepLeaseHomes } from "./vault/codex-lease-home.ts";
 import type { ResetAttemptView } from "../protocol/accounts.ts";
 import type { Identity, Login, Reading } from "./types.ts";
 import { activeLeases, markApplies, markExcludes, markLifted, readMarks, readSessionReadings, type Lease } from "./leases.ts";
 import { clockFromMark, clockFromReading, markGuessed, mergeClock, validClock } from "./clock.ts";
 import type { VaultEntry } from "./vault/vault.ts";
-import { type AccountLease, type AccountVault, type AccountUsage as UsageT, type ResetClock } from "../protocol/accounts.ts";
+import type { CodexAccess } from "./vault/codex-access.ts";
+import { type AccountLease, type AccountVault, type AccountUsage as UsageT, type ResetClock, type TeamPolicyAd } from "../protocol/accounts.ts";
 
 export const RECORD_TTL_MS = 7 * 86_400_000;
+/** COMPANY POOL: a lent Codex login is renewed when its access token has less than this left, */
+export const RENEW_AHEAD_MS = 48 * 3_600_000;
+/** … at most once per this per login, */
+export const RENEW_RETRY_MS = 60 * 60_000;
+/** … and leased homes of ended sessions are swept this often. */
+export const SWEEP_MS = 10 * 60_000;
 export const TICK_MS = 15_000;
 
 /** What discovery tells the service about one running session. */
@@ -57,6 +66,10 @@ export interface SessionRef {
 export interface VaultSource {
   list(): VaultEntry[];
   claudeToken(id: string): Promise<string>;
+  /** COMPANY POOL: a Codex login's lease copy (never its refresh token or email); null when it must not be lent. */
+  codexAccess?(id: string, now: number): CodexAccess | null;
+  /** COMPANY POOL: when a vault Codex login's access token runs out (null: unreadable), for renewal. */
+  codexExpiry?(id: string): number | null;
 }
 
 export interface AccountsOptions {
@@ -72,6 +85,10 @@ export interface AccountsOptions {
   codexAppServer?: AppServerLauncher;
   /** ACCOUNTS-2: the vault (switchable accounts); none = watch-only as in phase 1. */
   vault?: VaultSource | null;
+  /** COMPANY POOL: the team accounts policy this machine's person set (config.json), read at each tick. */
+  teamPolicy?: () => TeamPolicyAd | null;
+  /** COMPANY POOL: whether the team's pool is on as this machine knows it (fail closed: false when unknown). */
+  poolOn?: () => boolean;
 }
 
 /** Why a reset or refresh request was refused before anything happened (the route maps it to an HTTP status). */
@@ -169,6 +186,13 @@ export class AccountsService {
   /** RESET-CLOCK-1: the remembered reset times of vault accounts from accounts.json (like savedVaultReadings). */
   private readonly savedVaultClocks = new Map<string, readonly ResetClock[]>();
   private lastLeases = "";
+  private readonly teamPolicy: () => TeamPolicyAd | null;
+  private readonly poolOn: () => boolean;
+  private lastTeamPolicy = "";
+  /** COMPANY POOL: vault Codex logins' last renewal try (the home renews what it lends), and the one running. */
+  private readonly renewTried = new Map<string, number>();
+  private renewing: Promise<void> | null = null;
+  private lastSweep = 0;
 
   constructor(walkieHome: string, private readonly log: Logger, private readonly onChange: (s: AccountsSnapshot) => void, opts: AccountsOptions = {}) {
     this.home = opts.home ?? homedir();
@@ -179,6 +203,8 @@ export class AccountsService {
     this.polling = opts.poll !== false;
     this.launcher = opts.codexAppServer ?? launchCodexAppServer;
     this.vault = opts.vault ?? null;
+    this.teamPolicy = opts.teamPolicy ?? (() => null);
+    this.poolOn = opts.poolOn ?? (() => false);
     this.file = join(walkieHome, "accounts.json");
     this.walkieHome = walkieHome;
     this.ledgerFile = join(walkieHome, LEDGER_FILE);
@@ -311,8 +337,11 @@ export class AccountsService {
     try {
       this.syncVault();
       this.syncLeases();
+      this.syncTeamPolicy();
       this.learnPassive();
+      this.sweepLeases();
       if (!this.polling) return;
+      this.renewCodexLogins();
       const isDue = (r: Rec, at: number) => !r.identity.tokenLogin && r.nextAt <= at && (r.notBefore ?? 0) <= at;
       const now = this.clock();
       const due = [...this.records.values()].filter((r) => isDue(r, now)).sort((a, b) => a.nextAt - b.nextAt).map((r) => r.identity.id);
@@ -609,9 +638,9 @@ export class AccountsService {
     const now = this.clock();
     // The credential generation is part of what changed (round 3, Codex 6): a replaced credential is published at once.
     const prevEntries = this.vaultEntries;
-    const before = JSON.stringify([...prevEntries.values()].map((e) => [e.id, e.policy, e.share_with, e.label, e.plan, e.gen]));
+    const before = JSON.stringify([...prevEntries.values()].map((e) => [e.id, e.policy, e.share_with, e.label, e.plan, e.gen, e.home_at]));
     this.vaultEntries = new Map(list.map((e) => [e.id, e]));
-    let changed = before !== JSON.stringify(list.map((e) => [e.id, e.policy, e.share_with, e.label, e.plan, e.gen]));
+    let changed = before !== JSON.stringify(list.map((e) => [e.id, e.policy, e.share_with, e.label, e.plan, e.gen, e.home_at]));
     for (const [id, rec] of this.records) {
       if (rec.login.vault && !this.vaultEntries.has(id)) { this.records.delete(id); changed = true; }
     }
@@ -652,6 +681,83 @@ export class AccountsService {
     if (now === this.lastLeases) return;
     this.lastLeases = now;
     this.publish();
+  }
+
+  private poolOnNow(): boolean {
+    try { return this.poolOn(); } catch { return false; }
+  }
+
+  /** Publishes when this machine's team pool setting, or the team's pool as this machine knows it, changed. */
+  syncTeamPolicy(): void {
+    const now = JSON.stringify([this.currentTeamPolicy(), this.poolOnNow()]);
+    if (now === this.lastTeamPolicy) return;
+    this.lastTeamPolicy = now;
+    this.publish();
+  }
+
+  private currentTeamPolicy(): TeamPolicyAd | null {
+    try { return this.teamPolicy(); } catch { return null; }
+  }
+
+  // ---- company pool: what the home machine does for its lent logins ------------------
+
+  /**
+   * The least room (%) left on a vault login right now, from this machine's own readings (the poll, or a wrapped
+   * session's own): the lender's check of the 10 % personal reserve. Null when no reading under an hour old says —
+   * the caller fails closed.
+   */
+  roomLeft(id: string, now = this.clock()): number | null {
+    const rec = this.records.get(id);
+    if (!rec) return null;
+    const u = newer(rec.reading, readSessionReadings(this.walkieHome, now)[id]);
+    return freshRoomOf(u, null, now);
+  }
+
+  /**
+   * The home machine is its Codex logins' one refresher (COMPANY POOL): a lent login whose access token runs out
+   * within RENEW_AHEAD_MS (or whose expiry cannot be read) is renewed by the user's own Codex CLI (renewCodexLogin),
+   * one login at a time, at most once per RENEW_RETRY_MS each — so an idle home keeps serving the pool.
+   */
+  private renewCodexLogins(): void {
+    const due = [...this.vaultEntries.values()].find((e) => this.poolOnNow() && !e.personal && this.renewalEligible(e.id));
+    if (due) this.renewCodex(due.id);
+  }
+
+  /** Authorized demand and scheduled renewal share expiry, serialization and retry limits. */
+  private renewalEligible(id: string): boolean {
+    const e = this.vaultEntries.get(id);
+    if (this.renewing || !this.vault?.codexExpiry || !e || e.provider !== "codex" || !e.home) return false;
+    const now = this.clock();
+    const tried = this.renewTried.get(id);
+    if (tried !== undefined && now - tried < RENEW_RETRY_MS) return false;
+    const expiry = this.vault.codexExpiry(id);
+    return expiry === null || expiry - now < RENEW_AHEAD_MS;
+  }
+
+  /** Renews one eligible vault Codex login (also asked for by a refused lease). */
+  renewCodex(id: string): void {
+    if (!this.renewalEligible(id)) return;
+    const e = this.vaultEntries.get(id);
+    if (!e?.home) return;
+    this.renewTried.set(id, this.clock());
+    const before = this.vault?.codexExpiry?.(id) ?? null;
+    this.renewing = renewCodexLogin(this.launcher, { provider: "codex", dir: e.home, isDefault: false, vault: true })
+      .then((ok) => { this.log.info("vault_codex_renew", { account: id, ok, before, after: this.vault?.codexExpiry?.(id) ?? null }); })
+      .catch(() => undefined)
+      .finally(() => { this.renewing = null; });
+  }
+
+  /** Leased Codex homes whose session process is gone are removed (also swept by the switcher on its next use). */
+  private sweepLeases(): void {
+    const now = this.clock();
+    if (now - this.lastSweep < SWEEP_MS) return;
+    this.lastSweep = now;
+    try {
+      const n = sweepLeaseHomes(this.walkieHome);
+      if (n) this.log.info("lease_homes_swept", { count: n });
+    } catch (err) {
+      this.log.warn("lease_homes_sweep_failed", { err: scrubMessage((err as Error).message, [], 200) });
+    }
   }
 
   // ---- reset clock (RESET-CLOCK-1) --------------------------------------------------
@@ -696,17 +802,18 @@ export class AccountsService {
         usage: r.identity.tokenLogin ? { at: this.clock(), state: "unknown", reason: "token_login", source: "none", windows: [], until: null }
           : withMark(newer(r.reading, sessions[r.identity.id]) ?? (r.identity.pending ? { at: this.clock(), state: "unknown", reason: "identity_pending", source: "none", windows: [], until: null } : null), marks[r.identity.id], now, this.vaultEntries.get(r.identity.id)?.gen),
         last_seen: r.lastSeen,
-        ...(this.vaultEntries.has(r.identity.id) ? { vault: vaultOf(this.vaultEntries.get(r.identity.id) as VaultEntry) } : {}),
+        ...(this.vaultEntries.has(r.identity.id) ? { vault: vaultOf(this.vaultEntries.get(r.identity.id) as VaultEntry, this.poolOnNow()) } : {}),
         ...(!r.identity.tokenLogin && r.resetClock.length ? { clock: [...r.resetClock] } : {}),
       }));
     const leases = this.leaseSummaries();
-    const snap = { at: this.clock(), accounts, ...(leases.length ? { leases } : {}) };
+    const team = this.currentTeamPolicy();
+    const snap = { at: this.clock(), accounts, ...(leases.length ? { leases } : {}), ...(team ? { team_policy: team } : {}) };
     const ok = AccountsSnapshot.safeParse(snap);
     if (ok.success) return ok.data;
     // A malformed entry (never expected) is dropped rather than published.
     const valid = accounts.filter((a) => AccountsSnapshot.shape.accounts.element.safeParse(a).success);
     this.log.warn("accounts_snapshot_invalid", { dropped: accounts.length - valid.length });
-    return { at: snap.at, accounts: valid, ...(leases.length ? { leases } : {}) };
+    return { at: snap.at, accounts: valid, ...(leases.length ? { leases } : {}), ...(team ? { team_policy: team } : {}) };
   }
 
   private publish(): void {
@@ -801,10 +908,17 @@ export class AccountsService {
   }
 }
 
-function vaultOf(e: VaultEntry): AccountVault {
+/**
+ * The vault badge on the wire. COMPANY POOL: `company: true` while the team's pool is on and its person has not marked
+ * it personal (this machine then lends it to every member's machines); `home_at` says which holder lends.
+ */
+export function vaultOf(e: VaultEntry, poolOn = false): AccountVault {
   return {
     policy: e.policy, ...(e.policy === "shared" && e.share_with.length ? { share_with: e.share_with.slice(0, 16) } : {}),
     ...(/^[0-9a-f]{1,32}$/.test(e.gen) ? { gen: e.gen } : {}),
+    ...(poolOn && !e.personal ? { company: true as const } : {}),
+    ...(e.personal ? { personal: true as const } : {}),
+    ...(Number.isSafeInteger(e.home_at) && e.home_at > 0 ? { home_at: e.home_at } : {}),
   };
 }
 

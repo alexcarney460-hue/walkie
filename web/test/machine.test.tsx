@@ -63,7 +63,7 @@ const NODES: NodeView[] = [
 ];
 const TEAM: TeamView = {
   id: "7c1e4a90b25fd318", name: "Acme", authority: ALEX, channels: [], nodes: NODES, plan: undefined as never,
-  members: [{ login: "alex@x", handle: "alex", role: "owner", display_name: "Alex Carney" }, { login: "kira@x", handle: "kira", role: "owner", display_name: "Kira Moore" }],
+  members: [{ login: "alex@x", handle: "alex", role: "owner", display_name: "Avery Quinn" }, { login: "kira@x", handle: "kira", role: "owner", display_name: "Kira Moore" }],
 };
 const agent = (node: NodeView, name: string, state: AgentState, runtime: AgentView["status"]["runtime"], title: string, archived = false): AgentView => ({
   id: `${node.handle}/${node.hostname}/${name}`, handle: node.handle, node: node.node_id, hostname: node.hostname, agent: name,
@@ -137,7 +137,7 @@ test("machine page: header facts, live stats, agents working first, idle collaps
   expect(out).toContain("Online");
   expect(out).toContain("roster authority");
   expect(out).toContain("this machine");
-  expect(out).toContain("Alex Carney");
+  expect(out).toContain("Avery Quinn");
   expect(out).toContain("macOS · arm64 · Apple M3");
   expect(out).toContain("0.2.0-pre.2");
   expect(out).toContain("This machine"); // connection

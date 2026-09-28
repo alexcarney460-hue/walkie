@@ -1,5 +1,6 @@
 // WALKIE-POOL-LLM-1: "what your team could run locally": catalog validation, memory math, capacity, grouping and
 // suggestions. Nothing is downloaded or run; these are estimates from memory figures.
+import { alternativeLabel } from "../../src/pool/format.ts";
 import { describe, expect, test } from "bun:test";
 import { CATALOG, bytesPerToken, kvValuesPerToken, memoryNeeded, weightBytes, type CatalogModel } from "../../src/pool/catalog.ts";
 import { CatalogSchema } from "../../src/pool/catalog-schema.ts";
@@ -92,16 +93,17 @@ describe("capacity: memory in use is not counted", () => {
     expect(limited.notes[0]).toContain("iogpu.wired_limit_mb");
   });
 
-  test("NVIDIA: free VRAM minus 1 GiB per GPU now, VRAM minus 1 GiB if idle, plus system RAM on the CPU; CPU-only: free RAM; no memory: excluded", () => {
+  test("NVIDIA: free VRAM minus 0.5 GiB per GPU now, VRAM minus 0.5 GiB if idle, plus system RAM on the CPU; CPU-only: free RAM; no memory: excluded", () => {
     const rig = machineCapacity(node("rig", 64, 20, { chip: "AMD Ryzen 9 7950X", unified: false, gpu_limit: null, gpus: [{ name: "NVIDIA GeForce RTX 4090", vram: 24 * GiB }, { name: "NVIDIA GeForce RTX 4090", vram: 24 * GiB }] }, {}, [24 * GiB, 10 * GiB]))!;
     expect(rig.kind).toBe("nvidia");
-    expect(rig.backends[0]).toMatchObject({ kind: "nvidia", usable: 32 * GiB, usableIdle: 46 * GiB, measured: true });
+    expect(rig.backends[0]).toMatchObject({ kind: "nvidia", usable: 33 * GiB, usableIdle: 47 * GiB, measured: true });
     expect(rig.backends[1]).toMatchObject({ kind: "cpu", usable: 43 * GiB, usableIdle: 60 * GiB });
     expect(rig.usable).toBe(43 * GiB); // the larger backend: what it adds to a split
     expect(rig.label).toBe("2x NVIDIA GeForce RTX 4090 · 48 GB VRAM + 64 GB RAM");
-    expect(rig.bandwidthKnown).toBe(false);
+    expect(rig.bandwidthKnown).toBe(true); // POOL-REAL-1: RTX 4090 = 1008 GB/s (NVIDIA spec)
+    expect(rig.bandwidth).toBe(1008);
     const laptop = machineCapacity(node("wsl", 8, 5, { chip: "Intel(R) Core(TM) 7 240H", unified: false, gpu_limit: null, gpus: [{ name: "NVIDIA GeForce RTX 5070 Laptop GPU", vram: 8151 * 1024 ** 2 }] }))!;
-    expect(laptop.bandwidth).toBe(250);
+    expect(laptop.bandwidth).toBe(384); // RTX 5070 Laptop GPU: 128-bit GDDR7 at 24 Gbps (POOL-REAL-1)
     const cpu = machineCapacity(node("box", 32, 8, { chip: "Intel Xeon", unified: false, gpu_limit: null, gpus: [] }))!;
     expect(cpu.kind).toBe("cpu");
     expect(cpu.usable).toBe(23 * GiB);
@@ -152,7 +154,7 @@ describe("speed estimates", () => {
     const one = pooledSpeed(40 * GiB, [{ share: 1, bandwidth: 400 }], 1);
     expect(one).toBeCloseTo(singleSpeed(40 * GiB, 400), 5);
     const two = pooledSpeed(40 * GiB, [{ share: 0.5, bandwidth: 400 }, { share: 0.5, bandwidth: 400 }], 2);
-    const perToken = 1 / one + (2 + 2) / 1000;
+    const perToken = 1 / one + (1.3 * 2 + 2) / 1000; // POOL-REAL-1: 1.3 measured round trips a token + 2 ms
     expect(two).toBeCloseTo(1 / perToken, 5);
     expect(two).toBeLessThan(one);
   });
@@ -209,11 +211,18 @@ describe("suggestions", () => {
     expect(t.headline?.single?.speed).toBe("fast");
   });
 
-  test("a slow single pick offers a faster smaller one", () => {
+  test("the headline is the largest model that isn't slow; a bigger slow one is offered as 'Bigger, slow' (POOL-REAL-1)", () => {
     const s = suggestForGroup(groupMachines([node("cpu", 64, 4, { chip: "Xeon", unified: false, gpu_limit: null, gpus: [] }, { self: true })]).groups[0]!);
-    expect(s.single?.speed).toBe("slow");
-    const faster = s.alternatives.find((a) => a.fits);
-    expect(faster && ["fast", "usable"]).toContain(faster!.speed);
-    expect(faster!.model.params_b).toBeLessThan(s.single!.model.params_b);
+    expect(["fast", "usable"]).toContain(s.single!.speed);
+    const bigger = s.alternatives.find((a) => a.fits)!;
+    expect(bigger.speed).toBe("slow");
+    expect(bigger.model.params_b).toBeGreaterThan(s.single!.model.params_b);
+    expect(alternativeLabel(s, bigger)).toBe("Bigger, slow");
+  });
+
+  test("only slow options: the largest one is the headline, with a faster smaller alternative", () => {
+    // 16 GB CPU box: every model that fits is slow on the CPU except the smallest ones.
+    const s = suggestForGroup(groupMachines([node("tiny", 12, 1, { chip: "Celeron", unified: false, gpu_limit: null, gpus: [] }, { self: true })]).groups[0]!);
+    expect(s.single).not.toBeNull();
   });
 });

@@ -6,6 +6,10 @@ import { gb, memText, tempLevel, tempText } from "../../../src/protocol/machine-
 import { agoLong, useNow } from "../lib/time.ts";
 
 type Level = "normal" | "warn" | "critical";
+export function ModelServerLoad({ stats }: { stats?: MachineStats }) {
+  if (!stats?.model_servers?.length) return null;
+  return <span data-testid="model-server-load">Models: {stats.model_servers.map((m) => `${m.name}${m.count > 1 ? ` ×${m.count}` : ""}`).join(", ")}</span>;
+}
 const PRESSURE_LABEL: Record<Level, string> = { normal: "normal", warn: "elevated", critical: "critical" };
 
 /** Tooltip: memory, swap, pressure, temperature and when the values were sampled. */
@@ -76,6 +80,7 @@ export function MachineStatsLine({ node, part = "rail" }: { node: NodeView; part
     <span className={`ms ms-${part}${node.online ? "" : " ms-stale"}`} title={statsTitle(node.hostname, node.stats, node.online, now)}>
       <MemBar mem={node.stats?.mem} compact />
       <TempReadout stats={node.stats} />
+      <ModelServerLoad stats={node.stats} />
       {node.stats?.discovery?.incomplete && <span className="ms-disc" data-testid="discovery-incomplete">discovery incomplete</span>}
       {!node.online && node.stats && <span className="sr-only"> (last known, machine offline)</span>}
     </span>

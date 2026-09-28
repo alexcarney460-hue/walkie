@@ -7,9 +7,12 @@ import type { Event } from "../../protocol/schemas.ts";
 import type { OpEvent } from "../../protocol/projects/fold.ts";
 import { boardBodyFits, type CardView } from "../../protocol/projects/schema.ts";
 
-const VISIBLE = "kind = 'msg.post' AND redacted = 0 AND status = 'ok'";
+// `+kind` / `+thread IS NULL` / `+channel` (DAEMON-STALL-1): every query here names its channel (for the project channels,
+// the `p-` name range) or its rows, which bound what it reads; SQLite must not walk the kind index (every msg.post of
+// every channel) or the thread index's NULL entries (every root, agent statuses included) instead.
+const VISIBLE = "+kind = 'msg.post' AND redacted = 0 AND status = 'ok'";
 /** Accepted, or stored in full but hidden (a rank carrier for the fold: fold.ts `hidden`). */
-const STORED = "kind = 'msg.post' AND redacted = 0 AND status IN ('ok', 'rejected')";
+const STORED = "+kind = 'msg.post' AND redacted = 0 AND status IN ('ok', 'rejected')";
 
 /** First 16 hex of sha256(signature): how an op names its parent (fold.ts). */
 export function sigHash(sig: string): string {
@@ -46,6 +49,33 @@ export class ProjectsDb {
     // A round-2 build kept per-machine key aliases here; aliases now come from the fold (round-4 audit LOW). The table
     // was created at runtime, so it is dropped the same way.
     db.exec("DROP TABLE IF EXISTS board_key_alias");
+    if (fts) this.mapFtsRows();
+  }
+
+  /**
+   * board_fts_rid names each card's FTS row (DAEMON-STALL-1): a card's old row is deleted by rowid, not found by a scan
+   * of the whole FTS table (id is UNINDEXED) for every card saved. The map must name every FTS row and only those; an
+   * older build (it deletes and inserts FTS rows by id) breaks that, and then the map is rebuilt from the FTS table, a
+   * card with several rows keeping its newest (the highest rowid: FTS5 gives a new row one past the largest).
+   */
+  private mapFtsRows(): void {
+    this.db.exec("CREATE TABLE IF NOT EXISTS board_fts_rid(id TEXT PRIMARY KEY, rid INTEGER NOT NULL)");
+    const n = (sql: string) => this.db.query<{ n: number }, []>(sql).get()?.n ?? 0;
+    const stale = n("SELECT COUNT(*) AS n FROM board_fts_rid m WHERE NOT EXISTS (SELECT 1 FROM board_fts f WHERE f.rowid = m.rid)");
+    if (stale === 0 && n("SELECT COUNT(*) AS n FROM board_fts") === n("SELECT COUNT(*) AS n FROM board_fts_rid")) return;
+    this.db.transaction(() => {
+      this.db.exec(`DELETE FROM board_fts WHERE rowid NOT IN (SELECT MAX(rowid) FROM board_fts GROUP BY id);
+        DELETE FROM board_fts_rid;
+        INSERT INTO board_fts_rid(id, rid) SELECT id, rowid FROM board_fts;`);
+    })();
+  }
+
+  /** Deletes a card's FTS row (by the rowid the map names). */
+  private dropFts(id: string): void {
+    const r = this.db.query<{ rid: number }, [string]>("SELECT rid FROM board_fts_rid WHERE id = ?").get(id);
+    if (!r) return;
+    this.db.query("DELETE FROM board_fts WHERE rowid = ?").run(r.rid);
+    this.db.query("DELETE FROM board_fts_rid WHERE id = ?").run(id);
   }
 
   // ---- the event log ----------------------------------------------------------------------------------------------
@@ -54,8 +84,8 @@ export class ProjectsDb {
   settingsPosts(channel: string): OpEvent[] {
     return this.db.query<{ json: string; status: string }, [string, string]>(
       `SELECT json, status FROM events WHERE channel = ? AND ${STORED} AND (
-         (thread IS NULL AND json_extract(body, '$.board.op') IN ('project', 'board'))
-         OR thread IN (SELECT id FROM events WHERE channel = ? AND ${VISIBLE} AND thread IS NULL
+         (+thread IS NULL AND json_extract(body, '$.board.op') IN ('project', 'board'))
+         OR thread IN (SELECT id FROM events WHERE channel = ? AND ${VISIBLE} AND +thread IS NULL
                        AND json_extract(body, '$.board.op') IN ('project', 'board')))`,
     ).all(channel, channel).map((r) => opEventOf(r.json, r.status !== "ok"));
   }
@@ -66,7 +96,7 @@ export class ProjectsDb {
    */
   threadPosts(rootId: string, channel: string): { root: OpEvent | null; thread: OpEvent[] } {
     const rows = this.db.query<{ id: string; json: string; status: string }, [string, string, string]>(
-      `SELECT id, json, status FROM events WHERE (id = ? OR thread = ?) AND channel = ? AND ${STORED}`).all(rootId, rootId, channel);
+      `SELECT id, json, status FROM events WHERE (id = ? OR thread = ?) AND +channel = ? AND ${STORED}`).all(rootId, rootId, channel);
     let root: OpEvent | null = null;
     const thread: OpEvent[] = [];
     for (const r of rows) {
@@ -93,14 +123,14 @@ export class ProjectsDb {
   /** Ids of the channel's card roots (posts whose board op is a card, not in a thread). */
   cardRootIds(channel: string): string[] {
     return this.db.query<{ id: string }, [string]>(
-      `SELECT id FROM events WHERE channel = ? AND ${VISIBLE} AND thread IS NULL AND json_extract(body, '$.board.op') = 'card'
+      `SELECT id FROM events WHERE channel = ? AND ${VISIBLE} AND +thread IS NULL AND json_extract(body, '$.board.op') = 'card'
        ORDER BY ts, id`).all(channel).map((r) => r.id);
   }
 
   /** What kind of board entity a root post of `channel` is ("project", "board", "card"), or null (not one, elsewhere). */
   rootOp(id: string, channel: string): string | null {
     const r = this.db.query<{ op: string | null }, [string, string]>(
-      `SELECT json_extract(body, '$.board.op') AS op FROM events WHERE id = ? AND channel = ? AND ${VISIBLE} AND thread IS NULL`).get(id, channel);
+      `SELECT json_extract(body, '$.board.op') AS op FROM events WHERE id = ? AND channel = ? AND ${VISIBLE} AND +thread IS NULL`).get(id, channel);
     return typeof r?.op === "string" ? r.op : null;
   }
 
@@ -129,16 +159,42 @@ export class ProjectsDb {
     return this.db.query<{ m: number | null }, []>("SELECT MAX(rowid) AS m FROM events").get()?.m ?? 0;
   }
 
+  /**
+   * Accepted card roots (thread IS NULL) and project roots carrying `ext.src = src`, authored by `handle`, in visible
+   * project channels, oldest first (LINEAR-IMPORT-1: what this person imported before; `ext` is informational and
+   * ignored by the fold, so only the importing person's own roots are trusted).
+   */
+  extRoots(src: string, handle: string): Array<{ id: string; channel: string; op: string; ext_id: string; ts: number }> {
+    return this.db.query<{ id: string; channel: string; op: string; ext_id: string; ts: number }, [string, string]>(
+      `SELECT id, channel, json_extract(body, '$.board.op') AS op, json_extract(body, '$.board.ext.id') AS ext_id, ts
+       FROM events WHERE channel >= 'p-' AND channel < 'p.' AND channel LIKE 'p-%' AND ${VISIBLE} AND +thread IS NULL AND author_handle = ? AND +author_agent IS NULL
+       AND json_extract(body, '$.board.op') IN ('card', 'project') AND json_extract(body, '$.board.ext.src') = ?
+       AND typeof(json_extract(body, '$.board.ext.id')) = 'text' ORDER BY ts, id`).all(handle, src);
+  }
+
+  /** Accepted card roots of a channel authored by `handle`, with their signed title and body (adoption of older imports). */
+  authoredCardRoots(channel: string, handle: string): Array<{ id: string; title: string; body: string }> {
+    return this.db.query<{ id: string; title: string | null; body: string | null }, [string, string]>(
+      `SELECT id, json_extract(body, '$.board.title') AS title, json_extract(body, '$.board.body') AS body FROM events
+       WHERE channel = ? AND ${VISIBLE} AND +thread IS NULL AND author_handle = ? AND +author_agent IS NULL AND json_extract(body, '$.board.op') = 'card'
+       ORDER BY ts, id`).all(channel, handle).map((r) => ({ id: r.id, title: r.title ?? "", body: r.body ?? "" }));
+  }
+
   /** Channels that have at least one project post (startup: rebuild what was folded under another fold version). */
   projectChannels(): string[] {
     return this.db.query<{ channel: string }, []>(
-      `SELECT DISTINCT channel FROM events WHERE channel LIKE 'p-%' AND ${VISIBLE} AND thread IS NULL
+      `SELECT DISTINCT channel FROM events WHERE channel >= 'p-' AND channel < 'p.' AND channel LIKE 'p-%' AND ${VISIBLE} AND +thread IS NULL
        AND json_extract(body, '$.board.op') = 'project'`).all().map((r) => r.channel);
   }
 
   // ---- folded projects --------------------------------------------------------------------------------------------
 
+  /** Bumped by every write to board_projects (a cache of what the views say, e.g. the status scrub's prefixes, checks it). */
+  get revision(): number { return this.rev; }
+  private rev = 0;
+
   saveProject(channel: string, rootId: string | null, json: string | null, lastTs: number): void {
+    this.rev++;
     this.db.query(`INSERT INTO board_projects(channel, root_id, json, last_ts, updated_at) VALUES (?,?,?,?,?)
       ON CONFLICT(channel) DO UPDATE SET root_id = excluded.root_id, json = excluded.json, last_ts = excluded.last_ts,
       updated_at = excluded.updated_at`).run(channel, rootId, json, lastTs, Date.now());
@@ -163,15 +219,16 @@ export class ProjectsDb {
     // Every number a card holds on this node is remembered: a bare key it held before stays ambiguous (Codex r6 M3).
     this.db.query("INSERT OR IGNORE INTO board_key_history(channel, n, id) VALUES (?,?,?)").run(c.channel, c.n, c.id);
     if (!this.fts) return;
-    this.db.query("DELETE FROM board_fts WHERE id = ?").run(c.id);
+    this.dropFts(c.id);
     if (c.state !== "deleted") {
-      this.db.query("INSERT INTO board_fts(id, channel, key, title, body, labels) VALUES (?,?,?,?,?,?)").run(
-        c.id, c.channel, c.key, c.title, c.body, c.labels.join(" "));
+      const rid = this.db.query("INSERT INTO board_fts(id, channel, key, title, body, labels) VALUES (?,?,?,?,?,?)").run(
+        c.id, c.channel, c.key, c.title, c.body, c.labels.join(" ")).lastInsertRowid;
+      this.db.query("INSERT INTO board_fts_rid(id, rid) VALUES (?, ?)").run(c.id, Number(rid));
     }
   }
   deleteCard(id: string): void {
     this.db.query("DELETE FROM board_cards WHERE id = ?").run(id);
-    if (this.fts) this.db.query("DELETE FROM board_fts WHERE id = ?").run(id);
+    if (this.fts) this.dropFts(id);
   }
   card(id: string): CardView | null {
     const r = this.db.query<{ json: string }, [string]>("SELECT json FROM board_cards WHERE id = ?").get(id);
@@ -230,9 +287,12 @@ export class ProjectsDb {
     return this.db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM board_cards WHERE ${where.join(" AND ")}`).get(...args)?.n ?? 0;
   }
   deleteChannel(channel: string): void {
+    this.rev++;
     this.db.query("DELETE FROM board_cards WHERE channel = ?").run(channel);
     this.db.query("DELETE FROM board_projects WHERE channel = ?").run(channel);
-    if (this.fts) this.db.query("DELETE FROM board_fts WHERE channel = ?").run(channel);
+    if (!this.fts) return;
+    this.db.query("DELETE FROM board_fts WHERE channel = ?").run(channel); // rare (a channel stops being a project): one scan
+    this.db.query("DELETE FROM board_fts_rid WHERE NOT EXISTS (SELECT 1 FROM board_fts f WHERE f.rowid = board_fts_rid.rid)").run();
   }
 
   /** Card ids matching `q` in these channels, best first (FTS5), or by substring without FTS5. */

@@ -21,6 +21,7 @@ import type { AccountsService } from "../accounts/service.ts";
 import type { LicenseService } from "../license/service.ts";
 import type { MobileManager } from "./mobile/manager.ts";
 import type { ProjectsIndex } from "./projects/index.ts";
+import { trackOp } from "./watchdog.ts";
 
 export const CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'";
 const SECURITY_HEADERS = {
@@ -106,6 +107,8 @@ function legacyCookies(port: number): string[] { return ["walkie_token", `walkie
  * status, uploads, …) needs the durable token as a bearer.
  */
 const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
+  ["GET", /^\/v1\/import\/linear\/status$/],
+  ["POST", /^\/v1\/import\/linear\/(?:plan|run|resume|cancel|sync|settings)$/],
   ["GET", /^\/v1\/(?:me|team|agents|accounts|peers|events|asks|team\/pending|license|integrations|linear\/issues|stream|pool)$/],
   ["GET", /^\/v1\/events\/[^/]+$/],
   ["GET", /^\/v1\/artifacts\/[0-9a-f]{64}$/],
@@ -124,7 +127,7 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   ["POST", /^\/v1\/integrations\/[a-z]+(?:\/run)?$/],
   ["POST", /^\/v1\/accounts\/(?:reset|reset\/prepare|reset\/resolve|refresh)$/],
   ["DELETE", /^\/v1\/integrations\/[a-z]+$/],
-  ["POST", /^\/v1\/pool\/(?:share|run|stop)$/], // WALKIE-POOL-2: the person at this machine's dashboard
+  ["POST", /^\/v1\/pool\/(?:share|run|stop|serve|serve\/stop|connect|disconnect|install)$/], // WALKIE-POOL-2: the person at this machine's dashboard
   // The Seats view (PROTOCOL §11; Codex seats r9 MEDIUM 5): this machine's opt-in, launching and stopping seats, busy
   // and resume. Person-only like the rest (a dashboard session sends no agent header). Not the token or bundle
   // uploads: those are the CLI's.
@@ -134,7 +137,7 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   // its Start and Stop buttons (PRE5-INT: start with the daemon's defaults only, orchestrator/routes.ts).
   ["GET", /^\/v1\/orchestrator(?:\/messages)?$/],
   // ORCH-2: and its model picker (the chat header).
-  ["POST", /^\/v1\/orchestrator\/(?:say|stop-reply|start|stop|model|access)$/],
+  ["POST", /^\/v1\/orchestrator\/(?:say|stop-reply|start|stop|model|access|auto)$/],
   // Team > Devices (WALKIE-PWA-1): pair a phone, list and revoke paired phones.
   ["GET", /^\/v1\/mobile$/],
   ["POST", /^\/v1\/mobile\/pair$/],
@@ -323,8 +326,9 @@ export class LocalApi {
         release = this.sessions.openStream(session);
         routeReq.signal.addEventListener("abort", release, { once: true });
       }
-      return await dispatch(this.routeCtx(routeReq, url, req, server, validAgentHeader(req.headers.get("x-walkie-agent")), session?.expiresAt,
-        undefined, req.headers.get("x-walkie-under-agent") === "1", { via: session ? "dashboard" : "cli", listener: transport, ...(auth ? { signal: auth.signal } : {}) }));
+      return await trackOp(`${req.method} ${url.pathname}`, () => dispatch(this.routeCtx(routeReq, url, req, server,
+        validAgentHeader(req.headers.get("x-walkie-agent")), session?.expiresAt, undefined, req.headers.get("x-walkie-under-agent") === "1",
+        { via: session ? "dashboard" : "cli", listener: transport, ...(auth ? { signal: auth.signal } : {}) })));
     } catch (err) {
       release?.(); // a refused stream (e.g. 429) must not keep its session from idling out
       return errorResponse(err, this.d.core.log);
@@ -369,9 +373,8 @@ export class LocalApi {
     try {
       if (!url.pathname.startsWith("/v1/")) throw new HttpError(404, "not_found", "no such route");
       const routeReq = credential ? new Request(req, { signal: AbortSignal.any([req.signal, credential.signal]) }) : req;
-      return await dispatch(this.routeCtx(routeReq, url, req, server, undefined, credential?.expiresAt, credential?.rateKey, false, {
-        via: "phone", ...(credential ? { signal: credential.signal } : {}),
-      }));
+      return await trackOp(`phone ${req.method} ${url.pathname}`, () => dispatch(this.routeCtx(routeReq, url, req, server, undefined,
+        credential?.expiresAt, credential?.rateKey, false, { via: "phone", ...(credential ? { signal: credential.signal } : {}) })));
     } catch (err) {
       return errorResponse(err, this.d.core.log);
     }

@@ -56,6 +56,22 @@ describe("transport selection", () => {
     expect(client.addrOf(carol)).toBeNull();
     expect(client.reaches(carol)).toBe(false);
   });
+
+  test("POOL-REAL-1: PeerClient.addrVia names one transport, only when both machines serve it now", () => {
+    const fakeDirect = { kind: "direct", request: async () => new Response("{}") } as Transport;
+    const alex: Pick<NodeRec, "ip" | "port" | "pubkey" | "transports"> = { ip: "100.64.0.1", port: 7458, pubkey: "ALEX", transports: ["tailscale", "direct"] };
+    const bob: Pick<NodeRec, "ip" | "port" | "pubkey" | "transports"> = { ip: "100.64.0.2", port: 7458, pubkey: "BOB" };
+    const client = new PeerClient({ team: () => "t", nodeId: "n", self: () => rec(["tailscale", "direct"], "100.64.0.3") });
+    client.transports.direct = fakeDirect;
+    // Both dual: Tailscale is what addrOf picks; a pool tunnel may ask for Direct instead.
+    expect(client.addrOf(alex)).toEqual({ ip: "100.64.0.1", port: 7458 });
+    expect(client.addrVia(alex, "direct")).toEqual({ ip: "100.64.0.1", port: 7458, pubkey: "ALEX" });
+    expect(client.addrVia(alex, "tailscale")).toEqual({ ip: "100.64.0.1", port: 7458 });
+    // A Tailscale-only peer has no Direct address; Direct not running here: none either.
+    expect(client.addrVia(bob, "direct")).toBeNull();
+    client.transports.direct = null;
+    expect(client.addrVia(alex, "direct")).toBeNull();
+  });
 });
 
 /** alex's daemon (authority, dual), bob (Tailscale-only), carol (Direct-only, `direct:carol`), alex2 (alex's Direct-only machine). */

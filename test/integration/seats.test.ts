@@ -169,6 +169,37 @@ describe("remote seats over a 2-machine team", () => {
     expect(show).toContain("seat-output.txt");
   }, 60_000);
 
+  test("same-user seats publish one signed card each, then archive when stopped", async () => {
+    await person(arvid).seatsConfig({ allow: true, same_user: true, env: ["UNIT_EXTRA", "FAKE_CLAUDE_LOG", "FAKE_CLAUDE_STATE", "FAKE_CODEX_LOG"] });
+    await waitFor(async () => (await alex.client().seats()).hosts.some((h) => h.node === arvid.d.nodeId && h.allows), { what: "seat host" });
+    const ids = await Promise.all([1, 2, 3].map(async (i) =>
+      (await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", model: "fake-model", prompt: `slow tool seat card ${i}\nprivate second line`, max_concurrent: 3 })).seat));
+    const names = ids.map(seatAgentName);
+    await waitFor(() => names.every((name) => arvid.d.core.store.agent(arvid.d.nodeId, name)?.body.includes('"state":"working"')), { what: "three working seat cards", timeoutMs: 20_000 });
+    const rows = names.map((name) => JSON.parse(arvid.d.core.store.agent(arvid.d.nodeId, name)?.body ?? "{}") as Record<string, unknown>);
+    expect(new Set(rows.map((r) => r.agent)).size).toBe(3);
+    for (const row of rows) expect(row).toMatchObject({ parent: "seats", launcher: "alex", runtime: "claude-code", model: "fake-model", state: "working", launch: "headless" });
+    const host = seatsFor(arvid.d.core) as unknown as { seats: Map<string, { lastOutputAt: number }>; seatStatus: (seat: unknown) => void; onSignal: (seat: unknown, signal: { kind: "tool"; text: string }) => void };
+    const quiet = host.seats.get(ids[0] as string);
+    expect(quiet).toBeDefined();
+    quiet!.lastOutputAt = Date.now() - 31_000;
+    host.seatStatus(quiet);
+    await waitFor(() => arvid.d.core.store.agent(arvid.d.nodeId, names[0] as string)?.body.includes('"state":"idle"'), { what: "quiet seat idle" });
+    host.onSignal(quiet, { kind: "tool", text: "Read a file" });
+    await waitFor(() => arvid.d.core.store.agent(arvid.d.nodeId, names[0] as string)?.body.includes('"state":"working"'), { what: "seat working again" });
+    await Promise.all(ids.map((id) => person(alex).seatStop(id)));
+    await waitFor(() => names.every((name) => arvid.d.core.store.agent(arvid.d.nodeId, name)?.body.includes('"state":"offline"')), { what: "three offline seat cards" });
+    host.onSignal(quiet, { kind: "tool", text: "late output after conclusion" });
+    await Bun.sleep(300);
+    expect(arvid.d.core.store.agent(arvid.d.nodeId, names[0] as string)?.body).toContain('"state":"offline"');
+    await person(arvid).seatsBusy({ max: 0 });
+    const queued = (await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "queued card count" })).seat;
+    await waitFor(() => arvid.d.core.store.agent(arvid.d.nodeId, "seats")?.body.includes("Seats · 1 queued"), { what: "queued count on host card" });
+    expect(JSON.parse(arvid.d.core.store.agent(arvid.d.nodeId, "seats")?.body ?? "{}")).toMatchObject({ state: "working", title: "Seats · 1 queued" });
+    await person(alex).seatStop(queued);
+    await person(arvid).seatsResume();
+  }, 60_000);
+
   test("a codex seat reads its prompt from stdin, runs on the host's CODEX_HOME, and returns its commit", async () => {
     const { bundle } = makeBundle("repo-codex");
     const hash = await shareBundle(alex, bundle);
@@ -408,15 +439,17 @@ describe("remote seats over a 2-machine team", () => {
     expect(entry?.pid).toBeGreaterThan(1);
     expect(entry?.started).toBeTruthy();
     // Simulate a crash: this daemon's shutdown leaves its seats running (as a SIGKILLed daemon would).
-    const host = seatsFor(arvid.d.core) as unknown as { stopAll: () => Promise<void>; reaping: Set<Promise<void>>; seats: Map<string, unknown> };
+    const host = seatsFor(arvid.d.core) as unknown as { stopAll: () => Promise<void>; reaping: Set<Promise<void>>; seats: Map<string, { statusTimer: ReturnType<typeof setInterval> | null }> };
     host.stopAll = async () => undefined;
     host.reaping.clear();
+    for (const seat of host.seats.values()) if (seat.statusTimer) clearInterval(seat.statusTimer);
     host.seats = new Map(); // the dead daemon reports nothing
     await arvid.restart();
     await waitFor(() => !alive(grandchild), { what: "leftover group ended", timeoutMs: 5_000 });
     const s = await ended(alex, res.seat);
     expect(s.state).toBe("failed");
     expect(s.reason).toBe("the host's Walkie daemon restarted while it ran (its processes were stopped)");
+    await waitFor(() => arvid.d.core.store.agent(arvid.d.nodeId, seatAgentName(res.seat))?.body.includes('"state":"offline"'), { what: "restarted seat card offline" });
   }, 60_000);
 
   test("deny covers a seat's whole life: it returns only once a seat that just exited is fully reaped and reported", async () => {

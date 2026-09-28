@@ -13,10 +13,12 @@ import { HttpError, json, parseWith, readJson } from "../http.ts";
 import { LOCAL_BODY_MAX, limitWrite, requireTeam, route, type RouteCtx } from "../local-routes.ts";
 import { agentsView } from "../views.ts";
 import type { ProjectsIndex } from "./index.ts";
+import { BatchReq } from "../../protocol/projects/batch.ts";
+import { applyBatch, importBudgetKey } from "./batch.ts";
 import { cardFiles } from "./room.ts";
 import { adminGate, agentCaller } from "../admin/gate.ts";
 import {
-  automation, cardAction, comment, createBoard, createCard, createProject, findCard, findProject,
+  automation, cardAction, comment, createBoard, createCard, createProject, findCard, findProject, requirePerson,
   updateBoard, updateCard, updateProject, visibleProject, visibleProjects, type WriteCtx,
 } from "./service.ts";
 
@@ -60,6 +62,7 @@ const UpdateProjectReq = z.object({
   name: Line(60).optional(), folder: z.string().trim().max(40).optional(), description: z.string().max(2_000).optional(),
   prefix: Prefix.optional(), paths: z.array(PathRule).max(MAX_PATHS).optional(), meter: z.enum(["count", "points"]).optional(),
   automations: Automations.optional(), state: z.enum(["active", "archived", "deleted"]).optional(), private: z.boolean().optional(),
+  steward: z.enum(["on", "off"]).optional(), steward_node: z.string().regex(/^(?:[0-9a-f]{16})?$/).optional(),
 }).strict();
 const BoardReq = z.object({ name: Line(40), columns: Columns.optional() }).strict();
 const UpdateBoardReq = z.object({ name: Line(40).optional(), columns: Columns.optional(), state: z.enum(["active", "archived"]).optional() }).strict();
@@ -119,6 +122,9 @@ route("GET", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, (c, [channel]) => {
 
 route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, async (c, [channel]) => {
   const b = parseWith(UpdateProjectReq, await readJson(c.req, LOCAL_BODY_MAX));
+  // FO-6 (pre.8 merge): the board steward's switch and lease stay a person's, even under agent admin (an agent may
+  // only dry-run the steward); other settings follow AGENT-ADMIN-1's audited gate.
+  if ((b.steward !== undefined || b.steward_node !== undefined) && agentCaller(c)) requirePerson(w(c), "the board steward's switch and lease");
   const ctx = adminW(c, `changed project ${channel}: ${Object.keys(b).join(", ") || "nothing"}`);
   limitWrite(c);
   c.noTimeout();
@@ -157,6 +163,21 @@ route("GET", /^\/v1\/projects\/(p-[0-9a-f]{8})\/export$/, (c, [channel]) => {
   if (format === "ndjson") return attach("ndjson", "application/x-ndjson", ctx.idx.db.signedPosts(project.channel, 250_000).map((l) => `${l}\n`).join(""));
   if (format === "json") return attach("json", "application/json", JSON.stringify({ project, cards }, null, 2));
   throw new HttpError(400, "invalid", "format is csv, json or ndjson");
+});
+
+/** A batch body: up to MAX_BATCH_OPS ops of up to 16 KB each. */
+const BATCH_BODY_MAX = 4 * 1024 * 1024;
+
+/**
+ * Board ops batch (LINEAR-IMPORT-1): people only, up to 250 card writes signed in one transaction, paid for from the
+ * import budget (not the interactive write limit). `429 rate_limited` carries `retry_after_s`.
+ */
+route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})\/batch$/, async (c, [channel]) => {
+  const ctx = w(c);
+  requirePerson(ctx, "bulk board writes (an import)");
+  const b = parseWith(BatchReq, await readJson(c.req, BATCH_BODY_MAX));
+  c.noTimeout();
+  return json({ batch: applyBatch(ctx, channel as string, b.ops, { budgetKey: importBudgetKey(c.rateKey) }) });
 });
 
 // ---- tasks (cards across projects) --------------------------------------------------------------------------------

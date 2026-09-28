@@ -2,8 +2,10 @@
 // running (the chat), standby (another machine leads), needs a model login (the one step to add one), or stopped by
 // hand (the manual Start, in Orchestrator.tsx).
 import { useEffect, useState } from "react";
-import { KeyRound, RadioTower } from "lucide-react";
+import { KeyRound, Loader, Play, RadioTower } from "lucide-react";
 import { api } from "../../api/client.ts";
+import { ErrorState } from "../../components/primitives.tsx";
+import { lifecycleError } from "./lifecycle-error.ts";
 import type { OrchestratorView } from "../../api/types.ts";
 import { CopyCommand } from "../../components/primitives.tsx";
 
@@ -25,6 +27,58 @@ export function useTalkieView(refresh: string): TalkieView | null {
 /** Whether this machine's WalkieTalkie is standing down (another machine leads, or no model login here). */
 export function standingDown(v: TalkieView | null): boolean {
   return v?.state === "standby" || v?.state === "needs_login";
+}
+
+/**
+ * pre.8 (Alex: "it should just run on its own"): what a machine whose WalkieTalkie isn't running shows instead of a
+ * Start button: stopped by you (the one button: Resume = automatic), or starting (it starts on its own), or, only on a
+ * daemon without the auto-start, the manual start.
+ */
+export type NotRunningKind = "stopped_by_you" | "starting" | "manual";
+export function notRunningKind(v: TalkieView | null): NotRunningKind {
+  if (v?.stopped_by_hand) return "stopped_by_you";
+  if (v?.auto) return "starting";
+  return "manual";
+}
+
+/** Resume = back to automatic (POST /v1/orchestrator/auto). */
+export function ResumeButton({ size }: { size?: "sm" }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const resume = async () => {
+    setBusy(true);
+    setError(null);
+    try { await api.orchestratorAuto(); } catch (err) { setError(lifecycleError(err)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="orch-start">
+      <button type="button" className={`btn btn-primary${size === "sm" ? " btn-sm" : ""}`} disabled={busy} aria-busy={busy} onClick={() => void resume()}>
+        <Play size={size === "sm" ? 13 : 15} strokeWidth={2} aria-hidden="true" />
+        {busy ? "Resuming…" : "Resume"}
+      </button>
+      {error && <ErrorState message={error} compact />}
+    </div>
+  );
+}
+
+export function StoppedCard({ kind }: { kind: Exclude<NotRunningKind, "manual"> }) {
+  if (kind === "starting") {
+    return (
+      <div className="orch-card" role="status" aria-labelledby="orch-starting-title">
+        <div className="orch-card-icon" aria-hidden="true"><Loader size={18} strokeWidth={1.75} /></div>
+        <h2 id="orch-starting-title" className="orch-card-title">WalkieTalkie is starting</h2>
+        <p className="orch-card-body">It starts on its own on this machine; nothing to press.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="orch-card" role="region" aria-labelledby="orch-stopped-title">
+      <div className="orch-card-icon" aria-hidden="true"><Play size={18} strokeWidth={1.75} /></div>
+      <h2 id="orch-stopped-title" className="orch-card-title">WalkieTalkie is stopped (by you)</h2>
+      <p className="orch-card-body">It stays stopped until you resume it. Resume makes it automatic again: it runs here while this machine leads your team, and stands by otherwise.</p>
+      <ResumeButton />
+    </div>
+  );
 }
 
 export function TalkieStateCard({ view }: { view: TalkieView }) {

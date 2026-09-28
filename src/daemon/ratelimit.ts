@@ -13,7 +13,15 @@ export interface RateLimits {
   readonly peer: BucketSpec;
   /** agent.status of one session's sub-agents together (default SUBAGENT_STATUS_LIMIT, WALKIE-MISSION-SUB-1). */
   readonly subagentStatus?: BucketSpec;
+  /**
+   * Bulk board writes by a person (LINEAR-IMPORT-1, `POST /v1/projects/:channel/batch`): one token per signed op, per
+   * person key; never the interactive limiter. Default IMPORT_WRITE_LIMIT.
+   */
+  readonly importWrite?: BucketSpec;
 }
+
+/** 10 000 ops at once (a large Linear workspace's open issues and their history comments), refilled 10 000 per hour. */
+export const IMPORT_WRITE_LIMIT: BucketSpec = { capacity: 10_000, perSecond: 10_000 / 3600 };
 
 /** A session's sub-agents together: 6 statuses at once, 3/s sustained (each one's own 2/s bucket applies too). */
 export const SUBAGENT_STATUS_LIMIT: BucketSpec = { capacity: 6, perSecond: 3 };
@@ -23,6 +31,7 @@ export const DEFAULT_LIMITS: RateLimits = {
   humanWrite: { capacity: 60, perSecond: 1 },
   status: { capacity: 2, perSecond: 2 },
   peer: { capacity: 120, perSecond: 60 },
+  importWrite: IMPORT_WRITE_LIMIT,
 };
 
 /** Global cap on tracked keys; the least recently used bucket is evicted first. */
@@ -35,6 +44,18 @@ export class RateLimiter {
   can(key: string, spec: BucketSpec, now = Date.now()): boolean {
     const b = this.buckets.get(key);
     return (b ? Math.min(spec.capacity, b.tokens + ((now - b.at) / 1000) * spec.perSecond) : spec.capacity) >= 1;
+  }
+
+  /** The tokens in the bucket now (without taking any). */
+  available(key: string, spec: BucketSpec, now = Date.now()): number {
+    const b = this.buckets.get(key);
+    return b ? Math.min(spec.capacity, b.tokens + ((now - b.at) / 1000) * spec.perSecond) : spec.capacity;
+  }
+
+  /** Return tokens for an operation whose transaction rolled back; never exceed the bucket's capacity. */
+  refund(key: string, spec: BucketSpec, n: number, now = Date.now()): void {
+    const tokens = Math.min(spec.capacity, this.available(key, spec, now) + n);
+    this.buckets.set(key, { tokens, at: now });
   }
 
   /** Takes `n` tokens (default one); false = limited (nothing taken). */

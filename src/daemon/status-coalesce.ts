@@ -4,12 +4,13 @@
 // there would leave the dashboard showing stale activity.
 import type { BodyOf, Event } from "../protocol/schemas.ts";
 import type { StatusProvenance } from "../protocol/status-projection.ts";
+import { trackOp } from "./watchdog.ts";
 
 type Status = BodyOf<"agent.status">;
 interface Held { body: Status; provenance?: StatusProvenance }
 
 export interface StatusSink {
-  tryEmit(agent: string, body: Status, provenance?: StatusProvenance): Event | null; // null = rate limited
+  tryEmit(agent: string, body: Status, provenance?: StatusProvenance, final?: boolean): Event | null; // null = rate limited
 }
 
 /** Global cap on held statuses (and their timers): rotating agent names can't grow memory without bound. */
@@ -29,6 +30,19 @@ export class StatusCoalescer {
     this.held.set(agent, { body, ...(provenance ? { provenance } : {}) });
     if (!this.timers.has(agent)) this.schedule(agent);
     this.evict();
+    return null;
+  }
+
+  /** Offline is terminal: cancel a queued update and try to sign it synchronously. */
+  submitFinal(agent: string, body: Status, provenance?: StatusProvenance): Event | null {
+    const timer = this.timers.get(agent);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(agent);
+    this.held.delete(agent);
+    const event = this.sink.tryEmit(agent, body, provenance, true);
+    if (event) return event;
+    this.held.set(agent, { body, ...(provenance ? { provenance } : {}) });
+    this.schedule(agent);
     return null;
   }
 
@@ -53,7 +67,7 @@ export class StatusCoalescer {
       const held = this.held.get(agent);
       if (!held) return;
       try {
-        if (this.sink.tryEmit(agent, held.body, held.provenance)) this.held.delete(agent);
+        if (trackOp("status_flush", () => this.sink.tryEmit(agent, held.body, held.provenance))) this.held.delete(agent);
         else this.schedule(agent);
       } catch {
         this.held.delete(agent); // daemon stopping; status is ephemeral

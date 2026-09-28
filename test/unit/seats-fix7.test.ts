@@ -257,7 +257,7 @@ describe("links, durability, texts", () => {
     const l = { quarantined: ["walkie-s4"], quarantine_why: { "walkie-s4": "processes (before anything else): 1 process of it survived SIGKILL for 10 s" } } as unknown as SeatsLocalView;
     const text = quarantineLines(l).map(plain).join("\n");
     expect(text).toContain("walkie-s4: processes (before anything else): 1 process of it survived SIGKILL");
-    expect(text).toContain("A seat user that stays quarantined");
+    expect(text).toContain("https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional");
   });
 
   test("a process's identity is its pid and start time", () => {

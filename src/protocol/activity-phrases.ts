@@ -16,10 +16,10 @@ export const ACTIVITY_PHRASES: ReadonlySet<string> = new Set([
   "Planning", "Using a tool", "Edit files", "Waiting on a command's output", "Waiting",
   // the seats host's own status (src/daemon/seats/host.ts)
   ...Object.values({ off: "Seats off", allowed: "Seats allowed", running: "Seats running", busy: "Busy: its person is using it" }),
+  "Seat running", "Seat paused", "Seat finished",
   // discovery (src/daemon/discovery.ts)
   "Idle (no activity seen in the last minute)", "Working (seen from the process)", "Process exited",
   "Running (no hooks yet — restart to see live activity)",
   // sub-agents (src/hooks/subagents.ts)
   "Sub-agent started", "Sub-agent finished", "Parent session ended",
 ]);
-

@@ -1,7 +1,7 @@
 // config.json with defaults; env overrides WALKIE_PEER_PORT, WALKIE_LOCAL_PORT, WALKIE_PEER_HOST.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { SEAT_RUNTIMES } from "../protocol/seats.ts";
+import { SEAT_RUNTIMES_V1, SeatRepoId } from "../protocol/seats.ts";
 
 /**
  * Remote seats on THIS machine (PROTOCOL §11): off unless the person opts in (`walkie seats enable`, or
@@ -13,7 +13,13 @@ export const SeatsConfig = z.object({
   allow: z.boolean().default(false),
   launchers: z.array(z.string().min(1).max(140)).max(50).optional(),
   max: z.number().int().min(1).max(64).optional(),
-  runtimes: z.array(z.enum(SEAT_RUNTIMES)).min(1).max(2).optional(),
+  /** Claude/Codex only (a released pre.5 daemon must still read this file after a rollback: FO-2). */
+  runtimes: z.array(z.enum(SEAT_RUNTIMES_V1)).min(1).max(2).optional(),
+  /**
+   * FO-2: Kimi seats (v2 requests only, full access only): off unless its person turns them on (`walkie seats allow
+   * --runtimes claude,codex,kimi`). Kept out of `runtimes` so an older daemon still parses the file.
+   */
+  kimi: z.boolean().optional(),
   dir: z.string().min(1).max(1_000).optional(),
   /** Extra environment variable names a seat gets, on top of the allowlist (src/daemon/seats/runtime.ts). */
   env: z.array(z.string().min(1).max(64)).max(50).optional(),
@@ -40,6 +46,31 @@ export const SeatsConfig = z.object({
 });
 export type SeatsConfig = z.infer<typeof SeatsConfig>;
 
+/**
+ * FO-2 (FLEET-ORCH-1 §3.4): this machine's own clones of the team's repos, by repo id, for v2 seats that work in the
+ * host's existing repo (`workspace.repo`). Absolute paths; older daemons ignore the key.
+ */
+export const FleetConfig = z.object({
+  repos: z.record(SeatRepoId, z.string().min(2).max(1_000).regex(/^\//)).refine((r) => Object.keys(r).length <= 64, "at most 64 repos").optional(),
+});
+export type FleetConfig = z.infer<typeof FleetConfig>;
+
+/**
+ * FO-6 board steward on THIS machine: `auto` runs it every `interval_min` on every project this member stewards (an
+ * owner, or the project's creator) whose steward is on. Off unless the person turns it on (`walkie board steward auto
+ * on`): one machine per team should run it, the one with the repositories. `repos` maps a project prefix to local
+ * repositories whose branches are evidence (besides the project's path rules).
+ */
+export const StewardConfig = z.object({
+  auto: z.boolean().default(false),
+  interval_min: z.number().int().min(5).max(1_440).default(15),
+  stale_hours: z.number().int().min(1).max(720).default(24),
+  repos: z.record(z.string().regex(/^[A-Z][A-Z0-9]{1,9}$/), z.array(z.string().min(1).max(1_000)).max(10)).optional(),
+  /** The one-time lease migration ran (steward-run.ts migrateLeases); set by every config this version writes. */
+  lease_migrated: z.boolean().optional(),
+});
+export type StewardConfig = z.infer<typeof StewardConfig>;
+
 export const ConfigSchema = z.object({
   peer_port: z.number().int().min(0).max(65535).default(7458),
   local_port: z.number().int().min(0).max(65535).default(7457),
@@ -50,6 +81,9 @@ export const ConfigSchema = z.object({
   /** Show running Claude Code / Codex / Kimi sessions that have no hooks yet (src/daemon/discovery.ts). */
   discover_agents: z.boolean().default(true),
   seats: SeatsConfig.optional(),
+  /** FO-2: v2 seats' repos on this machine (FleetConfig). */
+  fleet: FleetConfig.optional(),
+  steward: StewardConfig.optional(),
   /**
    * Status titles made from prompts (and Codex's last-reply line), for hooks and discovery alike
    * (src/agent/share-policy.ts). Off unless set to true; WALKIE_SHARE_PROMPTS=0 turns it off too.
@@ -86,6 +120,12 @@ export const ConfigSchema = z.object({
   pool_share_max_gb: z.number().positive().max(16_384).nullable().optional(),
   /** Where the llama.cpp runtime is (default <walkie home>/pool/llama, where `walkie pool install` puts it). */
   pool_llama_dir: z.string().min(1).max(1024).optional(),
+  /**
+   * POOL-REAL-1: the transport split-run and served-model tunnels use to a machine that serves both: "auto" (the usual
+   * one, Tailscale first), "tailscale" or "direct" (falls back to the usual one when unreachable). WALKIE_POOL_TRANSPORT
+   * overrides it. A machine reachable over one transport only always uses that one.
+   */
+  pool_transport: z.enum(["auto", "tailscale", "direct"]).default("auto"),
   /** ACCOUNTS-2: a new `walkie claude` / `walkie codex` session does not start on an account whose window is at least
    *  this full (WALKIE_SWITCH_AT overrides). A running session moves only when its account hits the limit. */
   switch_threshold_pct: z.number().min(50).max(100).default(95),
@@ -151,6 +191,18 @@ export function loadConfig(path: string, env = true): Config {
     ...(localPort !== undefined ? { local_port: localPort } : {}),
     ...(process.env.WALKIE_PEER_HOST ? { peer_host: process.env.WALKIE_PEER_HOST } : {}),
   };
+}
+
+/** Writes `fleet` into config.json, keeping every other key exactly as the file has it. Atomic (temp file + rename), 0600. */
+export function saveFleetConfig(path: string, fleet: FleetConfig): void {
+  let raw: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) raw = parsed as Record<string, unknown>;
+  }
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ ...raw, fleet }, null, 2) + "\n", { mode: 0o600 });
+  renameSync(tmp, path);
 }
 
 /**

@@ -4,6 +4,7 @@
 // changed, chained by a roster revision; everyone else keeps getting whole `agents` frames.
 import type { AccountView, AgentView, AgentsPayload, Event, NodeView, StreamMessage } from "../protocol/schemas.ts";
 import type { BoardDelta } from "../protocol/projects/schema.ts";
+import { trackOp } from "./watchdog.ts";
 
 export const MAX_SSE_CLIENTS = 64;
 /** Per-client queued (unread) bytes before the client is dropped. */
@@ -125,7 +126,7 @@ export class Hub {
     if (this.agentsTimer) return;
     this.agentsTimer = setTimeout(() => {
       this.agentsTimer = null;
-      if (this.clients.size) this.flushAgents("timer");
+      if (this.clients.size) trackOp("stream_agents", () => this.flushAgents("timer"));
     }, this.debounceMs);
   }
 
@@ -178,7 +179,7 @@ export class Hub {
     if (this.nodesTimer) return;
     this.nodesTimer = setTimeout(() => {
       this.nodesTimer = null;
-      if (this.providers && this.clients.size) this.broadcastRaw(frame({ type: "nodes", nodes: this.providers.nodes() }));
+      if (this.providers && this.clients.size) trackOp("stream_nodes", () => this.broadcastRaw(frame({ type: "nodes", nodes: this.providers?.nodes() ?? [] })));
     }, this.debounceMs);
   }
 
@@ -186,8 +187,10 @@ export class Hub {
     if (this.accountsTimer) return;
     this.accountsTimer = setTimeout(() => {
       this.accountsTimer = null;
-      const list = this.providers?.accounts?.();
-      if (list && this.clients.size) this.broadcastRaw(frame({ type: "accounts", accounts: list }));
+      trackOp("stream_accounts", () => {
+        const list = this.providers?.accounts?.();
+        if (list && this.clients.size) this.broadcastRaw(frame({ type: "accounts", accounts: list }));
+      });
     }, this.debounceMs);
   }
 

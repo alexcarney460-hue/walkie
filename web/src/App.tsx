@@ -10,6 +10,7 @@ import { Asks } from "./views/Asks.tsx";
 import { BootError, FirstRun, SignedOut } from "./views/FirstRun.tsx";
 import { Integrations } from "./views/Integrations.tsx";
 import { Accounts } from "./views/Accounts.tsx";
+import { PoolBanner } from "./components/AccountsPool.tsx";
 import { MachineDetail } from "./views/machine/MachineDetail.tsx";
 import { Team } from "./views/Team.tsx";
 import { Board } from "./views/board/Board.tsx";
@@ -32,12 +33,14 @@ function Dashboard() {
   const [palette, setPalette] = useState(false);
   const openPalette = useCallback(() => setPalette(true), []);
   useGlobalHotkeys(openPalette);
+  const { accountsPool } = useStore();
 
   return (
     <div className={`app view-${route.view}`}>
       <Sidebar onSearch={openPalette} />
       <MobileBar onSearch={openPalette} />
       <main className="main" id="main">
+        <PoolBanner pool={accountsPool} />
         {route.view === "mission" && <MissionControl />}
         {route.view === "orchestrator" && <Orchestrator />}
         {route.view === "projects" && <Projects />}
