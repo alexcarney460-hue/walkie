@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { walkieArgv } from "../../hooks/install.ts";
 import { HEARTBEAT_MS } from "./supervisor.ts";
 import { killMarkedProcesses } from "./marked-processes.ts";
-import { existsSync, statSync, writeFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
+import { existsSync, statSync, realpathSync, writeFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { PermissionMode } from "../../protocol/orchestrator.ts";
@@ -104,6 +104,31 @@ export function childEnv(base: NodeJS.ProcessEnv, bin: string, path: string | un
   return { ...env, ...walkie };
 }
 
+/** A path can keep its name while an installer atomically replaces the executable behind it. */
+export function claudeBinaryIdentity(bin: string): string | null {
+  try {
+    const path = realpathSync(bin);
+    const st = statSync(path);
+    return `${path}:${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch { return null; }
+}
+
+const VALUE_FLAGS = new Set(["--permission-prompts"]);
+
+/** Only a flag present in the argv may be removed; never retry an unrelated Claude error. */
+export function unsupportedClaudeFlag(args: readonly string[], diagnostic: string): { flag: string; args: string[] } | null {
+  const flag = /unknown option\s+['"`]?(-{1,2}[a-zA-Z][\w-]*)/i.exec(diagnostic)?.[1];
+  if (flag !== "--permission-prompts") return null;
+  const index = args.findIndex((arg) => arg === flag || arg.startsWith(`${flag}=`));
+  if (index < 0) return null;
+  const count = args[index] === flag && VALUE_FLAGS.has(flag) ? 2 : 1;
+  return { flag, args: [...args.slice(0, index), ...args.slice(index + count)] };
+}
+
+export function withoutUnsupportedClaudeFlag(args: readonly string[], diagnostic: string): string[] | null {
+  return unsupportedClaudeFlag(args, diagnostic)?.args ?? null;
+}
+
 /** Whether this claude understands `--permission-prompts` (older versions exit on unknown options). */
 export async function supportsPermissionPrompts(bin: string, env: Record<string, string>, signal?: AbortSignal): Promise<boolean> {
   try {
@@ -166,6 +191,7 @@ export class ClaudeChild<S = ClaudeSignal> {
   private readonly runMarker: string;
   private stderr = "";
   private stderrCut = false;
+  private readonly stderrFinished: Promise<void>;
   /** Key blocks in all of stderr, so a window that starts inside one is known (ORCH-FIX-4). */
   private closed = false;
   readonly exited: Promise<number | null>;
@@ -199,7 +225,7 @@ export class ClaudeChild<S = ClaudeSignal> {
       const hookCommand = file ? leaseHookCommand([...walkieArgv(), "--internal-orchestrator-hook", file]) : "";
       const hook = file && lease?.hook ? JSON.stringify({ hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand, timeout: 15 }] }] } }) : null;
       if (lease) mkdirSync(join(lease.directory, "talkie"), { recursive: true, mode: 0o700 });
-      this.proc = Bun.spawn(file ? [...walkieArgv(), "--internal-orchestrator-supervisor", file, bin, ...args, ...(hook ? ["--settings", hook] : [])] : [bin, ...args],
+      this.proc = Bun.spawn(file ? [...walkieArgv(), "--internal-orchestrator-supervisor", file, String(process.pid), bin, ...args, ...(hook ? ["--settings", hook] : [])] : [bin, ...args],
         { cwd: lease ? join(lease.directory, "talkie") : cwd, env: { ...env, ...(file ? { WALKIE_TALKIE_RUN: run } : {}) }, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true });
     } catch (err) {
       if (file) rmSync(file, { force: true });
@@ -214,9 +240,11 @@ export class ClaudeChild<S = ClaudeSignal> {
       if (file) { rmSync(file, { force: true }); rmSync(`${file}.tmp`, { force: true }); }
     });
     void this.readStdout();
-    void this.readStderr();
+    this.stderrFinished = this.readStderr();
     this.exited = this.proc.exited.then(async (code) => {
-      await Bun.sleep(0);
+      // Bun reports process exit before its piped stderr reader necessarily sees EOF.
+      // A descendant may retain the pipe; bound the wait rather than delaying restart forever.
+      await Promise.race([this.stderrFinished, Bun.sleep(1_000)]);
       this.closed = true;
       this.h.onExit(code, stderrDiagnostic(this.stderr, this.stderrCut));
       return code;

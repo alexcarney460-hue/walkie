@@ -6,6 +6,7 @@ import type { PeerClient } from "../../src/daemon/peer-client.ts";
 import { makeCore, reopen } from "../helpers/core.ts";
 import { createTeam, ev, memberEv, nodeEv, tnode } from "../helpers/events.ts";
 import { seatsChannel } from "../../src/protocol/seats.ts";
+import { VERSION } from "../../src/daemon/version.ts";
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()?.(); });
 
@@ -67,5 +68,5 @@ test("vv advertises protocol capabilities with machine_stats false", async () =>
   expect(res.status).toBe(200);
   const vv = PeerVvRes.parse(await res.json());
   expect(vv.stats).toBeUndefined();
-  expect(vv.capabilities).toEqual({ version: "0.2.0-pre.8", caps: ["seats_v2"] });
+  expect(vv.capabilities).toEqual({ version: VERSION, caps: ["seats_v2"] });
 });

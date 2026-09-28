@@ -6,7 +6,7 @@ function alive(pid: number): boolean {
   try { process.kill(-pid, 0); return true; } catch { return false; }
 }
 for (const mode of ["stall", "expiry", "path", "orphan", "detached-orphan"]) {
-  test(`independent supervisor kills the live child group on ${mode}`, async () => {
+  test(`independent supervisor fences the live child group on ${mode}`, async () => {
     const dir = mkdtempSync(join(import.meta.dir, ".supervisor-"));
     const daemon = Bun.spawn([process.execPath, join(import.meta.dir, "../fixtures/orchestrator-supervisor/stalled-daemon.ts"), dir, mode],
       { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -22,6 +22,12 @@ for (const mode of ["stall", "expiry", "path", "orphan", "detached-orphan"]) {
         while (!existsSync(path) && Date.now() < ready) await Bun.sleep(10);
         orphan = Number(readFileSync(path, "utf8"));
         if (mode === "detached-orphan") await Bun.sleep(550);
+      }
+      if (mode === "stall" || mode === "orphan" || mode === "detached-orphan") {
+        await Bun.sleep(1_500); // the daemon is stalled, but its authority lease is still live
+        expect(alive(group)).toBe(true);
+        daemon.kill("SIGKILL"); // parent death, unlike a delayed renewal, must fence immediately
+        await daemon.exited;
       }
       const deadline = Date.now() + (mode === "stall" || mode === "orphan" || mode === "detached-orphan" ? 2_000 : 4_000);
       while (alive(group) && Date.now() < deadline) await Bun.sleep(25);

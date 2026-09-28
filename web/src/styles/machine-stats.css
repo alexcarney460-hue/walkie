@@ -57,10 +57,34 @@
   padding-top: 3px;
   padding-bottom: 4px;
 }
-.ms-rail { flex-basis: 100%; padding-left: 15px; }
-.ms-rail .ms-mem { flex: 1; }
-.ms-rail .ms-bar { flex: 1; width: auto; min-width: 32px; max-width: 72px; }
-.ms-rail .ms-temp { margin-left: auto; }
+/* A two-column grid, not one flex row: in the narrow rail a single row squeezed the memory text under the temperature
+   and pushed "Models: …" past the edge (text drawn over text). Memory takes what is left and ellipsizes; the temperature
+   keeps its width on the right; model servers and the discovery note get their own full-width, ellipsized lines. */
+.ms-rail {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 0;
+  padding-left: 15px;
+  overflow: hidden;
+}
+.ms-rail .ms-mem { min-width: 0; overflow: hidden; }
+.ms-rail .ms-bar { flex: 1 1 auto; width: auto; min-width: 24px; max-width: 72px; }
+.ms-rail .ms-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ms-rail .ms-temp { justify-self: end; }
+.ms-rail [data-testid="model-server-load"],
+.ms-rail .ms-disc {
+  grid-column: 1 / -1;
+  justify-self: start;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Team page: a line under the machine name. */
 .ms-cell { display: flex; margin: 4px 0 0 15px; gap: 12px; }

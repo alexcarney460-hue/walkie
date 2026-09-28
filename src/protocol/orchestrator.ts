@@ -95,7 +95,7 @@ export interface OrchestratorView {
      * ORCH-2: "standby" = another machine of the team is the lead (`lead`); "needs_login" = no Claude login here yet
      * (`needs` says how to add one). Older daemons never send them.
      */
-    state: "stopped" | "starting" | "idle" | "working" | "restarting" | "standby" | "needs_login";
+    state: "stopped" | "starting" | "idle" | "working" | "restarting" | "failed" | "standby" | "needs_login";
     /** ORCH-2: it starts on its own (the team's lead with a model login); false after a stop by hand. */
     auto?: boolean;
     /** Stopped by hand (sticky until started again by hand). */

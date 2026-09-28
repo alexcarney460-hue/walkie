@@ -158,7 +158,7 @@ as a released one.
 
 ## Status
 
-v0.2 pre-release (`v0.2.0-pre.8`, installed by default by the site's installer): macOS on Apple Silicon and Linux (x64,
+v0.2 pre-release (`v0.2.0-pre.9`, installed by default by the site's installer): macOS on Apple Silicon and Linux (x64,
 arm64; Windows through WSL2 as Linux), over Walkie Direct, Tailscale, or both in one team. Pre-release builds skip
 Intel Macs (use the v0.1.x release or build from source). Native Windows is not supported yet. Changes are in
 [CHANGELOG.md](CHANGELOG.md).

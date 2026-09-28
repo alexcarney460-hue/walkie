@@ -8,6 +8,7 @@ import { ErrorState } from "../../components/primitives.tsx";
 import { lifecycleError } from "./lifecycle-error.ts";
 import type { OrchestratorView } from "../../api/types.ts";
 import { CopyCommand } from "../../components/primitives.tsx";
+import { StartOrchestrator } from "./Lifecycle.tsx";
 
 export type TalkieView = OrchestratorView["local"];
 
@@ -34,9 +35,10 @@ export function standingDown(v: TalkieView | null): boolean {
  * Start button: stopped by you (the one button: Resume = automatic), or starting (it starts on its own), or, only on a
  * daemon without the auto-start, the manual start.
  */
-export type NotRunningKind = "stopped_by_you" | "starting" | "manual";
+export type NotRunningKind = "stopped_by_you" | "starting" | "failed" | "manual";
 export function notRunningKind(v: TalkieView | null): NotRunningKind {
   if (v?.stopped_by_hand) return "stopped_by_you";
+  if (v?.state === "failed") return "failed";
   if (v?.auto) return "starting";
   return "manual";
 }
@@ -61,7 +63,17 @@ export function ResumeButton({ size }: { size?: "sm" }) {
   );
 }
 
-export function StoppedCard({ kind }: { kind: Exclude<NotRunningKind, "manual"> }) {
+export function StoppedCard({ kind, view }: { kind: Exclude<NotRunningKind, "manual">; view?: TalkieView | null }) {
+  if (kind === "failed") {
+    return (
+      <div className="orch-card" role="alert" aria-labelledby="orch-failed-title">
+        <div className="orch-card-icon" aria-hidden="true"><KeyRound size={18} strokeWidth={1.75} /></div>
+        <h2 id="orch-failed-title" className="orch-card-title">WalkieTalkie keeps failing</h2>
+        <p className="orch-card-body">{view?.last_error ?? "Claude exited repeatedly. Check walkie talkie status for the error."}</p>
+        <StartOrchestrator />
+      </div>
+    );
+  }
   if (kind === "starting") {
     return (
       <div className="orch-card" role="status" aria-labelledby="orch-starting-title">

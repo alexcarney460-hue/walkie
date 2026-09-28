@@ -95,6 +95,9 @@ export function Orchestrator() {
   // The host's running flag is authoritative; the replicated agent card can be stale or swept by older peers.
   const hostRunning = talkie?.running === true && !standingDown(talkie);
   const host = hostRunning ? status : null;
+  // The host says it runs: show the conversation even while its replicated card is missing or stale (it re-announces
+  // itself every 10 min; before that fix, an idle card went stale after 30 min and this page said "starting").
+  const talkieLive = hostRunning;
   const reconnecting = conn.status === "reconnecting";
   const thread = route.thread;
   const [load, setLoad] = useState<"loading" | "ok" | "error">("loading");
@@ -209,6 +212,12 @@ export function Orchestrator() {
           <span>WalkieTalkie is stopped (by you). Resume to continue: it runs on its own again.</span>
           <ResumeButton size="sm" />
         </div>
+      ) : !empty && notRunningKind(talkie) === "failed" ? (
+        <div className="orch-offline orch-offline-start" role="alert">
+          <TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
+          <span>{talkie?.last_error ?? "WalkieTalkie keeps failing."}</span>
+          <StartOrchestrator size="sm" />
+        </div>
       ) : !empty && notRunningKind(talkie) === "starting" ? (
         <div className="orch-offline" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -252,7 +261,7 @@ export function Orchestrator() {
             <p className="orch-where">{where}</p>
           </div>
           {host && <HeaderModel refresh={`${host.status.model ?? ""}|${host.status.started_at ?? ""}`} />}
-          {host && <StopOrchestrator />}
+          {talkieLive && <StopOrchestrator />}
           <button type="button" className="btn btn-ghost btn-sm orch-head-new" onClick={newChat} title="New chat">
             <SquarePen size={15} strokeWidth={1.75} aria-hidden="true" />
             <span className="orch-head-new-label">New chat</span>
@@ -262,7 +271,7 @@ export function Orchestrator() {
         <div className="orch-scroll" ref={scroller} onScroll={onScroll}>
           <div className="orch-col">
             {empty ? (
-              host ? (
+              talkieLive ? (
                 <div className="orch-hello">
                   <h2 className="orch-hello-title">What should we get done?</h2>
                   {composerEl}
@@ -275,7 +284,7 @@ export function Orchestrator() {
                   </ul>
                 </div>
               ) : talkie && standingDown(talkie) ? <TalkieStateCard view={talkie} />
-                : notRunningKind(talkie) !== "manual" ? <StoppedCard kind={notRunningKind(talkie) as "stopped_by_you" | "starting"} /> : <NotRunning />
+                : notRunningKind(talkie) !== "manual" ? <StoppedCard kind={notRunningKind(talkie) as "stopped_by_you" | "starting" | "failed"} view={talkie} /> : <NotRunning />
             ) : (
               <div className="orch-thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
                 {load === "loading" && !messages.length && (

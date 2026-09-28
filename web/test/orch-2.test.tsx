@@ -135,6 +135,15 @@ describe("pre.8: no Start press on the lead", () => {
     expect(out).toContain("nothing to press");
     expect(out).not.toContain("<button");
   });
+  test("a capped crash loop shows its diagnostic and a deliberate restart", () => {
+    const view = { running: false, state: "failed" as const, auto: true, restarts: 4,
+      last_error: "WalkieTalkie keeps failing: claude exited (code 1): unknown option" };
+    expect(notRunningKind(view)).toBe("failed");
+    const out = renderToStaticMarkup(<StoppedCard kind="failed" view={view} />);
+    expect(out).toContain("WalkieTalkie keeps failing");
+    expect(out).toContain("unknown option");
+    expect(out).toContain("Start WalkieTalkie");
+  });
   test("a daemon without the auto-start keeps the manual Start", () => {
     expect(notRunningKind(v({}))).toBe("manual");
     expect(notRunningKind(null)).toBe("manual");

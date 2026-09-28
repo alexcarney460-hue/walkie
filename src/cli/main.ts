@@ -325,7 +325,7 @@ if (import.meta.main) {
   }
   if (process.argv[2] === "--internal-orchestrator-supervisor") {
     const { superviseChild } = await import("../daemon/orchestrator/supervisor.ts");
-    process.exit(await superviseChild(process.argv[3] ?? "", process.argv.slice(4)));
+    process.exit(await superviseChild(process.argv[3] ?? "", Number(process.argv[4]), process.argv.slice(5)));
   }
   process.exit(await main(process.argv.slice(2)));
 }

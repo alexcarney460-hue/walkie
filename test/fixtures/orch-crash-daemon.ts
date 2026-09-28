@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { WalkieClient } from "../../src/client/index.ts";
 import { FakeIdentity } from "../../src/daemon/identity.ts";
 import { startDaemon } from "../../src/daemon/main.ts";
+import { hostFor } from "../../src/daemon/orchestrator/host.ts";
 
 const [home, mode] = process.argv.slice(2) as [string, "first" | "again"];
 const fake = join(import.meta.dir, "fake-claude");
@@ -40,6 +41,7 @@ const logged = (): Record<string, unknown>[] => existsSync(log)
 
 if (mode === "first") {
   await person.init("acme", "alex");
+  hostFor(d.core)?.setLeadEligible(true); // this fixture's isolated WSL node is the team's only owner
   await person.orchestratorStart({ cwd: home, path: `${fake}:${process.env.PATH ?? "/usr/bin:/bin"}` });
   await until(async () => (await person.orchestrator()).local.state === "idle");
   await person.orchestratorSay("spawn and hang");

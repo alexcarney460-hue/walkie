@@ -3,6 +3,22 @@
 Releases are cut with `scripts/release.sh vX.Y.Z` (or the `release` workflow on a `v*` tag); both refuse a tag
 without a matching `## vX.Y.Z` section here. The section becomes the GitHub release notes.
 
+## v0.2.0-pre.9
+
+Hotfix on top of pre.8.
+
+- **WalkieTalkie no longer crash-loops.** It re-checks what the installed Claude supports whenever the Claude program
+  changes (a replaced older Claude made every start fail), retries once without an option Claude rejects, and shows
+  Claude's own error. Its watchdog no longer kills a healthy WalkieTalkie when a busy machine renews the lease a little
+  late (it still stops it when the lease really expires or Walkie stops). After 5 quick failures it stops retrying and
+  says "WalkieTalkie keeps failing: …" instead of restarting over and over.
+- **WalkieTalkie page.** A running WalkieTalkie no longer shows "WalkieTalkie is starting" with no chat box after it
+  has been idle for 30 minutes: it now re-announces itself every 10 minutes while it runs, and the page shows the
+  conversation whenever this machine's Walkie says it is running.
+- **Dashboard sidebar.** Each machine's stats line under its name no longer draws text over text in the narrow
+  sidebar: memory shortens with "…" when space is tight, the temperature keeps its place on the right, and the local
+  model servers ("Models: …") get a line of their own. The round-trip time next to the name is never clipped.
+
 ## v0.2.0-pre.8
 
 - **Faster, never-stuck daemon**: fixed indexes that made common queries walk every event; a watchdog names anything

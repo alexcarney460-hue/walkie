@@ -28,7 +28,7 @@ import { AutoPilot, defaultLogins, leadIfRunning, needsLoginText, peerLive, type
 import type { Logins } from "./logins.ts";
 import { FIRST_RUN_PROMPT, playbook } from "./playbook.ts";
 import { walkieArgv } from "../../hooks/install.ts";
-import { ClaudeChild, childEnv, claudeArgs, findClaude, supportsPermissionPrompts, walkieMcpConfig } from "./process.ts";
+import { ClaudeChild, childEnv, claudeArgs, claudeBinaryIdentity, findClaude, supportsPermissionPrompts, unsupportedClaudeFlag, walkieMcpConfig } from "./process.ts";
 import { vmMayLead, setVmLeadEligible } from "./vm-lead.ts";
 
 export interface OrchestratorOptions {
@@ -37,6 +37,8 @@ export interface OrchestratorOptions {
   restartMaxMs?: number;
   /** Minimum gap between progress statuses during a reply (default 1 s). */
   statusThrottleMs?: number;
+  /** How often a running WalkieTalkie re-announces its status (default ORCH_HEARTBEAT_MS). */
+  heartbeatMs?: number;
   /** Messages older than this when they arrive are not acted on (default 10 min). */
   maxAgeMs?: number;
   /** A `/stop` that Claude hasn't honoured after this long becomes a forced stop of Claude (default 10 s). */
@@ -100,6 +102,8 @@ interface HostState {
   stop_by_person_v8?: boolean;
   /** When the first-run onboarding was last opened (set once on the first start; again only when no projects). */
   onboarded_at?: number;
+  /** Gave up after five rapid failures: survives a lease loss and a daemon restart until a person starts it again. */
+  gave_up?: boolean;
 }
 
 /** A message to answer (`ts`: when the person sent it); `origin` is authorised again when it runs. */
@@ -125,12 +129,16 @@ const LIVE_FRAME_MS = 100;
 const TRANSCRIPT_CHARS = 24_000;
 /** A child that ran this long before exiting resets the backoff. */
 const HEALTHY_MS = 60_000;
+const MAX_RAPID_FAILURES = 5;
 
 export interface HostDeps {
   core: Core; log: Logger; client?: PeerClient;
   /** The team's machines with their heartbeats (views.ts nodesView), for the lead election. */
   nodes?: () => NodeView[];
 }
+
+/** How often a running WalkieTalkie re-announces its status (views treat a card older than 30 min as offline). */
+export const ORCH_HEARTBEAT_MS = 10 * 60_000;
 
 export class OrchestratorHost {
   private readonly core: Core;
@@ -163,9 +171,17 @@ export class OrchestratorHost {
   private interruptTimer: ReturnType<typeof setTimeout> | null = null;
   private liveTimer: ReturnType<typeof setTimeout> | null = null;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Re-announces the current status while WalkieTalkie runs: an idle card older than STALE_STATUS_MS reads as offline to
+   * every dashboard (the WalkieTalkie page then showed "starting" for a running WalkieTalkie). */
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastStatusAt = 0;
   private heldActivity: string | null = null;
   private permissionPrompts: boolean | null = null;
+  private probedBinary: string | null = null;
+  private spawnedBinary: string | null = null;
+  private disabledFlags = new Set<string>();
+  private flagRetryUsed = false;
+  private childArgs: string[] = [];
   /** ORCH-2: a model switch asked for while a reply was in progress (applied when it ends). */
   private pendingModel: string | undefined;
   /** ORCH-2: a note for the conversation when the pending restart happens (a model or access change). */
@@ -230,10 +246,11 @@ export class OrchestratorHost {
   private get restartBase(): number { return this.opts.restartBaseMs ?? 1_000; }
   private get restartMax(): number { return this.opts.restartMaxMs ?? 60_000; }
   private get throttle(): number { return this.opts.statusThrottleMs ?? 1_000; }
+  private get heartbeat(): number { return this.opts.heartbeatMs ?? ORCH_HEARTBEAT_MS; }
   private get maxAge(): number { return this.opts.maxAgeMs ?? 10 * 60_000; }
   private get interruptGrace(): number { return this.opts.interruptGraceMs ?? 10_000; }
   private get gateCheck(): number { return this.opts.gateCheckMs ?? 2_000; }
-  get running(): boolean { return this.phase !== "stopped"; }
+  get running(): boolean { return this.phase !== "stopped" && this.phase !== "failed"; }
 
   /**
    * Daemon start: messages still queued from before are dropped (their credentials ended with the old daemon), and an
@@ -261,6 +278,7 @@ export class OrchestratorHost {
       }
       if (!this.state?.active) return;
       if (this.state.owner !== this.core.myHandle()) { this.state = { ...this.state, active: false }; this.save(); return; }
+      if (this.gaveUp) { this.phase = "failed"; this.lastError = "WalkieTalkie kept failing before the daemon restarted"; return; }
       this.log.info("orchestrator_resumed", { started_at: this.state.started_at });
       await this.boot();
     }).catch((err) => this.log.warn("orchestrator_init_failed", { err: (err as Error).message }));
@@ -307,7 +325,15 @@ export class OrchestratorHost {
       this.state = { ...rest, mode: "auto" };
       this.save();
       this.log.info("orchestrator_auto_resumed", {});
-      void Promise.resolve().then(() => this.pilot?.tick());
+      if (this.phase === "failed" || this.gaveUp) {
+        // Cleared first so a start that fails (e.g. no lease yet) is retried by the auto check, not refused again.
+        this.setGaveUp(false);
+        this.restarts = 0;
+        this.attempt = 0;
+        if (this.phase === "failed") this.phase = "stopped";
+        await this.autoStart();
+      }
+      else void Promise.resolve().then(() => this.pilot?.tick());
       return this.view();
     });
   }
@@ -344,8 +370,9 @@ export class OrchestratorHost {
       ...(prev?.onboarded_at !== undefined ? { onboarded_at: prev.onboarded_at } : {}),
     };
     this.autoState = null;
-    this.restarts = 0;
-    this.attempt = 0;
+    // Only a person's start is a fresh try (the new state has no gave_up). An automatic start (after a lease loss in
+    // the middle of a crash loop) keeps counting, or lease blips would keep it below the five-failure give-up.
+    if (byHand) { this.restarts = 0; this.attempt = 0; }
     this.lastError = undefined;
     this.pendingModel = undefined;
     this.pendingNote = undefined;
@@ -366,7 +393,7 @@ export class OrchestratorHost {
       await this.stopNow("Stopped");
       this.ensureState();
       const s = this.state;
-      if (s) { const { mode: _m, ...rest } = s; this.state = { ...rest, stopped_by_hand: true, stop_by_person_v8: true }; this.save(); }
+      if (s) { const { mode: _m, gave_up: _g, ...rest } = s; this.state = { ...rest, stopped_by_hand: true, stop_by_person_v8: true }; this.save(); }
       this.autoState = null;
       // A machine that was standing by leaves the election too (its standby status said it could lead).
       this.status("offline", "Stopped", true);
@@ -391,6 +418,7 @@ export class OrchestratorHost {
    */
   close(): Promise<void> {
     this.closed = true; // a start queued behind this one does nothing
+    if (this.heartbeatTimer) { clearTimeout(this.heartbeatTimer); this.heartbeatTimer = null; }
     this.pilot?.stop();
     return this.serial(async () => {
       this.stopGate();
@@ -410,9 +438,11 @@ export class OrchestratorHost {
 
   view(): OrchestratorView["local"] {
     const s = this.state;
-    const auto = this.autoState && this.phase === "stopped" ? this.autoState : null;
+    // A give-up outranks standby/needs-login (it will not start on its own); a person's stop clears it.
+    const failed = this.gaveUp && !s?.stopped_by_hand && (this.phase === "stopped" || this.phase === "failed");
+    const auto = !failed && this.autoState && this.phase === "stopped" ? this.autoState : null;
     return {
-      running: this.running, state: auto ? auto.kind : this.phase, restarts: this.restarts,
+      running: this.running, state: failed ? "failed" : auto ? auto.kind : this.phase, restarts: this.restarts,
       ...(this.pilot ? { auto: !s?.stopped_by_hand && !(s?.mode === "manual" && s.active) } : {}),
       ...(s?.stopped_by_hand ? { stopped_by_hand: true } : {}),
       ...((auto?.kind === "standby" ? auto.lead : this.running ? null : this.otherLead) ? { lead: (auto?.kind === "standby" ? auto.lead : this.otherLead) as string } : {}),
@@ -440,7 +470,7 @@ export class OrchestratorHost {
     if (!validModel(model)) return Promise.reject(new HttpError(400, "invalid", BAD_MODEL));
     return this.serial(async () => {
       const s = this.state;
-      if (!s?.active || this.phase === "stopped") throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+      if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
       const next = modelArg(model);
       const { model: _prev, ...rest } = s;
       this.state = next ? { ...rest, model: next } : rest;
@@ -461,7 +491,7 @@ export class OrchestratorHost {
     if (!ORCHESTRATOR_ACCESS.includes(access)) return Promise.reject(new HttpError(400, "invalid", "bad access (platform or full)"));
     return this.serial(async () => {
       const s = this.state;
-      if (!s?.active || this.phase === "stopped") throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+      if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
       const base = s.access === "full" ? "default" : s.permission_mode;
       this.state = { ...s, access, permission_mode: effectiveMode(access, base) };
       this.save();
@@ -501,7 +531,7 @@ export class OrchestratorHost {
    */
   say(text: string, thread: string | undefined, origin: MessageOrigin): OrchMessage {
     const s = this.state;
-    if (!s?.active || this.phase === "stopped") throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+    if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", this.lastError ?? "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
     if (this.core.me()?.handle !== s.owner) throw new HttpError(403, "forbidden", "this machine no longer counts as the orchestrator's person");
     const body = text.trim();
     if (!body) throw new HttpError(400, "invalid", "empty message");
@@ -544,9 +574,7 @@ export class OrchestratorHost {
     this.stopping = false;
     this.startGate();
     this.phase = "starting";
-    if (this.permissionPrompts === null) {
-      this.permissionPrompts = await supportsPermissionPrompts(s.claude, childEnv(this.env, s.claude, s.path, {}));
-    }
+    await this.probePermissionPrompts();
     await this.detectLogins(); // a vault-only login is found before the first spawn too (a daemon restart resumes here)
     await this.prepareAuth();
     if (!(await this.leadership.acquire())) {
@@ -590,6 +618,18 @@ export class OrchestratorHost {
     }
   }
 
+  private async probePermissionPrompts(): Promise<void> {
+    const s = this.state;
+    if (!s) return;
+    const identity = claudeBinaryIdentity(s.claude);
+    if (identity && identity === this.probedBinary && this.permissionPrompts !== null) return;
+    const supported = await supportsPermissionPrompts(s.claude, childEnv(this.env, s.claude, s.path, {}));
+    if (identity === claudeBinaryIdentity(s.claude)) {
+      this.probedBinary = identity;
+      this.permissionPrompts = supported;
+    }
+  }
+
   // ---- auto-start (ORCH-2) -----------------------------------------------------------------------------
 
   /** What the auto-start loop (auto.ts) needs from this host. */
@@ -623,6 +663,9 @@ export class OrchestratorHost {
     // republishes a standby status over a person's stop (that would advertise this machine as able to lead).
     if (this.handHeld()) { this.autoState = null; return; }
     if (d.kind === "run") {
+      // Five rapid failures stopped it: the periodic check never restarts it (that re-ran five attempts on every
+      // check); only a person's `walkie talkie auto`/start/resume resets it.
+      if (this.phase === "failed" || this.gaveUp) { this.autoState = null; return; }
       if (!(await this.leadership.acquire())) { if (this.state?.active) await this.autoPause(); return; }
       if (this.state?.active && this.phase !== "stopped") { this.autoState = null; return; }
       await this.autoStart();
@@ -647,7 +690,7 @@ export class OrchestratorHost {
   /** The lead starts on its own with its saved settings (default: platform access, the default model). */
   private async autoStart(): Promise<void> {
     const prev = this.state?.owner === this.core.myHandle() ? this.state : null;
-    const claude = findClaude(undefined, prev?.path ?? this.env.PATH) ?? (prev?.claude && existsSync(prev.claude) ? prev.claude : null);
+    const claude = (prev?.claude && existsSync(prev.claude) ? prev.claude : null) ?? findClaude(undefined, prev?.path ?? this.env.PATH);
     if (!claude) {
       this.autoState = { kind: "needs_login", found: this.logins?.found ?? [] };
       this.lastError = "the claude CLI was not found (install Claude Code)";
@@ -752,12 +795,26 @@ export class OrchestratorHost {
     if (!this.leadership.valid) return;
     const s = this.state;
     if (!s) return;
-    const args = claudeArgs({
+    const identity = claudeBinaryIdentity(s.claude);
+    if (identity !== this.spawnedBinary) {
+      this.spawnedBinary = identity;
+      this.disabledFlags = new Set();
+      this.flagRetryUsed = false;
+    }
+    if (identity !== this.probedBinary) {
+      this.permissionPrompts = false;
+      void this.probePermissionPrompts(); // a changed binary starts safely while its capability is checked again
+    }
+    let args = claudeArgs({
       session, resume, ...(s.model ? { model: s.model } : {}), permissionMode: effectiveMode(s.access, s.permission_mode),
       permissionPrompts: this.permissionPrompts === true, allowedTools: PLATFORM_TOOLS,
       mcpConfig: walkieMcpConfig(walkieArgv(), this.core.paths.home, this.core.paths.socket),
       systemPrompt: playbook({ owner: s.owner, hostname: this.core.hostname, access: s.access }),
     });
+    for (const flag of this.disabledFlags) {
+      args = unsupportedClaudeFlag(args, `unknown option '${flag}'`)?.args ?? args;
+    }
+    this.childArgs = args;
     // A fresh secret per Claude process: only this child (and what it runs) can write as `orchestrator`.
     this.childToken = randomBytes(32).toString("hex");
     this.childLeaseEpoch = this.leadership.epoch;
@@ -781,7 +838,7 @@ export class OrchestratorHost {
         onSignal: (sig) => { if (this.child === child) this.onSignal(sig); },
         onExit: (code, err) => { if (this.child === child) this.onExit(code, err); },
       }, undefined, { directory: this.core.paths.home, expires: () => this.leadership.valid ? this.leadership.expiresAt : 0,
-        epoch: this.childLeaseEpoch, hook: true });
+        epoch: this.childLeaseEpoch, hook: !this.disabledFlags.has("--settings") });
     } catch (err) {
       this.child = null;
       this.onSpawnFailed((err as Error).message);
@@ -820,8 +877,24 @@ export class OrchestratorHost {
     const tail = scrub(stderr).trim().split("\n").slice(-1)[0] ?? "";
     this.lastError = `claude exited (code ${code ?? "signal"})${tail ? `: ${tail.slice(0, 240)}` : ""}`;
     this.log.warn("orchestrator_claude_exited", { code, session, err: tail.slice(0, 240) });
+    const unknownFlag = /unknown option\s+['"`]?(-{1,2}[a-zA-Z][\w-]*)/i.exec(stderr)?.[1];
+    const unsupported = !this.childInit && code !== 0 && !this.flagRetryUsed
+      ? unsupportedClaudeFlag(this.childArgs, stderr)
+      : null;
+    if (!this.childInit && code !== 0 && unknownFlag && !unsupported) {
+      this.setGaveUp(true);
+      this.phase = "failed";
+      this.lastError = `this Claude is too old for WalkieTalkie: ${unknownFlag}; update Claude`;
+      this.status("blocked", this.lastError, true);
+      return;
+    }
+    if (unsupported) {
+      this.disabledFlags.add(unsupported.flag);
+      this.flagRetryUsed = true;
+      if (unsupported.flag === "--permission-prompts") this.permissionPrompts = false;
+    }
     this.clearInterruptTimer();
-    const resumeFailed = this.childResumed && !this.childInit && !!session;
+    const resumeFailed = this.childResumed && !this.childInit && !!session && !unsupported;
     if (resumeFailed && session) {
       // The session could not be resumed on this machine: its conversation continues in a fresh session (with the
       // earlier turns as context), and the message it was about to answer is sent again there.
@@ -842,22 +915,31 @@ export class OrchestratorHost {
     if (ranMs > HEALTHY_MS) this.attempt = 0;
     this.pendingModel = undefined; // the restart runs the settings already
     this.pendingNote = undefined;
-    this.scheduleRestart();
+    this.scheduleRestart(!!unsupported);
   }
 
-  private scheduleRestart(): void {
+  private scheduleRestart(unsupportedRetry = false): void {
     if (this.stopping || !this.state?.active) return;
-    const delay = Math.min(this.restartMax, this.restartBase * 2 ** this.attempt);
-    this.attempt += 1;
+    if (!unsupportedRetry && this.attempt >= MAX_RAPID_FAILURES - 1) {
+      this.attempt += 1;
+      this.setGaveUp(true);
+      this.phase = "failed";
+      this.lastError = `WalkieTalkie keeps failing: ${this.lastError ?? "Claude exited without a diagnostic"}`;
+      this.status("blocked", "WalkieTalkie keeps failing; check walkie talkie status", true);
+      return;
+    }
+    const delay = unsupportedRetry ? 0 : Math.min(this.restartMax, this.restartBase * 2 ** this.attempt);
+    if (!unsupportedRetry) this.attempt += 1;
     this.restarts += 1;
     this.phase = "restarting";
-    this.status(this.attempt > 3 ? "blocked" : "idle", this.attempt > 3 ? "Claude keeps exiting." : "Restarting Claude…", true);
+    this.status("idle", unsupportedRetry ? "Retrying Claude with a supported option" : "Restarting Claude…", true);
     this.restartTimer = setTimeout(async () => {
       this.restartTimer = null;
       if (this.stopping || !this.state?.active) return;
       // The login may have changed (or been added to the vault) since the last spawn: refreshed before each retry.
       await this.detectLogins();
       await this.prepareAuth();
+      await this.probePermissionPrompts();
       if (this.stopping || !this.state?.active || this.child) return;
       const session = this.childSession;
       const used = !!session && Object.values(this.state.sessions).includes(session);
@@ -898,7 +980,7 @@ export class OrchestratorHost {
   private pump(): void {
     if (!this.leadership.valid) return;
     const s = this.state;
-    if (!s?.active || this.turn || this.phase === "restarting" || this.phase === "starting" || this.phase === "stopped") return;
+    if (!s?.active || this.turn || this.phase === "restarting" || this.phase === "starting" || this.phase === "stopped" || this.phase === "failed") return;
     // Authorised again when its turn comes (ORCH-FIX-11, Codex r11 HIGH 3's local analogue): a message that waited past
     // the age limit, whose credential ended (a signed-out or expired dashboard session, a rotated token), or whose
     // machine no longer counts as its person is not answered.
@@ -965,6 +1047,7 @@ export class OrchestratorHost {
     switch (sig.kind) {
       case "init":
         this.childInit = true;
+        this.flagRetryUsed = false;
         if (sig.model) this.model = sig.model;
         if (this.childSession !== sig.session) this.log.warn("orchestrator_session_mismatch", { want: this.childSession, got: sig.session });
         return;
@@ -1122,6 +1205,19 @@ export class OrchestratorHost {
     } catch (err) {
       this.log.warn("orchestrator_status_failed", { err: (err as Error).message });
     }
+    this.scheduleHeartbeat(state, activity);
+  }
+
+  /** While running and not offline, the same status again every ORCH_HEARTBEAT_MS (well under STALE_STATUS_MS). */
+  private scheduleHeartbeat(state: AgentState, activity: string): void {
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    if (this.closed || state === "offline") return;
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null;
+      if (!this.closed && (this.child || this.phase === "failed")) this.status(state, activity, true);
+    }, this.heartbeat);
+    this.heartbeatTimer.unref?.();
   }
 
   // ---- persistence -------------------------------------------------------------------------------
@@ -1143,6 +1239,15 @@ export class OrchestratorHost {
       this.log.warn("orchestrator_state_unreadable", { err: (err as Error).message });
       return null;
     }
+  }
+
+  /** Five rapid failures (or a too-old Claude): nothing automatic starts it again; only a person's start/auto. */
+  private get gaveUp(): boolean { return !!this.state?.gave_up; }
+  private setGaveUp(on: boolean): void {
+    if (!this.state || this.gaveUp === on) return;
+    const { gave_up: _g, ...rest } = this.state;
+    this.state = on ? { ...rest, gave_up: true } : rest;
+    this.save();
   }
 
   private save(): void {

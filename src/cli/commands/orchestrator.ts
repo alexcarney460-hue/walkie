@@ -61,6 +61,7 @@ function stateLine(v: OrchestratorView): string {
   const l = v.local;
   if (l.state === "standby") return `${c.cyan("standby")}${l.lead ? ` (lead: ${safeTerm(l.lead)})` : " (no lead machine yet)"} — the team's WalkieTalkie runs on its lead machine`;
   if (l.state === "needs_login") return `${c.yellow("needs a model login")} — ${safeTerm(l.needs ?? "sign in to Claude Code on this machine (run: claude)")}`;
+  if (l.state === "failed") return `${c.red("failed")} — ${safeTerm(l.last_error ?? "WalkieTalkie keeps failing")} · restart: walkie talkie start`;
   if (!l.running && l.stopped_by_hand) return `${c.yellow("stopped by you")} — resume it (automatic again): walkie talkie auto`;
   if (!l.running && l.auto) return `${c.dim("starting")} — it starts on its own on this machine`;
   if (!l.running) return `${c.yellow("not running")} — ${START_HINT}`;
@@ -165,7 +166,7 @@ async function status(ctx: Ctx, client: WalkieClient): Promise<number> {
   const l = v.local;
   if (l.running) ctx.out(c.dim(`session ${l.session ?? "-"} · cwd ${l.cwd ?? "-"} · ${accessLabel(l)} · restarts ${l.restarts}`));
   if (l.running) ctx.out(c.dim(`model ${safeTerm(l.model_setting ?? "default")}${l.model && l.model !== l.model_setting ? ` (running ${safeTerm(l.model)})` : ""}${l.model_pending ? ` · switching to ${safeTerm(l.model_pending)} after this reply` : ""}`));
-  if (l.last_error) ctx.out(c.yellow(`last error: ${safeTerm(l.last_error)}`));
+  if (l.last_error && l.state !== "failed") ctx.out(c.yellow(`last error: ${safeTerm(l.last_error)}`));
   return EXIT.ok;
 }
 

@@ -147,7 +147,8 @@
 .rail-machine.is-active { background: var(--sel); color: var(--text); box-shadow: 0 1px 0 0 var(--glass-hi) inset; }
 .rail-machine:focus-visible { border-radius: var(--r-control); outline-offset: -2px; }
 .rail-machine.is-off { color: var(--text-3); }
-.rail-rtt { margin-left: auto; font-size: var(--fs-11); }
+.rail-rtt { flex: none; margin-left: auto; font-size: var(--fs-11); white-space: nowrap; }
+.rail-machine > .truncate { min-width: 0; }
 .rail-foot {
   display: flex;
   align-items: center;
