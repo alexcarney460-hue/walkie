@@ -1,0 +1,4 @@
+{"partial line cut by the tail rea
+{"timestamp": "2026-09-26T18:00:00.000Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "working"}}
+{"timestamp": "2026-09-26T18:07:25.653Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 10}}, "rate_limits": {"limit_id": "codex", "limit_name": null, "primary": {"used_percent": 13.0, "window_minutes": 10080, "resets_at": 1791046693}, "secondary": null, "credits": {"has_credits": false, "unlimited": false, "balance": "0"}, "plan_type": "pro", "rate_limit_reached_type": null}}}
+{"timestamp": "2026-09-26T18:07:30.000Z", "type": "response_item", "payload": {"type": "message", "role": "assistant"}}

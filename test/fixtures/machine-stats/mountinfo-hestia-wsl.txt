@@ -1,0 +1,38 @@
+77 82 0:31 / /usr/lib/modules/6.18.33.2-microsoft-standard-WSL2 rw,nosuid,nodev,noatime - overlay none rw,lowerdir=/modules,upperdir=/lib/modules/6.18.33.2-microsoft-standard-WSL2/rw/upper,workdir=/lib/modules/6.18.33.2-microsoft-standard-WSL2/rw/work,uuid=on
+78 82 0:34 / /mnt/wsl rw,relatime shared:1 - tmpfs none rw
+79 82 0:36 / /usr/lib/wsl/drivers ro,nosuid,nodev,noatime - 9p drivers ro,aname=drivers;fmask=222;dmask=222,cache=0x5,access=client,msize=65536,trans=fd,rfd=8,wfd=8
+82 67 8:48 / / rw,relatime - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+83 82 0:40 / /mnt/wslg rw,relatime shared:2 - tmpfs none rw
+84 83 8:48 / /mnt/wslg/distro ro,relatime shared:3 - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+110 82 0:57 / /usr/lib/wsl/lib rw,nosuid,nodev,noatime - overlay none rw,lowerdir=/gpu_lib_packaged:/gpu_lib_inbox,upperdir=/gpu_lib/rw/upper,workdir=/gpu_lib/rw/work,uuid=on
+111 82 0:2 /init /init ro - rootfs rootfs rw,size=3955920k,nr_inodes=988980
+112 82 0:6 / /dev rw,nosuid,relatime shared:14 - devtmpfs none rw,size=3955920k,nr_inodes=988980,mode=755
+113 82 0:24 / /sys rw,nosuid,nodev,noexec,noatime shared:15 - sysfs sysfs rw
+114 82 0:61 / /proc rw,nosuid,nodev,noexec,noatime shared:16 - proc proc rw
+115 112 0:62 / /dev/pts rw,nosuid,noexec,noatime shared:17 - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+116 82 0:63 / /run rw,nosuid,nodev shared:18 - tmpfs none rw,mode=755
+117 116 0:64 / /run/lock rw,nosuid,nodev,noexec,noatime shared:19 - tmpfs none rw
+118 116 0:65 / /run/shm rw,nosuid,nodev,noatime shared:20 - tmpfs none rw
+119 112 0:65 / /dev/shm rw,nosuid,nodev,noatime shared:20 - tmpfs none rw
+120 116 0:66 / /run/user rw,nosuid,nodev,noexec,noatime shared:21 - tmpfs none rw,mode=755
+121 114 0:35 / /proc/sys/fs/binfmt_misc rw,relatime shared:22 - binfmt_misc binfmt_misc rw
+122 113 0:25 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:23 - cgroup2 cgroup2 rw,nsdelegate
+126 83 0:42 /etc/versions.txt /mnt/wslg/versions.txt rw,relatime shared:24 - overlay none rw,lowerdir=/systemvhd,upperdir=/system/rw/upper,workdir=/system/rw/work,uuid=on
+128 83 0:42 /usr/share/doc /mnt/wslg/doc rw,relatime shared:25 - overlay none rw,lowerdir=/systemvhd,upperdir=/system/rw/upper,workdir=/system/rw/work,uuid=on
+130 82 0:40 /.X11-unix /tmp/.X11-unix ro,relatime shared:2 - tmpfs none rw
+131 82 0:69 / /mnt/c rw,noatime - 9p C:\134 rw,aname=drvfs;path=C:\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=6,wfd=6
+132 120 0:40 /run/user /run/user rw,relatime shared:2 - tmpfs none rw
+133 113 0:13 / /sys/kernel/tracing rw,nosuid,nodev,noexec,relatime shared:26 - tracefs tracefs rw
+134 82 0:71 / /tmp rw,nosuid,nodev - tmpfs tmpfs rw,nr_inodes=1048576
+135 112 0:70 / /dev/hugepages rw,nosuid,nodev,relatime shared:27 - hugetlbfs hugetlbfs rw,pagesize=2M
+136 112 0:39 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:28 - mqueue mqueue rw
+137 113 0:8 / /sys/kernel/debug rw,nosuid,nodev,noexec,relatime shared:29 - debugfs debugfs rw
+138 116 0:72 / /run/credentials/systemd-journald.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:30 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,noswap
+139 113 0:22 / /sys/kernel/config rw,nosuid,nodev,noexec,relatime shared:31 - configfs configfs rw
+140 113 0:73 / /sys/fs/fuse/connections rw,nosuid,nodev,noexec,relatime shared:32 - fusectl fusectl rw
+142 116 0:75 / /run/credentials/systemd-resolved.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:34 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,noswap
+158 134 0:40 /.X11-unix /tmp/.X11-unix ro,relatime shared:2 - tmpfs none rw
+185 132 0:83 / /run/user/1000 rw,nosuid,nodev,relatime shared:261 - tmpfs tmpfs rw,size=792336k,nr_inodes=198084,mode=700,uid=1000,gid=1000
+187 83 0:83 / /mnt/wslg/run/user/1000 rw,nosuid,nodev,relatime shared:261 - tmpfs tmpfs rw,size=792336k,nr_inodes=198084,mode=700,uid=1000,gid=1000
+370 82 8:48 /var/lib/docker /var/lib/docker rw,relatime shared:324 - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered
+386 116 0:88 / /run/credentials/getty@tty1.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:386 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,noswap

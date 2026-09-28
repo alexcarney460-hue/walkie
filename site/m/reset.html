@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Reset Walkie</title>
+  <link rel="stylesheet" href="/m/app.css">
+  <script type="module" src="/m/reset.js"></script>
+</head>
+<body>
+  <main class="screen">
+    <div class="brand"><span class="logo" aria-hidden="true"></span>Walkie</div>
+    <h1>Reset Walkie on this phone</h1>
+    <p class="lede">This forgets the pairing, the saved app and its offline copy on this phone. Your computer keeps its
+      list of phones: sign this one out there too (<code>walkie mobile revoke</code> or Team → Devices), then pair again
+      with <code>walkie mobile pair</code>.</p>
+    <p class="row">
+      <button type="button" class="btn-danger" id="reset">Reset this phone</button>
+      <a class="btn-ghost" href="/m">Cancel</a>
+    </p>
+    <p class="muted small" id="status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "updated": "2026-09-26",
+  "context_tokens": 8192,
+  "bits_per_weight": {
+    "q4": 4.8944,
+    "q8": 8.5008
+  },
+  "bits_source": "https://github.com/ggml-org/llama.cpp/blob/master/tools/quantize/README.md",
+  "kv_bytes_per_value": 2,
+  "overhead_gib": 1.0,
+  "formula": "mem_gib = weights + kv + overhead; weights = params x bits_per_weight / 8 (or weights_gib); kv = kv_values_per_token x context_tokens x 2 bytes, kv_values_per_token = 2 x layers x kv_heads x head_dim (or layers x (kv_lora_rank + rope_dim) with mla); overhead = overhead_gib",
+  "models": [
+    {
+      "id": "llama-3.2-3b",
+      "name": "Llama 3.2 3B Instruct",
+      "maker": "Meta",
+      "params_b": 3.21,
+      "active_b": null,
+      "arch": {
+        "layers": 28,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 3.7,
+        "q8": 5.1
+      },
+      "license": "Llama 3.2 Community License",
+      "source": "https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct",
+      "config_source": "https://huggingface.co/unsloth/Llama-3.2-3B-Instruct/blob/main/config.json",
+      "verified": true,
+      "note": "Meta's repository is gated; the architecture was read from the unsloth mirror's config.json."
+    },
+    {
+      "id": "llama-3.1-8b",
+      "name": "Llama 3.1 8B Instruct",
+      "maker": "Meta",
+      "params_b": 8.03,
+      "active_b": null,
+      "arch": {
+        "layers": 32,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 6.6,
+        "q8": 9.9
+      },
+      "license": "Llama 3.1 Community License",
+      "source": "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct",
+      "config_source": "https://huggingface.co/unsloth/Llama-3.1-8B-Instruct/blob/main/config.json",
+      "verified": true,
+      "note": "Meta's repository is gated; the architecture was read from the unsloth mirror's config.json."
+    },
+    {
+      "id": "qwen3-8b",
+      "name": "Qwen3 8B",
+      "maker": "Alibaba Qwen",
+      "params_b": 8.19,
+      "active_b": null,
+      "arch": {
+        "layers": 36,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 6.8,
+        "q8": 10.2
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-8B",
+      "config_source": "https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json",
+      "verified": true
+    },
+    {
+      "id": "phi-4",
+      "name": "Phi-4 (14B)",
+      "maker": "Microsoft",
+      "params_b": 14.66,
+      "active_b": null,
+      "arch": {
+        "layers": 40,
+        "kv_heads": 10,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 10.9,
+        "q8": 17.1
+      },
+      "license": "MIT",
+      "source": "https://huggingface.co/microsoft/phi-4",
+      "config_source": "https://huggingface.co/microsoft/phi-4/blob/main/config.json",
+      "verified": true,
+      "note": "head_dim = hidden_size 5120 / 40 attention heads."
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3 14B",
+      "maker": "Alibaba Qwen",
+      "params_b": 14.77,
+      "active_b": null,
+      "arch": {
+        "layers": 40,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 10.7,
+        "q8": 16.9
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-14B",
+      "config_source": "https://huggingface.co/Qwen/Qwen3-14B/blob/main/config.json",
+      "verified": true
+    },
+    {
+      "id": "gpt-oss-20b",
+      "name": "gpt-oss-20b",
+      "maker": "OpenAI",
+      "params_b": 21.0,
+      "active_b": 3.6,
+      "arch": {
+        "layers": 24,
+        "kv_heads": 8,
+        "head_dim": 64
+      },
+      "weights_gib": {
+        "q4": 12.8,
+        "q8": null
+      },
+      "mem_gib": {
+        "q4": 14.2,
+        "q8": null
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/openai/gpt-oss-20b",
+      "config_source": "https://huggingface.co/openai/gpt-oss-20b/blob/main/config.json",
+      "verified": true,
+      "note": "Mixture of experts, 21B total / 3.6B active (model card). Ships with MXFP4 (about 4-bit) expert weights: the 4-bit size is the published checkpoint (12.8 GiB of safetensors), there is no official 8-bit. Half the layers use a 128-token sliding window, so the KV estimate is an upper bound."
+    },
+    {
+      "id": "mistral-small-3.2-24b",
+      "name": "Mistral Small 3.2 24B Instruct",
+      "maker": "Mistral AI",
+      "params_b": 24.01,
+      "active_b": null,
+      "arch": {
+        "layers": 40,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 15.9,
+        "q8": 26.0
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+      "config_source": "https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506/blob/main/config.json",
+      "verified": true,
+      "note": "Parameter count includes the vision encoder."
+    },
+    {
+      "id": "qwen3-30b-a3b",
+      "name": "Qwen3 30B-A3B",
+      "maker": "Alibaba Qwen",
+      "params_b": 30.53,
+      "active_b": 3.3,
+      "arch": {
+        "layers": 48,
+        "kv_heads": 4,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 19.1,
+        "q8": 32.0
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-30B-A3B",
+      "config_source": "https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json",
+      "verified": true,
+      "note": "Mixture of experts, 30.5B total / 3.3B activated (model card): needs the memory of a 30B model, runs at the speed of a 3B one."
+    },
+    {
+      "id": "qwen3-32b",
+      "name": "Qwen3 32B",
+      "maker": "Alibaba Qwen",
+      "params_b": 32.76,
+      "active_b": null,
+      "arch": {
+        "layers": 64,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 21.7,
+        "q8": 35.4
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-32B",
+      "config_source": "https://huggingface.co/Qwen/Qwen3-32B/blob/main/config.json",
+      "verified": true
+    },
+    {
+      "id": "llama-3.3-70b",
+      "name": "Llama 3.3 70B Instruct",
+      "maker": "Meta",
+      "params_b": 70.55,
+      "active_b": null,
+      "arch": {
+        "layers": 80,
+        "kv_heads": 8,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 43.7,
+        "q8": 73.3
+      },
+      "license": "Llama 3.3 Community License",
+      "source": "https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct",
+      "config_source": "https://huggingface.co/unsloth/Llama-3.3-70B-Instruct/blob/main/config.json",
+      "verified": true,
+      "note": "Meta's repository is gated; the architecture was read from the unsloth mirror's config.json."
+    },
+    {
+      "id": "gpt-oss-120b",
+      "name": "gpt-oss-120b",
+      "maker": "OpenAI",
+      "params_b": 117.0,
+      "active_b": 5.1,
+      "arch": {
+        "layers": 36,
+        "kv_heads": 8,
+        "head_dim": 64
+      },
+      "weights_gib": {
+        "q4": 60.8,
+        "q8": null
+      },
+      "mem_gib": {
+        "q4": 62.4,
+        "q8": null
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/openai/gpt-oss-120b",
+      "config_source": "https://huggingface.co/openai/gpt-oss-120b/blob/main/config.json",
+      "verified": true,
+      "note": "Mixture of experts, 117B total / 5.1B active (model card). MXFP4 checkpoint of 60.8 GiB; no official 8-bit. Sliding-window layers make the KV estimate an upper bound."
+    },
+    {
+      "id": "qwen3-235b-a22b",
+      "name": "Qwen3 235B-A22B",
+      "maker": "Alibaba Qwen",
+      "params_b": 235.09,
+      "active_b": 22.0,
+      "arch": {
+        "layers": 94,
+        "kv_heads": 4,
+        "head_dim": 128
+      },
+      "mem_gib": {
+        "q4": 136.4,
+        "q8": 235.1
+      },
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-235B-A22B",
+      "config_source": "https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json",
+      "verified": true,
+      "note": "Mixture of experts, 235B total / 22B activated (model card)."
+    },
+    {
+      "id": "deepseek-v3",
+      "name": "DeepSeek-V3",
+      "maker": "DeepSeek",
+      "params_b": 671.0,
+      "active_b": 37.0,
+      "arch": {
+        "layers": 61,
+        "mla": {
+          "kv_lora_rank": 512,
+          "rope_dim": 64
+        }
+      },
+      "mem_gib": {
+        "q4": 383.9,
+        "q8": 665.6
+      },
+      "license": "DeepSeek Model License (weights), MIT (code)",
+      "source": "https://huggingface.co/deepseek-ai/DeepSeek-V3",
+      "config_source": "https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/config.json",
+      "verified": true,
+      "note": "Mixture of experts, 671B total / 37B activated (model card; the checkpoint's 685B adds the multi-token-prediction module). Multi-head latent attention caches 512 + 64 values per layer and token."
+    }
+  ]
+}

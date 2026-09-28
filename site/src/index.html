@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{name}}: {{tagline}}</title>
+  <meta name="description" content="See what every AI agent on your team is doing, live, on your desk and on your phone. Works inside Claude Code and Codex. Machines connect directly, with nothing else to install. Free for 2 people.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#131417" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f8f8fa" media="(prefers-color-scheme: light)">
+  {{canonical}}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{name}}">
+  <meta property="og:title" content="{{name}}: {{tagline}}">
+  <meta property="og:description" content="One live view of every AI agent on your team, on your desk and on your phone. Machines connect directly, with nothing else to install.">
+  <meta property="og:image" content="{{og_image}}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Mission Control: a team's agents working, waiting on a person and stuck, with one session's sub-agents.">
+  {{og_url}}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{name}}: {{tagline}}">
+  <meta name="twitter:description" content="One live view of every AI agent on your team, on your desk and on your phone. Machines connect directly, with nothing else to install.">
+  <meta name="twitter:image" content="{{og_image}}">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/archivo-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/geist-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script>
+    (function () {
+      var d = document.documentElement;
+      d.classList.add("js");
+      try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") d.dataset.theme = t; } catch (e) {}
+      // Screenshots follow the system theme through <source media>; a manual override rewrites those queries.
+      window.themePictures = function () {
+        var forced = d.dataset.theme;
+        document.querySelectorAll("picture[data-themed] source[data-scheme]").forEach(function (s) {
+          if (!s.dataset.orig) s.dataset.orig = s.media;
+          s.media = forced === "light" ? s.dataset.mq : forced === "dark" ? "not all" : s.dataset.orig;
+        });
+      };
+    })();
+  </script>
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav-wrap">
+    <nav class="nav" aria-label="Primary">
+      <a class="brand" href="#top" aria-label="{{name}} home">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="8"/><path class="m1" d="M9 13h11"/><path class="m2" d="M12.5 19.5h11"/></svg>
+        <span>{{name}}</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#how">How it connects</a></li>
+        <li><a href="#phone">Phone</a></li>
+        <li><a href="#pricing">Pricing</a></li>
+        <li><a href="#faq">FAQ</a></li>
+        <li><a href="{{source_url}}" rel="noopener">GitHub</a></li>
+      </ul>
+      <button class="theme-btn" type="button" data-theme-toggle aria-label="Switch to light theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+      <a class="nav-cta" href="#install">Install</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <!-- 1. Hero -->
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="wrap hero-grid">
+        <p class="eyebrow load" style="--i:0"><span class="live-dot" aria-hidden="true"></span>Free for 2 people &middot; 14-day Team trial, no card</p>
+        <h1 id="hero-title" class="load" style="--i:1">See what every AI agent on your team is doing.</h1>
+        <div class="hero-side">
+          <p class="lead load" style="--i:2">{{name}} puts every Claude Code and Codex session on your team on one live dashboard, on your desk and on your phone. Your machines connect directly, and your agents can ask each other for help.</p>
+          <div class="install load" id="install" style="--i:3">
+            <div class="install-shell">
+              <div class="install-core">
+                <code class="install-cmd"><span class="p" aria-hidden="true">$</span> <span data-copy-src>{{install}}</span></code>
+                <button class="copy" type="button" data-copy aria-label="Copy install command">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg>
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+            </div>
+            <p class="install-note">The installer runs <code>{{cli}} setup</code>, which creates or joins your team. Machines connect with {{name}} Direct: no VPN, no account, nothing else to install. Macs with Apple Silicon, and Linux. Installs version {{release}}.</p>
+          </div>
+        </div>
+      </div>
+
+      <figure class="shot hero-shot load" style="--i:4">
+        <div class="bezel">
+          <div class="bezel-core">
+            <picture data-themed>
+              <source media="(max-width: 640px) and (prefers-color-scheme: light)" data-scheme="light" data-mq="(max-width: 640px)" srcset="assets/img/mission-m-light.webp" width="390" height="660">
+              <source media="(max-width: 640px)" srcset="assets/img/mission-m-dark.webp" width="390" height="660">
+              <source media="(prefers-color-scheme: light)" data-scheme="light" data-mq="all" srcset="assets/img/mission-light.webp" width="1440" height="900">
+              <img src="assets/img/mission-dark.webp" width="1440" height="900" fetchpriority="high" alt="Mission Control: counts of agents working, waiting on you and stuck, then each person's machines with their agents. One Claude Code session shows its sub-agents as rows of their own, one of them waiting for permission.">
+            </picture>
+            <script>window.themePictures()</script>
+          </div>
+        </div>
+        <figcaption>Mission Control for Kestrel, a made-up team. Working agents first, and what needs you on top.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 2. See every agent -->
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <header class="sec-head reveal">
+          <p class="kicker">Mission Control</p>
+          <h2 id="features-title">Know who&rsquo;s working, who&rsquo;s waiting and who&rsquo;s stuck.</h2>
+          <p class="sec-lead">Agents show up on their own. {{name}} reads what each one is doing right now, and the ones that need a person rise to the top.</p>
+        </header>
+
+        <ul class="features">
+          <li class="feature reveal">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="7" height="6" rx="1.5"/><rect x="13.5" y="4.5" width="7" height="6" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="6" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="6" rx="1.5"/></svg></span>
+            <h3>Live agent states</h3>
+            <p>Working, waiting on you, stuck or idle, from what each agent is doing. Hook events show up right away, and the rest is picked up within about half a minute.</p>
+          </li>
+          <li class="feature reveal">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.2"/><path d="M6 8.2v9.3M6 12h6.5M6 17.5h6.5"/><circle cx="15" cy="12" r="2.2"/><circle cx="15" cy="17.5" r="2.2"/></svg></span>
+            <h3>Sub-agents in view</h3>
+            <p>When a Claude Code session fans out, each sub-agent gets a row of its own under it. You see the whole tree at a glance.</p>
+          </li>
+          <li class="feature reveal">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H11l-4 3.5v-3.5h-.5a2 2 0 0 1-2-2Z"/><path d="M9.5 9a2.5 2.5 0 1 1 3.3 2.4c-.5.2-.8.6-.8 1.1"/></svg></span>
+            <h3>Agents help each other</h3>
+            <p>Your agent can ask a teammate&rsquo;s agent a question and get the answer back. Questions for a person wait in Asks until someone answers.</p>
+          </li>
+          <li class="feature reveal">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4.5" width="16" height="11" rx="2"/><path d="M9 19.5h6M12 15.5v4M8 11l2-2.5 2 1.5 3-3.5"/></svg></span>
+            <h3>A page per machine</h3>
+            <p>Click a machine to see its agents, memory, load, temperature and GPU, and the questions waiting on it.</p>
+          </li>
+          <li class="feature reveal">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 16.5a7.5 7.5 0 1 1 15 0"/><path d="M12 16.5 15.5 11"/><path d="M4.5 19.5h15"/></svg></span>
+            <h3>Usage left on every account</h3>
+            <p>See how much of each Claude, Codex and Kimi plan is left, and when the limits reset. Codex resets can be used right from the dashboard.</p>
+          </li>
+          <li class="feature reveal">
+            <span class="f-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5 13.6 8l4.4 1.6-4.4 1.6L12 15.6l-1.6-4.4L6 9.6 10.4 8Z"/><path d="M18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></svg></span>
+            <h3>WalkieTalkie, the orchestrator you can chat with</h3>
+            <p>It starts on its own once a machine has a Claude login: one per team, on your own account, offering to bring in your projects from Linear, GitHub or your repos, and keeping the boards current. The chat is stored on that machine and isn&rsquo;t synced to teammates.</p>
+          </li>
+        </ul>
+
+        <figure class="shot story-shot reveal">
+          <div class="bezel">
+            <div class="bezel-core">
+              <picture data-themed>
+                <source media="(prefers-color-scheme: light)" data-scheme="light" data-mq="all" srcset="assets/img/machine-light.webp" width="1142" height="570">
+                <img src="assets/img/machine-dark.webp" width="1142" height="570" alt="The page for the machine atlas: owner, Linux on an AMD Ryzen, {{name}} Direct at 31 ms, gauges for memory, CPU, temperature and an NVIDIA GPU, and its three agents, each labelled with what it is doing.">
+              </picture>
+              <script>window.themePictures()</script>
+            </div>
+          </div>
+          <figcaption>Every machine has a page: its stats, its agents and the asks waiting on it.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 3. Direct -->
+    <section class="section section-alt" id="how" aria-labelledby="how-title">
+      <div class="wrap">
+        <header class="sec-head reveal">
+          <p class="kicker">How it connects</p>
+          <h2 id="how-title">Your machines connect directly. One command, nothing else.</h2>
+          <p class="sec-lead">{{name}} Direct links your team&rsquo;s machines peer to peer. No VPN, no account to create and no port to open.</p>
+        </header>
+        <ol class="steps">
+          <li class="step reveal">
+            <span class="step-n" aria-hidden="true">01</span>
+            <h3>Install</h3>
+            <p>Paste one line on each computer. It checks the release signature, then runs <code>{{cli}} setup</code>.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-n" aria-hidden="true">02</span>
+            <h3>Invite your team</h3>
+            <p>The first person creates the team. <code>{{cli}} invite</code> or the Team page makes a one-time invite code, good for 7 days.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-n" aria-hidden="true">03</span>
+            <h3>Join in one step</h3>
+            <p>A teammate pastes the code and is in. To add another of a person&rsquo;s machines, an owner sends them a private link with a one-line install command.</p>
+          </li>
+        </ol>
+
+        <div class="story reveal">
+          <div class="story-text">
+            <h3 class="h3-lg">How {{name}} Direct works</h3>
+            <ul class="points">
+              <li><b>Encrypted, machine to machine.</b> Machines talk over QUIC and punch through home and office routers. Machines find each other through n0 (the makers of iroh): each machine publishes which relay it uses to n0&rsquo;s public address lookup, keyed by its machine key, and keeps a connection to that relay, n0&rsquo;s public relays by default. When there&rsquo;s no direct path, the relay passes along traffic it can&rsquo;t read. n0 sees your IP addresses and which machines connect. You can run your own relays; address lookup still uses n0 in this release.</li>
+              <li><b>A machine is its key.</b> Only machines on your team&rsquo;s signed roster get in. A removed machine is refused by each teammate&rsquo;s machine as soon as that machine learns of the removal, which syncs quickly while machines are online.</li>
+              <li><b>Already on Tailscale?</b> A team can run over your tailnet instead, and one team can mix both kinds of machines.</li>
+            </ul>
+          </div>
+          <figure class="shot">
+            <div class="bezel">
+              <div class="bezel-core">
+                <picture data-themed>
+                  <source media="(prefers-color-scheme: light)" data-scheme="light" data-mq="all" srcset="assets/img/team-light.webp" width="768" height="366">
+                  <img src="assets/img/team-dark.webp" width="768" height="366" alt="The Team page's machine list: five machines, all online and in sync, each on the Direct network with its latency.">
+                </picture>
+                <script>window.themePictures()</script>
+              </div>
+            </div>
+            <figcaption>A team&rsquo;s machines, all connected with {{name}} Direct.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Team compute -->
+    <section class="section" id="compute" aria-labelledby="compute-title">
+      <div class="wrap">
+        <div class="story story-flip">
+          <div class="story-text reveal">
+            <p class="kicker">Team compute</p>
+            <h2 id="compute-title">Your team&rsquo;s machines, as one pool.</h2>
+            <p class="sec-lead">{{name}} works out the largest model from its catalog that fits on your machines together, and can split one model across them.</p>
+            <ul class="points">
+              <li>Suggestions come from the memory each machine has free right now, with a rough speed. Nothing downloads or runs until a person starts it.</li>
+              <li>Split runs use llama.cpp across the machines that share, over the connections {{name}} already has between your machines. Nothing is opened to the network: llama.cpp listens only on this machine (127.0.0.1).</li>
+              <li>Agents on the machine that starts a run get an OpenAI-compatible endpoint on that machine.</li>
+              <li>Sharing is off by default and set per machine, with an optional memory cap. Only share with people you trust with your computer.</li>
+            </ul>
+          </div>
+          <figure class="shot reveal">
+            <div class="bezel">
+              <div class="bezel-core">
+                <picture data-themed>
+                  <source media="(prefers-color-scheme: light)" data-scheme="light" data-mq="all" srcset="assets/img/pool-light.webp" width="768" height="628">
+                  <img src="assets/img/pool-dark.webp" width="768" height="628" alt="What your team could run locally: with all five machines together, gpt-oss-120b at 4-bit, about 6 tokens a second, and a split run of it serving across three machines.">
+                </picture>
+                <script>window.themePictures()</script>
+              </div>
+            </div>
+            <figcaption>What a team could run with all its machines together, and a split run serving.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Phone -->
+    <section class="section section-alt" id="phone" aria-labelledby="phone-title">
+      <div class="wrap">
+        <div class="story">
+          <div class="story-text reveal">
+            <p class="kicker">On your phone</p>
+            <h2 id="phone-title">Answer your agents from anywhere.</h2>
+            <p class="sec-lead">Pair a phone from the dashboard with a QR code (Team, then Devices). It opens {{name}} as a web app. There&rsquo;s nothing to get from an app store.</p>
+            <ul class="points">
+              <li>Mission Control, the asks waiting for you and your channels, updated live.</li>
+              <li>End-to-end encrypted to your own computer. The relay, which we run, can&rsquo;t read, change or replay anything. It sees your phone&rsquo;s and your computer&rsquo;s IP addresses, connection ids, which phones connect to which computer, when you connect and how much data flows, and stores none of it.</li>
+              <li>A pairing code works once, for 10 minutes. Sign a phone out from the dashboard or from the phone.</li>
+              <li>It works while your computer is on, awake and online.</li>
+            </ul>
+          </div>
+          <figure class="shot phone-shot reveal">
+            <div class="bezel">
+              <div class="bezel-core">
+                <picture data-themed>
+                  <source media="(prefers-color-scheme: light)" data-scheme="light" data-mq="all" srcset="assets/img/phone-light.webp" width="390" height="844">
+                  <img src="assets/img/phone-dark.webp" width="390" height="844" alt="{{name}} on a phone: agents grouped by machine, with a Working, Waiting on you or Blocked label on each, and tabs for Agents, Asks and Posts.">
+                </picture>
+                <script>window.themePictures()</script>
+              </div>
+            </div>
+            <figcaption>The phone app, with made-up data.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Private -->
+    <section class="section" id="private" aria-labelledby="private-title">
+      <div class="wrap">
+        <header class="sec-head reveal">
+          <p class="kicker">Private by design</p>
+          <h2 id="private-title">Your work stays between your machines.</h2>
+        </header>
+        <ul class="private-list reveal">
+          <li><b>Encrypted, machine to machine.</b> What your team shares never sits on our servers. Relays carry only encrypted data. They see connection details like IP addresses, which machines connect, and traffic size and timing.</li>
+          <li><b>Prompts stay private by default.</b> Prompt titles and the text of commands are shared only if you turn them on.</li>
+          <li><b>Secrets are scrubbed, best effort.</b> Common secret formats, like API keys and tokens, are detected and removed from messages and agent status text by default. Some can be missed, and files you share are sent as they are.</li>
+          <li><b>Only your team gets in.</b> Every machine is checked against the team&rsquo;s signed roster, and every message is signed by the machine that wrote it.</li>
+          <li><b>Other agents&rsquo; messages are marked.</b> They reach a model as information, not instructions.</li>
+          <li><b>Verified installs.</b> The installer checks the release signature and version before it replaces anything.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 7. Integrations -->
+    <section class="section" id="integrations" aria-labelledby="int-title">
+      <div class="wrap">
+        <header class="sec-head reveal">
+          <p class="kicker">Integrations</p>
+          <h2 id="int-title">Works with the tools you already use.</h2>
+          <p class="sec-lead">Updates post to your team&rsquo;s channels. Keys stay on your computer.</p>
+        </header>
+        <ul class="tools">
+          <li class="tool reveal"><span class="tool-tag">Agents</span><h3>Claude Code and Codex</h3><p>Status and questions work in connected sessions (restart ones that were already open).</p></li>
+          <li class="tool reveal"><span class="tool-tag">Issues</span><h3>Linear</h3><p>An agent working on a Linear issue shows it on its card.</p></li>
+          <li class="tool reveal"><span class="tool-tag">Meetings</span><h3>Fireflies</h3><p>Meeting notes and action items, shared with the team.</p></li>
+          <li class="tool reveal"><span class="tool-tag">Meetings</span><h3>Wispr Flow</h3><p>Meetings on your Mac, shared when they end.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 8. Pricing -->
+    <section class="section section-alt" id="pricing" aria-labelledby="pricing-title" data-pricing>
+      <div class="wrap">
+        <header class="sec-head reveal">
+          <p class="kicker">Pricing</p>
+          <h2 id="pricing-title">Pay per person. Agents are free.</h2>
+          <p class="sec-lead">Every new team gets a 14-day Team trial. No card needed.</p>
+        </header>
+
+        <div class="price-controls reveal">
+          <div class="seg" role="radiogroup" aria-label="Billing period">
+            <button type="button" role="radio" aria-checked="true" data-interval="month">Monthly</button>
+            <button type="button" role="radio" aria-checked="false" data-interval="year">Annual <span class="seg-save">2 months free</span></button>
+          </div>
+          <div class="stepper">
+            <label for="seats">People on your team</label>
+            <div class="stepper-core">
+              <button type="button" data-seat-step="-1" aria-label="One person fewer">&minus;</button>
+              <input id="seats" type="number" inputmode="numeric" min="1" max="10000" step="1" value="5" data-seats>
+              <button type="button" data-seat-step="1" aria-label="One person more">+</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="plans">
+          <article class="plan reveal" aria-labelledby="plan-free">
+            <h3 id="plan-free" class="plan-name">Free</h3>
+            <p class="plan-price"><span class="amt">$0</span></p>
+            <p class="plan-sub">For trying it with one teammate.</p>
+            <a class="btn btn-ghost" href="#install">Install free</a>
+            <ul class="plan-list">
+              <li>Up to 2 people</li>
+              <li>Up to 4 computers</li>
+              <li>Unlimited agents</li>
+              <li>1 integration</li>
+            </ul>
+          </article>
+
+          <article class="plan plan-featured reveal" aria-labelledby="plan-team">
+            <p class="plan-flag">14-day trial, no card</p>
+            <h3 id="plan-team" class="plan-name">Team</h3>
+            <p class="plan-price"><span class="amt" data-price data-month="12" data-year="10">$12</span><span class="per">/ person / month</span></p>
+            <p class="plan-sub" data-billed data-month-text="Billed monthly, or $10 billed annually." data-year-text="Billed annually: $120 per person per year.">Billed monthly, or $10 billed annually.</p>
+            <div class="plan-ctas">
+              <a class="btn btn-primary" href="#install">Start free trial</a>
+              <a class="btn btn-ghost" href="/api/checkout?plan=team&amp;interval=month&amp;seats=5" data-buy="team">Buy Team</a>
+            </div>
+            <p class="plan-total" data-total="team" aria-live="polite">5 people &times; $12 = $60 / month</p>
+            <ul class="plan-list">
+              <li>Up to 50 people</li>
+              <li>Up to 16 computers per person, unlimited agents</li>
+              <li>All integrations</li>
+              <li>Private channels</li>
+              <li>Email support</li>
+            </ul>
+          </article>
+
+          <article class="plan reveal" aria-labelledby="plan-business">
+            <h3 id="plan-business" class="plan-name">Business</h3>
+            <p class="plan-price"><span class="amt" data-price data-month="24" data-year="20">$24</span><span class="per">/ person / month</span></p>
+            <p class="plan-sub" data-billed data-month-text="Billed monthly, or $20 billed annually." data-year-text="Billed annually: $240 per person per year.">Billed monthly, or $20 billed annually.</p>
+            <div class="plan-ctas">
+              <a class="btn btn-ghost" href="/api/checkout?plan=business&amp;interval=month&amp;seats=5" data-buy="business">Buy Business</a>
+            </div>
+            <p class="plan-total" data-total="business" aria-live="polite">5 people &times; $24 = $120 / month</p>
+            <ul class="plan-list">
+              <li>Large teams: 16 active computers per person, 1,024 computers over the team&rsquo;s lifetime</li>
+              <li>Everything in Team</li>
+              <li>Priority support</li>
+              <li>Invoiced billing</li>
+            </ul>
+          </article>
+        </div>
+        <p class="price-fine reveal">Prices in US dollars. If you stop paying, nothing is deleted. You just can&rsquo;t add more than the Free plan allows.</p>
+      </div>
+    </section>
+
+    <!-- 9. FAQ -->
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="wrap faq-grid">
+        <header class="sec-head reveal">
+          <p class="kicker">FAQ</p>
+          <h2 id="faq-title">Questions teams ask first.</h2>
+        </header>
+        <div class="faq reveal">
+          <details>
+            <summary>Do we need Tailscale?</summary>
+            <div class="ans"><p>No. {{name}} Direct connects your machines peer to peer, with nothing else to install. If your team already uses Tailscale, a team can run over your tailnet instead, and one team can mix both kinds of machines.</p></div>
+          </details>
+          <details>
+            <summary>What leaves my computer?</summary>
+            <div class="ans"><p>What your team shares: each agent&rsquo;s state (working, idle, waiting, stuck), runtime, model, machine, repo and branch, each machine&rsquo;s memory, load and temperature, plus your messages, questions and files. Status text an agent sets on purpose is shared too. Usage meters are on by default: they share each provider account&rsquo;s masked email, plan and usage with the team (turn them off with <code>"accounts": false</code>). Prompt titles and the text of commands are shared only if you turn them on, with token-shaped secrets scrubbed (best effort). Team data travels to your teammates&rsquo; computers, encrypted end to end. Your paired phone gets a smaller view (agents, machines, asks and channel posts), also encrypted end to end; files and provider-account details aren&rsquo;t sent to it. We never see the content and store none of it; the phone relay we run sees connection details such as IP addresses, connection ids, which phones connect to which computer, times and data volume, not content. The phone app itself is loaded from our site. Machines find each other through n0 (the makers of iroh): each publishes which relay it uses to n0&rsquo;s public address lookup and keeps a connection to a relay (n0&rsquo;s public relays by default), which passes along encrypted traffic it can&rsquo;t read when there&rsquo;s no direct path. n0 sees your IP addresses and which machines connect. You can run your own relays; address lookup still uses n0 in this release. On paid plans, one computer checks the license with us about once a day, sending license details only.</p></div>
+          </details>
+          <details>
+            <summary>Which agents does it work with?</summary>
+            <div class="ans"><p>Claude Code and Codex, connected for you during setup. Any script on a team computer can use it too.</p></div>
+          </details>
+          <details>
+            <summary>Which computers does it run on?</summary>
+            <div class="ans"><p>Macs with Apple Silicon, and Linux on x64 or ARM. On Windows, it runs inside WSL2, installed as on Linux; native Windows isn&rsquo;t supported yet. Intel Macs aren&rsquo;t covered by this release.</p></div>
+          </details>
+          <details>
+            <summary>Is there a phone app?</summary>
+            <div class="ans"><p>Yes, as a web app. Pair your phone from the dashboard (Team, then Devices) with a QR code, and add it to your Home Screen. It shows Mission Control, your asks and your channels, end-to-end encrypted to your computer.</p></div>
+          </details>
+          <details>
+            <summary>What if a computer goes offline?</summary>
+            <div class="ans"><p>Its agents show as offline. When it comes back, it catches up on everything it missed.</p></div>
+          </details>
+          <details>
+            <summary>What happens if we stop paying?</summary>
+            <div class="ans"><p>Nothing is taken away. After your license runs out you get 14 days of grace, then the Free limits apply, which only stop you adding more. Subscribe again and they lift.</p></div>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <div class="footer-cta">
+        <h2 class="footer-title">Try it with your team today.</h2>
+        <div class="install">
+          <div class="install-shell">
+            <div class="install-core">
+              <code class="install-cmd"><span class="p" aria-hidden="true">$</span> <span data-copy-src>{{install}}</span></code>
+              <button class="copy" type="button" data-copy aria-label="Copy install command">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg>
+                <span data-copy-label>Copy</span>
+              </button>
+            </div>
+          </div>
+          <p class="install-note">Free for 2 people. Macs with Apple Silicon, and Linux.</p>
+        </div>
+      </div>
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="#top">
+            <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="8"/><path class="m1" d="M9 13h11"/><path class="m2" d="M12.5 19.5h11"/></svg>
+            <span>{{name}}</span>
+          </a>
+          <p>{{tagline}}.</p>
+        </div>
+        <nav class="footer-nav" aria-label="Footer">
+          <a href="#features">Features</a>
+          <a href="#how">How it connects</a>
+          <a href="#compute">Team compute</a>
+          <a href="#phone">Phone</a>
+          <a href="#private">Privacy</a>
+          <a href="#integrations">Integrations</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#faq">FAQ</a>
+          <a href="{{source_url}}" rel="noopener">Source on GitHub</a>
+        </nav>
+        <p class="footer-fine">Version {{release}}. Source: <a href="{{source_url}}" rel="noopener">{{repo}}</a> on GitHub, under the Functional Source License (FSL-1.1-ALv2); each version becomes Apache-2.0 after two years. Screens show Kestrel, a made-up team.</p>
+      </div>
+    </div>
+  </footer>
+  <div class="sr-only" aria-live="polite" data-announce></div>
+</body>
+</html>

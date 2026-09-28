@@ -1,0 +1,223 @@
+/* Local models: what the team's machines could run (components/LocalModels.tsx). Estimates, so the numbers stay quiet:
+   the model name carries the weight, the speed is a small tag in the state colours. */
+.lm-card {
+  margin-bottom: 18px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.lm-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lm-icon { flex: none; color: var(--text-3); }
+.lm-card-title { font-size: var(--fs-13); font-weight: 600; letter-spacing: -0.005em; }
+.lm-est {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  color: var(--text-3);
+  font-size: var(--fs-11);
+  line-height: 16px;
+}
+.lm-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.lm-more:hover { color: var(--text); }
+.lm-card-meta { margin: 6px 0 8px; color: var(--text-2); font-size: var(--fs-12); }
+.lm-group { color: var(--text); font-weight: 500; }
+.lm-empty { color: var(--text-3); font-size: var(--fs-13); }
+.lm-empty strong { color: var(--text); font-weight: 500; }
+.lm-card-note { margin: 0 0 8px; color: var(--text-3); font-size: var(--fs-12); }
+
+.lm-picks { display: grid; gap: 2px; }
+.lm-pick {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 1px 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.lm-pick:first-child { border-top: 0; }
+.lm-pick-label { grid-row: span 2; padding-top: 1px; color: var(--text-3); font-size: var(--fs-12); }
+.lm-pick-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.lm-pick-model { color: var(--text); font-size: var(--fs-14); font-weight: 500; }
+.lm-pick.is-nofit .lm-pick-model { color: var(--text-2); font-weight: 400; }
+.lm-pick-where { color: var(--text-3); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.lm-pick-why { color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+
+.lm-speed {
+  align-self: center;
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  line-height: 17px;
+  white-space: nowrap;
+}
+.lm-speed-fast { background: var(--signal-soft); color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal-line); }
+.lm-speed-usable { background: var(--amber-soft); color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber-line); }
+.lm-speed-slow { background: var(--red-soft); color: var(--red); box-shadow: inset 0 0 0 1px var(--red-line); }
+.lm-speed-none { color: var(--text-3); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+/* Team page section */
+.lm-section { display: grid; gap: 12px; }
+.lm-intro { max-width: 72ch; color: var(--text-2); font-size: var(--fs-13); line-height: 1.5; }
+.lm-group-card {
+  padding: 12px 16px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.lm-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.lm-group-title { font-size: var(--fs-14); font-weight: 600; }
+.lm-group-free { margin-left: auto; color: var(--text-2); font-size: var(--fs-12); }
+.lm-why { margin: 4px 0 10px; color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+.lm-machines {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+}
+.lm-machine {
+  display: grid;
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr) auto;
+  gap: 0 12px;
+  align-items: baseline;
+  font-size: var(--fs-12);
+}
+.lm-machine-host { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm-machine-hw { color: var(--text-2); }
+.lm-machine-free { color: var(--text-2); text-align: right; white-space: nowrap; }
+.lm-machine-note { grid-column: 2 / -1; color: var(--text-4); font-size: var(--fs-11); }
+.lm-foot { color: var(--text-4); font-size: var(--fs-12); line-height: 1.5; }
+
+
+/* WALKIE-POOL-2: "With all our machines together" (components/LocalModelsSplit.tsx): the headline of the card, then
+   the fast options below a quiet divider. */
+.lm-all { display: grid; gap: 8px; margin: 8px 0 4px; }
+.lm-all-card { padding-bottom: 12px; }
+.lm-all-label { color: var(--text-3); font-size: var(--fs-11); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+.lm-all-model { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+.lm-all-title { color: var(--text); font-size: var(--fs-16, 16px); font-weight: 600; letter-spacing: -0.01em; }
+.lm-all-speed { color: var(--text-2); font-size: var(--fs-13); }
+.lm-all-note { color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+.lm-place {
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+}
+.lm-place-row {
+  display: grid;
+  grid-template-columns: minmax(0, 140px) 56px minmax(0, 1fr) auto auto;
+  gap: 0 10px;
+  align-items: baseline;
+  font-size: var(--fs-12);
+}
+.lm-place-host { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm-place-gb { color: var(--text); text-align: right; }
+.lm-place-mem { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm-tag {
+  padding: 0 5px;
+  border-radius: var(--r-chip);
+  color: var(--text-2);
+  font-size: var(--fs-11);
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.lm-tag-off { color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber-line); }
+.lm-fast-h {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-3);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lm-run-start { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.lm-run-go { gap: 6px; }
+.lm-run-est { color: var(--text-3); font-size: var(--fs-12); }
+.lm-run-note { flex-basis: 100%; color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+.lm-run-note svg { vertical-align: -1px; }
+.lm-run-error { color: var(--red); font-size: var(--fs-12); line-height: 1.45; overflow-wrap: anywhere; }
+
+.lm-run {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+}
+.lm-run-serving { border-color: var(--signal-line); }
+.lm-run-failed { border-color: var(--red-line); }
+.lm-run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.lm-run-state {
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  line-height: 17px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  box-shadow: inset 0 0 0 1px var(--amber-line);
+}
+.lm-run-state-serving { color: var(--signal); background: var(--signal-soft); box-shadow: inset 0 0 0 1px var(--signal-line); }
+.lm-run-state-failed { color: var(--red); background: var(--red-soft); box-shadow: inset 0 0 0 1px var(--red-line); }
+.lm-run-model { color: var(--text); font-size: var(--fs-13); font-weight: 500; }
+.lm-run-tps { color: var(--text-2); font-size: var(--fs-12); }
+.lm-run-stop { margin-left: auto; gap: 5px; }
+.lm-run-stages { display: grid; gap: 2px; font-size: var(--fs-12); }
+.lm-run-stage { display: grid; grid-template-columns: minmax(0, 1fr) 56px minmax(0, 110px); gap: 0 10px; color: var(--text-2); }
+.lm-run-stage .tnum { text-align: right; }
+.lm-run-stage-state { color: var(--text-3); }
+.lm-run-stage.is-ready .lm-run-stage-state { color: var(--signal); }
+.lm-run-stage.is-lost .lm-run-stage-state { color: var(--red); }
+.lm-run-endpoint { display: grid; gap: 6px; min-width: 0; }
+.lm-progress { position: relative; height: 18px; border-radius: var(--r-chip); background: var(--surface-3, var(--line-soft)); overflow: hidden; }
+.lm-progress-bar { position: absolute; inset: 0 auto 0 0; background: var(--signal-soft); box-shadow: inset -1px 0 0 var(--signal-line); }
+.lm-progress-text { position: relative; padding: 0 8px; color: var(--text-2); font-size: var(--fs-11); line-height: 18px; }
+
+.lm-share { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--text-2); font-size: var(--fs-12); }
+.lm-share-toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.lm-share-toggle input { accent-color: var(--signal); }
+.lm-share-max { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); }
+.lm-share-max input {
+  width: 64px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-chip);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.lm-share-hint { color: var(--text-3); }
+.lm-share-warn { flex-basis: 100%; color: var(--amber); font-size: var(--fs-11); line-height: 1.45; }
+.lm-share-hint code { font-family: var(--font-mono); color: var(--text-2); }
+
+@media (max-width: 560px) {
+  .lm-place-row { display: flex; flex-wrap: wrap; gap: 0 8px; padding: 2px 0; }
+  .lm-place-host { flex: 1 1 auto; min-width: 0; }
+  .lm-place-mem { order: 5; flex-basis: 100%; }
+  .lm-run-stop { margin-left: 0; }
+  .lm-card { padding: 12px 12px 12px; }
+  .lm-pick { grid-template-columns: minmax(0, 1fr); }
+  .lm-pick-label { grid-row: auto; }
+  .lm-group-card { padding: 12px 12px 8px; }
+  .lm-group-free { margin-left: 0; }
+  .lm-machine { grid-template-columns: minmax(0, 1fr) auto; }
+  .lm-machine-hw { grid-column: 1 / -1; grid-row: 2; }
+  .lm-machine-note { grid-column: 1 / -1; }
+}

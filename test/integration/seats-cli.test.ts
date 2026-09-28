@@ -1,0 +1,94 @@
+// The seats CLI (`bun src/cli/main.ts …`) against two in-process daemons with a FAKE codex/claude on the host:
+// `walkie join … --allow-seats`, person-only opt-in, `walkie seat run --wait`, and an agent's run refused by the host.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { runAsPerson } from "../helpers/person-cli.ts";
+
+const CLI = join(import.meta.dir, "../../src/cli/main.ts");
+const FIXTURES = join(import.meta.dir, "..", "fixtures");
+let c: Cluster;
+let alex: TestNode;
+let arvid: TestNode;
+
+beforeAll(async () => {
+  c = new Cluster();
+  const home = join(c.root, "arvid-home");
+  mkdirSync(home, { recursive: true });
+  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
+  arvid = await c.add({
+    name: "arvid", login: "arvid@example.com", hostname: "arvid-mac",
+    seats: { flushMs: 100, env: { PATH: `${join(FIXTURES, "fake-claude")}:${join(FIXTURES, "fake-codex")}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, FAKE_CLAUDE_STATE: join(c.root, "fake-state") } },
+  });
+  await alex.client().init("aka", "alex");
+  await alex.client().invite("arvid@example.com", "arvid", "member");
+}, 60_000);
+afterAll(async () => { await c.close(); });
+
+/** A person's terminal: no agent session marker unless `env` adds one. */
+async function walkie(node: TestNode, args: string[], env: Record<string, string> = {}) {
+  // As a person would (test/helpers/person-cli.ts): detached from this test's own process ancestry, which may include
+  // an agent runtime that agent-detect.ts would rightly count.
+  return runAsPerson([process.execPath, CLI, ...args], { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: node.home, WALKIE_SOCKET: node.socket, ...env });
+}
+
+describe("walkie seats CLI", () => {
+  test("join --allow-seats under an agent is refused (before joining) only while agent admin is off; a person's terminal opts in", async () => {
+    await arvid.client().adminSwitches({ agent_admin: false });
+    const agent = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats"], { CLAUDECODE: "1" });
+    expect(agent.code).toBe(1);
+    expect(agent.err).toContain("agent_admin_off");
+    expect((await arvid.client().me()).team).toBeFalsy();
+    await arvid.client().adminSwitches({ agent_admin: true });
+    // Seats need their own OS user, or the person's explicit --same-user (Opus r2 LOW 3: said in the output too).
+    const refused = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats"]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("walkie seats setup-user");
+    const r = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats", "--same-user"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("joined aka as @arvid");
+    expect(r.out).toContain("seats allowed");
+    expect(r.out).toContain("Seats run as YOUR OS user: a seat can reach your Walkie");
+    expect(r.out).toContain("walkie seats setup-user --apply");
+    const cfg = JSON.parse(readFileSync(join(arvid.home, "config.json"), "utf8")) as { seats?: { allow?: boolean } };
+    expect(cfg.seats?.allow).toBe(true);
+    await waitFor(async () => (await alex.client().seats()).hosts.find((h) => h.hostname === "arvid-mac" && h.allows && h.member), { what: "alex sees arvid-mac" });
+  }, 60_000);
+
+  test("seats setup-user prints its plan (for an agent too, AGENT-ADMIN-1); allow says who seats run as", async () => {
+    const agent = await walkie(arvid, ["seats", "setup-user"], { CLAUDECODE: "1" });
+    expect([agent.code, agent.out.includes("Every seat as a fresh OS user")]).toEqual([0, true]);
+    const plan = await walkie(arvid, ["seats", "setup-user"]);
+    expect(plan.code).toBe(0);
+    expect(plan.out).toContain("Every seat as a fresh OS user of its own, made for it and destroyed after it (never reused)");
+    expect(plan.out).toContain("ALL=(%walkie-seats) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-runner seat-runner");
+    expect(plan.out).toContain("ALL=(root) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-admin seat-admin create *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin destroy *");
+    // Applied only from a closed home (or when accepted); either way the plan says how.
+    expect(`${plan.out}${plan.err}`).toMatch(/walkie seats setup-user --apply|not applied: your home/);
+    const list = await walkie(arvid, ["seats"]);
+    expect(list.out).toContain("seats allowed as your own user");
+  });
+
+  test("seats allow/deny under an agent: refused while its person has agent admin off", async () => {
+    await arvid.client().adminSwitches({ agent_admin: false });
+    const r = await walkie(arvid, ["seats", "deny"], { CODEX_THREAD_ID: "t-1" });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("agent_admin_off");
+    expect((await arvid.client().seats()).local.allow).toBe(true);
+    await arvid.client().adminSwitches({ agent_admin: true });
+  });
+
+  test("seat run --wait prints the output and ends with the state; an agent's run is refused by the host", async () => {
+    const r = await walkie(alex, ["seat", "run", "--machine", "arvid-mac", "--runtime", "codex", "--wait", "--", "hello", "codex"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("codex: hello codex");
+    expect(r.out.trim().split("\n").pop()).toMatch(/^done/);
+    const agent = await walkie(alex, ["seat", "run", "--machine", "arvid-mac", "--wait", "--", "from", "an", "agent"], { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "abc-123" });
+    expect(agent.code).toBe(1);
+    // Marked as an agent's (agent-detect.ts) but unnamed: refused before any request is made; named, the host judges.
+    expect(agent.out + agent.err).toContain("a seat request from an agent must name it");
+    const list = await walkie(alex, ["seats"]);
+    expect(list.out).toContain("arvid-mac (@arvid) · seats allowed · online · you can launch");
+  }, 60_000);
+});

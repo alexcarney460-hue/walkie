@@ -1,0 +1,19 @@
+{
+ "https://auth.x.ai::00000000-aaaa-4bbb-8ccc-dddddddddddd": {
+  "key": "FIXTURE-GROK-KEY-NEVER-READ",
+  "auth_mode": "oidc",
+  "create_time": "2026-09-26T06:16:12.312460Z",
+  "user_id": "aaaaaaaa-0000-4000-8000-000000000001",
+  "email": "dev.grok@example.test",
+  "first_name": "Dev",
+  "last_name": "Example",
+  "principal_type": "User",
+  "principal_id": "aaaaaaaa-0000-4000-8000-000000000001",
+  "team_id": "bbbbbbbb-0000-4000-8000-000000000002",
+  "coding_data_retention_opt_out": false,
+  "refresh_token": "FIXTURE-GROK-REFRESH-NEVER-READ",
+  "expires_at": "2026-09-26T12:16:12.312460Z",
+  "oidc_issuer": "https://auth.x.ai",
+  "oidc_client_id": "00000000-aaaa-4bbb-8ccc-dddddddddddd"
+ }
+}

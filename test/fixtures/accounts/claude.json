@@ -1,0 +1,14 @@
+{
+ "numStartups": 3,
+ "oauthAccount": {
+  "accountUuid": "11111111-2222-4333-8444-555555555555",
+  "emailAddress": "dev.claude@example.test",
+  "organizationUuid": "66666666-7777-4888-8999-000000000000",
+  "hasExtraUsageEnabled": false,
+  "billingType": "stripe_subscription",
+  "organizationRateLimitTier": "default_claude_max_20x",
+  "organizationType": "claude_max",
+  "displayName": "Dev"
+ },
+ "projects": {}
+}

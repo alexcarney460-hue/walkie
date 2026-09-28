@@ -1,0 +1,6 @@
+# SHA-256 of n0's prebuilt @number0/iroh Node-API modules embedded in release binaries (scripts/build.ts).
+# Fetched with `npm pack @number0/iroh-<target>@<version>` (registry sha512 integrity) on 2026-09-26.
+# darwin-x64 has no prebuilt: build.ts compiles the SDK's crate with ./Cargo.lock.
+3d8b1c05a9994e9d36b2693e3af832ed9cd113d64ac0eaf4d7d082f2a5d1aef8  1.1.0/iroh.darwin-arm64.node
+d660aa1abbc2b65b99a970e8da094339256725078b75ed1201b49e0b0acbda55  1.1.0/iroh.linux-x64-gnu.node
+e19d9da4111f5e35b630317c281b575e81c7f0abf6e3cd09dd1ba15d074eec82  1.1.0/iroh.linux-arm64-gnu.node

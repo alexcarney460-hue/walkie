@@ -1,0 +1,7 @@
+[
+  {"name": "PMU2 tdev3", "c": 57.6}, {"name": "gas gauge battery", "c": 38.7}, {"name": "PMU tdev6", "c": 43.3},
+  {"name": "PMU2 tdie7", "c": 47.6}, {"name": "PMU tdie8", "c": 64.8}, {"name": "PMU tdie12", "c": 56.3},
+  {"name": "PMU tcal", "c": 51.8}, {"name": "PMU tdie5", "c": 57.6}, {"name": "PMU tdev1", "c": -21.7},
+  {"name": "PMU tdie6", "c": 65.1}, {"name": "PMU tdie1", "c": 70.0}, {"name": "NAND CH0 temp", "c": 48.0},
+  {"name": "PMU2 tdie1", "c": 50.2}, {"name": "PMU tdie14", "c": 56.1}
+]

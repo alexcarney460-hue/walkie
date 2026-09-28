@@ -1,0 +1,365 @@
+/*
+ * Glass layer (WALKIE-UI-POLISH-1): Apple-like surfaces over the page views.
+ * Loaded last so it can restyle the per-view surfaces without touching their
+ * layout rules. Material ported from an earlier in-house design system (.glass,
+ * .glass-panel, .glass-header): translucent fill, hairline rim, specular top
+ * edge, soft cast shadow. Rules:
+ *  - chrome (sidebar, bars, sheets, palette) gets a real backdrop blur;
+ *  - cards are translucent with a shadow but NO backdrop blur (dozens of live
+ *    cards stay cheap to paint);
+ *  - no glass inside glass.
+ */
+
+/* ---- cards: grouped, rounded, softly lifted ---- */
+.summary,
+.attention-list,
+.agent-card,
+.int-card,
+.acct-tile,
+.acct-mini,
+.lm-card,
+.lm-group-card,
+.ask-card,
+.artifact,
+.channel-rows,
+.table-wrap,
+.firstrun-check,
+.member-pick {
+  border-color: var(--card-line);
+  border-radius: var(--r-card);
+  background-color: var(--card-bg);
+  box-shadow: var(--card-shadow);
+}
+.table-wrap { background: var(--card-bg); }
+.table th { background: transparent; }
+.table tbody tr:hover { background: var(--hover); }
+
+/* clickable cards lift on a spring */
+.agent-card {
+  transition:
+    transform var(--dur-spring) var(--ease-spring),
+    box-shadow var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out),
+    background var(--dur-2) var(--ease-out),
+    opacity var(--dur-3) var(--ease-out);
+}
+.agent-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklch, var(--card-line), var(--text) 10%);
+  background-color: var(--card-bg);
+  box-shadow: var(--card-shadow-hover);
+}
+.agent-card:active { transform: translateY(0) scale(0.985); transition-duration: var(--dur-1); }
+.agent-card.is-waiting {
+  border-color: var(--amber-line);
+  background-color: color-mix(in oklch, var(--amber) 6%, var(--card-bg));
+}
+.agent-card.is-blocked {
+  border-color: var(--red-line);
+  background-color: color-mix(in oklch, var(--red) 7%, var(--card-bg));
+}
+.agent-card.is-offline { background: transparent; box-shadow: none; }
+.agent-card:focus-visible { border-radius: var(--r-card); }
+
+/* tinted cards keep their tone, just rounder and lifted */
+.pending-row,
+.plan-limit,
+.error-state,
+.ask-row.is-actionable {
+  border-radius: var(--r-card);
+  box-shadow: var(--card-shadow);
+}
+.ask-row.is-actionable { background: color-mix(in oklch, var(--amber) 5%, var(--card-bg)); }
+.ask-row-answer { border-radius: 12px; }
+.attention-row.is-waiting { background: color-mix(in oklch, var(--amber) 5%, transparent); }
+.attention-row.is-blocked { background: color-mix(in oklch, var(--red) 6%, transparent); }
+.summary-stat.is-active { background: var(--sel); }
+button.summary-stat:hover { background: var(--hover); }
+/* focus rings on the strip cells are drawn inside so the card's clip can't cut them */
+.summary { overflow: clip; }
+.summary-stat:focus-visible { outline-offset: -3px; border-radius: 12px; }
+.summary-n { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.03em; }
+
+.machine-empty,
+.int-missing,
+.cmd,
+.drawer-activity {
+  border-radius: 12px;
+}
+.cmd { background: color-mix(in oklch, var(--surface-2) 70%, transparent); border-color: var(--card-line); }
+.int-error,
+.acct-note { border-radius: 10px; }
+.md-pre { border-radius: 12px; }
+.file-icon,
+.source-avatar,
+.ticker-icon { border-radius: 9px; }
+.acct-icon { border-radius: 10px; }
+.avatar { border-radius: 32%; }
+.runtime { border-radius: 6px; }
+.role { border-radius: var(--r-pill); padding: 0 9px; }
+
+/* ---- segmented controls (Apple style: a track with a raised thumb) ---- */
+.segmented {
+  gap: 2px;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--sel);
+  box-shadow: 0 1px 1px oklch(0 0 0 / 0.06) inset;
+}
+/* scoped: integrations.css defines a different .seg (the key-source toggle) */
+.segmented > .seg {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-2);
+  transition: background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
+}
+.segmented > .seg:hover { color: var(--text); }
+.segmented > .seg:active { transform: scale(0.96); }
+.segmented > .seg.is-on { background: var(--thumb); color: var(--text); box-shadow: var(--thumb-shadow); }
+.segmented > .seg:focus-visible { outline-offset: -2px; border-radius: var(--r-pill); }
+.int-key .seg {
+  padding: 3px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--sel);
+}
+.int-key .seg-btn { height: 26px; padding: 0 12px; border-radius: var(--r-pill); transition: background var(--dur-2) var(--ease-out); }
+.int-key .seg-btn.is-on { background: var(--thumb); box-shadow: var(--thumb-shadow); }
+
+/* page tabs become soft capsules */
+.tabs {
+  gap: 4px;
+  margin-bottom: 18px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.tab-link {
+  height: 32px;
+  margin-bottom: 0;
+  padding: 0 14px;
+  border-bottom: 0;
+  border-radius: var(--r-pill);
+  transition: background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
+}
+.tab-link:hover { background: var(--hover); }
+.tab-link:active { transform: scale(0.96); }
+.tab-link.is-on { background: var(--thumb); color: var(--text); box-shadow: var(--thumb-shadow); }
+.tab-link:focus-visible { border-radius: var(--r-pill); }
+
+/* person filter chips */
+.person-chip {
+  border-color: var(--card-line);
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.06);
+  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
+}
+.person-chip:active { transform: scale(0.96); }
+.person-chip:focus-visible,
+.machine-archive:focus-visible { border-radius: var(--r-pill); }
+
+/* ---- side rails ---- */
+.feed-rail {
+  border-left: 1px solid var(--chrome-line);
+  background: color-mix(in oklch, var(--chrome-bg) 60%, transparent);
+}
+.ticker-btn { border-radius: 12px; }
+.channels {
+  border-right: 1px solid var(--chrome-line);
+  background: color-mix(in oklch, var(--chrome-bg) 55%, transparent);
+}
+.channel-link { height: 32px; transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), transform var(--dur-spring) var(--ease-spring); }
+.channel-link:hover { background: var(--hover); }
+.channel-link.is-active { background: var(--sel); box-shadow: 0 1px 0 0 var(--glass-hi) inset; }
+.channel-link:active { transform: scale(0.98); }
+.feed-head { border-bottom-color: var(--chrome-line); }
+.feed-name { font-family: var(--font-display); font-size: 16px; font-weight: 650; }
+.msg { border-radius: 12px; margin-left: 6px; margin-right: 6px; }
+.msg:hover { background: var(--hover); }
+.msg.is-active { background: var(--sel); }
+
+/* composer: a floating glass field */
+.composer-box {
+  border-color: var(--glass-border);
+  border-radius: 18px;
+  background: var(--sheet-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  backdrop-filter: blur(20px) saturate(170%);
+  box-shadow: 0 1px 0 0 var(--glass-hi) inset, var(--card-shadow);
+}
+.composer-box:focus-within { border-color: var(--signal-line); box-shadow: 0 1px 0 0 var(--glass-hi) inset, 0 0 0 4px var(--signal-soft), var(--card-shadow); }
+.mention-menu { border-radius: 14px; }
+.mention-opt { border-radius: 9px; }
+
+/* ---- sheets: drawer, thread, palette ---- */
+.scrim,
+.palette-layer {
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.drawer {
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  width: min(460px, calc(100% - 20px));
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  background: var(--sheet-bg);
+  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  backdrop-filter: blur(34px) saturate(180%);
+  box-shadow: 0 1px 0 0 var(--glass-hi) inset, var(--shadow-pop);
+  overflow: hidden;
+  animation: sheet-in var(--dur-spring) var(--ease-spring);
+}
+.drawer-head { border-bottom-color: var(--chrome-line); }
+.drawer-title { font-family: var(--font-display); font-weight: 700; }
+.tl-dot { box-shadow: 0 0 0 3px var(--surface); }
+.drawer-post { border-radius: 10px; }
+.palette {
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  background: var(--sheet-bg);
+  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  backdrop-filter: blur(34px) saturate(180%);
+  box-shadow: 0 1px 0 0 var(--glass-hi) inset, var(--shadow-pop);
+  animation: pop-spring var(--dur-spring) var(--ease-spring);
+}
+.palette-input-row { height: 54px; border-bottom-color: var(--chrome-line); }
+.palette-item { height: 38px; border-radius: 10px; }
+.palette-item.is-sel { background: var(--sel); }
+.thread {
+  background: color-mix(in oklch, var(--sheet-bg) 70%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  backdrop-filter: blur(28px) saturate(170%);
+  border-left-color: var(--chrome-line);
+}
+
+@keyframes sheet-in {
+  from { opacity: 0.3; transform: translateX(28px) scale(0.985); }
+}
+@keyframes pop-spring {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+}
+
+/* ---- empty states: centred, friendly, with a soft illustrated badge ---- */
+.empty {
+  justify-items: center;
+  margin: 0 auto;
+  padding: 44px 16px;
+  text-align: center;
+}
+.empty-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  background:
+    radial-gradient(120% 80% at 30% 0%, oklch(1 0 0 / 0.35), transparent 60%),
+    linear-gradient(145deg, color-mix(in oklch, var(--tint-mint) 38%, transparent), color-mix(in oklch, var(--tint-sky) 34%, transparent));
+  box-shadow: 0 1px 0 0 var(--glass-hi) inset, 0 14px 30px -14px color-mix(in oklch, var(--tint-sky) 60%, transparent);
+  color: var(--text);
+  animation: float-soft 5s ease-in-out infinite;
+}
+.empty-icon svg { width: 26px; height: 26px; }
+/* two small "sparkle" dots for a playful touch */
+.empty-icon::before,
+.empty-icon::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: var(--tint-mint);
+  opacity: 0.75;
+}
+.empty-icon::before { top: -5px; right: -4px; width: 9px; height: 9px; }
+.empty-icon::after { bottom: 2px; left: -7px; width: 6px; height: 6px; background: var(--tint-sky); }
+.empty-title { font-family: var(--font-display); font-size: var(--fs-16); font-weight: 650; letter-spacing: -0.012em; }
+.empty-body { max-width: 46ch; }
+.empty .cmd { justify-self: center; }
+@keyframes float-soft {
+  50% { transform: translateY(-3px); }
+}
+
+/* ---- first run: a sheet on the wash ---- */
+.firstrun { background: transparent; }
+.firstrun-title { font-family: var(--font-display); font-size: 34px; font-weight: 700; letter-spacing: -0.032em; }
+.firstrun-steps {
+  padding: 0 18px;
+  border: 1px solid var(--card-line);
+  border-radius: var(--r-card);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+}
+.firstrun-step:last-child { border-bottom: 0; }
+.firstrun-step { border-bottom-color: var(--line-soft); }
+.firstrun-num {
+  border: 0;
+  background: linear-gradient(145deg, color-mix(in oklch, var(--tint-mint) 45%, transparent), color-mix(in oklch, var(--tint-sky) 40%, transparent));
+  color: var(--text);
+}
+.boot .logo { animation: float-soft 1.6s ease-in-out infinite; }
+
+/* ---- phone ---- */
+@media (max-width: 860px) {
+  .table tr {
+    border-color: var(--card-line);
+    border-radius: var(--r-card);
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow);
+  }
+  .table-wrap { background: transparent; box-shadow: none; border-radius: 0; }
+  .channels { background: transparent; border-bottom-color: var(--chrome-line); }
+  .channel-link { border-color: var(--card-line); border-radius: var(--r-pill); background: var(--card-bg); }
+  .channel-link.is-active { border-color: var(--signal-line); background: var(--signal-soft); }
+  .drawer { top: 0; right: 0; bottom: 0; width: 100%; border: 0; border-radius: 0; }
+  .thread { background: var(--sheet-bg); }
+  .msg { margin-left: 4px; margin-right: 4px; }
+  /* touch targets: at least 40 px on phones */
+  .btn,
+  .btn-sm,
+  .btn-icon,
+  .segmented > .seg,
+  .int-key .seg-btn,
+  .tab-link,
+  .channel-link,
+  .person-chip { min-height: 40px; }
+  /* 16 px fields: iOS Safari does not zoom the page when one is focused */
+  .input,
+  .select,
+  .textarea,
+  .composer-input { font-size: 16px; }
+  .input,
+  .select { min-height: 40px; }
+  .btn-icon,
+  .btn-icon.btn-sm { min-width: 40px; }
+  .empty { padding: 32px 8px; }
+  .firstrun-title { font-size: 28px; }
+}
+
+/* ---- accessibility and fallbacks ---- */
+/* Reduce transparency (macOS/iOS setting): solid surfaces, no blur. */
+@media (prefers-reduced-transparency: reduce) {
+  .rail, .mobilebar, .tabbar, .drawer, .palette, .thread, .composer-box, .feed-rail, .channels,
+  .btn, .btn-primary, .scrim, .palette-layer {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .rail, .mobilebar, .tabbar, .feed-rail, .channels { background: var(--bg-rail); }
+  .drawer, .palette, .thread, .composer-box { background: var(--overlay); }
+  :root { --card-bg: var(--surface); }
+  body { background-image: none; }
+}
+/* Engines without backdrop-filter: solid, never unreadable. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rail, .mobilebar, .tabbar, .feed-rail { background: var(--bg-rail); }
+  .drawer, .palette, .thread, .composer-box { background: var(--overlay); }
+}
+/* Windows high contrast / forced colours: keep real borders on buttons. */
+@media (forced-colors: active) {
+  .btn { border: 1px solid ButtonText; }
+  .btn::after { display: none; }
+}

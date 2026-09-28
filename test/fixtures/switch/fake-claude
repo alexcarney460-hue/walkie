@@ -1,0 +1,178 @@
+#!/usr/bin/env bun
+// A FAKE `claude` for the account-switcher tests (ACCOUNTS-2). It never talks to a network. It behaves like the parts
+// of Claude Code the switcher relies on:
+//   · auth from CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR (fd 3) or CLAUDE_CODE_OAUTH_TOKEN; it logs only a fingerprint
+//   · --session-id / --resume <id> / --settings <json with hooks> / -p / a positional prompt
+//   · a transcript at $CLAUDE_CONFIG_DIR/projects/<slug>/<session>.jsonl (user / assistant / API-error entries)
+//   · the hooks from --settings (SessionStart, UserPromptSubmit, Stop, StopFailure) run with the hook JSON on stdin
+// Each line on stdin is one turn. After each turn the account's usage climbs by FAKE_STEP points in the meter file
+// FAKE_METER (the shape ~/.walkie/accounts.json has), standing in for the provider's usage meter.
+// Prompts: "limit" → a rate_limit API error (quotaLimits.resetsAt in 1 h), the turn stops; every later prompt in this
+//          process gets the same error (the account stays at its limit).
+//          "tool:<ms>" → a synchronous tool call (tool_use, <ms> of work, tool_result) before the answer.
+//          "bg" / "bg:<ms>" → a Bash call with run_in_background: true; the result names a background task
+//          (toolUseResult.backgroundTaskId). With <ms>, a <task-notification> reports it completed that much later.
+//          "agent" / "agent:<ms>" → an Agent call with run_in_background: "true" (the STRING, as Claude Code logs it);
+//          the result is status async_launched with an agentId, completed <ms> later the same way.
+//          "monitor" / "monitor:<ms>" → a Monitor call; the result names a taskId (no backgroundTaskId).
+//          "ratelimit" → a transient per-minute 429 (no quota evidence): the turn stops, nothing else.
+//          "refused" → a 401 (authentication_failed): the account's token was refused.
+// -p with --output-format json prints one JSON result (is_error on a limit), like Claude Code.
+// Hooks run with CLAUDE_PID = this process (as Claude Code sets it).
+// FAKE_REFUSE_RESUME=<fingerprint>: a --resume launch on that account fails its first turn with the 400 about thinking
+// signatures that a cross-account resume can produce.
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
+
+const args = process.argv.slice(2);
+const log = (o) => { if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, ...o }) + "\n"); };
+
+function token() {
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR === "3") {
+    try { return readFileSync(3, "utf8").trim(); } catch { return ""; }
+  }
+  return process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "";
+}
+const tok = token();
+const fp = tok ? createHash("sha256").update(tok).digest("hex").slice(0, 12) : "none";
+
+let session = null, resume = null, settings = null, print = false, prompt = null, format = "text", settingsCount = 0;
+const readSettings = (v) => { try { return JSON.parse(v); } catch { try { return JSON.parse(readFileSync(v, "utf8")); } catch { return null; } } };
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (a === "--session-id") session = args[++i];
+  else if (a === "--resume" || a === "-r") resume = args[++i];
+  else if (a === "--settings") { settings = readSettings(args[++i]); settingsCount++; }
+  else if (a === "-p" || a === "--print") print = true;
+  else if (a === "--model") i++;
+  else if (a === "--output-format") format = args[++i];
+  else if (!a.startsWith("-") && prompt === null) prompt = a;
+}
+session = resume ?? session ?? randomUUID();
+const cfg = process.env.CLAUDE_CONFIG_DIR;
+const dir = join(cfg, "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"));
+mkdirSync(dir, { recursive: true });
+const transcript = join(dir, `${session}.jsonl`);
+const senv = settings?.env ?? {};
+log({ start: true, fp, session, resumed: !!resume, prompt, argv: args.filter((a) => !a.startsWith("{")), via: process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR ? "fd" : "env", account: process.env.WALKIE_ACCOUNT,
+  settingsCount, settingsEnv: { ANTHROPIC_BASE_URL: senv.ANTHROPIC_BASE_URL ?? null, HTTPS_PROXY: senv.HTTPS_PROXY ?? null, MY_VAR: senv.MY_VAR ?? null },
+  sessionStartHooks: (settings?.hooks?.SessionStart ?? []).map((e) => e.hooks?.[0]?.command ?? "") });
+
+function hook(ev, extra = {}) {
+  const list = settings?.hooks?.[ev] ?? [];
+  for (const entry of list) for (const h of entry.hooks ?? []) {
+    const r = Bun.spawnSync(["sh", "-c", h.command], { stdin: Buffer.from(JSON.stringify({ hook_event_name: ev, session_id: session, transcript_path: transcript, cwd: process.cwd(), ...extra })), env: { ...process.env, CLAUDE_PID: String(process.pid) } });
+    if (r.exitCode !== 0) log({ hookFailed: ev });
+  }
+}
+function write(entry) { appendFileSync(transcript, JSON.stringify({ sessionId: session, timestamp: new Date().toISOString(), ...entry }) + "\n"); }
+
+function bump() {
+  const meter = process.env.FAKE_METER;
+  const id = process.env.WALKIE_ACCOUNT;
+  if (!meter || !id) return;
+  const data = existsSync(meter) ? JSON.parse(readFileSync(meter, "utf8")) : { version: 1, records: [], kimi_aliases: {} };
+  const now = Date.now();
+  let rec = data.records.find((r) => r.id === id);
+  if (!rec) { rec = { id, provider: "claude", label: "Claude account", plan: null, dir: `vault:${id}`, is_default: false, last_seen: now, vault: true, reading: null }; data.records.push(rec); }
+  const used = Math.min(100, (rec.reading?.windows?.[0]?.used_pct ?? 0) + Number(process.env.FAKE_STEP ?? 10));
+  rec.reading = { at: now, state: "ok", reason: null, source: "api", until: null, windows: [{ kind: "session", used_pct: used, resets_at: now + 3 * 3600_000, window_s: 18000, scope: null }] };
+  writeFileSync(meter, JSON.stringify(data));
+}
+
+let turns = 0;
+let lastResult = null;
+let toolN = 0;
+function toolCall(ms) {
+  const id = `toolu_fake${++toolN}`;
+  write({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command: "sleep" } }] } });
+  log({ toolStart: id });
+  if (ms > 0) Bun.sleepSync(ms);
+  write({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+  log({ tool: id, ms });
+}
+/** Background work: a shell (backgroundTaskId) or an async agent (async_launched); completed after `ms` when given. */
+function background(kind, ms) {
+  const id = `toolu_fake${++toolN}`;
+  const task = `${kind === "bg" ? "bash" : kind}${toolN}`;
+  const input = kind === "agent" ? { prompt: "x", run_in_background: "true" }
+    : kind === "monitor" ? { command: "tail -f log", description: "deploy watch", timeout_ms: 1800000 }
+      : { command: "sleep 99", run_in_background: true };
+  const name = kind === "agent" ? "Agent" : kind === "monitor" ? "Monitor" : "Bash";
+  write({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] } });
+  const result = kind === "agent" ? { status: "async_launched", agentId: task }
+    : kind === "monitor" ? { taskId: task, timeoutMs: 1800000, persistent: false } : { stdout: "", backgroundTaskId: task };
+  write({ type: "user", toolUseResult: result, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "started" }] } });
+  log({ background: task });
+  if (ms !== null) setTimeout(() => {
+    write({ type: "queue-operation", operation: "enqueue", content: `<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>` });
+    log({ backgroundDone: task });
+  }, ms);
+}
+let limited = false;
+function turn(text) {
+  turns++;
+  hook("UserPromptSubmit");
+  write({ type: "user", message: { role: "user", content: text } });
+  if (resume && turns === 1 && process.env.FAKE_REFUSE_RESUME === fp) {
+    write({ type: "assistant", isApiErrorMessage: true, apiErrorStatus: 400, error: "invalid_request", message: { role: "assistant", content: [{ type: "text", text: "API Error: 400 messages.1.content.0: Invalid `signature` in `thinking` block" }] } });
+    process.stdout.write(`[fake-claude ${fp}] API Error: 400 invalid signature in thinking block\n`);
+    hook("StopFailure");
+    return;
+  }
+  if (text.trim() === "refused") {
+    write({ type: "assistant", isApiErrorMessage: true, error: "authentication_failed", apiErrorStatus: 401, message: { role: "assistant", content: [{ type: "text", text: "Invalid bearer token" }] } });
+    process.stdout.write(`[fake-claude ${fp}] token refused\n`);
+    log({ turn: text, fp });
+    return;
+  }
+  if (text.trim() === "ratelimit") {
+    write({ type: "assistant", isApiErrorMessage: true, apiErrorStatus: 429, error: "rate_limit", message: { role: "assistant", content: [{ type: "text", text: "API Error: Rate limit reached for requests per minute. Please retry shortly." }] } });
+    process.stdout.write(`[fake-claude ${fp}] rate limited (per minute)\n`);
+    log({ turn: text, fp });
+    return;
+  }
+  if (text.trim() === "limit" || limited) {
+    limited = true;
+    write({ type: "assistant", isApiErrorMessage: true, apiErrorStatus: 429, error: "rate_limit", quotaLimits: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 3600, rateLimitType: "five_hour" }, message: { role: "assistant", content: [{ type: "text", text: "You've hit your session limit" }] } });
+    lastResult = { type: "result", is_error: true, result: "You've hit your session limit", session_id: session };
+    if (!print || format !== "json") process.stdout.write(`[fake-claude ${fp}] You've hit your session limit\n`);
+    hook("StopFailure");
+    return;
+  }
+  const tool = /^tool:(\d+)$/.exec(text.trim());
+  if (tool) toolCall(Number(tool[1]));
+  const bg = /^(bg|agent|monitor)(?::(\d+))?$/.exec(text.trim());
+  if (bg) background(bg[1], bg[2] === undefined ? null : Number(bg[2]));
+  write({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `done: ${text}` }] } });
+  bump();
+  lastResult = { type: "result", is_error: false, result: `done: ${text}`, session_id: session };
+  if (!print || format !== "json") process.stdout.write(`[fake-claude ${fp}] session ${session.slice(0, 8)} answered: ${text}\n`);
+  log({ turn: text, fp });
+  hook("Stop");
+}
+
+process.on("SIGTERM", () => { log({ sigterm: true, fp }); process.stdout.write(`[fake-claude ${fp}] ended by SIGTERM\n`); process.exit(143); });
+process.on("SIGINT", () => { log({ sigint: true }); });
+
+hook("SessionStart");
+if (!(print && format === "json")) process.stdout.write(`[fake-claude ${fp}] ${resume ? "resumed" : "started"} session ${session.slice(0, 8)}\n`);
+if (prompt !== null) turn(prompt);
+if (print) {
+  if (format === "json") process.stdout.write(JSON.stringify(lastResult) + "\n");
+  process.exit(lastResult?.is_error ? 1 : 0);
+}
+let buf = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buf += new TextDecoder().decode(chunk);
+  let i;
+  while ((i = buf.indexOf("\n")) >= 0) {
+    const line = buf.slice(0, i).replace(/\r$/, "");
+    buf = buf.slice(i + 1);
+    if (line.trim() === "/exit") { log({ exit: true }); process.exit(0); }
+    if (line.trim()) turn(line);
+  }
+}
+log({ eof: true });
+process.exit(0);

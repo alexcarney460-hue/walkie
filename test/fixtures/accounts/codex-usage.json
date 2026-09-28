@@ -1,0 +1,26 @@
+{
+ "user_id": "user-FAKEFAKEFAKEFAKEFAKE0001",
+ "account_id": "00000000-1111-4222-8333-444444444444",
+ "email": "dev@example.test",
+ "plan_type": "pro",
+ "rate_limit": {
+  "allowed": true,
+  "limit_reached": false,
+  "primary_window": {
+   "used_percent": 13,
+   "limit_window_seconds": 604800,
+   "reset_after_seconds": 600767,
+   "reset_at": 1791046693
+  },
+  "secondary_window": null
+ },
+ "code_review_rate_limit": null,
+ "additional_rate_limits": null,
+ "credits": {
+  "has_credits": false,
+  "unlimited": false,
+  "balance": "0"
+ },
+ "rate_limit_reached_type": null,
+ "promo": null
+}

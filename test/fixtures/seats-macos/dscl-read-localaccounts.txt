@@ -1,0 +1,11 @@
+AppleMetaNodeLocation: /Local/Default
+Comment:
+ Group membership calculated by system
+ Accounts from the local directory database or /etc files
+GeneratedUID: ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000003D
+Password: *
+PrimaryGroupID: 61
+RealName:
+ Local Accounts
+RecordName: localaccounts
+RecordType: dsRecTypeStandard:Groups

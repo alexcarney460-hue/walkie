@@ -1,0 +1,421 @@
+/*
+ * Colour layer (WALKIE-UI-POLISH-2): loaded after glass.css. The tokens live in tokens.css; this file applies them.
+ *  - accent (indigo) = actions, selection, focus, links; green stays "working", amber "needs you", red "stuck".
+ *  - runtimes wear one hue each everywhere: claude (clay), codex (azure), kimi (magenta), local (teal).
+ *  - machines, people, card labels and project prefixes carry a stable hue (--mh / --ph / --th, set inline).
+ *  - kanban roles: backlog slate, to do sky, in progress green, review violet, done indigo, cancelled muted.
+ * Text on tints uses --hue-fg-* (>= 4.5:1 on the page and card surfaces in both themes).
+ */
+
+/* ---- hue plumbing ---- */
+.rt-claude-code, .rt-claude, [data-provider="claude"], .acct-p-claude { --rt: var(--h-claude); }
+.rt-codex, [data-provider="codex"], .acct-p-codex { --rt: var(--h-codex); }
+.rt-kimi, [data-provider="kimi"], .acct-p-kimi { --rt: var(--h-kimi); }
+.rt-local { --rt: var(--h-local); }
+[data-provider="grok"], .acct-p-grok { --rt: var(--h-grok); }
+
+/* ---- accent: primary actions, selection, focus, links ---- */
+.btn-primary {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background:
+    radial-gradient(120% 90% at 50% -20%, oklch(1 0 0 / 0.32), transparent 58%),
+    linear-gradient(170deg, color-mix(in srgb, var(--accent) 88%, white), var(--accent) 55%, var(--accent-deep));
+  color: var(--accent-ink);
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.4) inset,
+    0 -1px 2px 0 oklch(0 0 0 / 0.18) inset,
+    0 10px 24px -12px color-mix(in srgb, var(--accent) 75%, transparent),
+    0 1px 2px oklch(0 0 0 / 0.16);
+}
+.btn-primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-strong) 80%, transparent);
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.45) inset,
+    0 -1px 2px 0 oklch(0 0 0 / 0.18) inset,
+    0 16px 30px -12px color-mix(in srgb, var(--accent) 85%, transparent),
+    0 1px 3px oklch(0 0 0 / 0.18);
+}
+.btn-primary:disabled { background: var(--surface-3); border-color: var(--line); color: var(--text-3); box-shadow: none; }
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.composer-box:focus-within { border-color: var(--accent-line); box-shadow: 0 1px 0 0 var(--glass-hi) inset, 0 0 0 4px var(--accent-soft), var(--card-shadow); }
+.card-title-input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.check input { accent-color: var(--accent); }
+::selection { background: var(--accent-soft); }
+
+.text-link { text-decoration-color: var(--accent-line); }
+.text-link:hover { color: var(--accent-text); text-decoration-color: currentColor; }
+.mission-lede a { text-decoration-color: var(--accent-line); }
+.mission-lede a:hover { color: var(--accent-text); }
+
+/* sidebar + tab bar: the current page wears the accent */
+.rail-link.is-active { background: var(--accent-soft); color: var(--text); box-shadow: 0 1px 0 0 var(--glass-hi) inset, inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent); }
+.rail-link.is-active svg { color: var(--accent-text); }
+.rail-link:hover svg { color: var(--text-2); }
+.rail-link.is-active:hover svg { color: var(--accent-text); }
+.tab.is-active { background: var(--accent-soft); }
+.tab.is-active svg { color: var(--accent-text); }
+.badge-amber { background: oklch(0.83 0.15 78); color: oklch(0.2 0.04 70); } /* same bright amber in both themes: ~9:1 with the dark text */
+.segmented > .seg.is-on .seg-n { color: var(--accent-text); }
+.person-chip.is-on { border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* ---- per-view header tint: a soft band of colour at the top of each page ---- */
+.main {
+  --view-h: 268;
+  background-image: radial-gradient(1100px 300px at 18% -140px, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--view-h) / calc(var(--hue-tint-a) * 1.6)), transparent 70%);
+  background-repeat: no-repeat;
+}
+.view-mission .main { --view-h: 150; }
+.view-projects .main { --view-h: 268; }
+.view-orchestrator .main { --view-h: 300; }
+.view-accounts .main { --view-h: 72; }
+.view-seats .main { --view-h: 212; }
+.view-team .main { --view-h: 232; }
+.view-machine .main { --view-h: var(--mh-page, 232); }
+.view-asks .main { --view-h: 72; }
+.page-title { text-wrap: balance; }
+
+/* ---- runtime badges ---- */
+.runtime[class*="rt-"] {
+  background: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / var(--hue-soft-a));
+  box-shadow: inset 0 0 0 1px oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / var(--hue-line-a));
+  color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--rt, 260));
+  font-weight: 600;
+}
+.runtime.rt-cli,
+.runtime.rt-other { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-3); font-weight: 500; }
+
+/* ---- state pills: a hairline in their tone, working gets a soft glow dot ---- */
+.state-pill { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 28%, transparent); }
+.state-working .state-dot { box-shadow: 0 0 6px color-mix(in srgb, var(--signal) 70%, transparent); }
+.state-idle { box-shadow: inset 0 0 0 1px var(--line); }
+
+/* ---- summary strip: each count tinted in its state colour ---- */
+.summary-stat {
+  position: relative;
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--tone, var(--accent)) 11%, transparent), transparent 85%);
+}
+.summary-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--tone, var(--accent)), color-mix(in srgb, var(--tone, var(--accent)) 10%, transparent));
+  opacity: 0.85;
+}
+.summary-static { --tone: var(--accent); }
+.summary-stat.tone-working:not(.is-zero) .summary-n { color: var(--signal); }
+.summary-static .summary-n { color: var(--accent-text); }
+.summary-stat.is-zero { background-image: none; }
+.summary-stat.is-zero::before { opacity: 0.25; }
+.summary-stat.is-zero .summary-n { color: var(--text-3); }
+.summary-stat.is-active { background-color: color-mix(in srgb, var(--tone) 10%, transparent); box-shadow: inset 0 -2px 0 var(--tone); }
+
+/* ---- needs-you banner ---- */
+.needs-banner {
+  border-color: var(--amber-line);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--amber) 16%, var(--card-bg)), color-mix(in srgb, var(--amber) 5%, var(--card-bg)));
+  box-shadow: var(--card-shadow);
+  transition: background var(--dur-2) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
+}
+.needs-banner:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--amber) 22%, var(--card-bg)), color-mix(in srgb, var(--amber) 8%, var(--card-bg))); }
+.needs-banner:active { transform: scale(0.99); }
+.needs-banner-dot { box-shadow: 0 0 0 3px var(--amber-soft); animation: breathe 1.8s ease-in-out infinite; }
+.needs-banner-go { color: var(--amber); font-weight: 600; }
+
+/* ---- people and machines on Mission Control ---- */
+.person-head {
+  border-bottom: 0;
+  background-image: linear-gradient(90deg, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--ph, 260) / 0.55), var(--line) 38%, transparent);
+  background-size: 100% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+}
+.machine-head .machine-name,
+.host-link {
+  color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--mh, 260));
+}
+.machine-head .machine-name {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  background: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 260) / var(--hue-soft-a));
+  box-shadow: inset 0 0 0 1px oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 260) / var(--hue-line-a));
+  font-weight: 600;
+}
+.machine-head .machine-icon { color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--mh, 260)); }
+.machine.is-offline .machine-head .machine-name { filter: saturate(0.2); opacity: 0.8; }
+.machine-live.is-on { box-shadow: inset 0 0 0 1px var(--signal-line); }
+.host-link { font-weight: 600; text-decoration-color: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 260) / 0.45); }
+.host-link:hover { color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--mh, 260)); }
+/* the rail's machine list: a hue tick at the left edge */
+.rail-machine { position: relative; }
+.rail-machine::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 7px;
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 260));
+  opacity: 0.75;
+  transition: opacity var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out);
+}
+.rail-machine.is-off::before { background: var(--line-strong); }
+.rail-machine:hover::before,
+.rail-machine.is-active::before { opacity: 1; }
+.machine-row td:first-child { box-shadow: inset 3px 0 0 oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 260) / 0.7); }
+.machine-row.is-off td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
+
+/* ---- agent cards: a spine in the state colour, runtime-tinted badge ---- */
+.agent-card { position: relative; overflow: hidden; }
+.agent-card::before {
+  content: "";
+  position: absolute;
+  inset: 10px auto 10px 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--card-spine, transparent);
+  transition: background var(--dur-2) var(--ease-out);
+}
+.agent-card.is-working { --card-spine: var(--signal); }
+.agent-card.is-waiting { --card-spine: var(--amber); }
+.agent-card.is-blocked { --card-spine: var(--red); }
+.agent-card.is-idle { --card-spine: var(--line-strong); }
+.agent-card.is-working { background-image: linear-gradient(180deg, color-mix(in srgb, var(--signal) 5%, transparent), transparent 55%); }
+.subagent-row.is-working { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--signal) 60%, transparent); }
+.agent-subs { border-color: var(--accent-line); color: var(--accent-text); background: var(--accent-soft); }
+.agent-subs svg { color: currentColor; }
+.project-chip { color: var(--accent-text); border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* live activity rail: icons in their tone, a faint hover in the accent */
+.ticker-btn:hover { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.feed-rail-head .section-title::before,
+.feed-rail-head h2::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 3px var(--signal-soft);
+  vertical-align: 1px;
+}
+
+/* ---- machine page header: icon tile in the machine's hue ---- */
+.mh .mh-icon {
+  background:
+    radial-gradient(120% 80% at 30% 0%, oklch(1 0 0 / 0.28), transparent 60%),
+    linear-gradient(145deg, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 232) / 0.42), oklch(var(--hue-solid-l) var(--hue-solid-c) calc(var(--mh, 232) + 40) / 0.18));
+  color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--mh, 232));
+}
+.mh-title { color: var(--text); }
+.mh-facts > div:first-child { background-image: linear-gradient(90deg, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--mh, 232) / var(--hue-tint-a)), transparent); border-radius: var(--r-card) 0 0 var(--r-card); }
+
+/* ---- team page ---- */
+.role-owner { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.role-member { background: var(--sky-soft); color: var(--sky); box-shadow: inset 0 0 0 1px var(--sky-line); }
+
+/* ---- projects: prefixes and labels in their own hue ---- */
+.project-prefix[style*="--th"],
+.kcard-label[style*="--th"] {
+  border-color: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--th) / var(--hue-line-a));
+  background: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--th) / var(--hue-soft-a));
+  color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--th));
+}
+.project-prefix[style*="--th"] { font-weight: 600; box-shadow: inset 0 0 0 1px oklch(var(--hue-solid-l) var(--hue-solid-c) var(--th) / var(--hue-line-a)); }
+.project-row {
+  border-color: var(--card-line);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), transform var(--dur-spring) var(--ease-spring);
+}
+.project-row:hover { border-color: var(--accent-line); background: var(--card-bg); box-shadow: var(--card-shadow-hover); transform: translateY(-1px); }
+.project-name { font-size: var(--fs-14); font-weight: 600; letter-spacing: -0.01em; }
+
+/* completeness meter follows the column colours */
+.meter-bar { background: color-mix(in srgb, var(--slate) 22%, transparent); }
+.seg-done { background: linear-gradient(90deg, var(--accent-deep), var(--accent)); }
+.seg-review { background: var(--violet); }
+.seg-active { background: var(--signal); }
+.pboard-sel { color: var(--accent-text); }
+
+/* ---- kanban columns ---- */
+.kcol { --col: var(--slate); }
+.kcol.role-backlog { --col: var(--slate); }
+.kcol.role-todo { --col: var(--sky); }
+.kcol.role-active { --col: var(--signal); }
+.kcol.role-review { --col: var(--violet); }
+.kcol.role-done { --col: var(--accent); }
+.kcol.role-cancelled { --col: var(--text-4); }
+.kcol {
+  position: relative;
+  border-color: color-mix(in srgb, var(--col) 22%, var(--card-line));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--col) 10%, transparent), transparent 140px),
+    color-mix(in srgb, var(--card-bg) 70%, transparent);
+  box-shadow: var(--card-shadow);
+}
+.kcol::before {
+  content: "";
+  position: absolute;
+  inset: -1px 14px auto;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--col);
+}
+.kcol .kcol-name::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 99px;
+  vertical-align: 0;
+  background: var(--col);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--col) 18%, transparent);
+}
+.kcol.role-backlog .kcol-name::before,
+.kcol.role-cancelled .kcol-name::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--col); }
+.kcol.role-done .kcol-name::before,
+.kcol.role-review .kcol-name::before,
+.kcol.role-active .kcol-name::before { background: var(--col); }
+.kcol-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--col) 14%, transparent);
+  color: var(--text-2);
+  font-size: var(--fs-11);
+  font-weight: 600;
+}
+.kcol-count.is-over { background: var(--red-soft); color: var(--red); }
+.kcol.is-drop { border-color: var(--accent-line); background: color-mix(in srgb, var(--accent) 7%, var(--card-bg)); }
+.kcol-new:hover { background: color-mix(in srgb, var(--col) 10%, transparent); color: var(--text); }
+.kcol-empty { padding: 14px 4px; border: 1px dashed color-mix(in srgb, var(--col) 30%, var(--line)); border-radius: var(--r-control); }
+.kdrop { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.kcard {
+  border-color: var(--card-line);
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.08);
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), transform var(--dur-spring) var(--ease-spring), opacity var(--dur-1) var(--ease-out);
+}
+.kcard:hover { border-color: color-mix(in srgb, var(--col, var(--accent)) 45%, var(--card-line)); box-shadow: var(--card-shadow-hover); transform: translateY(-1px); }
+.kcard.is-focus { border-color: var(--accent-line); box-shadow: 0 0 0 2px var(--accent-soft); }
+.kcard.is-selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card-bg)); }
+.kcard-check { color: var(--accent-text); }
+.kcard.is-stuck { border-left-color: var(--red); background: linear-gradient(90deg, color-mix(in srgb, var(--red) 6%, var(--card-bg)), var(--card-bg) 60%); }
+.kcard-key { font-weight: 500; }
+.kghost .kcard { border-color: var(--accent-line); }
+.kcard-ghost { cursor: default; box-shadow: none; }
+.kcard-ghost:hover { transform: none; box-shadow: none; border-color: var(--card-line); }
+.kcol-tab.role-backlog, .kcol-tab.role-cancelled { --col: var(--slate); }
+.kcol-tab.role-todo { --col: var(--sky); }
+.kcol-tab.role-active { --col: var(--signal); }
+.kcol-tab.role-review { --col: var(--violet); }
+.kcol-tab.role-done { --col: var(--accent); }
+.kcol-tab::before { content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--col, var(--slate)); }
+.kcol-tab.is-on { border-color: color-mix(in srgb, var(--col, var(--accent)) 55%, transparent); background: color-mix(in srgb, var(--col, var(--accent)) 14%, transparent); color: var(--text); }
+
+/* ---- accounts: provider-coloured monograms, tinted tiles, gradient meters ---- */
+.acct-icon[class*="acct-p-"] {
+  background:
+    radial-gradient(120% 80% at 30% 0%, oklch(1 0 0 / 0.22), transparent 60%),
+    oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / 0.2);
+  box-shadow: inset 0 0 0 1px oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / 0.45);
+  color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--rt, 260));
+}
+.acct-tile[data-provider] {
+  background-image: linear-gradient(180deg, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / var(--hue-tint-a)), transparent 96px);
+}
+.acct-mini[data-provider]:hover { border-color: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / var(--hue-line-a)); }
+.acct-provider { color: var(--text); }
+.acct-tile.is-exhausted,
+.acct-tile.is-relogin { background-image: linear-gradient(180deg, color-mix(in srgb, var(--red) 8%, transparent), transparent 96px); }
+
+.acct-bar { background: color-mix(in srgb, var(--tone) 14%, var(--surface-3)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 12%, transparent); }
+.acct-fill {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tone) 72%, var(--bg)), var(--tone));
+  box-shadow: 0 0 8px -1px color-mix(in srgb, var(--tone) 55%, transparent);
+}
+.acct-meter.is-stale .acct-fill { box-shadow: none; }
+.acct-meter.lv-none .acct-bar { box-shadow: inset 0 0 0 1px var(--line-soft); }
+.acct-chip[data-provider] .acct-chip-mono {
+  background: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / 0.2);
+  color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--rt, 260));
+}
+.acct-chip-bar { background: color-mix(in srgb, var(--tone) 16%, var(--surface-3)); }
+.acct-chip { background: var(--card-bg); }
+.acct-row-toggle { border-color: var(--card-line); background: var(--card-bg); box-shadow: var(--card-shadow); }
+.acct-row-toggle:hover { border-color: var(--accent-line); background: var(--card-bg); }
+.acct-row-more { color: var(--accent-text); }
+.acct-vault-badge { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-text); }
+
+/* ---- seats ---- */
+.rt-seg.is-on { background: oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt) / 0.18); color: oklch(var(--hue-fg-l) var(--hue-fg-c) var(--rt)); box-shadow: inset 0 0 0 1px oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt) / 0.4); }
+.seat-card[class*="rt-"] { box-shadow: inset 3px 0 0 oklch(var(--hue-solid-l) var(--hue-solid-c) var(--rt, 260) / 0.7), var(--card-shadow); }
+.seat-host-card.is-on { border-color: var(--signal-line); background-image: linear-gradient(180deg, color-mix(in srgb, var(--signal) 6%, transparent), transparent 120px); }
+
+/* ---- orchestrator ---- */
+.orch-bubble {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 16%, var(--surface-2)), color-mix(in srgb, var(--violet) 10%, var(--surface-2)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.orch-chip:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+.orch-hello-title {
+  background: linear-gradient(100deg, var(--text) 30%, var(--accent-text) 70%, var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@media (forced-colors: active) {
+  .orch-hello-title { color: CanvasText; background: none; }
+}
+.orch-skeleton { display: grid; gap: 10px; padding: 8px 0; }
+.orch-skel-you { justify-self: end; width: 46%; height: 38px; border-radius: 20px; }
+.orch-skel-line { height: 12px; }
+
+/* ---- empty states and skeletons ---- */
+.empty-icon {
+  background:
+    radial-gradient(120% 80% at 30% 0%, oklch(1 0 0 / 0.35), transparent 60%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 34%, transparent), color-mix(in srgb, var(--violet) 22%, transparent) 60%, color-mix(in srgb, var(--tint-mint) 26%, transparent));
+  box-shadow: 0 1px 0 0 var(--glass-hi) inset, 0 14px 30px -14px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.empty-icon::before { background: var(--violet); }
+.empty-icon::after { background: var(--tint-mint); }
+.skeleton {
+  background: linear-gradient(90deg, var(--sel) 0%, color-mix(in srgb, var(--accent) 10%, var(--sel)) 50%, var(--sel) 100%);
+  background-size: 200% 100%;
+}
+.skeleton-row { padding: 12px 14px; border: 1px solid var(--card-line); border-radius: var(--r-card); background: var(--card-bg); }
+.skeleton-rows { display: grid; gap: 8px; }
+.kanban-skeleton .kcard-ghost { display: grid; gap: 8px; padding: 12px; }
+
+/* ---- subtle entrance: page content settles in (disabled by prefers-reduced-motion in base.css) ---- */
+.page,
+.mission-main {
+  animation: settle-in 320ms var(--ease-out-expo) backwards;
+}
+@keyframes settle-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
+@media (max-width: 860px) {
+  .main { background-image: radial-gradient(600px 220px at 20% -100px, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--view-h) / calc(var(--hue-tint-a) * 1.6)), transparent 70%); }
+  .kcol-tab { transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out); }
+}

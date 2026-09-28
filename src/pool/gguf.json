@@ -1,0 +1,435 @@
+{
+ "version": 1,
+ "updated": "2026-09-26",
+ "note": "GGUF files per catalog model (models.json id) and format, pinned to a Hugging Face repository revision; sha256 = the file's LFS object id at that revision. q4 = Q4_K_M (gpt-oss: its native MXFP4 release), q8 = Q8_0.",
+ "models": {
+  "llama-3.2-3b": {
+   "repo": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+   "revision": "5ab33fa94d1d04e903623ae72c95d1696f09f9e8",
+   "files": {
+    "q4": [
+     {
+      "path": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "size": 2019377696,
+      "sha256": "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "size": 3421899296,
+      "sha256": "b5607b5090a8280063fff2d706bb3408ca6542341b06aab39c3eca0a28575921"
+     }
+    ]
+   }
+  },
+  "llama-3.1-8b": {
+   "repo": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+   "revision": "bf5b95e96dac0462e2a09145ec66cae9a3f12067",
+   "files": {
+    "q4": [
+     {
+      "path": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+      "size": 4920739232,
+      "sha256": "7b064f5842bf9532c91456deda288a1b672397a54fa729aa665952863033557c"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Meta-Llama-3.1-8B-Instruct-Q8_0.gguf",
+      "size": 8540775840,
+      "sha256": "9da71c45c90a821809821244d4971e5e5dfad7eb091f0b8ff0546392393b6283"
+     }
+    ]
+   }
+  },
+  "qwen3-8b": {
+   "repo": "Qwen/Qwen3-8B-GGUF",
+   "revision": "7c41481f57cb95916b40956ab2f0b139b296d974",
+   "files": {
+    "q4": [
+     {
+      "path": "Qwen3-8B-Q4_K_M.gguf",
+      "size": 5027783488,
+      "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Qwen3-8B-Q8_0.gguf",
+      "size": 8709518112,
+      "sha256": "408b955510e196121c1c375201744783b5c9a43c7956d73fc78df54c66e883d6"
+     }
+    ]
+   }
+  },
+  "phi-4": {
+   "repo": "bartowski/phi-4-GGUF",
+   "revision": "19cd65f97c2f1712a81c506611d3f9c94b16a1e1",
+   "files": {
+    "q4": [
+     {
+      "path": "phi-4-Q4_K_M.gguf",
+      "size": 9053114816,
+      "sha256": "009aba717c09d4a35890c7d35eb59d54e1dba884c7c526e7197d9c13ab5911d9"
+     }
+    ],
+    "q8": [
+     {
+      "path": "phi-4-Q8_0.gguf",
+      "size": 15580500416,
+      "sha256": "68efc525888cc34fc2cb539c2f4409653d57994e35b3a5735d2a59b871871bf3"
+     }
+    ]
+   }
+  },
+  "qwen3-14b": {
+   "repo": "Qwen/Qwen3-14B-GGUF",
+   "revision": "530227a7d994db8eca5ab5ced2fb692b614357fd",
+   "files": {
+    "q4": [
+     {
+      "path": "Qwen3-14B-Q4_K_M.gguf",
+      "size": 9001752960,
+      "sha256": "500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Qwen3-14B-Q8_0.gguf",
+      "size": 15698533728,
+      "sha256": "a0dfe649137410b7d82f06a209240508e218f32f5b6fd81b69d6932160cfcd9d"
+     }
+    ]
+   }
+  },
+  "gpt-oss-20b": {
+   "repo": "ggml-org/gpt-oss-20b-GGUF",
+   "revision": "ef9b12f2ff56c69cf32153a02784e7a3c88bf524",
+   "files": {
+    "q4": [
+     {
+      "path": "gpt-oss-20b-MXFP4.gguf",
+      "size": 12109566624,
+      "sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901"
+     }
+    ],
+    "q8": null
+   }
+  },
+  "mistral-small-3.2-24b": {
+   "repo": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+   "revision": "b3592d09be469bedab6be51f577824b3b6b76ba1",
+   "files": {
+    "q4": [
+     {
+      "path": "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+      "size": 14333915264,
+      "sha256": "80f5bda68f156f12650ca03a0a2dbfae06a215ac41caa773b8631a479f82415e"
+     }
+    ],
+    "q8": [
+     {
+      "path": "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf",
+      "size": 25054785664,
+      "sha256": "980c4969d46bf016ef78de4206bd74a66a6ca7de18152cb603a7b0c4d348bc55"
+     }
+    ]
+   }
+  },
+  "qwen3-30b-a3b": {
+   "repo": "Qwen/Qwen3-30B-A3B-GGUF",
+   "revision": "e4d4bafdfb96a411a163846265362aceb0b9c63a",
+   "files": {
+    "q4": [
+     {
+      "path": "Qwen3-30B-A3B-Q4_K_M.gguf",
+      "size": 18556685824,
+      "sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Qwen3-30B-A3B-Q8_0.gguf",
+      "size": 32483931648,
+      "sha256": "4ad960d180b16f56024f5b704697e5dd5b0837167c2e515ef0569abfc599743c"
+     }
+    ]
+   }
+  },
+  "qwen3-32b": {
+   "repo": "Qwen/Qwen3-32B-GGUF",
+   "revision": "938a7432affaec9157f883a87164e2646ae17555",
+   "files": {
+    "q4": [
+     {
+      "path": "Qwen3-32B-Q4_K_M.gguf",
+      "size": 19762149024,
+      "sha256": "efd971561896866f0e910cce52761ca77b1b138090c7f15fe284676d57d1f689"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Qwen3-32B-Q8_0.gguf",
+      "size": 34817718912,
+      "sha256": "2c50eb8aad05047dbf24fa014eb621adf552e14176cabe0c5db4ef38c91e2169"
+     }
+    ]
+   }
+  },
+  "llama-3.3-70b": {
+   "repo": "bartowski/Llama-3.3-70B-Instruct-GGUF",
+   "revision": "b6c5c9f176f3279204034e1d16d393105e95cb88",
+   "files": {
+    "q4": [
+     {
+      "path": "Llama-3.3-70B-Instruct-Q4_K_M.gguf",
+      "size": 42520398816,
+      "sha256": "32df3baccb556f9840059b2528b2dee4d3d516b24afdfb9d0c56ff5f63e3a664"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Llama-3.3-70B-Instruct-Q8_0/Llama-3.3-70B-Instruct-Q8_0-00001-of-00002.gguf",
+      "size": 39927004064,
+      "sha256": "0c4ec5083aec2efa104269e8b63e2d9f3322e2fa50511184314093a7b4697878"
+     },
+     {
+      "path": "Llama-3.3-70B-Instruct-Q8_0/Llama-3.3-70B-Instruct-Q8_0-00002-of-00002.gguf",
+      "size": 35048050944,
+      "sha256": "e5c8858f5feafdc56200bbcbb3c4fadb07cb323c8ed13548dfb798dd1fb24255"
+     }
+    ]
+   }
+  },
+  "gpt-oss-120b": {
+   "repo": "ggml-org/gpt-oss-120b-GGUF",
+   "revision": "238abdd290bb874b90a5da1b4549881b7d05c091",
+   "files": {
+    "q4": [
+     {
+      "path": "gpt-oss-120b-MXFP4.gguf",
+      "size": 63387346208,
+      "sha256": "582bd40f6886200101f4c4ed9f25f3fe80cc14c86e9e2b37746cd8904a0c622d"
+     }
+    ],
+    "q8": null
+   }
+  },
+  "qwen3-235b-a22b": {
+   "repo": "Qwen/Qwen3-235B-A22B-GGUF",
+   "revision": "211e807ecd6d37446a747409108783e39a04e80f",
+   "files": {
+    "q4": [
+     {
+      "path": "Q4_K_M/Qwen3-235B-A22B-Q4_K_M-00001-of-00005.gguf",
+      "size": 29742283872,
+      "sha256": "ce666f562eb8eefda48eec0aa93680ba40ca5727d0ba9918f3fb1771141375e6"
+     },
+     {
+      "path": "Q4_K_M/Qwen3-235B-A22B-Q4_K_M-00002-of-00005.gguf",
+      "size": 29974106496,
+      "sha256": "ac73c457aac5993d02444063c976062c70be609c03ca6584d0c3be0632e79ce6"
+     },
+     {
+      "path": "Q4_K_M/Qwen3-235B-A22B-Q4_K_M-00003-of-00005.gguf",
+      "size": 29933980640,
+      "sha256": "6357074e14a748446c2b0dcc64a1a7c64b1c124fbfb9cb48114147645d3310fe"
+     },
+     {
+      "path": "Q4_K_M/Qwen3-235B-A22B-Q4_K_M-00004-of-00005.gguf",
+      "size": 29936094304,
+      "sha256": "2eb47718eaeeebee3726cd2ca4ac11b5768faded5d7adddec5b754aeb7c387dd"
+     },
+     {
+      "path": "Q4_K_M/Qwen3-235B-A22B-Q4_K_M-00005-of-00005.gguf",
+      "size": 22567608864,
+      "sha256": "dbe2c7547c0d397d2ef16e08218a586383771dc12e9678cfd6fa8cc23e94e8f8"
+     }
+    ],
+    "q8": [
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00001-of-00009.gguf",
+      "size": 29565621408,
+      "sha256": "f30035563d331a0333a32c8d46ee102f9c79bcb159b288071ad84c7997fc970f"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00002-of-00009.gguf",
+      "size": 29986394176,
+      "sha256": "5fe4666715ed41267132004092cf3e4ce6baf27f22e46cb0e8dbccd2d5096db2"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00003-of-00009.gguf",
+      "size": 29986377728,
+      "sha256": "d60b257562ba8492bffe350863bda9627f21edba725dd90faddb5fc4f6055992"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00004-of-00009.gguf",
+      "size": 29950610880,
+      "sha256": "fdd9a62d0fda4fd83e939bec2cde15c0c09eb761a9b58dc8a7fb6100071efa7d"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00005-of-00009.gguf",
+      "size": 29986394176,
+      "sha256": "2abcd716367d482d1042020429335acf66e451a9ee1bae000044426bf89ece31"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00006-of-00009.gguf",
+      "size": 29986377728,
+      "sha256": "ab2a4b9f646e0c8bd86085a27cd5d4e603907781598d24306b6e0a3a670b228e"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00007-of-00009.gguf",
+      "size": 29950610880,
+      "sha256": "db25dbe82c58e979764fbcfb04ee0d2f40071d9b3493877fed03b6d6a0e1e0e5"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00008-of-00009.gguf",
+      "size": 29986394176,
+      "sha256": "e5f771b4dd5cb1ce4c85f084acbda58fd73894e2165378e14ff46a454fe1a68c"
+     },
+     {
+      "path": "Q8_0/Qwen3-235B-A22B-Q8_0-00009-of-00009.gguf",
+      "size": 10541324640,
+      "sha256": "18de673322f984dfbaf3ac22e2dc9412942fbf80448205bf764b6ea2a5077679"
+     }
+    ]
+   }
+  },
+  "deepseek-v3": {
+   "repo": "unsloth/DeepSeek-V3-GGUF",
+   "revision": "6b9a45d8a30b48660644560df90e5ded5c0cb0e9",
+   "files": {
+    "q4": [
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00001-of-00009.gguf",
+      "size": 45244923584,
+      "sha256": "b13f1c6c00ff33fb2cbb9fc920939d55f7abbe3111f1804af9aafbb6474a5419"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00002-of-00009.gguf",
+      "size": 46045037472,
+      "sha256": "f11ed5f79af603444c4d6d1ad65121463d52e9491b711c21e4c2ccb3703b4331"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00003-of-00009.gguf",
+      "size": 45170284896,
+      "sha256": "1644e9754ea79f162758c3b64c2dbb252d94f5c5ac87db61a8a56c708c31ad72"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00004-of-00009.gguf",
+      "size": 45177653696,
+      "sha256": "a3daa641b0f444456818f6d6d0888725ef14fcd9f562705c29e440ca76cf8814"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00005-of-00009.gguf",
+      "size": 45072368544,
+      "sha256": "90999ed2228323d5b384fd2100b8fca6fa8502085f9780fee50a5c057115c6f7"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00006-of-00009.gguf",
+      "size": 46142953824,
+      "sha256": "9326a7e28a0ba903d3ba7547d9685d0ccc33932398c5b4060bfd3dfc50f1d41f"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00007-of-00009.gguf",
+      "size": 45177653696,
+      "sha256": "08368fa46c1d5e2354d77d91acc230f8f69bfc02a9f9d00ab9f32121970c6f5a"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00008-of-00009.gguf",
+      "size": 44888150688,
+      "sha256": "c9b28e6234c040aef1adf2a1b35ee16a44a250c8979001a35d43bbf2fbdd9fd2"
+     },
+     {
+      "path": "DeepSeek-V3-Q4_K_M/DeepSeek-V3-Q4_K_M-00009-of-00009.gguf",
+      "size": 41511160672,
+      "sha256": "0651bdf062c75ca7ad79c5c1dff3ee92e393e9bec151b570af5246b5f3a2ff00"
+     }
+    ],
+    "q8": [
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00001-of-00016.gguf",
+      "size": 43791576864,
+      "sha256": "1cc385d5a2c240f622052c6d3b03dc8466b9423874e68eeab92d558ade773ac4"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00002-of-00016.gguf",
+      "size": 44934750464,
+      "sha256": "0010a2b595145c8868386c1b2d2d5b5e1e8f335522cbacf371d46113c9d42f47"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00003-of-00016.gguf",
+      "size": 44681751008,
+      "sha256": "384a32eb43517b2592c9158b5a2c3fe914d84deb4883537a0c747105ae14abb1"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00004-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "895139bda3955468a50c82b09882f9894002565ba4bfea7c1185560d77f32a5e"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00005-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "420e2a1b32068e51e76ba970def2cbdffa8df262ee7be852a057863cbe7395aa"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00006-of-00016.gguf",
+      "size": 44681751008,
+      "sha256": "5ec809d40f60214f77cafa06d23269c53f61b860baa848ba2951691cdd279c48"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00007-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "c442ed61816a6804c916164fab21800f40285cbf6ffccd63a766350e2d5f1511"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00008-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "456709b7a31f504c453cb47fd6f7b8eddedd2b822cd0c688bd4ea682978ed8cc"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00009-of-00016.gguf",
+      "size": 44681751008,
+      "sha256": "3ef4791cbb2c885b1d71e4fa857900e39e4ac53d100564b72291278b54b7ae1b"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00010-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "9bcba75ed7e5ee80111d787d14584f7fd7bd403794caf16f6af12a552d235eb1"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00011-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "556cdf9e5fb513fb75607cfc503b726150f1547a5b7112f417a3541312e048ea"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00012-of-00016.gguf",
+      "size": 44681751008,
+      "sha256": "c222201268db0a70d47d66fa672dcbe50c72a47344cc0f938ec32691d1f19325"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00013-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "60998a9f054fa71ee0c880d55129b831228c5de20476862158e32f3b9cb32557"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00014-of-00016.gguf",
+      "size": 44934750528,
+      "sha256": "92c557a733f1b79c244c2108af48003b30e8c31e871855a0a83d1bf3fc684010"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00015-of-00016.gguf",
+      "size": 44681751008,
+      "sha256": "b3c206d8f41cafc054bc40c14f0507f7dd8be43675c14a582a86e282f3a28a29"
+     },
+     {
+      "path": "DeepSeek-V3-Q8_0/DeepSeek-V3-BF16-256x20B-Q8_0-00016-of-00016.gguf",
+      "size": 41673427488,
+      "sha256": "5e36f68d551e7e49c3d90b6a14dc00aaff6fdf7d51aef46a196744a19d9921ee"
+     }
+    ]
+   }
+  }
+ }
+}

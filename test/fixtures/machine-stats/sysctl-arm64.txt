@@ -1,0 +1,3 @@
+hw.memsize: 17179869184
+vm.swapusage: total = 4096.00M  used = 2740.06M  free = 1355.94M  (encrypted)
+kern.memorystatus_vm_pressure_level: 1

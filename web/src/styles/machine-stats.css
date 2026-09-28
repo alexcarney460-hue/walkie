@@ -1,0 +1,69 @@
+/* Machine stats: memory bar (coloured by pressure) and temperature (green < 70 °C, amber 70–85, red > 85). */
+.ms {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  cursor: default;
+}
+.ms-mem { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-bar {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.ms-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--text-4);
+  transition: width var(--dur-3) var(--ease-out);
+}
+.ms-text { white-space: nowrap; }
+.ms-temp { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ms-na { color: var(--text-4); }
+/* Where the temperature came from: CPU/board sensor or the GPU fallback (WALKIE-TEMP-WSL). */
+.ms-src { color: var(--text-3); font-size: 10px; font-weight: 500; letter-spacing: 0.04em; margin-left: 2px; }
+
+.ms-mem.ms-lv-normal .ms-fill { background: var(--signal); }
+.ms-mem.ms-lv-warn .ms-fill { background: var(--amber); }
+.ms-mem.ms-lv-critical .ms-fill { background: var(--red); }
+.ms-mem.ms-lv-warn .ms-text { color: var(--amber); }
+.ms-mem.ms-lv-critical .ms-text { color: var(--red); }
+.ms-temp.ms-lv-normal { color: var(--signal); }
+.ms-temp.ms-lv-warn { color: var(--amber); }
+.ms-temp.ms-lv-critical { color: var(--red); font-weight: 600; }
+
+/* Offline: last known values, greyed. */
+.ms-stale,
+.ms-stale .ms-text,
+.ms-stale .ms-temp,
+.ms-stale .ms-src { color: var(--text-4) !important; font-weight: 400; }
+.ms-stale .ms-fill { background: var(--text-4) !important; opacity: 0.55; }
+
+/* Sidebar: a second row under the machine name, aligned with it. */
+.rail-machine.has-stats {
+  flex-wrap: wrap;
+  row-gap: 1px;
+  height: auto;
+  min-height: 24px;
+  padding-top: 3px;
+  padding-bottom: 4px;
+}
+.ms-rail { flex-basis: 100%; padding-left: 15px; }
+.ms-rail .ms-mem { flex: 1; }
+.ms-rail .ms-bar { flex: 1; width: auto; min-width: 32px; max-width: 72px; }
+.ms-rail .ms-temp { margin-left: auto; }
+
+/* Team page: a line under the machine name. */
+.ms-cell { display: flex; margin: 4px 0 0 15px; gap: 12px; }
+.ms-cell .ms-bar { width: 72px; }
+/* Agent discovery could not report every running session on this machine (MISSION-1 fix round 3). */
+.ms-disc { white-space: nowrap; font-size: 11px; color: var(--amber); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; }

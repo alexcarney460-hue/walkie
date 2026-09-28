@@ -1,0 +1,160 @@
+/* ---- integrations: source badges, task chips, settings cards ---- */
+
+.text-link { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
+.text-link:hover { text-decoration-color: var(--text); }
+
+/* Integration authors: a neutral tile with the source icon instead of a person's avatar. */
+.source-avatar {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.author-source-name { color: var(--text); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--line-strong);
+  color: var(--text-3);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.author-via { font-size: var(--fs-12); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.msg-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.msg-source-link:hover { color: var(--text); }
+.msg.is-integration .msg-body .md-p:first-child strong:first-child { font-size: 13.5px; }
+
+/* Task chips enriched from Linear. */
+.agent-task.has-issue { gap: 6px; }
+.task-state { color: var(--text-3); font-family: var(--font-sans); font-size: var(--fs-11); font-weight: 500; }
+.agent-task.is-started .task-state,
+.task-state.is-started { color: var(--signal); }
+.agent-task.is-done .task-state,
+.task-state.is-done { color: var(--text-2); }
+.agent-task.is-canceled .task-state,
+.task-state.is-canceled { color: var(--text-4); text-decoration: line-through; }
+.task-detail { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.task-link { display: inline-flex; align-items: center; gap: 3px; color: var(--text); }
+.task-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.task-title { color: var(--text-2); }
+
+/* Settings cards. */
+.int-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.int-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  min-width: 0;
+}
+.int-card.is-enabled { border-color: var(--line-strong); }
+.int-card.has-error { border-color: var(--red-line); }
+.int-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.int-head .source-avatar { width: 30px; height: 30px; }
+.int-title { margin: 0; font-size: var(--fs-16); font-weight: 600; letter-spacing: -0.01em; }
+.int-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-3);
+}
+.int-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--text-4); }
+.int-status.is-on { color: var(--signal); }
+.int-status.is-on::before { background: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.int-status.is-running { color: var(--amber); }
+.int-status.is-running::before { background: var(--amber); }
+.int-status.is-error { color: var(--red); }
+.int-status.is-error::before { background: var(--red); }
+.int-blurb { margin: 0; color: var(--text-2); font-size: var(--fs-13); line-height: 1.55; }
+.int-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+.int-facts > div { display: grid; gap: 2px; min-width: 0; }
+.int-facts dt { color: var(--text-3); font-size: var(--fs-11); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
+.int-facts dd { margin: 0; font-size: var(--fs-13); min-width: 0; }
+.int-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.int-missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--line);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+}
+.int-missing p { margin: 0; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.int-key { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.seg {
+  display: inline-flex;
+  justify-self: start;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--bg);
+}
+.seg-btn {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  cursor: pointer;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-btn.is-on { background: var(--surface-3); color: var(--text); }
+.int-remove { margin-left: auto; }
+.int-foot { margin-top: 20px; font-size: var(--fs-12); max-width: 70ch; }
+
+@media (max-width: 640px) {
+  .int-card { padding: 14px; }
+  .msg-source-link { margin-left: 0; }
+}

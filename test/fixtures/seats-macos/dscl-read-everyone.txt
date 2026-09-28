@@ -1,0 +1,10 @@
+AppleMetaNodeLocation: /Local/Default
+Comment:
+ Group membership calculated by system
+GeneratedUID: ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C
+Password: *
+PrimaryGroupID: 12
+RealName: Everyone
+RecordName: everyone BUILTIN\Everyone
+RecordType: dsRecTypeStandard:Groups
+SMBSID: S-1-1-0

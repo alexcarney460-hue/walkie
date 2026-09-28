@@ -1,0 +1,19 @@
+{
+  "name": "walkie-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Landing page (static files) and billing functions (api/*.ts, Vercel Node runtime).",
+  "scripts": {
+    "render": "python3 build.py",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "bun test test"
+  },
+  "dependencies": {
+    "stripe": "^22.6.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "7.0.2"
+  }
+}

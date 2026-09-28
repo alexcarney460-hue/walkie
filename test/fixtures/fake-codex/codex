@@ -1,0 +1,271 @@
+#!/usr/bin/env bun
+// A fake `codex` for remote-seat tests: `codex exec --json … -C <dir> … -` with the prompt on stdin, answering in
+// codex-cli 0.15x's JSONL event shapes (thread.started, turn.started, item.completed, turn.completed/failed) without
+// any model. Put its directory first on PATH.
+//   FAKE_CODEX_LOG  file: one JSON line per launch ({argv, pid, cwd, prompt, env names})
+// A prompt containing "commit" commits a file in the -C directory; "spawn" starts a `sleep 300` descendant; "slow"
+// works for ~20 s; "fail" ends with turn.failed; "probe-walkie <seats channel>" calls the Walkie socket it was given
+// (WALKIE_SOCKET) the ways a hostile seat would and logs each status (and, for the test only, its seat token);
+// "orphan-on-crash" starts a `sleep 300` descendant and exits once its parent (the host daemon) is gone;
+// "fail-secret" fails with a GitHub token around character 260 of its message;
+// "ticker <n>" logs {tick: i} every 100 ms, n times, then answers (a paused seat's ticks stop: busy tests);
+// "plant-git-config" commits a file, then plants in its repository every git setting that runs a program (hooks,
+// fsmonitor, filter/diff/merge drivers, sshCommand, credential helper, pager, gpg, include/includeIf, attributes),
+// each a script touching $HOME/git-markers/fired-<name>, and leaves changed and untracked files for the host to count;
+// anything else answers "codex: <last line>".
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
+import { join } from "node:path";
+
+const argv = process.argv.slice(2);
+const fail = (m: string) => { process.stderr.write(`fake codex: ${m}\n`); process.exit(2); };
+if (argv[0] !== "exec") fail("exec only");
+if (!argv.includes("--json")) fail("--json required");
+if (argv[argv.length - 1] !== "-") fail("the prompt must come from stdin (-)");
+const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+const cwd = flag("-C") ?? process.cwd();
+const prompt = await new Response(Bun.stdin.stream()).text();
+const SEEN = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_HOME", "UNIT_MARK",
+  "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "UNIT_EXTRA", "WALKIE_HOME", "WALKIE_SEAT_TOKEN", "WALKIE_SEAT_TOKEN_FILE"];
+const logFile = process.env.FAKE_CODEX_LOG;
+if (logFile) {
+  appendFileSync(logFile, JSON.stringify({
+    pid: process.pid, argv, cwd, prompt, walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined),
+    codex_home: process.env.CODEX_HOME ?? null, home: process.env.HOME ?? null, uid: process.getuid?.() ?? null, user: userInfo().username,
+  }) + "\n");
+}
+const out = (o: Record<string, unknown>) => process.stdout.write(JSON.stringify(o) + "\n");
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+out({ type: "thread.started", thread_id: "fake-thread-1" });
+out({ type: "turn.started" });
+if (prompt.includes("spawn")) {
+  const p = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  if (logFile) appendFileSync(logFile, JSON.stringify({ grandchild: p.pid }) + "\n");
+}
+if (prompt.includes("orphan-on-crash")) {
+  const parent = process.ppid;
+  const p = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  if (logFile) appendFileSync(logFile, JSON.stringify({ grandchild: p.pid, leader: process.pid }) + "\n");
+  out({ type: "item.completed", item: { id: "o1", type: "agent_message", text: "working until the host goes away" } });
+  for (;;) {
+    try { process.kill(parent, 0); } catch { process.exit(0); }
+    await sleep(100);
+  }
+}
+if (prompt.includes("plant-git-config")) {
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-c", "user.email=seat@example.com", "-c", "user.name=Seat", ...a], { cwd });
+  writeFileSync(join(cwd, "planted.txt"), "committed before planting\n");
+  git("add", "planted.txt");
+  git("commit", "-q", "-m", "seat: add planted.txt");
+  const markers = join(process.env.HOME ?? cwd, "git-markers");
+  mkdirSync(join(markers, "hooks"), { recursive: true });
+  const script = (name: string) => {
+    const f = join(markers, `${name}.sh`);
+    writeFileSync(f, `#!/bin/sh\ntouch "${markers}/fired-${name}"\ncat\n`);
+    chmodSync(f, 0o755);
+    return f;
+  };
+  const gitDir = join(cwd, ".git");
+  for (const h of ["pre-commit", "post-commit", "post-index-change", "reference-transaction", "post-checkout", "pre-auto-gc", "fsmonitor-watchman", "pre-push"]) {
+    for (const dir of [join(markers, "hooks"), join(gitDir, "hooks")]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, h), `#!/bin/sh\ntouch "${markers}/fired-hook-${h}"\n`);
+      chmodSync(join(dir, h), 0o755);
+    }
+  }
+  const settings: Array<[string, string]> = [
+    ["core.hooksPath", join(markers, "hooks")], ["core.fsmonitor", script("fsmonitor")], ["core.fsmonitorHookVersion", "2"],
+    ["filter.evil.clean", script("clean")], ["filter.evil.smudge", script("smudge")], ["filter.evil.process", script("process")], ["filter.evil.required", "true"],
+    ["diff.external", script("diff-external")], ["diff.evil.command", script("diff-command")], ["diff.evil.textconv", script("textconv")],
+    ["merge.evil.driver", script("merge-driver")], ["core.sshCommand", script("ssh")], ["credential.helper", `!${script("credential")}`],
+    ["core.pager", script("pager")], ["gpg.program", script("gpg")], ["core.alternateRefsCommand", script("alternate-refs")],
+    ["uploadpack.packObjectsHook", script("pack-objects-hook")], ["core.askPass", script("askpass")], ["core.editor", script("editor")],
+    ["include.path", join(markers, "included.cfg")], [`includeIf.gitdir:${gitDir}/.path`, join(markers, "included-if.cfg")],
+  ];
+  writeFileSync(join(markers, "included.cfg"), `[filter "evil2"]\n\tclean = ${script("clean-included")}\n\tprocess = ${script("process-included")}\n`);
+  writeFileSync(join(markers, "included-if.cfg"), `[filter "evil3"]\n\tclean = ${script("clean-included-if")}\n[core]\n\tfsmonitor = ${script("fsmonitor-included-if")}\n`);
+  for (const [k, v] of settings) git("config", k, v);
+  const attrs = "* filter=evil diff=evil merge=evil\n*.md filter=evil2\n*.txt filter=evil3\n";
+  writeFileSync(join(cwd, ".gitattributes"), attrs);
+  mkdirSync(join(gitDir, "info"), { recursive: true });
+  writeFileSync(join(gitDir, "info", "attributes"), attrs);
+  // Changed tracked files of the same size (so git must read their content, through any clean filter) and an
+  // untracked one.
+  writeFileSync(join(cwd, "README.md"), "HELLO\n");
+  writeFileSync(join(cwd, "planted.txt"), "COMMITTED BEFORE PLANTING\n");
+  writeFileSync(join(cwd, "untracked.txt"), "new\n");
+  if (logFile) appendFileSync(logFile, JSON.stringify({ planted: markers }) + "\n");
+}
+if (prompt.includes("probe-walkie")) {
+  const seatsChannel = /probe-walkie (\S+)/.exec(prompt)?.[1] ?? "";
+  const socket = process.env.WALKIE_SOCKET ?? "";
+  // The seat's credential is a 0600 file named by WALKIE_SEAT_TOKEN_FILE (never in the environment: ps -E).
+  const tokenFile = process.env.WALKIE_SEAT_TOKEN_FILE ?? "";
+  const token = tokenFile ? readFileSync(tokenFile, "utf8").trim() : (process.env.WALKIE_SEAT_TOKEN ?? "");
+  const tokenMode = tokenFile ? (statSync(tokenFile).mode & 0o777).toString(8) : null;
+  const other = "0123456789abcdef:1";
+  const calls: Array<[string, string, string, unknown?]> = [
+    ["seats_config", "POST", "/v1/seats/config", { allow: true, launchers: ["@arvid"] }],
+    ["seats_stop", "POST", "/v1/seats/stop", { seat: other }],
+    ["seats_run", "POST", "/v1/seats/run", { machine: "alex-mbp", runtime: "claude", prompt: "hop" }],
+    ["post_general", "POST", "/v1/post", { channel: "general", text: "as the person" }],
+    ["post_other_thread", "POST", "/v1/post", { channel: seatsChannel, text: "in another thread", thread: other }],
+    ["team_invite", "POST", "/v1/team/invite", { login: "m@example.com", handle: "mallory", role: "member" }],
+    ["team_pending", "GET", "/v1/team/pending"],
+    ["team", "GET", "/v1/team"],
+    ["channels", "POST", "/v1/channels", { name: "seat-made", members: ["arvid"] }],
+    ["events", "GET", "/v1/events"],
+    ["status", "POST", "/v1/status", { agent: "cc-1", state: "working" }],
+  ];
+  const variants: Array<[string, Record<string, string>]> = [
+    ["bare", {}],
+    ["token", token ? { Authorization: `Bearer ${token}` } : {}],
+    ["token_agent", { ...(token ? { Authorization: `Bearer ${token}` } : {}), "X-Walkie-Agent": "orchestrator" }],
+  ];
+  const results: Record<string, number> = {};
+  for (const [name, method, path, body] of calls) {
+    for (const [v, headers] of variants) {
+      try {
+        const res = await fetch(`http://walkie${path}`, {
+          method, unix: socket, headers: { ...headers, ...(body ? { "Content-Type": "application/json" } : {}) },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        } as RequestInit);
+        results[`${name}/${v}`] = res.status;
+      } catch {
+        results[`${name}/${v}`] = 0;
+      }
+    }
+  }
+  // The one thing a seat may do: post progress in its own thread (as itself, whatever header it sends).
+  const own = await fetch("http://walkie/v1/post", {
+    method: "POST", unix: socket, headers: { Authorization: `Bearer ${token}`, "X-Walkie-Agent": "orchestrator", "Content-Type": "application/json" },
+    body: JSON.stringify({ channel: seatsChannel, text: "progress from the seat" }),
+  } as RequestInit).then((r) => r.status).catch(() => 0);
+  if (logFile) {
+    appendFileSync(logFile, JSON.stringify({
+      probe: results, own_post: own, walkie_home: process.env.WALKIE_HOME ?? null, socket, seat_token: token, token_mode: tokenMode, walkie_agent: process.env.WALKIE_AGENT ?? null,
+    }) + "\n");
+  }
+}
+// "probe-main <socket>": what a hostile seat tries first: the host daemon's MAIN socket by path (it needs no token),
+// as the host's person (no agent header). Logs the HTTP status, or the connection error's code.
+const probeMain = /probe-main (\S+)/.exec(prompt);
+if (probeMain) {
+  let result: string;
+  try {
+    const res = await fetch("http://walkie/v1/me", { unix: probeMain[1], signal: AbortSignal.timeout(5_000) } as RequestInit);
+    result = String(res.status);
+  } catch (err) {
+    result = (err as { code?: string }).code ?? (err as Error).message;
+  }
+  if (logFile) appendFileSync(logFile, JSON.stringify({ probe_main: result, pid: process.pid }) + "\n");
+}
+if (prompt.includes("commit")) {
+  writeFileSync(join(cwd, "codex-output.txt"), "made by a codex seat\n");
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-c", "user.email=seat@example.com", "-c", "user.name=Seat", ...a], { cwd });
+  git("add", "codex-output.txt");
+  git("commit", "-q", "-m", "seat: add codex-output.txt");
+  out({ type: "item.completed", item: { id: "item_1", type: "command_execution", command: "git commit -m seat", aggregated_output: "", exit_code: 0, status: "completed" } });
+  out({ type: "item.completed", item: { id: "item_2", type: "file_change", changes: [{ path: join(cwd, "codex-output.txt"), kind: "add" }], status: "completed" } });
+}
+// Hostile seats (SEATS-FIX-3): a worker is a bun loop that logs {worker: pid} (bun, not a platform binary: the tests'
+// fake uid scope reads each process's environment with ps, which macOS hides for its own binaries).
+//   "setsid-worker": leaves the seat's process group for a session of its own, then answers normally;
+//   "kill-runner": starts such a worker, then SIGKILLs its runner (its parent) and keeps running;
+//   "stop-runner": starts such a worker, then SIGSTOPs its runner and keeps running;
+//   "inherit-stdout": starts a worker in its group that keeps its stdout open, then exits at once.
+const worker = (detached: boolean, stdout: "ignore" | "inherit") => {
+  const w = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdin: "ignore", stdout, stderr: "ignore", detached });
+  if (logFile) appendFileSync(logFile, JSON.stringify({ worker: w.pid, from: process.pid }) + "\n");
+  return w;
+};
+if (prompt.includes("setsid-worker")) worker(true, "ignore");
+if (prompt.includes("kill-runner") || prompt.includes("stop-runner")) {
+  worker(true, "ignore");
+  await sleep(200);
+  process.kill(process.ppid, prompt.includes("kill-runner") ? "SIGKILL" : "SIGSTOP");
+  if (logFile) appendFileSync(logFile, JSON.stringify({ hit_runner: process.ppid, from: process.pid }) + "\n");
+  await new Promise(() => undefined); // keeps running: only a uid-wide reap ends it
+}
+if (prompt.includes("inherit-stdout")) {
+  worker(false, "inherit");
+  process.exit(0);
+}
+// "plant-home": what a hostile seat leaves for the next one on its pool user: a Claude hook in ~/.claude/settings.json,
+// a LaunchAgent, a file. "check-home": logs what this seat finds of that, its per-run Claude config (settings, the
+// machine's login file and its mode) and a short hash of its Claude token.
+// "plant-outside": a file outside its home (/tmp, /var/tmp, the per-uid /var/folders/…/T: here FAKE_OUTSIDE_DIR),
+// named after its fake uid so the fake system knows whose it is (test/helpers/fake-seat-users.ts).
+if (prompt.includes("plant-outside") && process.env.FAKE_OUTSIDE_DIR) {
+  writeFileSync(join(process.env.FAKE_OUTSIDE_DIR, `${process.env.WALKIE_SEAT_FAKE_UID ?? "x"}-planted`), "from an earlier seat");
+}
+// "plant-tricky <victim dir>": what Codex r6 used against a root sweep that split `find -print` on newlines and
+// followed paths: a directory named `<its uid>-probe\n` holding the victim's absolute path as subdirectories (so the
+// old parse produced the victim's path, and each ancestor, as deletion targets), and a symlink of its own naming the
+// victim directory. Its own sweep must remove all of it and nothing of the victim.
+const tricky = /plant-tricky (\S+)/.exec(prompt);
+if (tricky && process.env.FAKE_OUTSIDE_DIR) {
+  const me = process.env.WALKIE_SEAT_FAKE_UID ?? "x";
+  const deep = join(process.env.FAKE_OUTSIDE_DIR, `${me}-probe\n`, ...(tricky[1] as string).split("/").filter(Boolean));
+  mkdirSync(deep, { recursive: true });
+  writeFileSync(join(deep, "inside"), "the seat's own file");
+  symlinkSync(tricky[1] as string, join(process.env.FAKE_OUTSIDE_DIR, `${me}-link`));
+}
+if (prompt.includes("plant-home")) {
+  const h = process.env.HOME ?? cwd;
+  mkdirSync(join(h, ".claude"), { recursive: true });
+  writeFileSync(join(h, ".claude", "settings.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: "touch /tmp/pwned" }] }] } }));
+  mkdirSync(join(h, "Library", "LaunchAgents"), { recursive: true });
+  writeFileSync(join(h, "Library", "LaunchAgents", "evil.plist"), "<plist/>");
+  writeFileSync(join(h, ".planted"), "from an earlier seat");
+  if (logFile) appendFileSync(logFile, JSON.stringify({ planted_home: h, pid: process.pid }) + "\n");
+}
+// "codex-auth": logs the sign-in this run was handed in its fresh CODEX_HOME (the machine's own, for this run only).
+if (prompt.includes("codex-auth")) {
+  const f = join(process.env.CODEX_HOME ?? "/nonexistent", "auth.json");
+  let found: { text: string; mode: string } | null = null;
+  try { found = { text: readFileSync(f, "utf8"), mode: (statSync(f).mode & 0o777).toString(8) }; } catch { found = null; }
+  if (logFile) appendFileSync(logFile, JSON.stringify({ codex_auth: found, codex_home: process.env.CODEX_HOME ?? null }) + "\n");
+}
+if (prompt.includes("check-home")) {
+  const h = process.env.HOME ?? cwd;
+  const cfg = process.env.CLAUDE_CONFIG_DIR ?? "";
+  const exists = (p: string) => { try { statSync(p); return true; } catch { return false; } };
+  const creds = cfg ? join(cfg, ".credentials.json") : "";
+  const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (logFile) appendFileSync(logFile, JSON.stringify({
+    pid: process.pid, home: h, planted: exists(join(h, ".planted")), dot_claude: exists(join(h, ".claude")), launch_agents: exists(join(h, "Library")),
+    claude_config: cfg, settings: cfg && exists(join(cfg, "settings.json")) ? readFileSync(join(cfg, "settings.json"), "utf8") : null,
+    credentials: creds && exists(creds) ? { text: readFileSync(creds, "utf8"), mode: (statSync(creds).mode & 0o777).toString(8) } : null,
+    token_sha: tok ? new Bun.CryptoHasher("sha256").update(tok).digest("hex").slice(0, 12) : null,
+  }) + "\n");
+}
+// "read-file <path>": what a seat tries on another seat: read its token file. Logs "ok" or the error's code.
+const readTarget = /read-file (\S+)/.exec(prompt);
+if (readTarget) {
+  let result: string;
+  try { readFileSync(readTarget[1] as string, "utf8"); result = "ok"; } catch (err) { result = (err as { code?: string }).code ?? "error"; }
+  if (logFile) appendFileSync(logFile, JSON.stringify({ read_file: result, pid: process.pid }) + "\n");
+}
+const ticker = /ticker (\d+)/.exec(prompt);
+if (ticker) {
+  for (let i = 1; i <= Number(ticker[1]); i++) {
+    if (logFile) appendFileSync(logFile, JSON.stringify({ tick: i, pid: process.pid, at: Date.now() }) + "\n");
+    await sleep(100);
+  }
+}
+if (prompt.includes("slow")) {
+  for (let i = 1; i <= 100; i++) { out({ type: "item.completed", item: { id: `r${i}`, type: "reasoning", text: `step ${i}` } }); await sleep(200); }
+}
+if (prompt.includes("fail-secret")) {
+  // A failure message whose credential runs across the host's 280-character cut (Codex r2 MEDIUM 4).
+  out({ type: "turn.failed", error: { message: `${"x".repeat(248)} token ghp_${"A1b2C3d4E5".repeat(4).slice(0, 36)} rejected` } });
+  process.exit(1);
+}
+if (prompt.includes("fail")) {
+  out({ type: "turn.failed", error: { message: "fake failure" } });
+  process.exit(1);
+}
+out({ type: "item.completed", item: { id: "item_9", type: "agent_message", text: `codex: ${prompt.trim().split("\n").pop()}` } });
+out({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
+process.exit(0);

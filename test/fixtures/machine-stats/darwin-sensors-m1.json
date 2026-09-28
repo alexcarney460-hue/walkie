@@ -1,0 +1,6 @@
+[
+  {"name": "pACC MTR Temp Sensor0", "c": 61.2}, {"name": "pACC MTR Temp Sensor1", "c": 63.9},
+  {"name": "eACC MTR Temp Sensor0", "c": 52.1}, {"name": "GPU MTR Temp Sensor1", "c": 88.0},
+  {"name": "SOC MTR Temp Sensor0", "c": 58.4}, {"name": "gas gauge battery", "c": 31.0},
+  {"name": "NAND CH0 temp", "c": 45.0}
+]

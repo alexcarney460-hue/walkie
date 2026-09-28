@@ -1,0 +1,112 @@
+#!/usr/bin/env bun
+// A FAKE `codex` for the account-switcher tests (ACCOUNTS-2). No network. Like Codex it:
+//   · uses the login in $CODEX_HOME/auth.json (logs a fingerprint of its account_id, never a token)
+//   · writes a rollout file $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl: session_meta, then per turn
+//     task_started, the messages, token_count.rate_limits (the account's usage: +FAKE_STEP points a turn, kept per
+//     account in FAKE_METER) and task_complete — with error.codex_error_info "usage_limit_exceeded" for the prompt
+//     "limit"
+//   · `codex resume <id> [prompt]` appends to that session's rollout; `codex [prompt]` starts a new one
+//   · "execbg" / "execbg:<ms>": an exec session left running — its output is JSON {session_id} with no exit_code (as
+//     current Codex reports it); with <ms>, a later output reports that session's exit_code. After "limit", every
+//     later prompt hits the limit again.
+// FAKE_REFUSE_RESUME=<fingerprint>: a resume on that account fails its first turn (encrypted reasoning refused).
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
+
+const args = process.argv.slice(2);
+const home = process.env.CODEX_HOME;
+const log = (o) => { if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, ...o }) + "\n"); };
+let acct = "none";
+try { acct = JSON.parse(readFileSync(join(home, "auth.json"), "utf8")).tokens.account_id; } catch {}
+const fp = createHash("sha256").update(acct).digest("hex").slice(0, 12);
+
+let resume = null, prompt = null;
+const pos = [];
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (a === "--") { pos.push(...args.slice(i + 1)); break; }
+  if (["-m", "--model", "-c", "--config", "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "-p", "--profile"].includes(a)) { i++; continue; }
+  if (a.startsWith("-")) continue;
+  pos.push(a);
+}
+if (pos[0] === "resume") { resume = pos[1]; prompt = pos[2] ?? null; } else prompt = pos[0] ?? null;
+
+const sessions = join(home, "sessions");
+function findRollout(id) {
+  const walk = (d) => existsSync(d) ? readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : e.name.includes(id) ? [join(d, e.name)] : []) : [];
+  return walk(sessions)[0] ?? null;
+}
+const id = resume ?? randomUUID();
+let file = resume ? findRollout(resume) : null;
+const iso = () => new Date().toISOString();
+const w = (o) => appendFileSync(file, JSON.stringify({ timestamp: iso(), ...o }) + "\n");
+if (!file) {
+  const d = new Date();
+  const dir = join(sessions, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0"));
+  mkdirSync(dir, { recursive: true });
+  file = join(dir, `rollout-${iso().replace(/[:.]/g, "-")}-${id}.jsonl`);
+  w({ type: "session_meta", payload: { id, cwd: process.cwd(), timestamp: iso(), originator: "fake" } });
+}
+log({ start: true, fp, session: id, resumed: !!resume, prompt, argv: args, rollout: file });
+
+function used(bumpBy) {
+  const meter = process.env.FAKE_METER;
+  const m = meter && existsSync(meter) ? JSON.parse(readFileSync(meter, "utf8")) : {};
+  m[fp] = Math.min(100, (m[fp] ?? 0) + bumpBy);
+  if (meter) writeFileSync(meter, JSON.stringify(m));
+  return m[fp];
+}
+
+let turns = 0;
+let limited = false;
+function turn(text) {
+  turns++;
+  const tid = randomUUID();
+  w({ type: "event_msg", payload: { type: "task_started", turn_id: tid } });
+  w({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } });
+  // A tool call per turn, as Codex records it: function_call, then its function_call_output.
+  const call = `call_${turns}`;
+  w({ type: "response_item", payload: { type: "function_call", name: "shell", call_id: call, arguments: "{}" } });
+  const exec = /^execbg(?::(\d+))?$/.exec(text.trim());
+  const out = exec ? JSON.stringify({ session_id: 3, output: "", wall_time_seconds: 1 }) : "ok";
+  w({ type: "response_item", payload: { type: "function_call_output", call_id: call, output: out } });
+  if (exec?.[1] !== undefined) setTimeout(() => {
+    w({ type: "response_item", payload: { type: "function_call_output", call_id: `${call}_poll`, output: JSON.stringify({ session_id: 3, exit_code: 0, output: "finished" }) } });
+    log({ execDone: 3 });
+  }, Number(exec[1]));
+  if (resume && turns === 1 && process.env.FAKE_REFUSE_RESUME === fp) {
+    w({ type: "event_msg", payload: { type: "task_complete", turn_id: tid, error: { message: "The encrypted content for this reasoning item could not be verified.", codex_error_info: "other" } } });
+    process.stdout.write(`[fake-codex ${fp}] error: encrypted reasoning could not be verified\n`);
+    return;
+  }
+  if (text.trim() === "limit" || limited) {
+    limited = true;
+    w({ type: "event_msg", payload: { type: "token_count", rate_limits: { primary: { used_percent: 100, window_minutes: 300, resets_at: Math.floor(Date.now() / 1000) + 3600 }, secondary: null, rate_limit_reached_type: "primary" } } });
+    w({ type: "event_msg", payload: { type: "task_complete", turn_id: tid, error: { message: "You've hit your usage limit. Try again later.", codex_error_info: "usage_limit_exceeded" } } });
+    process.stdout.write(`[fake-codex ${fp}] You've hit your usage limit\n`);
+    return;
+  }
+  w({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `done: ${text}` }] } });
+  const u = used(Number(process.env.FAKE_STEP ?? 10));
+  w({ type: "event_msg", payload: { type: "token_count", rate_limits: { primary: { used_percent: u, window_minutes: 300, resets_at: Math.floor(Date.now() / 1000) + 3 * 3600 }, secondary: { used_percent: 10, window_minutes: 10080, resets_at: Math.floor(Date.now() / 1000) + 5 * 86400 }, rate_limit_reached_type: null } } });
+  w({ type: "event_msg", payload: { type: "task_complete", turn_id: tid, error: null } });
+  process.stdout.write(`[fake-codex ${fp}] session ${id.slice(0, 8)} answered: ${text} (5-hour ${u}% used)\n`);
+  log({ turn: text, fp });
+}
+
+process.on("SIGTERM", () => { log({ sigterm: true, fp }); process.stdout.write(`[fake-codex ${fp}] ended by SIGTERM\n`); process.exit(143); });
+process.stdout.write(`[fake-codex ${fp}] ${resume ? "resumed" : "started"} session ${id.slice(0, 8)}\n`);
+if (prompt !== null) turn(prompt);
+let buf = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buf += new TextDecoder().decode(chunk);
+  let i;
+  while ((i = buf.indexOf("\n")) >= 0) {
+    const line = buf.slice(0, i).replace(/\r$/, "");
+    buf = buf.slice(i + 1);
+    if (line.trim() === "/exit") { log({ exit: true }); process.exit(0); }
+    if (line.trim()) turn(line);
+  }
+}
+process.exit(0);

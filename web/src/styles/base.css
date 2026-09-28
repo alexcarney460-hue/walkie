@@ -1,0 +1,345 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  /* A quiet colour wash under everything: it is what the glass chrome blurs
+     and refracts. Fixed, so it reads as depth rather than wallpaper. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(900px 620px at 104% -12%, var(--wash-a), transparent 62%),
+    radial-gradient(820px 600px at -12% -6%, var(--wash-b), transparent 60%),
+    radial-gradient(1000px 720px at 50% 118%, var(--wash-c), transparent 64%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+h1, h2, h3, h4, p, ul, ol, dl, dd, figure {
+  margin: 0;
+}
+ul, ol {
+  padding: 0;
+  list-style: none;
+}
+
+button, input, textarea, select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+::selection {
+  background: var(--signal-soft);
+  color: var(--text);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  letter-spacing: -0.01em;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+.muted { color: var(--text-3); }
+.dim { color: var(--text-2); }
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- buttons: liquid glass ----
+ * Every .btn is a glass capsule (translucent fill, specular top rim, grounding
+ * bottom shade, soft cast shadow, spring press). .btn-primary is the liquid
+ * glass accent: tinted, with a refractive backdrop (#walkie-liquid-glass from
+ * components/GlassFilters.tsx) where the engine supports it, and a travelling
+ * glint on hover. Ported from an earlier in-house design system (.glass-btn).
+ */
+.btn {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--glass-border);
+  background: linear-gradient(170deg, var(--glass-top), var(--glass-mid) 55%, var(--glass-bottom));
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  box-shadow:
+    0 1px 0 0 var(--glass-hi) inset,
+    0 -1px 1px 0 var(--glass-shade) inset,
+    var(--glass-drop);
+  color: var(--text);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--dur-spring) var(--ease-spring),
+    box-shadow var(--dur-2) var(--ease-out),
+    background var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+/* travelling specular glint */
+.btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 22%, var(--glass-glint) 48%, transparent 64%);
+  background-size: 240% 100%;
+  background-position: 170% 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-2) var(--ease-out), background-position 700ms var(--ease-out);
+}
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklch, var(--glass-border), var(--text) 8%);
+  box-shadow:
+    0 1px 0 0 var(--glass-hi) inset,
+    0 -1px 1px 0 var(--glass-shade) inset,
+    0 12px 26px -12px oklch(0 0 0 / 0.45),
+    0 1px 3px oklch(0 0 0 / 0.14);
+}
+.btn:hover:not(:disabled)::after { opacity: 0.55; background-position: -40% 0; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.965); transition-duration: var(--dur-1); }
+.btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-pill); }
+.btn:disabled { opacity: 0.5; }
+.btn svg { flex: none; }
+/* the same pressable feel for links styled as buttons */
+a.btn { text-decoration: none; }
+
+.btn-primary {
+  border-color: color-mix(in oklch, var(--signal) 70%, transparent);
+  background:
+    radial-gradient(120% 90% at 50% -20%, oklch(1 0 0 / 0.38), transparent 58%),
+    linear-gradient(170deg, color-mix(in oklch, var(--signal) 92%, white), var(--signal) 55%, var(--signal-strong));
+  color: var(--signal-ink);
+  font-weight: 600;
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.45) inset,
+    0 -1px 2px 0 oklch(0 0 0 / 0.18) inset,
+    0 10px 24px -12px color-mix(in oklch, var(--signal) 70%, transparent),
+    0 1px 2px oklch(0 0 0 / 0.16);
+}
+@supports (backdrop-filter: url(#walkie-liquid-glass)) {
+  .btn-primary {
+    backdrop-filter: url(#walkie-liquid-glass) blur(4px) saturate(170%);
+  }
+}
+.btn-primary:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--signal-strong) 80%, transparent);
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.5) inset,
+    0 -1px 2px 0 oklch(0 0 0 / 0.18) inset,
+    0 16px 30px -12px color-mix(in oklch, var(--signal) 80%, transparent),
+    0 1px 3px oklch(0 0 0 / 0.18);
+}
+.btn-primary:hover:not(:disabled)::after { opacity: 0.9; }
+.btn-primary:disabled { opacity: 1; background: var(--surface-3); border-color: var(--line); color: var(--text-3); box-shadow: none; }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: var(--text-2);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text);
+  transform: none;
+}
+.btn-ghost:hover:not(:disabled)::after { opacity: 0; }
+.btn-ghost:active:not(:disabled) { background: var(--sel); transform: scale(0.94); }
+
+.btn-danger {
+  border-color: var(--red-line);
+  background: linear-gradient(170deg, color-mix(in oklch, var(--red) 12%, var(--glass-top)), var(--glass-mid) 55%, color-mix(in oklch, var(--red) 8%, var(--glass-bottom)));
+  color: var(--red);
+}
+.btn-danger:hover:not(:disabled) { border-color: var(--red); background: var(--red-soft); }
+
+.btn-sm { height: 28px; padding: 0 11px; font-size: var(--fs-12); }
+.btn-icon { width: 32px; padding: 0; }
+.btn-icon.btn-sm { width: 28px; }
+
+/* ---- form controls ---- */
+.field {
+  display: grid;
+  gap: var(--s-3);
+}
+.field > label,
+.field-label {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.field-hint { font-size: var(--fs-12); color: var(--text-3); }
+.field-error { font-size: var(--fs-12); color: var(--red); }
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--line-input);
+  background: color-mix(in oklch, var(--surface) 88%, transparent);
+  color: var(--text);
+  font-size: var(--fs-13);
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+.input::placeholder,
+.textarea::placeholder { color: var(--text-4); }
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--signal);
+  box-shadow: 0 0 0 4px var(--signal-soft);
+}
+.input[aria-invalid="true"] { border-color: var(--red-line); }
+.textarea { resize: none; line-height: 1.5; }
+.select {
+  height: 34px;
+  padding-right: 30px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8d95' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  cursor: pointer;
+}
+
+/* ---- chips, kbd, dots ---- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.chip.mono { font-size: 0.7rem; }
+
+kbd,
+.kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  background: var(--surface);
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+.dot-on { background: var(--signal); }
+.dot-off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-4); }
+.dot-warn { background: var(--amber); }
+.dot-bad { background: var(--red); }
+
+/* ---- skeleton ---- */
+.skeleton {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

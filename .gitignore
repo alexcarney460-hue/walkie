@@ -1,0 +1,14 @@
+node_modules/
+# also a node_modules SYMLINK (a trailing slash matches directories only)
+node_modules
+dist/
+web/dist/
+.walkie-test/
+*.log
+.DS_Store
+.claude/
+src/daemon/embedded.gen.ts
+.gstack/
+*.bun-build
+.cache/
+src/daemon/direct/iroh-native.gen.ts

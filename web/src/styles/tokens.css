@@ -1,0 +1,340 @@
+/*
+ * Walkie design tokens.
+ * Scene: an engineer with three agent terminals open glances at a second
+ * monitor between prompts and needs to know in one second whose agent is
+ * stuck. The look is Apple-like: the system font, soft rounded shapes,
+ * translucent glass chrome over a quiet colour wash, and one green for
+ * "live", amber for "a person is needed", red for "stuck".
+ * Glass material (styles/glass.css + components/GlassFilters.tsx) is ported
+ * from an earlier in-house liquid-glass design system.
+ */
+
+:root {
+  /* SF on Apple devices (and in the desktop app), Geist elsewhere. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Geist Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Geist Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Geist Mono", Menlo, Consolas, monospace;
+
+  /* type scale (product: ~1.15 ratio) */
+  --fs-11: 0.6875rem;
+  --fs-12: 0.75rem;
+  --fs-13: 0.8125rem;
+  --fs-14: 0.875rem;
+  --fs-16: 1rem;
+  --fs-18: 1.125rem;
+  --fs-22: 1.375rem;
+  --fs-28: 1.75rem;
+
+  /* spacing */
+  --s-1: 2px;
+  --s-2: 4px;
+  --s-3: 6px;
+  --s-4: 8px;
+  --s-5: 12px;
+  --s-6: 16px;
+  --s-7: 20px;
+  --s-8: 24px;
+  --s-9: 32px;
+  --s-10: 48px;
+
+  /* generous, continuous-feeling corners */
+  --r-chip: 6px;
+  --r-control: 10px;
+  --r-card: 16px;
+  --r-sheet: 20px;
+  --r-pill: 999px;
+
+  --rail-w: 240px;
+  --topbar-h: 52px;
+  /* space reserved under the page for the floating phone tab bar (bar + gaps) */
+  --tabbar-h: 78px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* a gentle spring: slight overshoot, settles fast */
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 260ms;
+  --dur-spring: 420ms;
+
+  /* ---- dark (default) ---- */
+  --bg: oklch(0.145 0.006 270);
+  --bg-rail: oklch(0.17 0.007 270);
+  --surface: oklch(0.2 0.007 270);
+  --surface-2: oklch(0.235 0.008 270);
+  --surface-3: oklch(0.275 0.009 270);
+  --overlay: oklch(0.21 0.008 270);
+  --scrim: oklch(0.06 0.004 270 / 0.5);
+  --line: oklch(0.29 0.007 270);
+  --line-soft: oklch(0.245 0.007 270);
+  --line-strong: oklch(0.37 0.009 270);
+  /* form-control borders: >= 3:1 against bg and surface (WCAG 1.4.11) */
+  --line-input: oklch(0.5 0.01 270);
+
+  --text: oklch(0.96 0.004 270);
+  --text-2: oklch(0.8 0.008 270);
+  --text-3: oklch(0.7 0.01 270);
+  /* >= 4.5:1 on bg and surface */
+  --text-4: oklch(0.64 0.01 270);
+
+  --signal: oklch(0.8 0.18 150);
+  --signal-strong: oklch(0.86 0.18 150);
+  --signal-ink: oklch(0.22 0.05 150);
+  --signal-soft: oklch(0.8 0.18 150 / 0.12);
+  --signal-line: oklch(0.8 0.18 150 / 0.36);
+
+  --amber: oklch(0.82 0.15 72);
+  --amber-soft: oklch(0.82 0.15 72 / 0.12);
+  --amber-line: oklch(0.82 0.15 72 / 0.4);
+
+  --red: oklch(0.7 0.19 25);
+  --red-soft: oklch(0.7 0.19 25 / 0.13);
+  --red-line: oklch(0.7 0.19 25 / 0.45);
+
+  --focus: oklch(0.74 0.15 268 / 0.85);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 24px 60px -16px oklch(0.02 0.01 270 / 0.75), 0 2px 10px oklch(0.02 0.01 270 / 0.4);
+
+  /* ---- glass material ---- */
+  --glass-top: oklch(1 0 0 / 0.12);
+  --glass-mid: oklch(1 0 0 / 0.045);
+  --glass-bottom: oklch(1 0 0 / 0.08);
+  --glass-border: oklch(1 0 0 / 0.13);
+  --glass-hi: oklch(1 0 0 / 0.24);
+  --glass-shade: oklch(0 0 0 / 0.32);
+  --glass-drop: 0 8px 22px -12px oklch(0 0 0 / 0.7), 0 1px 2px oklch(0 0 0 / 0.25);
+  --glass-glint: oklch(1 0 0 / 0.3);
+  /* chrome (sidebar, bars, sheets): heavier glass that blurs the wash behind */
+  --chrome-bg: oklch(0.175 0.008 270 / 0.66);
+  --chrome-line: oklch(1 0 0 / 0.08);
+  --sheet-bg: oklch(0.19 0.008 270 / 0.8);
+  /* cards: translucent grouped surfaces with a soft cast shadow */
+  --card-bg: oklch(0.205 0.008 270 / 0.74);
+  --card-line: oklch(1 0 0 / 0.075);
+  --card-shadow: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 12px 32px -20px oklch(0 0 0 / 0.8), 0 1px 3px oklch(0 0 0 / 0.28);
+  --card-shadow-hover: 0 1px 0 oklch(1 0 0 / 0.07) inset, 0 18px 40px -20px oklch(0 0 0 / 0.85), 0 2px 6px oklch(0 0 0 / 0.3);
+  --hover: oklch(1 0 0 / 0.05);
+  --sel: oklch(1 0 0 / 0.09);
+  --thumb: oklch(0.37 0.01 270);
+  --thumb-shadow: 0 1px 0 oklch(1 0 0 / 0.1) inset, 0 2px 6px -1px oklch(0 0 0 / 0.5);
+  /* the quiet colour wash behind everything (what the glass blurs) */
+  --wash-a: oklch(0.8 0.18 150 / 0.15);
+  --wash-b: oklch(0.62 0.17 255 / 0.18);
+  --wash-c: oklch(0.62 0.15 305 / 0.12);
+  /* friendly tints for empty-state illustrations */
+  --tint-mint: oklch(0.8 0.14 160);
+  --tint-sky: oklch(0.72 0.13 240);
+
+  /* ---- colour system (UI-POLISH-2) ----
+   * accent: the confident primary (actions, selection, focus, links). Distinct from the state colours so a
+   *   button never reads as "working".
+   * states: working = --signal (green), needs you = --amber, stuck/error = --red, idle = --text-3,
+   *   review = --violet, planned = --sky.
+   * hues: runtimes (claude, codex, kimi, local) and machines/labels carry a hue angle; the --hue-* lightness and
+   *   chroma below turn any hue into a legible text colour, soft fill and line for the current theme.
+   */
+  --accent: oklch(0.72 0.15 268);
+  --accent-strong: oklch(0.79 0.13 268);
+  --accent-deep: oklch(0.62 0.18 268);
+  --accent-ink: oklch(0.17 0.04 268);
+  --accent-text: oklch(0.8 0.12 268);
+  --accent-soft: oklch(0.72 0.15 268 / 0.14);
+  --accent-line: oklch(0.72 0.15 268 / 0.42);
+
+  --violet: oklch(0.76 0.14 305);
+  --violet-soft: oklch(0.76 0.14 305 / 0.13);
+  --violet-line: oklch(0.76 0.14 305 / 0.4);
+  --sky: oklch(0.78 0.11 232);
+  --sky-soft: oklch(0.78 0.11 232 / 0.13);
+  --sky-line: oklch(0.78 0.11 232 / 0.4);
+  --slate: oklch(0.72 0.03 260);
+
+  /* hue angles */
+  --h-claude: 42;
+  --h-codex: 212;
+  --h-kimi: 335;
+  --h-local: 178;
+  --h-grok: 255;
+  /* any hue -> text / soft fill / line / solid (dark theme) */
+  --hue-fg-l: 0.8;
+  --hue-fg-c: 0.12;
+  --hue-solid-l: 0.72;
+  --hue-solid-c: 0.15;
+  --hue-soft-a: 0.15;
+  --hue-line-a: 0.38;
+  --hue-tint-a: 0.09;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: oklch(0.97 0.003 270);
+    --bg-rail: oklch(0.955 0.004 270);
+    --surface: oklch(1 0 0);
+    --surface-2: oklch(0.955 0.004 270);
+    --surface-3: oklch(0.925 0.005 270);
+    --overlay: oklch(1 0 0);
+    --scrim: oklch(0.3 0.02 270 / 0.22);
+    --line: oklch(0.9 0.004 270);
+    --line-soft: oklch(0.935 0.003 270);
+    --line-strong: oklch(0.84 0.006 270);
+    --line-input: oklch(0.62 0.008 270);
+
+    --text: oklch(0.2 0.01 270);
+    --text-2: oklch(0.4 0.01 270);
+    --text-3: oklch(0.47 0.01 270);
+    --text-4: oklch(0.535 0.01 270);
+
+    --signal: oklch(0.52 0.14 150);
+    --signal-strong: oklch(0.47 0.14 150);
+    --signal-ink: oklch(0.99 0.01 150);
+    --signal-soft: oklch(0.6 0.15 150 / 0.11);
+    --signal-line: oklch(0.52 0.14 150 / 0.36);
+
+    --amber: oklch(0.54 0.12 65);
+    --amber-soft: oklch(0.78 0.14 75 / 0.18);
+    --amber-line: oklch(0.62 0.13 70 / 0.45);
+
+    --red: oklch(0.55 0.2 25);
+    --red-soft: oklch(0.62 0.2 25 / 0.09);
+    --red-line: oklch(0.55 0.2 25 / 0.4);
+
+    --focus: oklch(0.5 0.2 268);
+    --shadow-pop: 0 24px 60px -20px oklch(0.3 0.03 270 / 0.3), 0 2px 10px oklch(0.3 0.03 270 / 0.1);
+
+    --glass-top: oklch(1 0 0 / 0.92);
+    --glass-mid: oklch(1 0 0 / 0.64);
+    --glass-bottom: oklch(1 0 0 / 0.8);
+    --glass-border: oklch(0.25 0.02 270 / 0.11);
+    --glass-hi: oklch(1 0 0 / 0.95);
+    --glass-shade: oklch(0.3 0.02 270 / 0.07);
+    --glass-drop: 0 6px 16px -8px oklch(0.3 0.03 270 / 0.22), 0 1px 2px oklch(0.3 0.03 270 / 0.1);
+    --glass-glint: oklch(1 0 0 / 0.85);
+    --chrome-bg: oklch(0.975 0.004 270 / 0.68);
+    --chrome-line: oklch(0.25 0.02 270 / 0.08);
+    --sheet-bg: oklch(0.99 0.002 270 / 0.82);
+    --card-bg: oklch(1 0 0 / 0.8);
+    --card-line: oklch(0.25 0.02 270 / 0.075);
+    --card-shadow: 0 1px 2px oklch(0.3 0.03 270 / 0.06), 0 10px 28px -16px oklch(0.3 0.03 270 / 0.2);
+    --card-shadow-hover: 0 2px 4px oklch(0.3 0.03 270 / 0.07), 0 16px 36px -16px oklch(0.3 0.03 270 / 0.26);
+    --hover: oklch(0.25 0.02 270 / 0.045);
+    --sel: oklch(0.25 0.02 270 / 0.075);
+    --thumb: oklch(1 0 0);
+    --thumb-shadow: 0 1px 3px oklch(0.3 0.03 270 / 0.16), 0 0 0 0.5px oklch(0.3 0.03 270 / 0.08);
+    --wash-a: oklch(0.88 0.1 160 / 0.45);
+    --wash-b: oklch(0.86 0.07 240 / 0.5);
+    --wash-c: oklch(0.9 0.06 40 / 0.4);
+    --tint-mint: oklch(0.72 0.14 160);
+    --tint-sky: oklch(0.66 0.13 240);
+    --accent: oklch(0.5 0.2 268);
+    --accent-strong: oklch(0.45 0.2 268);
+    --accent-deep: oklch(0.42 0.19 268);
+    --accent-ink: oklch(0.99 0.01 268);
+    --accent-text: oklch(0.47 0.2 268);
+    --accent-soft: oklch(0.55 0.2 268 / 0.1);
+    --accent-line: oklch(0.5 0.2 268 / 0.36);
+    --violet: oklch(0.5 0.19 305);
+    --violet-soft: oklch(0.55 0.19 305 / 0.1);
+    --violet-line: oklch(0.5 0.19 305 / 0.34);
+    --sky: oklch(0.5 0.13 235);
+    --sky-soft: oklch(0.6 0.13 235 / 0.11);
+    --sky-line: oklch(0.5 0.13 235 / 0.34);
+    --slate: oklch(0.52 0.03 260);
+    --hue-fg-l: 0.47;
+    --hue-fg-c: 0.14;
+    --hue-solid-l: 0.58;
+    --hue-solid-c: 0.16;
+    --hue-soft-a: 0.11;
+    --hue-line-a: 0.32;
+    --hue-tint-a: 0.07;
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: oklch(0.97 0.003 270);
+  --bg-rail: oklch(0.955 0.004 270);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.955 0.004 270);
+  --surface-3: oklch(0.925 0.005 270);
+  --overlay: oklch(1 0 0);
+  --scrim: oklch(0.3 0.02 270 / 0.22);
+  --line: oklch(0.9 0.004 270);
+  --line-soft: oklch(0.935 0.003 270);
+  --line-strong: oklch(0.84 0.006 270);
+  --line-input: oklch(0.62 0.008 270);
+
+  --text: oklch(0.2 0.01 270);
+  --text-2: oklch(0.4 0.01 270);
+  --text-3: oklch(0.47 0.01 270);
+  --text-4: oklch(0.535 0.01 270);
+
+  --signal: oklch(0.52 0.14 150);
+  --signal-strong: oklch(0.47 0.14 150);
+  --signal-ink: oklch(0.99 0.01 150);
+  --signal-soft: oklch(0.6 0.15 150 / 0.11);
+  --signal-line: oklch(0.52 0.14 150 / 0.36);
+
+  --amber: oklch(0.54 0.12 65);
+  --amber-soft: oklch(0.78 0.14 75 / 0.18);
+  --amber-line: oklch(0.62 0.13 70 / 0.45);
+
+  --red: oklch(0.55 0.2 25);
+  --red-soft: oklch(0.62 0.2 25 / 0.09);
+  --red-line: oklch(0.55 0.2 25 / 0.4);
+
+  --focus: oklch(0.5 0.2 268);
+  --shadow-pop: 0 24px 60px -20px oklch(0.3 0.03 270 / 0.3), 0 2px 10px oklch(0.3 0.03 270 / 0.1);
+
+  --glass-top: oklch(1 0 0 / 0.92);
+  --glass-mid: oklch(1 0 0 / 0.64);
+  --glass-bottom: oklch(1 0 0 / 0.8);
+  --glass-border: oklch(0.25 0.02 270 / 0.11);
+  --glass-hi: oklch(1 0 0 / 0.95);
+  --glass-shade: oklch(0.3 0.02 270 / 0.07);
+  --glass-drop: 0 6px 16px -8px oklch(0.3 0.03 270 / 0.22), 0 1px 2px oklch(0.3 0.03 270 / 0.1);
+  --glass-glint: oklch(1 0 0 / 0.85);
+  --chrome-bg: oklch(0.975 0.004 270 / 0.68);
+  --chrome-line: oklch(0.25 0.02 270 / 0.08);
+  --sheet-bg: oklch(0.99 0.002 270 / 0.82);
+  --card-bg: oklch(1 0 0 / 0.8);
+  --card-line: oklch(0.25 0.02 270 / 0.075);
+  --card-shadow: 0 1px 2px oklch(0.3 0.03 270 / 0.06), 0 10px 28px -16px oklch(0.3 0.03 270 / 0.2);
+  --card-shadow-hover: 0 2px 4px oklch(0.3 0.03 270 / 0.07), 0 16px 36px -16px oklch(0.3 0.03 270 / 0.26);
+  --hover: oklch(0.25 0.02 270 / 0.045);
+  --sel: oklch(0.25 0.02 270 / 0.075);
+  --thumb: oklch(1 0 0);
+  --thumb-shadow: 0 1px 3px oklch(0.3 0.03 270 / 0.16), 0 0 0 0.5px oklch(0.3 0.03 270 / 0.08);
+  --wash-a: oklch(0.88 0.1 160 / 0.45);
+  --wash-b: oklch(0.86 0.07 240 / 0.5);
+  --wash-c: oklch(0.9 0.06 40 / 0.4);
+  --tint-mint: oklch(0.72 0.14 160);
+  --tint-sky: oklch(0.66 0.13 240);
+  --accent: oklch(0.5 0.2 268);
+  --accent-strong: oklch(0.45 0.2 268);
+  --accent-deep: oklch(0.42 0.19 268);
+  --accent-ink: oklch(0.99 0.01 268);
+  --accent-text: oklch(0.47 0.2 268);
+  --accent-soft: oklch(0.55 0.2 268 / 0.1);
+  --accent-line: oklch(0.5 0.2 268 / 0.36);
+  --violet: oklch(0.5 0.19 305);
+  --violet-soft: oklch(0.55 0.19 305 / 0.1);
+  --violet-line: oklch(0.5 0.19 305 / 0.34);
+  --sky: oklch(0.5 0.13 235);
+  --sky-soft: oklch(0.6 0.13 235 / 0.11);
+  --sky-line: oklch(0.5 0.13 235 / 0.34);
+  --slate: oklch(0.52 0.03 260);
+  --hue-fg-l: 0.47;
+  --hue-fg-c: 0.14;
+  --hue-solid-l: 0.58;
+  --hue-solid-c: 0.16;
+  --hue-soft-a: 0.11;
+  --hue-line-a: 0.32;
+  --hue-tint-a: 0.07;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

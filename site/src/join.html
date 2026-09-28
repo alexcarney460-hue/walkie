@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Add a machine: {{name}}</title>
+  <meta name="description" content="Put {{name}} on another of your machines with the one-time link a team owner sent you.">
+  <meta name="robots" content="noindex, nofollow">
+  <!-- The URL's #fragment carries a one-time invite code: it never reaches a server, and this page sends nothing. -->
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#131417" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f8f8fa" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/assets/fonts/archivo-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="/assets/theme.js"></script>
+  <link rel="stylesheet" href="/assets/site.css">
+  <script src="/assets/join.js" defer></script>
+  <script src="/assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav-wrap">
+    <nav class="nav" aria-label="Primary">
+      <a class="brand" href="/" aria-label="{{name}} home">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="8"/><path class="m1" d="M9 13h11"/><path class="m2" d="M12.5 19.5h11"/></svg>
+        <span>{{name}}</span>
+      </a>
+      <button class="theme-btn" type="button" data-theme-toggle aria-label="Switch to light theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <main id="main" class="welcome" data-join data-cli="{{cli}}" data-install="{{install_url}}">
+    <div class="wrap">
+      <div class="welcome-card" aria-live="polite">
+
+        <!-- before the script runs -->
+        <section class="state is-on" data-state="loading" aria-labelledby="j-loading">
+          <span class="spinner" role="presentation"></span>
+          <h1 id="j-loading">Reading your link&hellip;</h1>
+          <noscript><p class="lead">This page needs JavaScript to read the code in your link. Ask the owner who sent it for the install command instead.</p></noscript>
+        </section>
+
+        <!-- a valid, unexpired code -->
+        <section class="state" data-state="ready" aria-labelledby="j-ready">
+          <span class="state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></span>
+          <h1 id="j-ready">Add this machine to your team.</h1>
+          <p class="lead">A team owner made this link so another of your machines can join as <b data-field="handle">you</b>. Run one command on the new machine: it installs {{name}} and joins the team as one of your machines.</p>
+          <div class="facts">
+            <span class="fact">Works once, only for <b data-field="handle">you</b></span>
+            <span class="fact">Expires <b data-field="expires">&hellip;</b></span>
+          </div>
+          <ol class="welcome-steps">
+            <li>On the new machine (macOS or Linux), open a terminal and run:</li>
+          </ol>
+          <div class="install">
+            <div class="install-shell">
+              <div class="install-core">
+                <code class="install-cmd"><span class="p" aria-hidden="true">$</span> <span data-copy-src data-field="command">&hellip;</span></code>
+                <button class="copy" type="button" data-copy="Install command copied" aria-label="Copy the install command">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg>
+                  <span data-copy-label>Copy</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <p class="welcome-note" data-field="version"></p>
+          <ol class="welcome-steps from-2" start="2">
+            <li>It verifies the release signature, installs, starts the background service and joins. Check it with <code>{{cli}} who</code>: this machine shows up under your name.</li>
+            <li>Once it has joined, your own agents and the team&rsquo;s owners can set {{name}} up on this machine for you (seats, accounts, hooks, pool) over {{name}}, never through a shell. Every such action is posted to the team, naming who did it and mentioning you. Turn it off any time on this machine: <code>{{cli}} admin remote off</code> (owners, remotely) and <code>{{cli}} agents admin off</code> (agents).</li>
+            <li data-team-agents hidden>It asks you one question: <strong>may your team start agents on this machine?</strong> No is the default, and nothing else changes. If you say yes, each agent runs as a separate user made just for it (never as you), uses this machine&rsquo;s own Claude or Codex sign-in, and you can turn it off any time with <code>{{cli}} seats deny</code>. Yes asks for your password once, to create those users. You never set up SSH, remote login or user accounts yourself.</li>
+          </ol>
+          <p class="welcome-note"><strong>Keep this private.</strong> Anyone who runs this command before you do joins the team as one of your machines. Already have {{name}} on that machine? Run <code>{{cli}} join</code> with the code at the end of the command instead.</p>
+        </section>
+
+        <!-- a well-formed code past its expiry -->
+        <section class="state" data-state="expired" aria-labelledby="j-expired">
+          <span class="state-icon amber"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          <h1 id="j-expired">This link has expired.</h1>
+          <p class="lead">It was for <b data-field="handle">you</b> and stopped working on <b data-field="expires">&hellip;</b>. Links last 7 days. Ask a team owner for a new one: Team &rarr; Add a machine in the dashboard, or <code>{{cli}} team add-machine &lt;you&gt;</code>.</p>
+        </section>
+
+        <!-- something that isn't a code -->
+        <section class="state" data-state="invalid" aria-labelledby="j-invalid">
+          <span class="state-icon red"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg></span>
+          <h1 id="j-invalid">This link is damaged.</h1>
+          <p class="lead">The code in it isn&rsquo;t complete. Copy the whole link again (some mail apps cut long links), or ask the owner to send the install command directly.</p>
+        </section>
+
+        <!-- no fragment: opened bare, or reloaded after the code was read -->
+        <section class="state" data-state="missing" aria-labelledby="j-missing">
+          <span class="state-icon amber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg></span>
+          <h1 id="j-missing">There&rsquo;s no code in this link.</h1>
+          <p class="lead">Open the full link the owner sent you. For your safety, this page removes the code from the address bar as soon as it reads it, so reloading shows this page: open the link again from the message.</p>
+          <div class="welcome-actions">
+            <a class="btn btn-ghost" href="/">What is {{name}}?</a>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <div class="sr-only" aria-live="polite" data-announce></div>
+</body>
+</html>

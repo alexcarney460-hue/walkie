@@ -1,0 +1,172 @@
+/* ---- seats: remote agents on teammates' machines (PROTOCOL §11) ---- */
+
+.seats-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  gap: 32px;
+  align-items: start;
+}
+.seats-main { display: grid; gap: 8px; min-width: 0; }
+.seats-side { display: grid; gap: 20px; position: sticky; top: 24px; min-width: 0; }
+
+.seat-host-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  min-width: 0;
+}
+.seat-host-card.is-on { border-color: var(--line-strong); }
+.seat-host-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.seat-host-head .int-title { font-size: var(--fs-14); }
+.seat-warn {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--amber-line);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--text);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+.seat-warn svg { color: var(--amber); margin-top: 2px; }
+.seat-warn p { margin: 0 0 10px; }
+
+/* "I'm using this computer" (busy): the host's own dashboard. */
+.seat-busy-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  min-width: 0;
+}
+.seat-busy-card.is-busy { border-color: var(--amber-line); background: color-mix(in oklch, var(--amber) 5%, var(--surface)); }
+.seat-busy-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  flex: none;
+}
+.seat-busy-lede { margin: 0; color: var(--text-2); font-size: var(--fs-13); line-height: 1.5; }
+.seat-busy-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.seat-busy-facts > div { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.seat-busy-facts dt { color: var(--text-3); font-size: var(--fs-11); }
+.seat-busy-facts dd { margin: 2px 0 0; font-size: var(--fs-16); font-weight: 600; }
+.seat-busy-seg { display: flex; flex-wrap: wrap; }
+.seat-busy-btn { justify-content: center; min-height: 40px; font-size: var(--fs-14); }
+.seat-busy-card .field-hint { margin: 0; }
+
+.seat-as-me { color: var(--amber); }
+
+.seat-hosts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.seat-host-row { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-13); }
+.seat-host-tag { margin-left: auto; color: var(--signal); font-size: var(--fs-12); white-space: nowrap; }
+.seat-host-tag.is-off { color: var(--text-4); }
+.seat-host-tag.is-busy { color: var(--amber); }
+
+.seat-launch { display: grid; gap: 14px; }
+.seat-launch-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.seat-launch-row .field { min-width: 0; }
+.seat-launch-row .field:first-child { flex: 1 1 200px; }
+.seat-minutes .input { width: 90px; }
+.seat-launch .seg { box-sizing: border-box; height: 32px; align-items: center; }
+.seat-prompt-input { min-height: 96px; resize: vertical; }
+
+.seat-list { display: grid; gap: 12px; }
+.seat-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  min-width: 0;
+}
+.seat-card.state-running { border-color: var(--line-strong); }
+.seat-card.state-failed,
+.seat-card.state-timeout { border-color: var(--red-line); }
+.seat-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.seat-title { margin: 0; font-size: var(--fs-14); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.seat-state {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--line-strong);
+  color: var(--text-3);
+  font-size: var(--fs-11);
+  font-weight: 500;
+}
+.seat-state.is-running,
+.seat-state.is-requested { color: var(--signal); border-color: color-mix(in oklch, var(--signal) 40%, transparent); background: var(--signal-soft); }
+.seat-state.is-done { color: var(--text); }
+.seat-state.is-queued,
+.seat-state.is-paused { color: var(--amber); border-color: var(--amber-line); background: var(--amber-soft); }
+.seat-card.state-paused,
+.seat-card.state-queued { border-color: var(--amber-line); }
+.seat-held { margin: 0; font-size: var(--fs-13); color: var(--text-2); }
+.seat-state.is-failed,
+.seat-state.is-timeout,
+.seat-state.is-refused { color: var(--red); border-color: var(--red-line); background: var(--red-soft); }
+.seat-meta { margin: 0; font-size: var(--fs-12); overflow-wrap: anywhere; }
+.seat-prompt summary { cursor: pointer; color: var(--text-3); font-size: var(--fs-12); }
+.seat-prompt-text {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+.seat-output {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  max-height: 480px;
+  overflow: auto;
+  font-size: var(--fs-13);
+  min-width: 0;
+}
+.seat-chunk { min-width: 0; overflow-wrap: anywhere; }
+.seat-waiting { margin: 0; font-size: var(--fs-13); }
+.seat-end { margin: 0; font-size: var(--fs-13); color: var(--text-2); overflow-wrap: anywhere; }
+.seat-end.is-bad { color: var(--red); }
+.seat-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.seat-actions:empty { display: none; }
+
+@media (max-width: 900px) {
+  .seats-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .seats-side { position: static; order: -1; } /* this machine's controls ("I'm using this computer") come first */
+}
+
+/* Grid children may shrink below their content (a long command or path never widens the page). */
+.seat-card > *,
+.seat-host-card > *,
+.seats-main > *,
+.seats-side > * { min-width: 0; }
+
+/* AGENT-ADMIN-1: the person's admin switches (Agent admin card). */
+.admin-switch { display: grid; gap: 4px; min-width: 0; }
+.admin-switch .field-hint { margin: 0; }
+.toggle-row { display: flex; align-items: center; gap: 10px; font-size: var(--fs-13); cursor: pointer; min-width: 0; }
+.toggle-row span:nth-of-type(1) { flex: 1; min-width: 0; }
+.toggle-row input { accent-color: var(--signal); width: 16px; height: 16px; flex: none; }
+.admin-audit { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: var(--fs-12); color: var(--text-3); overflow-wrap: anywhere; }

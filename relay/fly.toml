@@ -1,0 +1,39 @@
+# walkie-relay on Fly: the phone relay (docs/PWA.md). It forwards end-to-end encrypted frames it cannot read; rooms live in memory only.
+# Relay and daemons ship together: this relay speaks protocol 2 (src/mobile/wire.ts RELAY_PROTOCOL); deploy it from the
+# same release as the daemons, or they report "the relay is older/newer than this Walkie".
+#   fly apps create walkie-relay
+#   fly deploy --config relay/fly.toml --dockerfile relay/Dockerfile    (from the repository root)
+# One machine on purpose: rooms live in that machine's memory, so a daemon and its phone must meet on the same
+# instance. More than one needs room affinity first (docs/PWA.md, "Scaling").
+app = "walkie-relay"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  RELAY_TRUST_FLY = "1"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 4000
+    hard_limit = 5000
+
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "3s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

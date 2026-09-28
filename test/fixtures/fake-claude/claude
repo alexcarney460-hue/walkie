@@ -1,0 +1,223 @@
+#!/usr/bin/env bun
+// A fake `claude` for orchestrator tests: speaks Claude Code's stream-json protocol (the message shapes recorded
+// from claude 2.1.283, see test/unit/orchestrator.test.ts) without any model. Put its directory first on PATH.
+//   FAKE_CLAUDE_STATE  directory for session transcripts (a --resume of an unknown session fails like the real one)
+//   FAKE_CLAUDE_LOG    file: one JSON line per launch ({argv, pid}) and per turn
+// A user message containing "crash" exits mid-reply; "leak" exits with a secret on stderr; "spawn" starts a
+// `sleep 300` descendant; "orphan" leaves a TERM-ignoring one and exits; "hang" never answers (not even an interrupt); "slow" streams for ~10 s (interruptible); "tool" runs a
+// Bash tool first; "commit" writes and commits a file in the working directory (remote seats); "check-home" logs a
+// seat's home and per-run config; "history" answers with the session's turn count and first message; "HUGE" answers 1.5 MB; "TEAMPOST" posts to #general as the orchestrator; "ADDMACHINE <handle>" mints an add-machine link with the walkie CLI; "MANYTOOLS", "SECRETLINES" and "FLOOD" exercise the live-progress bounds; "demo" streams a Markdown
+// reply (heading, list, table, code) over ~FAKE_CLAUDE_DEMO_MS (default 4000) for dashboard screenshots; anything
+// else: "pong: <text>".
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const argv = process.argv.slice(2);
+if (argv.includes("--help")) {
+  process.stdout.write("Usage: claude [options]\n  --permission-prompts <target>  who answers permission prompts\n");
+  process.exit(0);
+}
+const stateDir = process.env.FAKE_CLAUDE_STATE ?? "/tmp/fake-claude-state";
+mkdirSync(stateDir, { recursive: true });
+const logFile = process.env.FAKE_CLAUDE_LOG;
+const log = (o: Record<string, unknown>) => { if (logFile) appendFileSync(logFile, JSON.stringify({ pid: process.pid, ...o }) + "\n"); };
+// Which credentials reached this process (names only, never values): remote seats must drop API keys.
+const SEEN = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_HOME", "UNIT_MARK", "CLAUDECODE",
+  "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "UNIT_EXTRA", "WALKIE_HOME", "LC_ALL"];
+log({ argv, cwd: process.cwd(), walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined) });
+
+const need = ["-p", "--verbose", "--include-partial-messages"];
+for (const f of need) if (!argv.includes(f)) { process.stderr.write(`fake claude: missing ${f}\n`); process.exit(2); }
+const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+if (flag("--input-format") !== "stream-json" || flag("--output-format") !== "stream-json") { process.stderr.write("fake claude: stream-json only\n"); process.exit(2); }
+const resume = flag("--resume");
+const session = resume ?? flag("--session-id");
+if (!session) { process.stderr.write("fake claude: no session\n"); process.exit(2); }
+const file = join(stateDir, `${session}.json`);
+if (resume && !existsSync(file)) { process.stderr.write(`No conversation found with session ID: ${resume}\n`); process.exit(1); }
+const turns: string[] = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
+
+const DEMO_REPLY = [
+  "Here's where the team stands right now:",
+  "",
+  "## Active work",
+  "",
+  "- **@kira/kiras-mbp/cc-ux** is polishing the onboarding flow (`ALE-5120`), tests green.",
+  "- **@alex/alex-mbp/codex-api** is *blocked* on a failing migration and waiting for you.",
+  "- Two agents are idle on `main`.",
+  "",
+  "| Agent | Machine | State |",
+  "|---|---|---|",
+  "| cc-ux | kiras-mbp | working |",
+  "| codex-api | alex-mbp | blocked |",
+  "",
+  "The migration fails on a missing index. This should unblock it:",
+  "",
+  "```sql",
+  "CREATE INDEX CONCURRENTLY idx_events_channel_ts",
+  "  ON events (channel, ts DESC);",
+  "```",
+  "",
+  "Want me to ask codex-api to apply it and re-run the suite?",
+].join("\n");
+
+const out = (o: Record<string, unknown>) => process.stdout.write(JSON.stringify({ ...o, session_id: session }) + "\n");
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+let interrupted = false;
+let busy: Promise<void> = Promise.resolve();
+
+function assistant(content: unknown[]) {
+  out({ type: "assistant", message: { role: "assistant", content }, parent_tool_use_id: null });
+}
+function delta(text: string) {
+  out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }, parent_tool_use_id: null });
+}
+
+async function turn(text: string): Promise<void> {
+  interrupted = false;
+  turns.push(text);
+  writeFileSync(file, JSON.stringify(turns));
+  log({ turn: text, session, n: turns.length });
+  out({ type: "system", subtype: "init", model: "fake-model", cwd: process.cwd(), tools: ["Bash"] });
+  out({ type: "system", subtype: "status", status: "requesting" });
+  // "check-home" (remote seats): what this seat finds in its home, its per-run Claude config and login, its token.
+  if (text.includes("check-home")) {
+    const h = process.env.HOME ?? "";
+    const cfg = process.env.CLAUDE_CONFIG_DIR ?? "";
+    const exists = (p: string) => existsSync(p);
+    const creds = cfg ? join(cfg, ".credentials.json") : "";
+    const tok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const { statSync } = await import("node:fs");
+    log({
+      check: text, home: h, planted: exists(join(h, ".planted")), dot_claude: exists(join(h, ".claude")), launch_agents: exists(join(h, "Library")),
+      claude_config: cfg, settings: cfg && exists(join(cfg, "settings.json")) ? readFileSync(join(cfg, "settings.json"), "utf8") : null,
+      credentials: creds && exists(creds) ? { text: readFileSync(creds, "utf8"), mode: (statSync(creds).mode & 0o777).toString(8) } : null,
+      token_sha: tok ? new Bun.CryptoHasher("sha256").update(tok).digest("hex").slice(0, 12) : null,
+      outside: process.env.FAKE_OUTSIDE_DIR ? (await import("node:fs")).readdirSync(process.env.FAKE_OUTSIDE_DIR) : null,
+    });
+  }
+  if (text.includes("crash")) { delta("about to "); await sleep(50); process.exit(3); }
+  // "leak": dies with a credential-shaped diagnostic on stderr (it must be scrubbed before it is logged or shown).
+  if (text.includes("leak")) { process.stderr.write(`fatal: bad credential sk-proj-${"A1b2C3d4".repeat(5)} rejected\n`); process.exit(4); }
+  // "spawn": starts a long-running descendant (a tool's shell) and logs its pid; "hang": stops responding, even to
+  // interrupts (a wedged Claude), until it is killed.
+  if (text.includes("spawn")) {
+    const p = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    log({ grandchild: p.pid });
+  }
+  if (text.includes("hang")) { delta("working on it "); await new Promise(() => undefined); }
+  // "orphan": leaves a descendant that ignores SIGTERM and exits on its own (ORCH-FIX-2: the daemon's shutdown must
+  // still wait for its SIGKILL).
+  if (text.includes("orphan")) {
+    const p = Bun.spawn(["bash", "-c", "trap '' TERM; exec sleep 300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    await sleep(200);
+    log({ orphan: p.pid });
+    process.exit(5);
+  }
+  if (text.includes("commit")) {
+    writeFileSync(join(process.cwd(), "seat-output.txt"), `made by a seat: ${text.slice(0, 40)}\n`);
+    const git = (...a: string[]) => Bun.spawnSync(["git", "-c", "user.email=seat@example.com", "-c", "user.name=Seat", ...a], { cwd: process.cwd() });
+    git("add", "seat-output.txt");
+    git("commit", "-q", "-m", "seat: add seat-output.txt");
+    assistant([{ type: "tool_use", id: "t2", name: "Bash", input: { command: "git commit -m 'seat: add seat-output.txt'" } }]);
+  }
+  if (text.includes("tool")) {
+    assistant([{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo hi" } }]);
+    // A subagent's text is not part of the reply.
+    out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "SUBAGENT" } }, parent_tool_use_id: "t1" });
+    await sleep(20);
+  }
+  let reply: string;
+  if (text.includes("slow")) {
+    let acc = "";
+    for (let i = 1; i <= 300 && !interrupted; i++) { const d = `${i} `; acc += d; delta(d); await sleep(30); }
+    if (interrupted) {
+      assistant([{ type: "text", text: acc }]);
+      out({ type: "user", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] }, parent_tool_use_id: null });
+      out({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
+      return;
+    }
+    reply = acc;
+  } else if (text.includes("demo")) {
+    reply = DEMO_REPLY;
+    const words = reply.split(/(?<=\s)/);
+    const pause = Math.max(1, Math.floor(Number(process.env.FAKE_CLAUDE_DEMO_MS ?? 4000) / words.length));
+    let acc = "";
+    for (const w of words) { if (interrupted) break; acc += w; delta(w); await sleep(pause); }
+    if (interrupted) {
+      assistant([{ type: "text", text: acc }]);
+      out({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
+      return;
+    }
+  } else if (text.includes("TEAMPOST")) {
+    // The orchestrator's Claude posting to the team through Walkie, as its MCP server would (the real client, which
+    // sends the host's per-run secret from this process's environment: ORCH-FIX-13).
+    const { WalkieClient } = await import(join(import.meta.dir, "..", "..", "..", "src", "client", "index.ts"));
+    try {
+      const { event } = await new WalkieClient({}).post({ channel: "general", text: `orchestrator says: ${text.split("\n").pop()}` });
+      reply = `posted ${event.id} as ${event.author.agent}`;
+    } catch (err) {
+      reply = `post refused: ${(err as Error).message}`;
+    }
+    delta(reply);
+  } else if (text.includes("ADDMACHINE")) {
+    // ORCH-2: the orchestrator's Claude minting an add-machine link with the walkie CLI through its shell tool, as it
+    // would under AGENT-ADMIN-1 (its environment names it `orchestrator` and carries the host's per-run secret).
+    const handle = text.split(/\s+/).pop() ?? "";
+    const cli = join(import.meta.dir, "..", "..", "..", "src", "cli", "main.ts");
+    const p = Bun.spawn([process.execPath, cli, "team", "add-machine", handle, "--json"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: process.env });
+    const [o, e, code] = [await new Response(p.stdout).text(), await new Response(p.stderr).text(), await p.exited];
+    reply = code === 0 ? `minted: ${o.trim()}` : `add-machine refused (${code}): ${e.trim()}`;
+    delta(reply);
+  } else if (text.includes("MANYTOOLS")) {
+    // 1 000 tool calls over two assistant messages (ORCH-FIX-13: stored as 12 + "+N more", 12 live frames at most)
+    for (let k = 0; k < 2; k++) assistant(Array.from({ length: 500 }, (_, i) => ({ type: "tool_use", id: `t${k}-${i}`, name: "Bash", input: { command: `echo ${k}-${i}` } })));
+    reply = "tools done";
+    delta(reply);
+  } else if (text.includes("SECRETLINES")) {
+    // a credential written across two deltas, then more lines (ORCH-FIX-13: live text is redacted like the reply)
+    const key = `sk-proj-${"A1b2C3d4".repeat(5)}`;
+    reply = `first line\nthe key is ${key}\nlast line\n`;
+    for (const part of ["first line\nthe key is ", key.slice(0, 14), key.slice(14), "\nlast line\n"]) { delta(part); await sleep(30); }
+  } else if (text.includes("FLOOD")) {
+    // 3 000 one-line deltas as fast as the pipe takes them (ORCH-FIX-13: at most ~10 live frames a second)
+    reply = "";
+    for (let i = 0; i < 3_000; i++) { const d = `${i}\n`; reply += d; delta(d); if (i % 500 === 0) await sleep(0); }
+  } else if (text.includes("HUGE")) {
+    // a 1.5 MB reply in one delta and one assistant message (ORCH-FIX-12: capped at 256 KiB, never on the phone)
+    reply = "Z".repeat(1_500_000);
+    delta(reply);
+  } else if (text.includes("history")) {
+    reply = `turns=${turns.length} first=${turns[0]}`;
+    delta(reply);
+  } else {
+    reply = `pong: ${text.split("\n").pop()}`;
+    for (const part of [reply.slice(0, 3), reply.slice(3, 8), reply.slice(8)]) if (part) { delta(part); await sleep(5); }
+  }
+  assistant([{ type: "text", text: reply }]);
+  out({ type: "result", subtype: "success", is_error: false, result: reply });
+}
+
+const dec = new TextDecoder();
+let buf = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buf += dec.decode(chunk, { stream: true });
+  let i: number;
+  while ((i = buf.indexOf("\n")) >= 0) {
+    const line = buf.slice(0, i).trim();
+    buf = buf.slice(i + 1);
+    if (!line) continue;
+    const m = JSON.parse(line);
+    if (m.type === "control_request" && m.request?.subtype === "interrupt") {
+      interrupted = true;
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } });
+      continue;
+    }
+    if (m.type === "user") {
+      const text = typeof m.message?.content === "string" ? m.message.content : "";
+      busy = busy.then(() => turn(text));
+    }
+  }
+}
+await busy;
+process.exit(0);

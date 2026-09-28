@@ -1,0 +1,9 @@
+{
+ "user_id": "fakeuser0000kimi0001",
+ "global_id": "fakeuser0000kimi0001",
+ "nickname": "Dev Example",
+ "avatar": "https://example.test/a.png",
+ "status": "USER_STATUS_NORMAL",
+ "user_level_name": "Vivace",
+ "email": "dev.kimi@example.test"
+}
