@@ -4,13 +4,14 @@ import { api, friendlyError } from "../../api/client.ts";
 import { CopyCommand, ErrorState } from "../../components/primitives.tsx";
 import { useMdOpts } from "../../state/useMdOpts.ts";
 import { hrefFor, navigate, useRoute } from "../../lib/route.ts";
-import { useNow } from "../../lib/time.ts";
+import { duration, useNow } from "../../lib/time.ts";
 import { useActions, useStore } from "../../state/store.tsx";
 import { Composer, type ComposerHandle } from "./Composer.tsx";
 import { Message, MessageBoundary, Pending } from "./Messages.tsx";
 import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
+import { SchedulesPanel } from "./Schedules.tsx";
 import { HeaderModel } from "./ModelPicker.tsx";
-import { notRunningKind, ResumeButton, standingDown, StoppedCard, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
+import { accessLabel, cleanupDiagnostic, notRunningKind, ResumeButton, standingDown, StoppedCard, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
 import { awaitingReply, conversations, dayGroup, localOrchestrator, modelLabel, threadMessages, type Conversation, type DayGroup } from "./model.ts";
 
 const SUGGESTIONS = [
@@ -172,18 +173,32 @@ export function Orchestrator() {
   };
 
   const empty = !thread;
-  const where = !host && talkie?.state === "standby" ? <span>standby{talkie.lead ? ` · lead: ${talkie.lead}` : ""}</span>
+  const where = talkie?.state === "cleanup_pending" ? <span>cleanup pending</span>
+    : !host && talkie?.state === "standby" ? <span>standby{talkie.lead ? ` · lead: ${talkie.lead}` : ""}</span>
     : !host && talkie?.state === "needs_login" ? <span>needs a model login</span>
     : hostRunning ? (
     <>
       <span className={`orch-dot orch-dot-${status?.effective_state ?? talkie?.state ?? "idle"}`} aria-hidden="true" />
-      <span>on this machine · {modelLabel(status?.status.model ?? talkie?.model)}</span>
+      <span>
+        on this machine · {modelLabel(status?.status.model ?? talkie?.model)} · {accessLabel(talkie?.access)}
+        {talkie?.started_at ? ` · up ${duration(now - talkie.started_at)}` : ""}
+      </span>
     </>
-  ) : <span>not running on this machine</span>;
+  ) : (
+    <span>
+      {notRunningKind(talkie) === "stopped_by_you" ? "stopped (by you)"
+        : notRunningKind(talkie) === "starting" ? "starting on its own"
+        : "not running on this machine"}
+    </span>
+  );
 
   const composerEl = (
     <div className="orch-dock">
       {error && <ErrorState message={error} compact />}
+      {hostRunning && talkie?.state === "cleanup_pending" && (
+        <div className="orch-offline" role="status"><TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
+          <span>WalkieTalkie cleanup pending: {cleanupDiagnostic(talkie)}</span></div>
+      )}
       {reconnecting && hostRunning && (
         <div className="orch-offline" role="status">
           <CloudOff size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -201,6 +216,9 @@ export function Orchestrator() {
           ref={composer} busy={busy} disabled={reconnecting} onSend={send} onStop={stop}
           placeholder={empty ? "Ask WalkieTalkie anything" : "Message WalkieTalkie"}
         />
+      ) : !empty && talkie?.state === "cleanup_pending" ? (
+        <div className="orch-offline" role="status"><TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
+          <span>WalkieTalkie cleanup pending: {cleanupDiagnostic(talkie)}</span></div>
       ) : !empty && talkie && standingDown(talkie) ? (
         <div className="orch-offline" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -221,7 +239,7 @@ export function Orchestrator() {
       ) : !empty && notRunningKind(talkie) === "starting" ? (
         <div className="orch-offline" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>WalkieTalkie is starting on its own…</span>
+          <span>{talkie?.last_error ?? "WalkieTalkie is starting on its own…"}</span>
         </div>
       ) : !empty ? (
         <div className="orch-offline orch-offline-start" role="status">
@@ -283,7 +301,8 @@ export function Orchestrator() {
                     ))}
                   </ul>
                 </div>
-              ) : talkie && standingDown(talkie) ? <TalkieStateCard view={talkie} />
+              ) : talkie?.state === "cleanup_pending" ? <TalkieStateCard view={talkie} />
+                : talkie && standingDown(talkie) ? <TalkieStateCard view={talkie} />
                 : notRunningKind(talkie) !== "manual" ? <StoppedCard kind={notRunningKind(talkie) as "stopped_by_you" | "starting" | "failed"} view={talkie} /> : <NotRunning />
             ) : (
               <div className="orch-thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
@@ -309,6 +328,7 @@ export function Orchestrator() {
               </div>
             )}
           </div>
+          {empty && <SchedulesPanel />}
         </div>
         {!empty && composerEl}
       </section>

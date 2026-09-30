@@ -46,6 +46,12 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const backlog = [...(local.quarantined ?? [])].sort((a, b) => Number(a.slice(8)) - Number(b.slice(8)));
+  const reasons = new Map<string, number>();
+  for (const name of backlog) {
+    const why = local.quarantine_why?.[name] ?? "cleanup has not answered yet";
+    reasons.set(why, (reasons.get(why) ?? 0) + 1);
+  }
   const act = async (allow: boolean) => {
     setBusy(true);
     setError(null);
@@ -67,12 +73,12 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
         <h2 className="int-title" id="seats-local-title">This machine <span className="mono muted">{hostname}</span></h2>
         <span className={`int-status ${local.allow ? "is-on" : "is-off"}`}>{local.allow ? "Allowed" : "Off"}</span>
       </header>
-      {local.quarantined?.length ? (
+      {backlog.length ? (
         // Shown whether seats are on or off (Codex r6 MEDIUM 8): turning seats off is exactly when this matters.
         <div className="int-error" role="alert">
-          <p>Seat users not verified removed (their processes or files may remain; Walkie retries every minute): <span className="mono">{local.quarantined.join(", ")}</span>.</p>
-          {local.quarantined.filter((u) => local.quarantine_why?.[u]).map((u) => (
-            <p key={u} className="mono">{u}: {local.quarantine_why?.[u]}</p>
+          <p>{backlog.length} seat user{backlog.length === 1 ? "" : "s"} awaiting cleanup. Walkie retries with backoff; live seat cleanup takes priority. <span className="mono">{backlog.slice(0, 5).join(", ")}{backlog.length > 5 ? " …" : ""}</span></p>
+          {[...reasons].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([why, count]) => (
+            <p key={why} className="mono">{count} × {why}</p>
           ))}
           <p>If one stays, see <a href="https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional" target="_blank" rel="noopener noreferrer">seat troubleshooting</a>.</p>
         </div>
@@ -80,12 +86,16 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
       {local.allow ? (
         <>
           <dl className="int-facts">
-            <div><dt>Launchers</dt><dd>{local.launchers.length ? <span className="mono">{local.launchers.join(", ")}</span> : "The team's owners"}</dd></div>
+            <div><dt>Launchers</dt><dd>{local.launcher_policy_empty ? "Nobody" : local.launchers.length ? <span className="mono">{local.launchers.join(", ")}</span> : local.launchers_default === false ? "Nobody" : "The team's owners and their agents"}</dd></div>
             <div><dt>Runtimes</dt><dd>{local.runtimes.join(", ")}</dd></div>
             <div><dt>Running</dt><dd className="tnum">{local.running}{local.max ? ` of ${local.max}` : ""}</dd></div>
             <div><dt>Directory</dt><dd className="mono truncate">{local.ephemeral ? "~<its seat user>/walkie-seats" : local.dir}</dd></div>
             <div><dt>Runs as</dt><dd>{local.ephemeral ? "A fresh user per seat" : <span className="seat-as-me">Your own user</span>}</dd></div>
           </dl>
+          <p className="field-hint">A person entry covers their agents on the listed machines. An exact agent entry covers only that agent.</p>
+          {local.ambiguous_launchers?.map((entry) => (
+            <p className="int-error" role="alert" key={entry}>{entry} matches multiple admitted machines and allows none of them. Rename one machine or use @{entry.slice(1).split("/")[0]}.</p>
+          ))}
           {local.disabled_reason && (
             <p className="int-error" role="alert">Allowed, but no seat runs: {local.disabled_reason}</p>
           )}
@@ -107,8 +117,10 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
             {local.claude_login === "dedicated"
               ? "Claude seats use the token set for seats only; a running seat can read it."
               : local.claude_login === "unavailable"
-              ? <>This machine's Claude login is in its Keychain, which seat users can't use: Claude seats won't start until seats get a token (<span className="mono">claude setup-token</span>, then <span className="mono">walkie seats token set</span>).</>
-              : <>Claude seats run on this machine's own Claude login (your subscription), and a running seat can read it. Keep them to a token of their own: <span className="mono">walkie seats token set</span></>}
+              ? <>This machine has no usable Claude access token or it is near expiry. Use Claude Code here to refresh its login; <span className="mono">walkie seats token set</span> is an optional override.</>
+              : local.ephemeral
+                ? <>Claude seats use this machine's Claude subscription; a running seat can read this machine's short-lived Claude access token, never the refresh token. <span className="mono">walkie seats token set</span> is an optional override.</>
+                : "Claude seats run as your user and can read everything you can, including your full Claude login."}
             {local.codex_login === "unavailable"
               ? <> Codex seats need this machine signed in to Codex where seat users can use it: <span className="mono">codex login</span>.</>
               : local.codex_login === "machine" ? " Codex seats run on this machine's own Codex sign-in." : null}
@@ -127,7 +139,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
       ) : (
         <>
           <p className="int-blurb">
-            Let the team's owners start Claude Code or Codex agents on this machine.{" "}
+            Let the team's owners and their agents start Claude Code or Codex agents on this machine.{" "}
             {local.ephemeral
               ? "Each seat runs as a fresh OS user of its own, made for it and removed after it, on this machine's sign-in (or a token set for seats), and streams its work back to them."
               : "Seats would run as your own OS user, on your own sign-in, in a fresh directory, and stream their work back to them (give them users of their own first: walkie seats setup-user --apply)."}
@@ -141,10 +153,14 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
                 ) : (
                   <p><strong>This is remote code execution, on purpose, as your own user.</strong> A seat can read and change anything your user can on this machine, including acting as you in Walkie. Safer: give seats users of their own first (<span className="mono">walkie seats setup-user --apply</span>). Turn them off any time; that stops every running seat.</p>
                 )}
-                {local.claude_login === "unavailable" ? (
-                  <p>This machine's Claude login is in its Keychain, which seat users can't use: Claude seats won't start until seats get a token (<span className="mono">claude setup-token</span>, then <span className="mono">walkie seats token set</span>).</p>
+                {local.claude_login === "dedicated" ? (
+                  <p>Claude seats use the token set for seats only; a running seat can read it.</p>
+                ) : local.claude_login === "unavailable" ? (
+                  <p>This machine has no usable Claude access token or it is near expiry. Use Claude Code here to refresh its login; <span className="mono">walkie seats token set</span> is an optional override.</p>
+                ) : local.ephemeral ? (
+                  <p>Claude seats use this machine's Claude subscription; a running seat can read this machine's short-lived Claude access token, never the refresh token. <span className="mono">walkie seats token set</span> is an optional override.</p>
                 ) : (
-                  <p>Claude seats run on this machine's own Claude login (your subscription), and a running seat can read it; a token of their own is safer (<span className="mono">walkie seats token set</span>).</p>
+                  <p>Claude seats run as your user and can read everything you can, including your full Claude login.</p>
                 )}
                 <div className="form-actions">
                   <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void act(true)}>{busy ? "Allowing…" : local.ephemeral ? "Allow seats" : "Allow as my user"}</button>
@@ -160,7 +176,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
               <button type="button" className="btn" onClick={() => setConfirm(true)}>Allow seats on this machine…</button>
             </div>
           )}
-          <p className="field-hint">To name who may launch, use the CLI: <span className="mono">walkie seats allow --launchers @alex</span></p>
+          <p className="field-hint">To name who may launch, use the CLI: <span className="mono">walkie seats allow --launchers @alex</span>. A person entry covers their agents; an exact agent entry covers only that agent.</p>
         </>
       )}
       {error && <p className="field-error" role="alert">{error}</p>}

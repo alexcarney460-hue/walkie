@@ -12,6 +12,7 @@ export class SeatStatusThrottle {
   private readonly lastSent = new Map<string, number>();
   private readonly recent: number[] = [];
   private readonly held = new Map<string, { body: Status; provenance?: StatusProvenance; stateChanged: boolean }>();
+  private readonly finals = new Map<string, { body: Status; provenance?: StatusProvenance; attempt: number }>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
 
@@ -30,9 +31,21 @@ export class SeatStatusThrottle {
     this.latestState.set(agent, body.state);
     if (body.state === "offline") {
       this.held.delete(agent);
-      this.lastBody.set(agent, encoded);
-      this.lastSent.set(agent, stamp);
-      return this.emit(agent, body, provenance);
+      this.latestState.set(agent, body.state);
+      const final = { body, ...(provenance ? { provenance } : {}), attempt: 0 };
+      this.finals.set(agent, final);
+      try {
+        const event = this.emit(agent, body, provenance);
+        if (event) {
+          this.finals.delete(agent);
+          this.lastBody.set(agent, encoded);
+          this.lastSent.set(agent, stamp);
+        } else this.retryFinal(agent, final);
+        return event;
+      } catch (error) {
+        this.retryFinal(agent, final);
+        throw error;
+      }
     }
     this.expire(stamp);
     // State transitions (especially idle -> working) are meaningful immediately. The 10-second
@@ -63,6 +76,12 @@ export class SeatStatusThrottle {
     this.timer.unref?.();
   }
 
+  private retryFinal(agent: string, final: { body: Status; provenance?: StatusProvenance; attempt: number }): void {
+    final.attempt++;
+    this.finals.set(agent, final);
+    this.schedule(Math.min(60_000, 1_000 * 2 ** Math.min(final.attempt - 1, 6)));
+  }
+
   flush(): void {
     if (this.stopped) return;
     const stamp = this.now();
@@ -84,11 +103,25 @@ export class SeatStatusThrottle {
         this.lastSent.set(agent, stamp);
       }
     }
-    if (this.held.size) {
+    for (const [agent, final] of this.finals) {
+      try {
+        const event = this.emit(agent, final.body, final.provenance);
+        if (event) {
+          this.finals.delete(agent);
+          this.lastBody.set(agent, JSON.stringify(final.body));
+          this.lastSent.set(agent, stamp);
+        } else this.retryFinal(agent, final);
+      } catch (error) {
+        this.retryFinal(agent, final);
+        try { this.onError(error); } catch { /* logging must not escape the timer */ }
+      }
+    }
+    if (this.held.size || this.finals.size) {
       const seatWait = Math.min(...[...this.held].map(([a, value]) => {
         return value.stateChanged ? 0 : Math.max(0, (this.lastSent.get(a) ?? -Infinity) + 10_000 - stamp);
       }));
-      this.schedule(Math.max(1, seatWait, this.recent.length >= 30 ? this.recent[0]! + 60_000 - stamp : 0));
+      const retryWait = this.finals.size ? Math.min(...[...this.finals.values()].map((f) => Math.min(60_000, 1_000 * 2 ** Math.min(f.attempt - 1, 6)))) : 0;
+      this.schedule(Math.max(1, seatWait, retryWait, this.recent.length >= 30 ? this.recent[0]! + 60_000 - stamp : 0));
     }
   }
 
@@ -101,5 +134,6 @@ export class SeatStatusThrottle {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.held.clear();
+    this.finals.clear();
   }
 }

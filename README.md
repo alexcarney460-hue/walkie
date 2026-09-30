@@ -1,5 +1,9 @@
 # Walkie
 
+Rental compute uses a Vercel Pro minute cron to renew 15-minute paid leases and a separate GitHub Actions watchdog every five minutes to delete expired DigitalOcean Droplets. The watchdog requires a repository `DIGITALOCEAN_TOKEN` secret. A guest can identify its cloud provider from hardware and network information; Walkie's private provider costs are never sent to the guest.
+
+Changing compute authority for a funded or held account, or one with an open checkout, requires explicit operator approval of that proposal after a 24-hour hold. Owner acknowledgements are advisory; eligible owner objections block approval until the operator explicitly overrides the objection. Every hold alerts the operator with the team, chain IDs, eligible owners, acknowledgements, and objections. An unacknowledged proposal expires after 72 hours and cannot be retried until the operator allows another attempt. Unfunded teams retain automatic authority changes. Set `COMPUTE_HANDOVER_OPERATOR_SECRET` on the site and send `complete` with `team_id`, `chain_id`, and `proposed_key` to `/api/compute/handover` with `Authorization: Bearer <operator secret>`. Use `override_objection` with the same proposal identifiers to explicitly approve despite an objection; that override is logged and alerted. `reject` blocks the proposal; `clear_rejection` selectively allows another attempt.
+
 **A walkie-talkie for your team's AI agents.**
 
 Your team runs a dozen coding agents across a handful of laptops and build boxes. They can't talk to each other,
@@ -13,6 +17,11 @@ and nobody can see what they're all doing. Walkie fixes both:
   and a **Data Room** per project for its files (versions, pinned documents that reach the agents working its cards).
 - **Seats.** Start agents on a teammate's machine that has opted in. They run on that machine's own Claude Code or
   Codex sign-in (by default as a fresh OS user per seat), and a seat's commits can come back to you as a git bundle.
+- **WalkieTalkie schedules.** The lead machine can refresh boards and data rooms, check spare capacity, or run a custom
+  instruction on a five-field local cron. Use the WalkieTalkie dashboard's Schedules section or
+  `walkie talkie schedule add "Morning check" --cron "0 9 * * *" --template capacity-check`. The roster authority
+  accepts at most one run per due slot. A slot due before an authority handover is skipped and shown in the schedule's
+  last result; at least one attempt is possible only while the same authority term stays available.
 - **Walkie Direct: no Walkie server in the middle.** Daemons connect peer-to-peer (QUIC with NAT hole-punching,
   built on [iroh](https://iroh.computer)) and replicate a signed, append-only team log. When there is no direct
   path, a relay forwards encrypted traffic it can't read. Already on [Tailscale](https://tailscale.com)? A team can
@@ -89,8 +98,8 @@ channels; keys stay on your machine. See [docs/INTEGRATIONS.md](docs/INTEGRATION
 ## Agents set Walkie up (agent admin)
 
 Nobody has to do Walkie's setup by hand. An agent on a machine can do its person's setup there (seats, accounts,
-hooks, pool, WalkieTalkie (the orchestrator), invites, project settings), and a team owner's agent can do it on any team machine over
-Walkie, never through a shell (members: their own machines):
+hooks, pool, WalkieTalkie (the orchestrator), invites), and a team owner's agent can do the same on any team machine
+over Walkie, never through a shell (members: their own machines):
 
 ```bash
 walkie admin machines --json                               # which machines this caller may administer
@@ -101,7 +110,8 @@ walkie admin --machines all-mine --json hooks install all
 Every such action is posted to `#general` naming the agent (and mentions the machine's person when done remotely).
 Each machine's person keeps a kill switch: `walkie agents admin off` (local agents) and `walkie admin remote off`
 (remote admin), also on the dashboard's Seats page; only the person turns them back on. What stays a person's:
-dashboard logins and phone pairing codes, removing a member, moving the roster authority. See
+dashboard logins and phone pairing codes, removing a member, moving the roster authority, and a project's settings
+(always its creator or an owner). See
 [SECURITY.md](docs/SECURITY.md#agent-admin-and-remote-admin-agent-admin-1).
 
 ## Free plan and pricing
@@ -158,7 +168,7 @@ as a released one.
 
 ## Status
 
-v0.2 pre-release (`v0.2.0-pre.9`, installed by default by the site's installer): macOS on Apple Silicon and Linux (x64,
+v0.2 pre-release (`v0.2.0-pre.10`, installed by default by the site's installer): macOS on Apple Silicon and Linux (x64,
 arm64; Windows through WSL2 as Linux), over Walkie Direct, Tailscale, or both in one team. Pre-release builds skip
 Intel Macs (use the v0.1.x release or build from source). Native Windows is not supported yet. Changes are in
 [CHANGELOG.md](CHANGELOG.md).

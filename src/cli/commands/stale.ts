@@ -42,5 +42,6 @@ function printReport(ctx: Ctx, r: StaleReport): void {
   if (r.agents.length) ctx.out(c.bold(`agents silent for ${r.thresholds.agent_minutes} min+`));
   for (const a of r.agents) ctx.out(`  ${safeTerm(a.id)} ${c.dim(`[${a.state}] ${a.silent_minutes} min`)} ${safeTerm(a.title)}${a.task ? c.dim(` · ${safeTerm(a.task)}`) : ""}`);
   if (r.machines.length) ctx.out(c.bold("machines"));
-  for (const m of r.machines) ctx.out(`  ${safeTerm(m.hostname)} ${c.dim(m.reason === "idle_while_cards_wait" ? `idle, ${r.todo_waiting} cards to do` : `memory ${m.pressure}, no agent working`)}`);
+  for (const m of r.machines) ctx.out(`  ${safeTerm(m.hostname)} ${c.dim(m.reason === "idle_while_cards_wait" ? `idle, ${r.todo_waiting} cards to do`
+    : m.reason === "load_without_agents" ? "high load, no agent process seen" : `memory ${m.pressure}, no agent working`)}`);
 }

@@ -9,6 +9,8 @@ import type { End } from "../pool/run/tunnel.ts";
 
 export interface PeerAddr {
   readonly ip: string; readonly port: number;
+  /** Known roster node id, used to bind Tailscale request signatures to their receiver. */
+  readonly nodeId?: string;
   /** Walkie Direct: dial this node key (base64) over iroh instead of ip:port. */
   readonly pubkey?: string;
   /** Walkie Direct: a relay URL hint (an invite's); discovery finds the node without it. */

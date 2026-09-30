@@ -228,13 +228,16 @@ export class Vault {
 
   /** Takes the key-creation claim: free, or held by a process that no longer exists (compare-and-swap). */
   private claimKey(mine: string): boolean {
+    const observed = this.db.query("SELECT v FROM meta WHERE k = 'key_claim'").get() as { v: string } | null;
+    let alive = true;
+    if (observed) {
+      const pid = Number(observed.v.split(":")[0]);
+      try { process.kill(pid, 0); } catch (err) { alive = (err as NodeJS.ErrnoException).code === "EPERM"; }
+    }
     const tx = this.db.transaction((): boolean => {
       const row = this.db.query("SELECT v FROM meta WHERE k = 'key_claim'").get() as { v: string } | null;
       if (!row) { this.db.query("INSERT INTO meta (k, v) VALUES ('key_claim', ?)").run(mine); return true; }
-      const pid = Number(row.v.split(":")[0]);
-      let alive = true;
-      try { process.kill(pid, 0); } catch (err) { alive = (err as NodeJS.ErrnoException).code === "EPERM"; }
-      if (alive) return false;
+      if (!observed || row.v !== observed.v || alive) return false;
       return this.db.query("UPDATE meta SET v = ? WHERE k = 'key_claim' AND v = ?").run(mine, row.v).changes === 1;
     });
     return tx.immediate();
@@ -332,4 +335,3 @@ export class Vault {
     return openAtRest(await this.key(false), row.secret, aadFor(this.vaultId, id, "claude"));
   }
 }
-

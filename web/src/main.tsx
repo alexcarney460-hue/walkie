@@ -21,6 +21,7 @@ import "./styles/accounts.css";
 import "./styles/seats.css";
 import "./styles/phone.css";
 import "./styles/projects.css";
+import "./styles/compute.css";
 import "./lib/theme.ts";
 import "./styles/machine.css";
 import "./styles/glass.css"; // the glass layer restyles the view surfaces

@@ -1,11 +1,12 @@
 import { PeerCapabilities } from "../protocol/capabilities.ts";
+import { peerCapabilities, recordPeerProof, recordPeerSignature, rememberPeerCapabilities, rememberValidPeerSignature, validPeerProof } from "./peer-capabilities.ts";
 // Replication (PROTOCOL §3): push on local write, anti-entropy pull on connect
 // and every interval, liveness + rtt per peer, stubs for restricted channels.
 import { stubOf } from "../protocol/header.ts";
 import { eventId } from "../protocol/ids.ts";
 import type { MachineStats } from "../protocol/machine-stats.ts";
 import { MAX_PEER_RTT, type PoolShare } from "../protocol/pool.ts";
-import { MAX_IDS_PER_FETCH, type Event, type Stub } from "../protocol/schemas.ts";
+import { MAX_IDS_PER_FETCH, PeerVvRelay, type Event, type Stub } from "../protocol/schemas.ts";
 import type { AccountsSnapshot } from "../protocol/accounts.ts";
 import type { Core } from "./core.ts";
 import { PeerCallError, type PeerAddr, type PeerClient } from "./peer-client.ts";
@@ -50,11 +51,25 @@ export class SyncManager {
    * this machine shares no transport with is shown online while a reachable peer says it is.
    */
   private readonly reported = new Map<string, { at: number; online: ReadonlySet<string> }>();
+  /** Verified proofs awaiting the authority; the signed envelopes also live in local store metadata. */
+  private readonly pendingPeerProofs = new Map<string, PeerVvRelay>();
+  private readonly peerProofRetry = new Map<string, { failures: number; nextAt: number }>();
+  private peerProofFlush: Promise<void> | null = null;
 
   constructor(private readonly core: Core, private readonly client: PeerClient, opts: SyncOptions = {}) {
     this.intervalMs = opts.intervalMs ?? 15_000;
     this.livenessMs = opts.livenessMs ?? 45_000;
     this.pushTimeoutMs = opts.pushTimeoutMs ?? 2_000;
+    for (const { key, value } of core.store.listMeta("pending_peer_proof:")) {
+      try {
+        const parsed = PeerVvRelay.safeParse(JSON.parse(value));
+        if (parsed.success && key === `pending_peer_proof:${parsed.data.node}`) {
+          this.pendingPeerProofs.set(parsed.data.node, parsed.data);
+          continue;
+        }
+      } catch { /* corrupt local metadata is discarded below */ }
+      core.store.deleteMeta(key);
+    }
   }
 
   start(): void {
@@ -90,16 +105,11 @@ export class SyncManager {
   peerState(nodeId: string): PeerState | undefined { return this.peers.get(nodeId); }
 
   peerCapabilities(nodeId: string): PeerCapabilities | undefined {
-    const raw = this.core.store.getMeta(`peer_capabilities:${nodeId}`);
-    if (!raw) return undefined;
-    try { return PeerCapabilities.parse(JSON.parse(raw)); } catch { return undefined; }
+    return peerCapabilities(this.core.store, nodeId);
   }
 
   rememberCapabilities(nodeId: string, value: PeerCapabilities | undefined): void {
-    if (!value) return; // No telemetry is not evidence of an old protocol version.
-    const serialized = JSON.stringify(PeerCapabilities.parse(value));
-    const key = `peer_capabilities:${nodeId}`;
-    if (this.core.store.getMeta(key) !== serialized) this.core.store.setMeta(key, serialized);
+    rememberPeerCapabilities(this.core.store, nodeId, value);
   }
 
   isOnline(nodeId: string, now = Date.now()): boolean {
@@ -148,6 +158,63 @@ export class SyncManager {
     for (const n of this.peerNodes()) void this.antiEntropy(n);
     this.checkLiveness();
     void this.flushRequests();
+    void this.flushPeerProofs();
+  }
+
+  private flushPeerProofs(): Promise<void> {
+    if (this.peerProofFlush) return this.peerProofFlush;
+    this.peerProofFlush = this.sendPeerProofs()
+      .catch((err: unknown) => this.core.log.warn("peer_proof_relay_failed", { err: err instanceof Error ? err.message : String(err) }))
+      .finally(() => { this.peerProofFlush = null; });
+    return this.peerProofFlush;
+  }
+
+  private async sendPeerProofs(): Promise<void> {
+    if (this.stopped) return;
+    for (const [id, proof] of this.pendingPeerProofs) {
+      const node = this.core.roster.nodes.get(id);
+      if (node?.peer_sig_v1 || !node || !nodeMember(this.core.roster, id)
+        || !validPeerProof(this.core, proof, this.core.nodeId)) {
+        this.forgetPeerProof(id);
+      }
+    }
+    if (!this.pendingPeerProofs.size) return;
+    if (this.core.isAuthority()) {
+      for (const [id, proof] of this.pendingPeerProofs) {
+        try {
+          const result = recordPeerProof(this.core, proof, this.core.nodeId);
+          if (result === "recorded" || result === "invalid") this.forgetPeerProof(id);
+        } catch (err) {
+          this.core.log.warn("peer_proof_local_failed", { node: id, err: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      return;
+    }
+    const authority = this.core.authority ? this.core.roster.nodes.get(this.core.authority) : undefined;
+    const addr = authority ? this.client.addrOf(authority) : null;
+    if (!addr) return;
+    for (const [id, proof] of this.pendingPeerProofs) {
+      if (Date.now() < (this.peerProofRetry.get(id)?.nextAt ?? 0)) continue;
+      try {
+        if ((await this.client.reportPeerProof(addr, proof)).recorded) this.forgetPeerProof(id);
+        else this.deferPeerProof(id);
+      } catch (err) {
+        this.core.log.warn("peer_proof_relay_failed", { node: id, err: err instanceof Error ? err.message : String(err) });
+        this.deferPeerProof(id);
+      }
+    }
+  }
+
+  private forgetPeerProof(id: string): void {
+    this.pendingPeerProofs.delete(id);
+    this.peerProofRetry.delete(id);
+    this.core.store.deleteMeta(`pending_peer_proof:${id}`);
+  }
+
+  private deferPeerProof(id: string): void {
+    const failures = Math.min(10, (this.peerProofRetry.get(id)?.failures ?? 0) + 1);
+    const delay = Math.min(60_000, 1_000 * 2 ** (failures - 1));
+    this.peerProofRetry.set(id, { failures, nextAt: Date.now() + delay });
   }
 
   /** After a roster request applied: pull the authority's origin so the new event is local. */
@@ -294,13 +361,22 @@ export class SyncManager {
       if (!addr) return; // no shared transport: its events come through the machines that serve both
       const t0 = performance.now();
       const w0 = Date.now();
-      const peerVv = await this.client.vv(addr);
+      const peerVv = await this.client.vv(addr, n.pubkey);
       s.rtt = Math.round(performance.now() - t0);
       if (typeof peerVv.ts === "number") s.skewMs = Math.round(peerVv.ts - (w0 + Date.now()) / 2);
       s.stats = peerVv.stats;
-      this.rememberCapabilities(n.node_id, peerVv.capabilities ?? (peerVv.stats?.sys ? {
-        version: peerVv.stats.sys.version, caps: peerVv.stats.sys.caps ?? [],
-      } : undefined));
+      if (peerVv.verified) {
+        rememberValidPeerSignature(this.core.store, n.node_id);
+        this.rememberCapabilities(n.node_id, peerVv.capabilities ?? (peerVv.stats?.sys ? {
+          version: peerVv.stats.sys.version, caps: peerVv.stats.sys.caps ?? [],
+        } : undefined));
+        recordPeerSignature(this.core, n.node_id);
+        if (!this.core.isAuthority() && peerVv.envelope && !this.core.roster.nodes.get(n.node_id)?.peer_sig_v1) {
+          this.pendingPeerProofs.set(n.node_id, peerVv.envelope);
+          this.core.store.setMeta(`pending_peer_proof:${n.node_id}`, JSON.stringify(peerVv.envelope));
+          await this.flushPeerProofs();
+        }
+      }
       s.pool = peerVv.pool;
       if (JSON.stringify(s.accounts ?? null) !== JSON.stringify(peerVv.accounts ?? null)) {
         s.accounts = peerVv.accounts;

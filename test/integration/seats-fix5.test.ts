@@ -11,14 +11,18 @@ import { dirname, join } from "node:path";
 import type { WalkieClient } from "../../src/client/index.ts";
 import { TERMINAL_STATES, type SeatView } from "../../src/protocol/seats.ts";
 import { seatsFor } from "../../src/daemon/seats/host.ts";
+import { doctorChecks } from "../../src/daemon/seats/doctor.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { canSandbox, fakeSeatWorld, type FakeSeatWorld, signInCodex } from "../helpers/fake-seat-users.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
-const CREDS = '{"claudeAiOauth":{"accessToken":"the-machines-own-login","refreshToken":"the-machines-refresh-token"}}';
+const EXPIRY = Date.now() + 8 * 3_600_000;
+const CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", refreshToken: "the-machines-refresh-token", expiresAt: EXPIRY, scopes: ["user:inference"] } });
 /** What a seat is handed of it: the access token only, never the refresh token (SEATS-FIX-8, Opus r8 2). */
-const HANDED = '{"claudeAiOauth":{"accessToken":"the-machines-own-login"}}';
+const HANDED = JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", expiresAt: EXPIRY, scopes: ["user:inference"] } });
 const DEDICATED = `sk${""}-ant-oat01-${"d".repeat(40)}`;
+let keychainCredentials: string | null = null;
+let keychainReads = 0;
 
 let c: Cluster;
 let alex: TestNode;
@@ -61,6 +65,7 @@ beforeAll(async () => {
   const walkieHome = join(c.root, "arvid");
   world = fakeSeatWorld(c.root, walkieHome);
   Object.assign(seatsOpts, {
+    keychain: async () => { keychainReads++; return keychainCredentials; },
     flushMs: 100, launchesPerMinute: 100, busyReapplyMs: 300,
     userSwitch: world.userSwitch, admin: world.admin, lookupUser: world.lookup, schedulerFiles: world.schedulerFiles,
     env: {
@@ -187,30 +192,93 @@ describe("SEATS-FIX-5: ephemeral seat users", () => {
       world.broken.delete("destroy-files");
     }
     expect(s.state).toBe("stopped");
-    expect(s.reason).toMatch(/could not verify that its seat user was removed: its processes or files may remain \(the seat user is quarantined\)/);
+    // Seat round 19 reports the destroy's actual reason, not a generic "processes or files may remain".
+    expect(s.reason).toMatch(/could not verify that its seat user was removed: files it owns remain or couldn't be checked \(the sweep failed \(broken\)\) \(seat user quarantined\)/);
     const { local } = await person(arvid).seats();
     expect(local.quarantined?.length).toBe(1);
     const n = Number((local.quarantined as string[])[0]?.slice(8));
     expect((await host().destroyUser(n)).ok).toBe(true); // the retry, now verified
-    expect((await person(arvid).seats()).local.quarantined).toBeUndefined();
+    const healed = (await person(arvid).seats()).local;
+    expect(healed.quarantined).toBeUndefined();
+    expect(doctorChecks(healed, { team: "test", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok",
+      runtimes: { claude: "/x", codex: "/x" } }).some((check) => check.what.includes("seat users not verified removed"))).toBe(false);
     expect(readdirSync(world.outside)).toEqual([]);
   }, 60_000);
 
-  test("Codex r5 LOW 7: with the login only in the Keychain (no token, no credentials file), Claude seats are refused with the fix", async () => {
+  test("Keychain login is projected access-only; expiry waits for Claude Code, and a seat token overrides it", async () => {
     const creds = join(personHome, ".claude", ".credentials.json");
+    const identity = join(personHome, ".claude.json");
     rmSync(creds);
+    writeFileSync(identity, JSON.stringify({ oauthAccount: { accountUuid: "known-seat-account-uuid" } }));
     try {
+      keychainCredentials = JSON.stringify({ claudeAiOauth: { accessToken: "old-access-token", refreshToken: "private-refresh", expiresAt: Date.now() + 60_000 } });
+      await (host() as unknown as { refreshLogin(): Promise<void> }).refreshLogin();
       expect((await person(arvid).seats()).local.claude_login).toBe("unavailable");
-      const s = await ended(await launch("check-home without a login", "claude"));
+      const s = await ended(await launch("check-home expiring", "claude"));
       expect(s.state).toBe("failed");
-      expect(s.reason).toMatch(/Keychain.*walkie seats token set/);
+      expect(s.reason).toMatch(/near expiry/);
+      const expiry = Date.now() + 3_600_000;
+      keychainCredentials = JSON.stringify({ claudeAiOauth: { accessToken: "fresh-access-token", refreshToken: "private-refresh", expiresAt: expiry, scopes: ["user:inference"] } });
+      await (host() as unknown as { refreshLogin(): Promise<void> }).refreshLogin();
+      expect((await person(arvid).seats()).local.claude_login).toBe("machine");
+      const readsAfterSuccess = keychainReads;
+      await (host() as unknown as { refreshLogin(): Promise<void> }).refreshLogin();
+      expect(keychainReads).toBe(readsAfterSuccess); // dashboard/status polling reuses the usable projection
+      expect((await ended(await launch("check-home projected", "claude"))).state).toBe("done");
+      const projected = await claudeCheck("check-home projected");
+      expect(projected.credentials).toEqual({ text: JSON.stringify({ claudeAiOauth: { accessToken: "fresh-access-token", expiresAt: expiry, scopes: ["user:inference"] } }), mode: "600" });
+      expect(existsSync(join(projected.claude_config as string, ".credentials.json"))).toBe(false);
+      expect(keychainReads).toBe(readsAfterSuccess); // launch also reuses a token with enough lifetime
+      const cache = host() as unknown as { cachedClaudeAccess: { expiresAt: number } };
+      cache.cachedClaudeAccess.expiresAt = Date.now() + 60_000;
+      keychainCredentials = JSON.stringify({ claudeAiOauth: { accessToken: "new-access-token", refreshToken: "private-refresh", expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } });
+      expect((await person(arvid).seats()).local.claude_login).toBe("unavailable");
+      expect(keychainReads).toBe(readsAfterSuccess); // dashboard polling never re-reads a near-expiry Keychain token
+      expect((await ended(await launch("check-home refreshed", "claude"))).state).toBe("done");
+      expect(keychainReads).toBe(readsAfterSuccess + 1);
+      expect(JSON.stringify((await claudeCheck("check-home refreshed")).credentials)).toContain("new-access-token");
       expect((await person(arvid).seatsToken(DEDICATED)).local.claude_login).toBe("dedicated");
       expect((await ended(await launch("check-home with the dedicated token", "claude"))).state).toBe("done");
       const seen = await claudeCheck("check-home with the dedicated token");
       expect(seen.token_sha).toBe(new Bun.CryptoHasher("sha256").update(DEDICATED).digest("hex").slice(0, 12));
+      expect(seen.credentials).toBeNull();
       await person(arvid).seatsToken(null);
     } finally {
+      keychainCredentials = null;
       writeFileSync(creds, CREDS, { mode: 0o600 });
+      rmSync(identity, { force: true });
+    }
+  }, 60_000);
+
+  test("cached Keychain projection follows Claude account changes and has a fifteen-minute age bound", async () => {
+    const creds = join(personHome, ".claude", ".credentials.json");
+    const identity = join(personHome, ".claude.json");
+    rmSync(creds);
+    const cache = host() as unknown as { cachedClaudeAccess: { readAt: number } | null };
+    cache.cachedClaudeAccess = null;
+    try {
+      const login = (id: string) => writeFileSync(identity, JSON.stringify({ oauthAccount: { accountUuid: id } }));
+      const token = (value: string) => JSON.stringify({ claudeAiOauth: { accessToken: value, expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } });
+      login("account-one-uuid");
+      keychainCredentials = token("account-one-access");
+      expect((await ended(await launch("check-home account one", "claude"))).state).toBe("done");
+      const firstReads = keychainReads;
+      login("account-two-uuid");
+      keychainCredentials = token("account-two-access");
+      expect((await ended(await launch("check-home account two", "claude"))).state).toBe("done");
+      expect(JSON.stringify((await claudeCheck("check-home account two")).credentials)).toContain("account-two-access");
+      expect(keychainReads).toBe(firstReads + 1);
+      expect(cache.cachedClaudeAccess).not.toBeNull();
+      cache.cachedClaudeAccess!.readAt = Date.now() - 16 * 60_000;
+      keychainCredentials = token("account-two-new-access");
+      expect((await ended(await launch("check-home account two refreshed", "claude"))).state).toBe("done");
+      expect(JSON.stringify((await claudeCheck("check-home account two refreshed")).credentials)).toContain("account-two-new-access");
+      expect(keychainReads).toBe(firstReads + 2);
+    } finally {
+      keychainCredentials = null;
+      rmSync(identity, { force: true });
+      writeFileSync(creds, CREDS, { mode: 0o600 });
+      cache.cachedClaudeAccess = null;
     }
   }, 60_000);
 

@@ -6,7 +6,7 @@
 //
 // struct stat / struct dirent layouts differ per platform: they are listed below and checked against node:fs by
 // selfTest() before any sweep (a mismatch refuses the sweep: nothing is deleted on a guess).
-import { closeSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, fsyncSync, ftruncateSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 
 type Ptr = import("bun:ffi").Pointer;
@@ -14,8 +14,8 @@ type Ptr = import("bun:ffi").Pointer;
 interface Layout {
   lib: string;
   sym: { fstatat: string[]; fdopendir: string[]; readdir: string[]; errno: string };
-  /** struct stat: st_dev (offset, bytes), st_ino, st_mode (offset, bytes), st_uid. */
-  st: { dev: [number, 4 | 8]; ino: number; mode: [number, 2 | 4]; uid: number; flags?: number };
+  /** struct stat: st_dev, st_ino, st_mode, st_nlink (offset, bytes), st_uid. */
+  st: { dev: [number, 4 | 8]; ino: number; mode: [number, 2 | 4]; nlink: [number, 2 | 4 | 8]; uid: number; flags?: number };
   /** struct dirent: where the name starts, and where its length is (macOS) or null (NUL-terminated, Linux). */
   dirent: { name: number; namlen: number | null };
   O: { RDONLY: number; NOFOLLOW: number; DIRECTORY: number; CLOEXEC: number; NONBLOCK: number };
@@ -23,8 +23,8 @@ interface Layout {
   errnos: Record<number, string>;
 }
 
-const MAC_ERR = { 1: "EPERM", 2: "ENOENT", 13: "EACCES", 16: "EBUSY", 18: "EXDEV", 20: "ENOTDIR", 21: "EISDIR", 22: "EINVAL", 30: "EROFS", 62: "ELOOP", 66: "ENOTEMPTY", 17: "EEXIST", 45: "ENOTSUP", 24: "EMFILE" };
-const LINUX_ERR = { 1: "EPERM", 2: "ENOENT", 13: "EACCES", 16: "EBUSY", 18: "EXDEV", 20: "ENOTDIR", 21: "EISDIR", 22: "EINVAL", 30: "EROFS", 40: "ELOOP", 39: "ENOTEMPTY", 17: "EEXIST", 95: "ENOTSUP", 24: "EMFILE" };
+const MAC_ERR = { 1: "EPERM", 2: "ENOENT", 13: "EACCES", 16: "EBUSY", 18: "EXDEV", 20: "ENOTDIR", 21: "EISDIR", 22: "EINVAL", 30: "EROFS", 34: "ERANGE", 62: "ELOOP", 66: "ENOTEMPTY", 17: "EEXIST", 45: "ENOTSUP", 24: "EMFILE" };
+const LINUX_ERR = { 1: "EPERM", 2: "ENOENT", 13: "EACCES", 16: "EBUSY", 18: "EXDEV", 20: "ENOTDIR", 21: "EISDIR", 22: "EINVAL", 30: "EROFS", 34: "ERANGE", 40: "ELOOP", 39: "ENOTEMPTY", 17: "EEXIST", 95: "ENOTSUP", 24: "EMFILE" };
 
 function layout(): Layout | null {
   if (process.platform === "darwin") {
@@ -33,7 +33,7 @@ function layout(): Layout | null {
     return {
       lib: "libSystem.B.dylib",
       sym: { fstatat: s("fstatat"), fdopendir: s("fdopendir"), readdir: s("readdir"), errno: "__error" },
-      st: { dev: [0, 4], ino: 8, mode: [4, 2], uid: 16, flags: 116 },
+      st: { dev: [0, 4], ino: 8, mode: [4, 2], nlink: [6, 2], uid: 16, flags: 116 },
       dirent: { name: 21, namlen: 18 },
       O: { RDONLY: 0, NOFOLLOW: 0x100, DIRECTORY: 0x100000, CLOEXEC: 0x1000000, NONBLOCK: 0x4 },
       AT: { FDCWD: -2, SYMLINK_NOFOLLOW: 0x20, REMOVEDIR: 0x80 },
@@ -45,7 +45,8 @@ function layout(): Layout | null {
     return {
       lib: "libc.so.6",
       sym: { fstatat: ["fstatat64", "fstatat"], fdopendir: ["fdopendir"], readdir: ["readdir64", "readdir"], errno: "__errno_location" },
-      st: arm ? { dev: [0, 8], ino: 8, mode: [16, 4], uid: 24 } : { dev: [0, 8], ino: 8, mode: [24, 4], uid: 28 },
+      st: arm ? { dev: [0, 8], ino: 8, mode: [16, 4], nlink: [20, 4], uid: 24 }
+        : { dev: [0, 8], ino: 8, mode: [24, 4], nlink: [16, 8], uid: 28 },
       dirent: { name: 19, namlen: null },
       O: arm
         ? { RDONLY: 0, NOFOLLOW: 0x8000, DIRECTORY: 0x4000, CLOEXEC: 0x80000, NONBLOCK: 0x800 }
@@ -61,11 +62,16 @@ export class FsatError extends Error {
   constructor(readonly code: string, what: string) { super(`${what}: ${code}`); }
 }
 
-export interface StatAt { dev: number; ino: number; mode: number; uid: number; flags?: number }
+export interface StatAt { dev: number; ino: number; mode: number; nlink: number; uid: number; flags?: number }
 /** macOS's SIP-protected no-unlink flag on /var/folders per-user directories. */
 export const SF_NOUNLINK = 0x00100000;
+/** macOS system flag for restricted entries in a seat's per-user folder. */
+export const SF_RESTRICTED = 0x00080000;
+/** xnu/sys/stat.h: UF_DATAVAULT needs Apple's data-vault entitlement. */
+export const UF_DATAVAULT = 0x00000080;
 export const S_IFMT = 0o170000;
 export const S_IFDIR = 0o040000;
+export const S_IFREG = 0o100000;
 export const S_IFLNK = 0o120000;
 export const isDir = (st: StatAt): boolean => (st.mode & S_IFMT) === S_IFDIR;
 
@@ -79,6 +85,10 @@ type Syms = {
   readdir: (dir: Ptr) => Ptr | null;
   closedir: (dir: Ptr) => number;
   errno: () => Ptr | null;
+  flistxattr: (fd: number, names: Uint8Array | null, size: number) => bigint;
+  fremovexattr: (fd: number, name: Uint8Array) => number;
+  mkdirat: (fd: number, name: Uint8Array, mode: number) => number;
+  renameatx: (fromFd: number, from: Uint8Array, toFd: number, to: Uint8Array, flags: number) => number;
 };
 
 let loaded: { L: Layout; f: Syms; read: typeof import("bun:ffi").read; toArrayBuffer: typeof import("bun:ffi").toArrayBuffer } | null = null;
@@ -109,6 +119,11 @@ function lib(): NonNullable<typeof loaded> {
     [n.readdir]: readDef,
     closedir: { args: [T.ptr], returns: T.i32 },
     [L.sym.errno]: { args: [], returns: T.ptr },
+    flistxattr: { args: process.platform === "darwin" ? [T.i32, T.ptr, T.u64, T.i32] : [T.i32, T.ptr, T.u64], returns: T.i64 },
+    fremovexattr: { args: process.platform === "darwin" ? [T.i32, T.ptr, T.i32] : [T.i32, T.ptr], returns: T.i32 },
+    mkdirat: { args: [T.i32, T.ptr, T.u16], returns: T.i32 },
+    ...(process.platform === "darwin" ? { renameatx_np: { args: [T.i32, T.ptr, T.i32, T.ptr, T.u32], returns: T.i32 } }
+      : { renameat2: { args: [T.i32, T.ptr, T.i32, T.ptr, T.u32], returns: T.i32 } }),
   } as never) as unknown as { symbols: Record<string, (...a: unknown[]) => unknown> };
   const s = h.symbols;
   const f: Syms = {
@@ -121,6 +136,11 @@ function lib(): NonNullable<typeof loaded> {
     readdir: (d) => s[n.readdir]!(d) as Ptr | null,
     closedir: (d) => s.closedir!(d) as number,
     errno: () => s[L.sym.errno]!() as Ptr | null,
+    flistxattr: (fd, names, size) => s.flistxattr!(fd, names, size, ...(process.platform === "darwin" ? [0] : [])) as bigint,
+    fremovexattr: (fd, name) => s.fremovexattr!(fd, cname(name), ...(process.platform === "darwin" ? [0] : [])) as number,
+    mkdirat: (fd, name, mode) => s.mkdirat!(fd, name, mode) as number,
+    renameatx: (fromFd, from, toFd, to, flags) =>
+      s[process.platform === "darwin" ? "renameatx_np" : "renameat2"]!(fromFd, from, toFd, to, flags) as number,
   };
   loaded = { L, f, read, toArrayBuffer };
   return loaded;
@@ -162,7 +182,9 @@ export function statAt(dirfd: number, name: Uint8Array | string): StatAt {
   const v = new DataView(buf.buffer);
   const dev = L.st.dev[1] === 4 ? v.getInt32(L.st.dev[0], true) : Number(v.getBigUint64(L.st.dev[0], true));
   const mode = L.st.mode[1] === 2 ? v.getUint16(L.st.mode[0], true) : v.getUint32(L.st.mode[0], true);
-  return { dev, ino: Number(v.getBigUint64(L.st.ino, true)), mode, uid: v.getUint32(L.st.uid, true),
+  const nlink = L.st.nlink[1] === 2 ? v.getUint16(L.st.nlink[0], true)
+    : L.st.nlink[1] === 4 ? v.getUint32(L.st.nlink[0], true) : Number(v.getBigUint64(L.st.nlink[0], true));
+  return { dev, ino: Number(v.getBigUint64(L.st.ino, true)), mode, nlink, uid: v.getUint32(L.st.uid, true),
     ...(L.st.flags === undefined ? {} : { flags: v.getUint32(L.st.flags, true) }) };
 }
 
@@ -173,6 +195,62 @@ export function openDirAt(dirfd: number, name: Uint8Array | string): number {
   const fd = f.openat(dirfd, cname(name), L.O.RDONLY | L.O.NOFOLLOW | L.O.DIRECTORY | L.O.CLOEXEC | L.O.NONBLOCK, 0);
   if (fd < 0) fail("openat");
   return fd;
+}
+
+/** Open one file without following a link; the caller checks its identity before using the descriptor. */
+export function openFileAt(dirfd: number, name: Uint8Array, write: boolean): number {
+  const { L, f } = lib();
+  nameOk(name);
+  const fd = f.openat(dirfd, cname(name), (write ? 1 : L.O.RDONLY) | L.O.NOFOLLOW | L.O.CLOEXEC | L.O.NONBLOCK, 0);
+  if (fd < 0) fail("openat");
+  return fd;
+}
+
+export function fileIdentity(fd: number): { dev: number; ino: number; mode: number; uid: number; nlink: number; size: number } {
+  const st = fstatSync(fd);
+  return { dev: st.dev, ino: st.ino, mode: st.mode, uid: st.uid, nlink: st.nlink, size: st.size };
+}
+
+export function truncateFile(fd: number): void { ftruncateSync(fd, 0); }
+
+/** Query xattr names on the already verified, no-follow file descriptor; includes macOS resource forks. */
+export function hasExtendedAttributes(fd: number): boolean {
+  const count = lib().f.flistxattr(fd, null, 0);
+  if (count < 0n) fail("flistxattr");
+  return count > 0n;
+}
+
+/** Attribute names on a verified descriptor; bytes are kept exact for removal. */
+export function listExtendedAttributes(fd: number): Uint8Array[] {
+  const f = lib().f;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const size = f.flistxattr(fd, null, 0);
+    if (size < 0n) fail("flistxattr");
+    if (size === 0n) return [];
+    if (size > 64n * 1024n) throw new FsatError("E2BIG", "flistxattr");
+    const bytes = new Uint8Array(Number(size));
+    const got = f.flistxattr(fd, bytes, bytes.length);
+    if (got < 0n) {
+      const errno = errnoCell()[0] as number;
+      if (lib().L.errnos[errno] === "ERANGE") continue; // concurrent growth
+      fail("flistxattr");
+    }
+    if (got > BigInt(bytes.length)) continue;
+    const names: Uint8Array[] = [];
+    let start = 0;
+    for (let i = 0; i < Number(got); i++) if (bytes[i] === 0) {
+      if (i === start) throw new FsatError("EINVAL", "flistxattr empty name");
+      names.push(bytes.slice(start, i));
+      start = i + 1;
+    }
+    if (start !== Number(got)) throw new FsatError("EINVAL", "flistxattr unterminated name");
+    return names;
+  }
+  throw new FsatError("EAGAIN", "flistxattr changed during listing");
+}
+
+export function removeExtendedAttribute(fd: number, name: Uint8Array): void {
+  if (lib().f.fremovexattr(fd, name) !== 0) fail("fremovexattr");
 }
 
 /** Removes entry `name` of `dirfd` (a directory only when `dir`, and only when empty). */
@@ -190,6 +268,19 @@ export function chmodAt(dirfd: number, name: Uint8Array, mode: number): void {
   const { L, f } = lib();
   nameOk(name);
   if (f.fchmodat(dirfd, cname(name), mode, L.AT.SYMLINK_NOFOLLOW) !== 0) fail("fchmodat");
+}
+
+/** Create one directory under a verified parent handle. */
+export function mkdirAt(dirfd: number, name: string, mode: number): void {
+  nameOk(Buffer.from(name));
+  if (lib().f.mkdirat(dirfd, cname(name), mode) !== 0) fail("mkdirat");
+}
+
+/** Atomic no-replace rename between verified parent handles. */
+export function renameAtExclusive(fromFd: number, from: string, toFd: number, to: string): void {
+  nameOk(Buffer.from(from)); nameOk(Buffer.from(to));
+  if (lib().f.renameatx(fromFd, cname(from), toFd, cname(to), process.platform === "darwin" ? 0x4 : 0x1) !== 0)
+    fail("exclusive renameat");
 }
 
 // ---- the owner's own protections, access, durability, mounts (SEATS-FIX-7) ----------------------------------
@@ -419,7 +510,8 @@ export function selfTest(): string | null {
     for (const p of ["/", process.platform === "darwin" ? "/private/tmp" : "/tmp", "/usr/bin", process.platform === "darwin" ? "/tmp" : "/proc/self"]) {
       const a = statAt(at, p);
       const b = lstatSync(p);
-      if (a.dev !== b.dev || a.ino !== b.ino || a.mode !== b.mode || a.uid !== b.uid) throw new Error(`fstatat disagrees with lstat on ${p}`);
+      if (a.dev !== b.dev || a.ino !== b.ino || a.mode !== b.mode || a.nlink !== b.nlink || a.uid !== b.uid)
+        throw new Error(`fstatat disagrees with lstat on ${p}`);
     }
     const fd = openDirAt(at, "/");
     try {

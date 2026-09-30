@@ -8,6 +8,8 @@ import { DirectNet, TunnelRefused } from "../../src/daemon/direct/net.ts";
 import { generateKeys } from "../../src/daemon/keys.ts";
 import { createLogger } from "../../src/daemon/logger.ts";
 import { PeerCallError } from "../../src/daemon/peer-client.ts";
+import { newPeerNonce, signPeerRequest } from "../../src/daemon/peer-sig.ts";
+import { admitJoin } from "../../src/daemon/requests.ts";
 import { WalkieError } from "../../src/client/index.ts";
 import type { End } from "../../src/pool/run/tunnel.ts";
 import { MAX_TUNNELS } from "../../src/pool/run/stage.ts";
@@ -22,8 +24,12 @@ const run = (ch: string): string => ch.repeat(32);
 
 /** The HTTP answer a tunnel upgrade gets on `to`'s peer API, as `from` (its node header; the fake whois maps it). */
 async function upgradeStatus(from: TestNode, to: TestNode, r: string, team = alex.d.core.teamId!): Promise<number> {
+  const path = `/peer/v1/pool/tunnel/${r}`;
+  const signed = signPeerRequest(from.d.core.keys, { method: "GET", path, query: "", body: "", requester: from.d.nodeId,
+    target: to.d.nodeId, team, ts: Date.now(), nonce: newPeerNonce() });
   const res = await fetch(`http://127.0.0.1:${to.peerPort}/peer/v1/pool/tunnel/${r}`, {
-    headers: { "X-Walkie-Node": from.d.nodeId, "X-Walkie-Team": team, Upgrade: "websocket", Connection: "Upgrade", "Sec-WebSocket-Key": ("dGhlIHNh" + "bXBsZSBub25jZQ=="), "Sec-WebSocket-Version": "13" },
+    headers: { "X-Walkie-Node": from.d.nodeId, "X-Walkie-Team": team, ...signed,
+      Upgrade: "websocket", Connection: "Upgrade", "Sec-WebSocket-Key": ("dGhlIHNh" + "bXBsZSBub25jZQ=="), "Sec-WebSocket-Version": "13" },
   });
   await res.body?.cancel();
   return res.status;
@@ -141,9 +147,12 @@ describe("tunnels: only the run's head, only while it runs", () => {
     // eve is not in the team: kira's peer gate refuses her before any upgrade.
     expect(await upgradeStatus(eve, kira, R)).toBe(403);
     expect(await upgradeStatus(alex, kira, run("9"))).toBe(404); // no such run
-    expect(await rejects(eve.d.client.tunnel({ ip: "127.0.0.1", port: kira.peerPort }, R))).toBe("0:tunnel_refused");
+    expect(await rejects(eve.d.client.tunnel({ ip: "127.0.0.1", port: kira.peerPort }, R))).toBe("403:not_member");
     // A plain HTTP request to the tunnel path from the head (no upgrade) is refused too.
-    const plain = await fetch(`http://127.0.0.1:${kira.peerPort}/peer/v1/pool/tunnel/${R}`, { headers: { "X-Walkie-Node": alex.d.nodeId, "X-Walkie-Team": alex.d.core.teamId! } });
+    const path = `/peer/v1/pool/tunnel/${R}`;
+    const signed = signPeerRequest(alex.d.core.keys, { method: "GET", path, query: "", body: "", requester: alex.d.nodeId,
+      target: kira.d.nodeId, team: alex.d.core.teamId!, ts: Date.now(), nonce: newPeerNonce() });
+    const plain = await fetch(`http://127.0.0.1:${kira.peerPort}${path}`, { headers: { "X-Walkie-Node": alex.d.nodeId, "X-Walkie-Team": alex.d.core.teamId!, ...signed } });
     expect(plain.status).toBe(426);
   });
 
@@ -190,6 +199,8 @@ describe("tunnels: only the run's head, only while it runs", () => {
 describe("lease", () => {
   test("a stage whose head stops renewing is stopped", async () => {
     const lessee = await c.add({ name: "lessee", login: "kira@example.com", hostname: "kiras-mini", pool: { llamaDir: fakeDir, verifyRuntime: ACCEPT_STANDIN, leaseMs: 1_500 } });
+    expect((await lessee.client().join(alex.peerAddr)).reason).toBe("pending_approval");
+    admitJoin(alex.d.core, lessee.d.nodeId, true);
     expect((await lessee.client().join(alex.peerAddr)).admitted).toBe(true);
     await lessee.client().poolShare(true, 8);
     await waitFor(() => !!alex.d.core.roster.nodes.get(lessee.d.nodeId), { what: "lessee in alex's roster" });

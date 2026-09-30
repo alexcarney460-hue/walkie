@@ -3,6 +3,7 @@
 import { cleanSubagentType, MAX_SUBAGENTS_PER_PARENT } from "../protocol/subagents.ts";
 import { isLiveSubagentRow, liveSubagents } from "./views.ts";
 import { canonicalJson } from "../protocol/canonical.ts";
+import { containsJoinCredentialValue } from "../protocol/join-credential.ts";
 import { eventHeader, jsonDepthOk, stubHeader, stubOf } from "../protocol/header.ts";
 import { deriveTeamId, eventId } from "../protocol/ids.ts";
 import {
@@ -23,6 +24,7 @@ import type { Config } from "./config.ts";
 import { HttpError } from "./http.ts";
 import type { Identity } from "./identity.ts";
 import { signEvent, verifyEvent, verifyHeader, type NodeKeys } from "./keys.ts";
+import { engagePeerSigStrict } from "./peer-capabilities.ts";
 import type { Logger } from "./logger.ts";
 import type { Paths } from "./paths.ts";
 import { DEFAULT_LIMITS, RateLimiter, SUBAGENT_STATUS_LIMIT, type RateLimits } from "./ratelimit.ts";
@@ -219,9 +221,11 @@ export class Core {
   /** This machine's published memory/temperature (machine-stats/sampler.ts): served on `vv`, shown on NodeView. */
   machineStats: MachineStats | null = null;
   /** Agent discovery's last scan was incomplete (discovery.ts): shown with this machine's stats. */
-  discoveryHealth: { incomplete: boolean; unreported: number } | null = null;
+  discoveryHealth: { incomplete: boolean; unreported: number; stale?: boolean } | null = null;
   /** AGENT-SEE-1: local model servers discovery saw running on this machine (machine load), published with its stats. */
   modelServers: { name: string; count: number }[] | null = null;
+  /** Counts from discovery's last successful cheap process-table pass. */
+  agentProcesses: NonNullable<MachineStats["agent_processes"]> | null = null;
 
   /** This machine's stats as published (vv answer, NodeView): machine stats plus discovery health when incomplete. */
   publishedStats(): MachineStats | null {
@@ -231,6 +235,7 @@ export class Core {
       ...this.machineStats,
       ...(this.discoveryHealth?.incomplete ? { discovery: this.discoveryHealth } : {}),
       ...(this.modelServers?.length ? { model_servers: this.modelServers } : {}),
+      ...(this.agentProcesses ? { agent_processes: this.agentProcesses } : {}),
       ...(Object.keys(rtt).length ? { peer_rtt: rtt } : {}),
     };
   }
@@ -323,9 +328,36 @@ export class Core {
   get authority(): string | null { return this.chain.authority; }
   /** Ordered authority transfers give each lease authority a disjoint, increasing epoch range. */
   get authorityLeaseTerm(): number { return this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").length; }
+  /** Signed roster timestamp of the transfer that began this authority term. */
+  get authorityTransferTimestamp(): number | null {
+    return this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").at(-1)?.ev.ts ?? null;
+  }
+  /** The transfer's signed watermark is the predecessor's acknowledged-post barrier. */
+  get authorityTransferWatermark(): Readonly<Record<string, number>> | null {
+    const transfer = this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").at(-1)?.ev;
+    return transfer ? (transfer.body as { wm?: Record<string, number> }).wm ?? null : null;
+  }
+  /** Each authority's signed sequence interval; `after` binds posts to the transfer. */
+  get authorityClaimTerms(): readonly { authority: string; after: string | null; floor: number; ceiling: number | null }[] {
+    const entries = this.chain.entriesFrom(0);
+    const founder = entries[0]?.ev;
+    if (!founder) return [];
+    const terms = [{ authority: founder.origin, after: null as string | null, floor: 0, ceiling: null as number | null }];
+    for (const { ev } of entries) {
+      if (ev.kind !== "team.authority") continue;
+      const prior = terms.at(-1)!;
+      terms[terms.length - 1] = { ...prior, ceiling: ev.seq };
+      const authority = (ev.body as { node_id: string }).node_id;
+      const wm = (ev.body as { wm?: Record<string, number> }).wm ?? {};
+      terms.push({ authority, after: ev.id, floor: wm[authority] ?? 0, ceiling: null });
+    }
+    return terms;
+  }
   orchestratorCanAct?: () => boolean;
   /** Entries in the roster chain (tests). */
   get chainLength(): number { return this.chain.length; }
+  /** Accepted roster events in the order the chain applied them. */
+  rosterEntries(): readonly Event[] { return this.chain.entriesFrom(0).map(entry => entry.ev); }
   isAuthority(): boolean { return this.chain.authority === this.nodeId; }
   /** Re-validation jobs still queued (they continue on later ticks). */
   get revalidating(): number { return this.reval.pending; }
@@ -1045,6 +1077,8 @@ export class Core {
   }
 
   emit<K extends Kind>(kind: K, body: BodyOf<K>, opts: EmitOptions = {}): Event {
+    if (opts.agent && containsJoinCredentialValue(body))
+      throw new HttpError(403, "join_credential_private_reply_only", "agents cannot publish join credentials; the daemon delivers minted credentials privately");
     if (opts.agent === "orchestrator" && kind !== "agent.status" && this.orchestratorCanAct && !this.orchestratorCanAct()) {
       throw new Error("orchestrator leadership lease expired");
     }
@@ -1078,6 +1112,7 @@ export class Core {
     if (kind === "team.member" && (signedBody as { role?: unknown }).role === "removed") {
       this.dropFromRestricted((signedBody as BodyOf<"team.member">).handle);
     }
+    if (roster) engagePeerSigStrict(this);
     return ev;
   }
 
@@ -1269,6 +1304,7 @@ export class Core {
     const body: BodyOf<"team.create"> = {
       name, owner_login: login, owner_handle: handle, node_hostname: this.hostname,
       node_pubkey: this.keys.pubkey, node_ip: this.ip, ...(this.peerPort >= 1 ? { node_port: this.peerPort } : {}),
+      peer_sig_v1: true,
     };
     const ev = signEvent(this.keys, {
       v: PROTOCOL_VERSION, team, id: eventId(this.nodeId, 1), origin: this.nodeId, seq: 1, ts,

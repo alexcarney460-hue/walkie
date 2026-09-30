@@ -10,7 +10,7 @@ import {
   type CardView, type ProjectStub, type ProjectView,
 } from "../../protocol/projects/schema.ts";
 import { HttpError, json, parseWith, readJson } from "../http.ts";
-import { LOCAL_BODY_MAX, limitWrite, requireTeam, route, type RouteCtx } from "../local-routes.ts";
+import { LOCAL_BODY_MAX, limitWrite, refuseAgentJoinContent, requireTeam, route, type RouteCtx } from "../local-routes.ts";
 import { agentsView } from "../views.ts";
 import type { ProjectsIndex } from "./index.ts";
 import { BatchReq } from "../../protocol/projects/batch.ts";
@@ -122,6 +122,7 @@ route("GET", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, (c, [channel]) => {
 
 route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, async (c, [channel]) => {
   const b = parseWith(UpdateProjectReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b);
   // FO-6 (pre.8 merge): the board steward's switch and lease stay a person's, even under agent admin (an agent may
   // only dry-run the steward); other settings follow AGENT-ADMIN-1's audited gate.
   if ((b.steward !== undefined || b.steward_node !== undefined) && agentCaller(c)) requirePerson(w(c), "the board steward's switch and lease");
@@ -228,6 +229,7 @@ route("GET", "/v1/tasks", (c) => {
 route("POST", "/v1/tasks", async (c) => {
   const ctx = w(c);
   const b = parseWith(CreateCardReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, { title: b.title, body: b.body });
   limitWrite(c);
   const { project, ...rest } = b;
   const p = findProject(ctx, project);
@@ -257,6 +259,7 @@ route("GET", /^\/v1\/tasks\/([^/]+)$/, (c, [ref]) => {
 
 route("POST", /^\/v1\/tasks\/([^/]+)$/, async (c, [ref]) => {
   const b = parseWith(UpdateCardReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, { title: b.title, body: b.body, blocked_reason: b.blocked_reason });
   const cur = b.state !== undefined && agentCaller(c) ? findCard(w(c), ref as string).card : null;
   const deletes = !!cur && b.state !== cur.state && (b.state === "deleted" || cur.state === "deleted");
   const ctx = deletes && cur ? adminW(c, `${b.state === "deleted" ? "deleted" : "restored"} card ${cur.key}`) : w(c);
@@ -267,6 +270,7 @@ route("POST", /^\/v1\/tasks\/([^/]+)$/, async (c, [ref]) => {
 route("POST", /^\/v1\/tasks\/([^/]+)\/comment$/, async (c, [ref]) => {
   const ctx = w(c);
   const b = parseWith(CommentReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b.text);
   limitWrite(c);
   const event = comment(ctx, ref as string, b.text);
   return json({ event, task: findCard(ctx, ref as string).card });
@@ -275,6 +279,7 @@ route("POST", /^\/v1\/tasks\/([^/]+)\/comment$/, async (c, [ref]) => {
 route("POST", /^\/v1\/tasks\/([^/]+)\/(start|review|done|block|unblock)$/, async (c, [ref, action]) => {
   const ctx = w(c);
   const b = parseWith(ActionReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b.reason ?? "");
   limitWrite(c);
   const task = cardAction(ctx, ref as string, action as "start", b.reason);
   if (action === "block" && b.reason) comment(ctx, ref as string, `Blocked: ${b.reason}`);

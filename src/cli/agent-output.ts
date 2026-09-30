@@ -152,21 +152,34 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 
 export interface AgentMachineStats {
   at: number | null; temp_c: number | null;
-  mem: { total: number | null; used: number | null; swap_used: number | null; pressure: string | null } | null;
+  mem: { total: number | null; used: number | null; free?: number | null; swap_used: number | null; pressure: string | null } | null;
+  sys?: { cpus: number | null; load1: number | null; load5: number | null; load15: number | null; cpu_busy_pct: number | null };
+  agent_processes?: { name: string; count: number }[];
 }
 const PRESSURES: ReadonlySet<string> = new Set(["normal", "warn", "critical"]);
+const AGENT_RUNTIMES: ReadonlySet<string> = new Set(["claude-code", "codex", "kimi", "grok", "gemini", "opencode"]);
 
 /** A node's machine stats for a model: numbers and the pressure enum only, nothing else a peer could put there. */
 function statsJson(s: unknown): AgentMachineStats | undefined {
   if (!s || typeof s !== "object") return undefined;
-  const st = s as { at?: unknown; temp_c?: unknown; mem?: unknown };
+  const st = s as { at?: unknown; temp_c?: unknown; mem?: unknown; sys?: unknown; agent_processes?: unknown };
   const m = st.mem && typeof st.mem === "object" ? st.mem as Record<string, unknown> : null;
+  const sys = st.sys && typeof st.sys === "object" ? st.sys as Record<string, unknown> : null;
+  const agents = Array.isArray(st.agent_processes) ? st.agent_processes.slice(0, 6).flatMap((a: unknown) => {
+    if (!a || typeof a !== "object") return [];
+    const row = a as Record<string, unknown>;
+    return typeof row.name === "string" && AGENT_RUNTIMES.has(row.name) && Number.isInteger(row.count) && (row.count as number) > 0 && (row.count as number) <= 100_000
+      ? [{ name: row.name, count: row.count as number }] : [];
+  }) : undefined;
   return {
     at: num(st.at), temp_c: num(st.temp_c),
     mem: m ? {
-      total: num(m.total), used: num(m.used), swap_used: num(m.swap_used),
+      total: num(m.total), used: num(m.used), free: num(m.free) ?? (num(m.total) !== null && num(m.used) !== null ? Math.max(0, (num(m.total) as number) - (num(m.used) as number)) : null),
+      swap_used: num(m.swap_used),
       pressure: typeof m.pressure === "string" && PRESSURES.has(m.pressure) ? m.pressure : null,
     } : null,
+    ...(sys ? { sys: { cpus: num(sys.cpus), load1: num(sys.load1), load5: num(sys.load5), load15: num(sys.load15), cpu_busy_pct: num(sys.cpu_busy_pct) } } : {}),
+    ...(agents ? { agent_processes: agents } : {}),
   };
 }
 

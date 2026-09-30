@@ -4,7 +4,7 @@
 // works on NodeView (dashboard + CLI).
 // Numbers and their sources: docs/PROTOCOL.md §3 "Local model suggestions".
 import { gb } from "../protocol/machine-stats-format.ts";
-import type { MachineAccel, MachineMem, MachineStats } from "../protocol/machine-stats.ts";
+import { machineBusy, type MachineAccel, type MachineMem, type MachineStats } from "../protocol/machine-stats.ts";
 
 const GiB = 1024 ** 3;
 
@@ -178,7 +178,13 @@ export function machineCapacity(n: CapacityInput): MachineCapacity | null {
   if (!mem || !(mem.total > 0)) return null;
   const accel = n.stats?.accel;
   const base: Base = { node_id: n.node_id, hostname: n.hostname, handle: n.handle };
-  if (accel && accel.gpus.length > 0) return nvidia(accel, mem, n.stats?.gpu_free, base);
+  const actual = (capacity: MachineCapacity): MachineCapacity => machineBusy(n.stats)
+    ? { ...capacity, usableIdle: capacity.usable,
+      backends: capacity.backends.map((b) => ({ ...b, usableIdle: b.usable,
+        ...(b.device ? { device: { ...b.device, usableIdle: b.device.usable } } : {}) })),
+      notes: [...capacity.notes, "Machine busy: idle capacity is unavailable"] }
+    : capacity;
+  if (accel && accel.gpus.length > 0) return actual(nvidia(accel, mem, n.stats?.gpu_free, base));
   if (accel?.unified) {
     // A user-set limit, else Metal's own budget (POOL-REAL-1, read from llama.cpp), else the community fraction.
     const cap = accel.gpu_limit ?? accel.metal_budget ?? mem.total * appleGpuShare(mem.total);
@@ -189,9 +195,9 @@ export function machineCapacity(n: CapacityInput): MachineCapacity | null {
       usableIdle: Math.floor(Math.max(0, Math.min(cap, mem.total - IDLE_OS_BYTES))), measured: true, bandwidth: bw, bandwidthKnown: known,
     };
     // The GPU (Metal) may wire only part of unified memory; the CPU can use all of it, slower (llama.cpp CPU build).
-    return assemble(base, `${accel.chip ?? "Apple Silicon"} · ${gbText(mem.total)} unified`, [unified, cpuBackend(mem)],
-      accel.gpu_limit ? [`GPU memory limit set to ${gbText(accel.gpu_limit)} (iogpu.wired_limit_mb)`] : []);
+    return actual(assemble(base, `${accel.chip ?? "Apple Silicon"} · ${gbText(mem.total)} unified`, [unified, cpuBackend(mem)],
+      accel.gpu_limit ? [`GPU memory limit set to ${gbText(accel.gpu_limit)} (iogpu.wired_limit_mb)`] : []));
   }
-  return assemble(base, `${accel?.chip ? `${accel.chip} · ` : ""}CPU only · ${gbText(mem.total)}`, [cpuBackend(mem)],
-    accel ? ["No GPU found: the model would run on the CPU (slow)"] : ["Hardware not reported (an older Walkie): counted as CPU only"]);
+  return actual(assemble(base, `${accel?.chip ? `${accel.chip} · ` : ""}CPU only · ${gbText(mem.total)}`, [cpuBackend(mem)],
+    accel ? ["No GPU found: the model would run on the CPU (slow)"] : ["Hardware not reported (an older Walkie): counted as CPU only"]));
 }

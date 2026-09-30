@@ -1,6 +1,10 @@
 import { VERSION } from "./version.ts";
 import { SEATS_V2_CAP } from "../protocol/seats.ts";
 import { hostFor } from "./orchestrator/host.ts";
+import { ScheduleClaim } from "./orchestrator/leadership.ts";
+import { ScheduleDefaultRequest, ScheduleProgress } from "../protocol/talkie-management.ts";
+import { SignedScheduleManagement, SignedSchedulePeer, verifyScheduleManagement, verifySchedulePeer } from "./orchestrator/schedule-forward.ts";
+import { z } from "zod";
 // Peer API (PROTOCOL §4). Two ways in, one set of handlers:
 //   tailscale  bound to the Tailscale IP; `tailscale whois` + roster gate on every request.
 //   direct     Walkie Direct (src/daemon/direct/net.ts): the caller's node key is authenticated by QUIC/TLS, and
@@ -14,15 +18,15 @@ import type { Server } from "bun";
 import { nodeIdFromPubkey } from "../protocol/ids.ts";
 import { jsonDepthOk, stubOf } from "../protocol/header.ts";
 import {
-  ChannelName, EventId, MAX_IDS_PER_FETCH, NodeId, PEER_PAGE_BUDGET, PeerEventsPush, PeerJoinReq, RosterRequest,
+  ChannelName, EventId, MAX_IDS_PER_FETCH, NodeId, PEER_PAGE_BUDGET, PeerEventsPush, PeerJoinReq, PeerVvRelay, RosterRequest,
   type Event, type PeerHello, type PeerJoinRes, type PeerOwnerAddr, type PeerPushRes,
 } from "../protocol/schemas.ts";
 import { blobServable } from "./blob-auth.ts";
 import { readBlob } from "./blobs.ts";
 import type { Core } from "./core.ts";
-import { HttpError, errorResponse, json, normalizeIp, parseWith, readJson } from "./http.ts";
+import { HttpError, errorResponse, json, normalizeIp, parseWith, readBytes, readJson } from "./http.ts";
 import { shortNodeName, type WhoisResult } from "./identity.ts";
-import { checkInvite, directLogin } from "./invite.ts";
+import { checkInvite, decodeInvite, directLogin } from "./invite.ts";
 import { isValidPubkey } from "./keys.ts";
 import type { BucketSpec } from "./ratelimit.ts";
 import { applyRequest } from "./requests.ts";
@@ -36,6 +40,9 @@ import type { TunnelDecision } from "./direct/net.ts";
 import type { TunnelGrant } from "../pool/run/stage.ts";
 import { WsEnd } from "../pool/run/tunnel.ts";
 import { trackOp } from "./watchdog.ts";
+import { PEER_SIG_CAP, PeerNonceBook, hasPeerSig, peerSigTier, signPeerVv, verifyPeerSigResult, type PeerSigHeaders, type PeerSigResult } from "./peer-sig.ts";
+import { peerSigRequired, peerSigStrict, recordPeerProof, recordPeerSignature, rememberValidPeerSignature } from "./peer-capabilities.ts";
+import { PeerClient } from "./peer-client.ts";
 
 export const PEER_BODY_MAX = 1024 * 1024;
 
@@ -63,7 +70,52 @@ export function authorityAddr(core: Core): PeerOwnerAddr | null {
 }
 
 export class PeerApi {
+  private readonly peerNonces = new PeerNonceBook(Date.now());
+  private readonly unsignedWarned = new Map<string, number>();
   constructor(private readonly core: Core) {}
+
+  private badSignature(reason: PeerSigResult = "bad_signature"): never {
+    const message = reason === "clock_skew" ? "peer signature clock skew exceeds two minutes"
+      : reason === "too_old" ? "peer signature is too old for this receiver or below its replay floor"
+      : reason === "replay" ? "peer signature nonce was already used"
+      : "valid node-key request signature required";
+    throw new HttpError(403, "bad_peer_sig", message);
+  }
+
+  private async checkSignature(req: Request, url: URL, nodeId: string, pubkey: string): Promise<void> {
+    const ts = req.headers.get("x-walkie-ts") ?? "";
+    const nonce = req.headers.get("x-walkie-nonce") ?? "";
+    const sig = req.headers.get("x-walkie-sig") ?? "";
+    if (!/^(0|[1-9][0-9]*)$/.test(ts) || !/^[0-9a-f]{32}$/.test(nonce) || !sig) this.badSignature();
+    const body = req.method === "GET" ? "" : url.pathname === "/peer/v1/admin/run"
+      ? await Promise.race([readBytes(req, 64 * 1024), Bun.sleep(ADMIN_BODY_MS).then((): never => {
+        throw new HttpError(408, "timeout", "the request body didn't arrive in time");
+      })])
+      : await readBytes(req, PEER_BODY_MAX);
+    const admitted = this.core.roster.nodes.get(nodeId);
+    const bookNonce = admitted?.pubkey === pubkey && !!nodeMember(this.core.roster, nodeId);
+    const result = verifyPeerSigResult(pubkey, { method: req.method, path: url.pathname, query: url.search,
+      body, requester: nodeId, target: this.core.nodeId, team: this.core.teamId ?? "", ts: Number(ts), nonce },
+    { "X-Walkie-Ts": ts, "X-Walkie-Nonce": nonce, "X-Walkie-Sig": sig } satisfies PeerSigHeaders,
+    this.peerNonces, Date.now(), bookNonce);
+    if (result !== "valid") this.badSignature(result);
+    if (bookNonce) {
+      rememberValidPeerSignature(this.core.store, nodeId);
+      recordPeerSignature(this.core, nodeId);
+    }
+  }
+
+  private callerSigRequired(nodeId: string): boolean {
+    return peerSigStrict(this.core.roster, this.core.store)
+      || peerSigRequired(this.core.roster, this.core.store, nodeId);
+  }
+
+  private warnUnsigned(nodeId: string, path: string, method: string): void {
+    const now = Date.now();
+    if (now - (this.unsignedWarned.get(nodeId) ?? -Infinity) < 600_000) return;
+    this.unsignedWarned.set(nodeId, now);
+    this.core.log.warn("peer_unsigned", { node: nodeId, path, method });
+  }
 
   start(host: string, port: number): Server<TunnelSocketData> {
     return Bun.serve<TunnelSocketData>({
@@ -121,6 +173,8 @@ export class PeerApi {
       const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
       if (lower["x-walkie-team"] !== core.teamId) throw new HttpError(409, "conflict", "team mismatch");
       if (lower["x-walkie-node"] !== undefined && lower["x-walkie-node"] !== nodeId) throw new HttpError(403, "forbidden", "X-Walkie-Node does not match the connection's key");
+      const signed = new Request(`http://peer.invalid${path}`, { headers });
+      if (hasPeerSig(signed.headers)) await this.checkSignature(signed, new URL(signed.url), nodeId, pubkey);
       const g = this.tunnelGrant(path, nodeId);
       return { accept: g.accept, release: g.release };
     } catch (err) {
@@ -168,8 +222,19 @@ export class PeerApi {
     const caller: Caller = { ip, who, member };
     const path = url.pathname;
 
-    if (req.method === "GET" && path === "/peer/v1/hello") return json(this.hello());
-    if (req.method === "POST" && path === "/peer/v1/join") return json(await this.join(req, caller, nodeHdr));
+    if (req.method === "GET" && path === "/peer/v1/hello") {
+      if (hasPeerSig(req.headers)) {
+        const node = core.roster.nodes.get(nodeHdr);
+        // A joiner's public key is not in the roster yet. Discovery is public to a member's login.
+        if (node) await this.checkSignature(req.clone(), url, nodeHdr, node.pubkey);
+      }
+      return json(this.hello());
+    }
+    if (req.method === "POST" && path === "/peer/v1/join") {
+      const known = core.roster.nodes.get(nodeHdr);
+      if (known && !hasPeerSig(req.headers) && this.callerSigRequired(nodeHdr)) this.badSignature();
+      return json(await this.join(req, req.clone(), caller, nodeHdr));
+    }
 
     const team = core.teamId;
     if (req.headers.get("x-walkie-team") !== team) throw new HttpError(409, "conflict", "team mismatch");
@@ -179,6 +244,14 @@ export class PeerApi {
       core.log.warn("peer_denied", { ip, login: who.login, node: nodeHdr, path, reason: "node_not_admitted" });
       throw new HttpError(403, "forbidden", "calling node is not admitted");
     }
+    const tier = peerSigTier(req.method, path);
+    const present = hasPeerSig(req.headers);
+    if (tier === "A" && !present) this.badSignature();
+    if (tier === "B" && !present) {
+      if (this.callerSigRequired(nodeHdr)) this.badSignature();
+      this.warnUnsigned(nodeHdr, path, req.method);
+    }
+    if (present) await this.checkSignature(req.clone(), url, nodeHdr, node.pubkey);
     if (path.startsWith("/peer/v1/pool/tunnel/") || path.startsWith("/peer/v1/pool/serve-tunnel/")) {
       // WALKIE-POOL-2: the gate above passed (tailnet identity -> admitted node of a current member); the stage decides.
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket" || !server) throw new HttpError(426, "upgrade_required", "a tunnel is a WebSocket");
@@ -209,8 +282,23 @@ export class PeerApi {
     if (!member && !core.limiter.take("peer:direct-unadmitted", UNADMITTED_DIRECT)) throw new HttpError(429, "rate_limited", "slow down");
     if (!core.limiter.take(`peer:direct:${nodeId}`, core.limits.peer)) throw new HttpError(429, "rate_limited", "slow down");
     const path = url.pathname;
+    if (hasPeerSig(req.headers)) await this.checkSignature(req.clone(), url, nodeId, pubkey);
 
     if (req.method === "POST" && path === "/peer/v1/join") return json(await this.joinDirect(req, pubkey, nodeId));
+    if (req.method === "POST" && path === "/peer/v1/invite-preview") {
+      const body = await readJson(req, 512);
+      if (!body || typeof body !== "object" || typeof (body as { code?: unknown }).code !== "string") throw new HttpError(400, "invalid", "invite code required");
+      const team = core.teamId;
+      if (!team) throw new HttpError(409, "no_team", "this authority has no team");
+      const check = checkInvite((body as { code: string }).code, core.roster, team, core.clock());
+      if (!check.ok && check.reason !== "invite_used") throw new HttpError(403, check.reason, "invite cannot be verified by this authority");
+      if (!core.isAuthority()) throw new HttpError(409, "not_authority", "the roster authority has moved; ask for a new link");
+      const invite = check.ok ? check.invite : decodeInvite((body as { code: string }).code);
+      if ("error" in invite) throw new HttpError(403, "invite_malformed", "invite cannot be verified by this authority");
+      const inviter = nodeMember(core.roster, invite.issuer);
+      if (!inviter || inviter.role !== "owner") throw new HttpError(403, "invite_issuer_not_owner", "inviter is no longer a team owner");
+      return json({ team_id: team, team_name: core.roster.team?.name, inviter_handle: inviter.handle, spent: !check.ok });
+    }
     if (!member) {
       const n = core.roster.nodes.get(nodeId);
       const reason = !n ? "not_member" : n.revoked ? "node_revoked" : nodeMember(core.roster, nodeId) ? "not_direct" : "member_removed";
@@ -233,20 +321,85 @@ export class PeerApi {
     const path = url.pathname;
     if (req.method === "GET" && path === "/peer/v1/vv") {
       const online = core.reachedPeers?.() ?? [];
-      return json({
+      const body = {
         node: core.nodeId, vv: core.store.vv(), ts: Date.now(),
-        capabilities: { version: VERSION, caps: [SEATS_V2_CAP] },
+        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, PEER_SIG_CAP] },
         ...(online.length ? { online } : {}),
         ...(core.publishedStats() ? { stats: core.publishedStats() } : {}),
         ...(core.accounts ? { accounts: core.accounts } : {}), // ACCOUNTS-1: this machine's accounts + usage (PROTOCOL §3)
         ...(core.poolShare?.() ? { pool: core.poolShare() } : {}), // WALKIE-POOL-2: split-run sharing (PROTOCOL §3)
-      });
+      };
+      const challenge = req.headers.get("x-walkie-vv-challenge") ?? "";
+      if (!/^[0-9a-f]{32}$/.test(challenge)) return json(body);
+      const relay_proof = signPeerVv(core.keys, { node: body.node, ts: body.ts }, nodeId, challenge);
+      const proved = { ...body, relay_proof };
+      return json({ ...proved, proof: signPeerVv(core.keys, proved, nodeId, challenge) });
+    }
+    if (req.method === "POST" && path === "/peer/v1/peer-proof") {
+      if (!core.isAuthority()) throw new HttpError(409, "not_authority", "this node is not the roster authority");
+      if (!core.limiter.take(`peer-proof:${nodeId}`, { capacity: 30, perSecond: 1 })) {
+        throw new HttpError(429, "rate_limited", "too many peer proofs");
+      }
+      const report = parseWith(PeerVvRelay, await readJson(req, 4 * 1024));
+      const recorded = recordPeerProof(core, report, nodeId);
+      if (recorded === "invalid") {
+        throw new HttpError(403, "bad_peer_proof", "node-key proof is invalid or expired");
+      }
+      return json({ recorded: recorded === "recorded" });
     }
     if (req.method === "POST" && path === "/peer/v1/orchestrator/lease") {
+      verifySchedulePeer(core, nodeId, "lease", parseWith(SignedSchedulePeer, await readJson(req, 1024)), z.object({}).strict());
       const host = hostFor(core);
       if (!host) throw new HttpError(503, "unavailable", "orchestrator leadership unavailable");
       if (!core.limiter.take(`orchestrator-lease:${nodeId}`, { capacity: 30, perSecond: 20 })) throw new HttpError(429, "rate_limited", "too many lease requests");
       return json(host.grantLeadership(nodeId));
+    }
+    if (req.method === "POST" && path === "/peer/v1/orchestrator/schedule-claim") {
+      if (member.role !== "owner") throw new HttpError(403, "forbidden", "only an owner lead claims schedule runs");
+      const host = hostFor(core);
+      if (!host) throw new HttpError(503, "unavailable", "orchestrator leadership unavailable");
+      const wire = parseWith(SignedSchedulePeer, await readJson(req, 24_000));
+      const claim = verifySchedulePeer(core, nodeId, "schedule-claim", wire, ScheduleClaim);
+      if (!core.limiter.take(`schedule-claim:${nodeId}`, { capacity: 30, perSecond: 5 })) throw new HttpError(429, "rate_limited", "too many schedule claims");
+      return json(host.claimSchedule(nodeId, claim));
+    }
+    if (req.method === "POST" && path === "/peer/v1/orchestrator/schedule-manage") {
+      if (!core.isAuthority()) throw new HttpError(409, "not_authority", "only the roster authority manages schedules");
+      if (member.role !== "owner") throw new HttpError(403, "forbidden", "only a current owner manages schedules");
+      const wire = parseWith(SignedScheduleManagement, await readJson(req, 24_000));
+      const request = verifyScheduleManagement(core, nodeId, wire);
+      if (!core.limiter.take(`schedule-manage:${nodeId}`, { capacity: 20, perSecond: 2 }))
+        throw new HttpError(429, "rate_limited", "too many schedule changes");
+      const host = hostFor(core);
+      if (!host) throw new HttpError(503, "unavailable", "schedule authority is unavailable");
+      const replay = host.schedules.replayed(request, nodeId);
+      if (replay) return json(replay);
+      if (!(await host.schedules.ensureChannel())) throw new HttpError(409, "channel_pending", "schedule channel is waiting for repair");
+      return json(host.schedules.manage(request, nodeId));
+    }
+    if (req.method === "POST" && path === "/peer/v1/orchestrator/schedule-progress") {
+      if (!core.isAuthority()) throw new HttpError(409, "not_authority", "only the schedule authority records progress");
+      if (member.role === "observer") throw new HttpError(403, "forbidden", "observers cannot report schedule progress");
+      const wire = parseWith(SignedSchedulePeer, await readJson(req, 24_000));
+      const progress = verifySchedulePeer(core, nodeId, "schedule-progress", wire, ScheduleProgress);
+      if (!core.limiter.take(`schedule-progress:${nodeId}`, { capacity: 60, perSecond: 5 }))
+        throw new HttpError(429, "rate_limited", "too many schedule progress reports");
+      const host = hostFor(core);
+      if (!host) throw new HttpError(503, "unavailable", "schedule authority is unavailable");
+      return json(host.schedules.progress(nodeId, progress, (node, epoch) => host.holdsScheduleLease(node, epoch), wire.ts, wire.sig));
+    }
+    if (req.method === "POST" && path === "/peer/v1/orchestrator/schedule-defaults") {
+      if (!core.isAuthority()) throw new HttpError(409, "not_authority", "only the schedule authority writes defaults");
+      const body = verifySchedulePeer(core, nodeId, "schedule-defaults",
+        parseWith(SignedSchedulePeer, await readJson(req, 2048)), ScheduleDefaultRequest);
+      if (!core.limiter.take(`schedule-defaults:${nodeId}`, { capacity: 5, perSecond: 0.2 }))
+        throw new HttpError(429, "rate_limited", "too many default requests");
+      const host = hostFor(core);
+      if (!host || !host.holdsScheduleLease(nodeId, body.epoch))
+        throw new HttpError(403, "forbidden", "only the current lead requests defaults");
+      const before = core.store.channelEventCount("talkie-schedules");
+      await host.schedules.defaultsForAuthority();
+      return json({ created: core.store.channelEventCount("talkie-schedules") > before });
     }
     if (req.method === "POST" && path === "/peer/v1/vault/usage") {
       if (member.role === "observer") throw new HttpError(403, "forbidden", "observers cannot refresh borrowed accounts");
@@ -325,7 +478,7 @@ export class PeerApi {
     const hostname = shortNodeName(body.hostname);
     core.emit("team.node", {
       node_id: nodeId, login, hostname, pubkey, ip: "", port: DEFAULT_PEER_PORT,
-      endpoint: endpointHex(pubkey), transports: ["direct"], invite: inv.id,
+      endpoint: endpointHex(pubkey), transports: ["direct"], invite: inv.id, peer_sig_v1: true,
     });
     core.log.info("node_admitted", { node: nodeId, login, hostname, via: "direct_invite", invite: inv.id, issuer: inv.issuer });
     return { admitted: true, team, node_id: nodeId };
@@ -348,13 +501,13 @@ export class PeerApi {
     if (!n || n.pubkey !== pubkey) throw new HttpError(403, "forbidden", "not this machine's key");
     core.emit("team.node", {
       node_id: n.node_id, login: n.login, hostname: n.hostname, pubkey: n.pubkey, ip: n.ip, port: n.port,
-      endpoint: endpointHex(n.pubkey), transports: withTransport(n, "direct"),
+      endpoint: endpointHex(n.pubkey), transports: withTransport(n, "direct"), peer_sig_v1: true,
     });
     core.log.info("node_direct_enabled", { node: nodeId, transports: withTransport(n, "direct").join(",") });
     return { admitted: true, team, node_id: nodeId };
   }
 
-  private async join(req: Request, c: Caller, nodeHdr: string): Promise<PeerJoinRes> {
+  private async join(req: Request, copy: Request, c: Caller, nodeHdr: string): Promise<PeerJoinRes> {
     const core = this.core;
     const body = parseWith(PeerJoinReq, await readJson(req, PEER_BODY_MAX));
     if (!isValidPubkey(body.pubkey)) throw new HttpError(400, "invalid", "pubkey is not a valid ed25519 key");
@@ -362,6 +515,17 @@ export class PeerApi {
     if (nodeHdr && nodeHdr !== nodeId) throw new HttpError(400, "invalid", "X-Walkie-Node does not match pubkey");
     const team = core.teamId as string;
     const known = core.roster.nodes.get(nodeId);
+    if (known) {
+      if (!hasPeerSig(req.headers)) {
+        if (this.callerSigRequired(nodeId)) this.badSignature();
+      } else await this.checkSignature(copy, new URL(req.url), nodeId, known.pubkey);
+    } else if (hasPeerSig(req.headers)) {
+      // A new key proves possession only. Admission is decided below.
+      await this.checkSignature(copy, new URL(req.url), nodeId, body.pubkey);
+      rememberValidPeerSignature(core.store, nodeId);
+    } else if (peerSigStrict(core.roster, core.store)) {
+      throw new HttpError(403, "update_required", "this team requires Walkie 0.2.0-pre.10 or newer: update, then join again");
+    }
     // Explicitly revoked: an owner must re-admit it. Revoked only by the member's removal: after a
     // re-invite the machine joins again like a new one (Fable F6), subject to auto_admit/approval.
     if (known?.revoked && !known.revoked_by_removal) throw new HttpError(403, "forbidden", "this node was revoked; an owner must re-admit it");
@@ -370,7 +534,10 @@ export class PeerApi {
     // here proves the caller holds its key (PROTOCOL §4 "Mixed teams").
     if (known && !transportsOf(known).includes("tailscale")) throw new HttpError(403, "forbidden", "this machine joined over Walkie Direct");
     const existing = known && !known.revoked ? known : undefined;
-    const port = body.port ?? DEFAULT_PEER_PORT;
+    const port = body.port ?? existing?.port ?? DEFAULT_PEER_PORT;
+    if (existing && port !== existing.port && !hasPeerSig(req.headers)) {
+      throw new HttpError(403, "bad_peer_sig", "changing a legacy peer port requires a node-key request signature");
+    }
     const moved = !!existing && (existing.ip !== c.ip || existing.port !== port);
     if (existing && !moved) return { admitted: true, team, node_id: nodeId };
     if (!core.isAuthority()) {
@@ -379,7 +546,9 @@ export class PeerApi {
     }
     if (existing && moved) {
       // Same machine re-joining from a new address (Tailscale IP or port changed): re-pin it.
-      core.emit("team.node", { node_id: nodeId, login: existing.login, hostname: existing.hostname, pubkey: existing.pubkey, ip: c.ip, port, ...transportFields(existing) });
+      if (!hasPeerSig(req.headers)) core.log.warn("peer_legacy_repin", { node: nodeId, ip: c.ip, port });
+      core.emit("team.node", { node_id: nodeId, login: existing.login, hostname: existing.hostname, pubkey: existing.pubkey, ip: c.ip, port, ...transportFields(existing),
+        ...(existing.peer_sig_v1 ? { peer_sig_v1: true } : {}) });
       core.log.info("node_repinned", { node: nodeId, ip: c.ip, port });
       return { admitted: true, team, node_id: nodeId };
     }
@@ -387,7 +556,19 @@ export class PeerApi {
     const hostname = shortNodeName(body.hostname);
     core.checkNodeCapacity(nodeId, c.who.login); // 409 node_limit, also before queueing an approval
     core.checkPlan("team.node", { node_id: nodeId, login: c.who.login }); // 402 plan_limit, likewise
-    if (!core.config.auto_admit) {
+    // Roster history retains revoked and removed nodes. Neither resets first-machine admission.
+    const hasEverHadLoginNode = [...core.roster.nodes.values()].some((n) => n.login === c.who.login);
+    let inviteId: string | undefined;
+    if (body.invite) {
+      const checked = checkInvite(body.invite, core.roster, team, core.clock());
+      if (!checked.ok) throw new HttpError(403, checked.reason, "add-machine credential refused");
+      const holder = memberByHandle(core.roster, checked.invite.handle);
+      if (!holder || holder.login !== c.who.login || holder.role === "removed") {
+        throw new HttpError(403, "invite_wrong_login", "add-machine credential names another login");
+      }
+      inviteId = checked.invite.id;
+    }
+    if ((!core.config.auto_admit || hasEverHadLoginNode) && !inviteId) {
       try {
         core.store.addJoinRequest({ node_id: nodeId, login: c.who.login, pubkey: body.pubkey, hostname, ip: c.ip, port, requested_at: core.clock() });
       } catch (err) {
@@ -398,7 +579,10 @@ export class PeerApi {
       return { admitted: false, reason: "pending_approval" };
     }
     // The address pinned for the node is the one we observed, not the one it claimed.
-    core.emit("team.node", { node_id: nodeId, login: c.who.login, hostname, pubkey: body.pubkey, ip: c.ip, port });
+    core.emit("team.node", { node_id: nodeId, login: c.who.login, hostname, pubkey: body.pubkey, ip: c.ip, port,
+      ...(hasPeerSig(req.headers) ? { peer_sig_v1: true } : {}),
+      ...(inviteId ? { invite: inviteId } : {}) });
+    if (hasPeerSig(req.headers)) rememberValidPeerSignature(core.store, nodeId);
     core.log.info("node_admitted", { node: nodeId, login: c.who.login, hostname, ip: c.ip, port });
     return { admitted: true, team, node_id: nodeId };
   }

@@ -67,7 +67,7 @@ export interface OsUser { name: string; uid: number; gid: number; groups: string
 export function lookupOsUser(name: string): OsUser | null {
   if (!SEAT_USER_RE.test(name)) return null;
   const id = (flag: string) => {
-    const r = Bun.spawnSync(["id", flag, name], { stdout: "pipe", stderr: "ignore", env: { PATH: "/usr/bin:/bin" } });
+    const r = Bun.spawnSync([process.platform === "darwin" ? "/usr/bin/id" : "id", flag, name], { stdout: "pipe", stderr: "ignore", env: { PATH: "/usr/bin:/bin" } });
     return r.exitCode === 0 ? r.stdout.toString().trim() : null;
   };
   const uid = id("-u");
@@ -108,7 +108,7 @@ export function seatUserProblem(
 export function adminGroupIds(): number[] | null {
   const out: number[] = [];
   for (const g of [...ADMIN_GROUPS, "staff"]) {
-    const argv = process.platform === "darwin" ? ["dscl", ".", "-read", `/Groups/${g}`, "PrimaryGroupID"] : ["getent", "group", g];
+    const argv = process.platform === "darwin" ? ["/usr/bin/dscl", ".", "-read", `/Groups/${g}`, "PrimaryGroupID"] : ["getent", "group", g];
     try {
       const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", env: { PATH: "/usr/bin:/bin:/usr/sbin" } });
       const t = r.stdout.toString();
@@ -144,7 +144,7 @@ export function aclProblem(path: string, listing: string | null, platform: NodeJ
 
 /** `ls -led` (macOS) or `getfacl -cp` (Linux) of `path`, or null when it can't be read (fail closed). */
 export function listAcl(path: string): string | null {
-  const argv = process.platform === "darwin" ? ["ls", "-led", path] : ["getfacl", "-cp", path];
+  const argv = process.platform === "darwin" ? ["/bin/ls", "-led", path] : ["getfacl", "-cp", path];
   try {
     const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "ignore", env: { PATH: "/usr/bin:/bin" } });
     if (r.exitCode === 0) return r.stdout.toString();
@@ -249,7 +249,7 @@ export interface SeatUserPlan {
 /**
  * What lets this machine give every seat a fresh OS user of its own (admin.ts), pure: the seats' group (`groupId` a
  * free id the caller found), a root-owned directory chain with the runner and the user helper (root-owned copies of
- * the walkie binary) and the runtimes, and a sudoers file with exactly two rules: the runner as any member of the
+ * the walkie binary) and the runtimes, and a sudoers file with dedicated runner, automatic helper, and repair rules: the runner as any member of the
  * seats' group, and the helper's two verbs as root.
  */
 export function seatUserPlan(o: {
@@ -270,7 +270,8 @@ export function seatUserPlan(o: {
         { what: "its id", argv: ["dscl", ".", "-create", `/Groups/${SEATS_GROUP}`, "PrimaryGroupID", String(o.groupId)], sudo: true, group: true },
       ]
     : [{ what: "the seats' group", argv: ["groupadd", "--system", SEATS_GROUP], sudo: true, group: true },
-       { what: "where seat users' homes go (root's)", argv: ["install", "-d", "-m", "0755", "-o", "root", "-g", "root", "/var/lib/walkie-seats"], sudo: true }];
+       { what: "where seat users' homes go (root's)", argv: ["install", "-d", "-m", "0755", "-o", "root", "-g", "root", "/var/lib/walkie-seats"], sudo: true },
+       { what: "the root-owned seat ledger and lock directory", argv: ["install", "-d", "-m", "0755", "-o", "root", "-g", "root", "/var/lib/walkie"], sudo: true }];
   steps.push(
     { what: "a root-owned directory for the runner and the user helper", argv: ["mkdir", "-p", RUNTIMES_DIR], sudo: true },
     { what: "owned by root", argv: ["chown", "-R", `root:${rootGroup}`, RUNNER_DIR], sudo: true },
@@ -288,10 +289,14 @@ export function seatUserPlan(o: {
   const sudoersPath = "/etc/sudoers.d/walkie-seats";
   const sudoers = [
     `# Walkie (walkie seats setup-user): ${o.daemonUser}'s daemon may make a fresh user for each seat, run the seat as it, and destroy it.`,
+    `Cmnd_Alias WALKIE_TALKIE_REPAIR = ${DEFAULT_ADMIN} seat-admin talkie-repair *`,
+    // The command-specific default discards a cached sudo timestamp even for a direct helper invocation.
+    "Defaults!WALKIE_TALKIE_REPAIR timestamp_timeout=0",
     `Defaults!${DEFAULT_RUNNER} !requiretty`,
     `Defaults!${DEFAULT_ADMIN} !requiretty`,
-    `${o.daemonUser} ALL=(%${SEATS_GROUP}) NOPASSWD: ${DEFAULT_RUNNER} seat-runner`,
-    `${o.daemonUser} ALL=(root) NOPASSWD: ${DEFAULT_ADMIN} seat-admin create *, ${DEFAULT_ADMIN} seat-admin destroy *, ${DEFAULT_ADMIN} seat-admin pending`,
+    `${o.daemonUser} ALL=(%${SEATS_GROUP}) NOPASSWD: ${DEFAULT_RUNNER} seat-runner, ${DEFAULT_RUNNER} talkie-runner`,
+    `${o.daemonUser} ALL=(root) NOPASSWD: ${DEFAULT_ADMIN} seat-admin create *, ${DEFAULT_ADMIN} seat-admin destroy *, ${DEFAULT_ADMIN} seat-admin pending, ${DEFAULT_ADMIN} seat-admin talkie-create *, ${DEFAULT_ADMIN} seat-admin talkie-reconcile *, ${DEFAULT_ADMIN} seat-admin talkie-destroy *, ${DEFAULT_ADMIN} seat-admin talkie-status, ${DEFAULT_ADMIN} seat-admin talkie-lock-init`,
+    `${o.daemonUser} ALL=(root) PASSWD: WALKIE_TALKIE_REPAIR`,
     "",
   ].join("\n");
   if (o.ownerTmp) {
@@ -307,6 +312,7 @@ export function seatUserPlan(o: {
     { what: "check the sudo rules", argv: ["visudo", "-c", "-f", o.sudoersTmp], sudo: true },
     { what: "install the sudo rules", argv: ["install", "-m", "0440", "-o", "root", "-g", rootGroup, o.sudoersTmp, sudoersPath], sudo: true },
     { what: "check the installed sudo rules", argv: ["visudo", "-c", "-f", sudoersPath], sudo: true },
+    { what: "create or verify the dedicated user lock", argv: [DEFAULT_ADMIN, "seat-admin", "talkie-lock-init"], sudo: true },
     { what: "keep the Walkie home private", argv: ["chmod", "700", o.walkieHome], sudo: false },
   );
   const warnings: string[] = [];

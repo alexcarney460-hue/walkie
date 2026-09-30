@@ -678,6 +678,26 @@ html:not(.js) .price-controls { display: none; }
 .welcome-note { color: var(--text-3); font-size: 0.92rem; }
 .welcome .welcome-note code { white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
 
+.consent { min-width: 0; margin: 10px 0 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; }
+.consent legend { padding: 0; margin: 0 0 8px; width: 100%; color: var(--text); font-weight: 600; font-size: 0.98rem; }
+.consent-option { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 0.95rem; cursor: pointer; }
+.consent-option input { width: 18px; height: 18px; accent-color: var(--signal); flex: none; }
+.consent-hint { color: var(--text-3); font-size: 0.86rem; }
+.consent-max {
+  margin-top: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-2); display: grid; gap: 8px;
+}
+.consent-max label { color: var(--text); font-weight: 500; font-size: 0.92rem; }
+.consent-max input {
+  width: 6ch; min-height: 40px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text); font: 600 1rem/1 var(--font-mono);
+}
+.consent-max .welcome-note { margin: 0; }
+.consent-option input:focus-visible, .consent-max input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+@media (max-width: 480px) {
+  .consent { flex-direction: column; align-items: flex-start; gap: 10px; }
+}
+
 /* ---------- motion ---------- */
 @media (prefers-reduced-motion: no-preference) {
   /* Hero entrance: transform only, so the hero is readable in any capture taken before it finishes. */

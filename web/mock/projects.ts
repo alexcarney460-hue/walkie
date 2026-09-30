@@ -49,7 +49,7 @@ export class MockProjects {
     return {
       channel: CH, id: "a1b2c3d4e5f60718:901", name: "Website relaunch", folder: "Harbor", description: "New marketing site", prefix: "WEB",
       paths: [{ path: "~/work/site" }], meter_mode: "count", automations: { pr_opened: true, pr_merged: false, agents_can_close: true },
-      state: "active", private: false, admins: ["maren"], creator: "maren", created_at: NOW - 3_600_000, boards: [board], meter: board.meter,
+      state: "active", private: false, admins: ["maren"], creator: "maren", steward: "on", steward_node: "a1b2c3d4e5f60718", created_at: NOW - 3_600_000, boards: [board], meter: board.meter,
       cards: this.cards.filter((c) => c.state !== "deleted").length, last_activity: Math.max(...this.cards.map((c) => c.updated_at)),
       room: this.room.summary(),
     };

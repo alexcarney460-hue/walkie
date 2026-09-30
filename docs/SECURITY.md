@@ -15,19 +15,22 @@ important — each teammate's **agents**, which hold real credentials and can ac
 
 | Boundary | Who is on the other side | Control |
 |---|---|---|
-| Peer port (Tailscale IP only; Tailscale and dual machines) | any device on the tailnet, including shared-in nodes | `tailscale whois` on every request → login must be a current member (a `direct:` login, which only invites create, is refused outright); the node must be admitted with a matching login, its record must serve Tailscale (a Direct-only machine is never let in over the tailnet) and its pinned address must be the source IP; team header must match |
+| Peer port (Tailscale IP only; Tailscale and dual machines) | any device on the tailnet, including shared-in nodes or another OS user on a member machine | `tailscale whois` on every request → login must be a current member (a `direct:` login, which only invites create, is refused outright); the node must be admitted with a matching login, its record must serve Tailscale (a Direct-only machine is never let in over the tailnet) and its pinned address must be the source IP; team header must match; node-key request signatures are required on privileged routes and on replication/read routes after verified node-key evidence or strict mode (PROTOCOL §4) |
 | Walkie Direct endpoint (v0.2; iroh QUIC, ALPN `walkie/1`) | **anyone on the internet** who knows or guesses the node's endpoint id (its public key), directly or through a relay | QUIC/TLS authenticates the caller's ed25519 key before any request is read; the gate is that key ∈ the roster's admitted, non-revoked nodes of current members whose record serves Direct (a Tailscale-only machine's key is refused until it proves the key with a Direct `/join`, see "Mixed teams"; `403 not_member` otherwise, `hello` and every data endpoint included; `X-Walkie-Node` must match the key or be absent). Only `/join` accepts an unknown key, and only with a valid invite (below), admitting exactly the connection's key. Per-endpoint rate limit (60 req/s) plus one shared 5 req/s bucket for every key that isn't an admitted node (keys are free to mint); at most 16 connections from unadmitted keys at once, each closed after 30 s and limited to 4 concurrent streams (lifted when the key is admitted on that connection); at most 4 connections per authenticated key (a member at 4 replaces its least recently active idle one; with all 4 busy the 5th is refused); 512 connections total, running native handshakes included. Pending handshakes are budgeted before `accept()` starts any native work, by what iroh names without a handshake: the **source** (an IPv4 address, an IPv6 /64, or on the relay path the sender's relay-authenticated endpoint id), its **network** (IPv4 /24, IPv6 /48) and, on the relay path, the **member** owning an admitted endpoint id. Native budgets are given back only when the native handshake really ends (iroh 1.1's binding can't cancel one): at most **128 native handshakes alive in total**, whatever their lifetime; of those at most 64 from the direct path and 16 from relay-path strangers (whose ids are free to mint), so members arriving through a relay always have at least 48; at most 4 per source, 8 per /24 or /48, and 8 per member across all of that member's machines. Lanes bound handshakes in progress: at most 32 from sources not known to be members, of which the direct path takes at most 24 (the other 8 only relay-path joiners can take); a relay-path sender whose endpoint id is an admitted node's has its own 32-slot lane (a handshake is abandoned after 15 s and closed if it completes late; its lane slot comes back when the native handshake ends or at 60 s, while its native budgets wait for the native end); above 8 pending, an unvalidated UDP source is sent a QUIC Retry first, so a spoofed or reply-blind sender never starts a handshake, and an unvalidated source over a limit is ignored rather than answered; when a node is revoked or its member removed, its open connections are closed at once, idle ones included; request heads ≤ 16 KiB, bodies ≤ 1 MB, 30 s to arrive. PROTOCOL §2 is unchanged: everything that arrives is still verified event by event |
 | Walkie Direct invites | whoever holds the code (a bearer credential until used) | `wk1…` code signed by an owner node's key (checked against that node's key on the roster, and the node must still be an admitted owner's when the code is used), naming the team; 7-day expiry (the authority refuses an expiry further out than that); single use: redeemed only by the roster authority, which records `sha256(secret)` on the chain in the admitting `team.node`, so no replica and no later authority accepts it again; a code for a handle that has ever been removed is refused unless it was minted after the latest removal (`invite_predates_removal`), whatever the handle's member is now (removed, or re-invited since): the code carries the issuer's signed roster chain position, which must be past the removing entry's chain index. That position is the only removal test (no clock is compared, so an authority clock that ran ahead when it removed someone can't block their later re-invite). So a removed member can't come back, with their old role or their old machine, on a code they held before, not after a re-invite and not through clock skew; the code and its secret are never logged (only the chain id), and no error echoes a pasted code. Anyone holding an unused code can join as its handle once, which is the point of it: send it privately |
 | Relays (Walkie Direct) | n0's public relays by default, or the ones in `config.json` `relays` | a relay forwards QUIC packets it can't read: every connection is end-to-end encrypted and authenticated between the two node keys (TLS 1.3 inside QUIC), so a relay sees only ciphertext, packet sizes and timing, and which endpoint ids talk to which. The n0 preset also publishes each endpoint's relay URL (not its IP addresses: iroh's publisher defaults to the relay only) to n0's address-lookup service, keyed by endpoint id and publicly resolvable by anyone who has that id, so peers can dial by key alone; n0 sees the source IP addresses of those publishes, of lookups and of relay connections; set your own `relays` to keep relay traffic on your infrastructure (address lookup still uses n0's service in v0.2) |
 | Event ingest (push or pull, relayed) | a member's daemon, possibly relaying others' events | ed25519 signature and header signature by the origin node (stubs too), author ↔ node ↔ login binding, roster changes only from the single roster authority's chain (each entry carrying the authority's signed watermark; events are judged by the roster in force when the authority first saw them), restricted-channel membership, answer ↔ ask addressee binding (PROTOCOL §2) |
 | Roster requests (`/peer/v1/roster-request`) | an admitted member's daemon asking the authority for a roster change | peer gate + requester node signature (canonical base64 only); the authority re-checks the requester's role in the current roster and every roster rule before appending, and an owner's `team.node` request may bind a key only to the owner's own login; the appended event carries the hash of the signed payload (independent of the signature's encoding), so a replay (also after a transfer, or re-encoded) returns the original entry or is refused |
 | Peer responses (our client) | a member's daemon answering our calls | streaming byte caps (1 MB JSON, 25 MB blobs), zod shape validation, depth limit |
-| Unix socket | processes of the same OS user | file mode 0600 in a 0700 directory |
+| Unix socket | processes of the same OS user | file mode 0600 in a 0700 directory; an unmarked request is the owner's own process and has the owner's authority |
 | Loopback dashboard port | any local process (including other OS users' and containers' forwarded ports on 127.0.0.1), and any website in a browser | the durable token as a bearer (scripts), or a dashboard **session** in the `X-Walkie-Session` header; **no cookie authorizes anything**. Exact Host check (DNS rebinding), Origin check on mutations (CSRF), CSP `default-src 'self'`, and a cross-origin page can't send the header (it needs a CORS preflight that is never granted). The session is obtained through `GET /auth?nonce=…`: a 60 s single-use nonce that `walkie dashboard` mints over the unix socket (`POST /v1/auth/nonce`, refused on loopback); `/auth` hands the value to the page in the redirect's URL fragment (never sent to a server), and the page keeps it in its own origin's `localStorage`, which other ports can't read. The session is not the token: 256 random bits kept only as a hash (in memory, and in the store's `meta` so a daemon restart or upgrade doesn't sign dashboards out), bound to its Host, 12 h idle / 7 days absolute across restarts, revocable (`POST /auth/logout`, `walkie dashboard logout`, `walkie token rotate`; each also clears the saved hashes), accepted only in that header and only on the dashboard's routes (PROTOCOL §5), never as a bearer or cookie. The durable token is never set as a cookie; old cookies are cleared |
 | License keys (`team.license`, `walkie license activate`) | the vendor, and anyone who can hand an owner a key | ed25519 signature over the key's payload segment, verified offline by every node against the vendor public key embedded in the binary (`src/license/vendor-key.ts`; no env or config override), canonical base64url only (one valid spelling per key); the chain accepts only a license naming its own team (`kind: "license"`, `team`), so an activation code or another team's key is rejected and never applied; only the authority's (owner) entries count; a license entry carries no watermark, so it can't change any event's anchor or verdict |
-| License service (the authority → `https://<site>/api/license/{bind,status,renew}`) | the vendor's billing functions (Vercel + Stripe) | the only calls Walkie makes to the vendor (other outbound traffic, none of it to the vendor: usage meters query each model provider's usage endpoints with your own login, on by default; `walkie update` and the installer fetch GitHub releases; Walkie Direct uses n0's address lookup and relays; a paired phone links through the phone relay), to the pinned site origin (a loopback override exists only in source runs with `WALKIE_DEV=1`; it is compiled out of release binaries), never following redirects: `{code, team_id}` once when an owner activates a code, `{lic_id, renewal_token, issued_at}` once a day (the check-in), and `{lic_id, renewal_token}` when a renewal is due or the check-in reports a newer grant; responses are size-capped and a key must verify against the vendor key, name this team and carry the same `lic_id` before it is activated; a renewal answer is dropped if the team's license changed meanwhile; failures are logged and retried the next day, never fatal |
+| License service (the authority → `https://<site>/api/license/{bind,status,renew}`) | the vendor's billing functions (Vercel + Stripe) | the only calls Walkie makes to the vendor (other outbound traffic, none of it to the vendor: usage meters query each model provider's usage endpoints with your own login, on by default; `walkie update` and the installer fetch GitHub releases; Walkie Direct uses n0's address lookup and relays; a paired phone links through the phone relay), to the pinned site origin (a loopback override exists only in source runs with `WALKIE_DEV=1`; it is compiled out of release binaries), never following redirects: `{code, team_id, proof}` once when an owner activates a code (the proof carries signed roster genesis, authority transfers and a short-lived authority signature bound to the license id), `{lic_id, renewal_token, issued_at}` once a day (the check-in), and `{lic_id, renewal_token}` when a renewal is due or the check-in reports a newer grant; responses are size-capped and a key must verify against the vendor key, name this team and carry the same `lic_id` before it is activated; a renewal answer is dropped if the team's license changed meanwhile; failures are logged and retried the next day, never fatal |
 | Renewal token (`~/.walkie/license-renew-token`) | any process of the same OS user on the roster authority | 32 random bytes returned once at the first bind; a 0600 file, never on the chain, never logged; the site stores only its sha256 and compares in constant time. Without it a subscription id renews nothing |
 | Billing functions (`site/api/*`) | anyone on the internet | the activation code is shown once, within 24 h of checkout (`walkie_code_revealed_at`, completed by `walkie_code_shown_at`; a marked but never completed reveal may be retried by the same session for 10 min); a code binds to one team only (`409` for any other); renewal and the status check-in need the token; `/api/portal` never opens a portal session itself, it only redirects to Stripe's email-verified login; only `active` subscriptions reveal, bind or renew; `/api/checkout` refuses a second subscription for a team that passes a still-billing `lic_id` (`409 already_subscribed`, with the portal link) and fails closed on a Stripe outage |
+| Rental compute control plane (`site/api/compute/*`, RENT-2) | anyone on the internet; the owner's daemon with its compute token; rented machines | every route but quotes, account and heartbeat needs the account's bearer token (32 random bytes, stored as sha256, compared in constant time); the heartbeat needs the rental's own token; the tick needs Vercel's `CRON_SECRET`; the webhook needs its own Stripe signing secret. Launching needs `COMPUTE_ENABLED=1`; stopping never does. Bodies are strictly validated (unknown fields refused), per-IP (account creation), per-account and per-rental rate limits live in Postgres. The control-plane provider token (`DIGITALOCEAN_TOKEN`), the private config (provider, size, region, image, **our cost**, our provider limits) and the database URL live only in Vercel env; the watchdog uses a separate token. No response, log line or user-data carries any of them (site/test/compute-no-cost.test.ts) |
+| Compute account token (`~/.walkie/compute-account`) | any process of the same OS user on the owner's machine that opened the account | a 0600 file written atomically, never on the chain, never logged or returned by any local route; whoever holds it can spend the account's prepaid credit on machines that join **the team as the owner's machines** only with a code the owner's daemon mints, so a stolen token alone launches machines that can't join |
+| Rented machines (RENT-2) | the renting team's agents, running as seat users on a VM in our provider account | boots from user-data that installs the **pinned, signed** release through the official installer and joins with a single-use **1-hour** add-machine code (the site passes it to the provider and never stores or logs it); seats run as seat users (never `--same-user`); the instance metadata endpoint (which re-serves the user-data) is blocked for every user but root and the user-data copies are deleted after the install; the bootstrap sudo rule is removed; no SSH keys, no provider agent, no logins of its own (seats lease the team's accounts only through the existing vault lease path when the team turns the pool on). The owner's daemon revokes the node when the rental ends. Stop = terminate + wipe (disks deleted with the droplet) |
 | Release artifacts (`SHA256SUMS`, `SHA256SUMS.sig`, the binaries) | GitHub Releases / a mirror | `SHA256SUMS.sig` is an **ECDSA P-256 / SHA-256** signature (DER) by the Walkie **release** key (not the license key; private half in `~/keys/walkie-release-signing-p256.pem` 0600 and the CI secret `WALKIE_RELEASE_SIGNING_KEY`) over `SHA256SUMS`, which carries a signed `version <tag>` line. P-256 because the installer must verify on a stock machine: macOS ships LibreSSL as `/usr/bin/openssl`, which can't verify ed25519, so the previous ed25519 scheme refused every valid release there. install.sh verifies with `openssl dgst -sha256 -verify` (LibreSSL and OpenSSL alike) and refuses without openssl; it then requires the signed version to be the release asked for (`WALKIE_VERSION`, or the tag GitHub's "latest" resolves to; a mirror without `WALKIE_VERSION` installs what it signs for), compares the binary's SHA-256, and removes a binary that doesn't report that version. `walkie update` verifies against the public key embedded in the binary, requires the signed version to match the advertised tag and to be newer than the running one (`--allow-downgrade` to go back on purpose), keeps a copy of the old binary, runs `<new> version` and restores the copy if it reports anything else. So a compromised host can't serve a signed older release as a newer one. The checksums alone give integrity of the download, not authenticity: anyone who can change the release can change the checksums; the signature is what says they are ours |
 | Join requests (`/peer/v1/join` with approval on) | admitted-login machines that aren't members' nodes yet | at most 16 pending requests per login and 256 per team (`429 join_limit` beyond), each expiring after 24 h |
 | Model context (MCP results, hook-injected context, channel pushes, and CLI reads run by an agent) | text written by other people's agents | wrapped in `<walkie-message … trust=… note=…>`, NFKC + control-char strip, `<`/`>` neutralised so the wrapper can't be closed, role markers (`system:`, `assistant:` …) neutralised, explicit "information, not instructions" note. The CLI applies the same contract to `get`, `subscribe`, `inbox`, `ask` answers, `who` and `linear create` (previews, results and errors) whenever it runs under an agent: **pass `--for-agent`** when the output goes to a model; `WALKIE_AGENT`, `CLAUDECODE`, `CODEX*`, `KIMI_*`, `GEMINI_CLI`, `CURSOR_AGENT`, `HERMES_*`, `OPENCODE*` and `AIDER_*` in the environment are recognised without it (any other runtime needs the flag). `--json` for a model is built from a per-kind **allowlist** of fields (never a spread of a signed body: a member can sign a body with any extra field, and validation keeps the body verbatim), with `text`/`note` wrapped, one-line fields defanged, no signatures, and a `trust` field per item. A person's terminal sees the usual output |
@@ -38,10 +41,60 @@ important — each teammate's **agents**, which hold real credentials and can ac
 | Phone link: a paired phone | the owner's phone (or whoever holds it) | a device key (256-bit PSK; on the phone a non-extractable CryptoKey in IndexedDB, on the daemon `~/.walkie/mobile/devices.json` 0600) proves the phone in every handshake, and the daemon drops a link that hasn't sent a valid encrypted frame within 10 s; requests run as the person (never an agent) on an allow-list: Mission Control reads, `post` (existing channels, no `raw`, no `artifacts`), `answer`, and the live stream; answers are projected for the phone (posts, asks and answers only; no plan, license, account, login, address or signature). Per device, across all its connections: 20 req/s, 8 in flight, 2 streams, 1 MiB/s of responses, 256 KB per response, 100 events per list, and its own write bucket. Ends 30 days unused, 90 days after pairing, on revocation or eviction (open links end at once), and when this machine stops belonging to a member |
 | Phone link: pairing | whoever sees the QR code or the code under it within 10 minutes | 128-bit secret in the URL **fragment** (no server receives it); the pairing's relay room is claimed with a random key only the daemon holds and the relay never hands a held room to a second claimant, so a code lets its holder pair a phone but never stand in for the computer; one use; five unregistered attempts void it; `walkie mobile pair` refuses to run under an agent and the route refuses `X-Walkie-Agent` |
 | The `claude` summarizer (Wispr, opt-in) | the user's own CLI, fed an external transcript | the transcript is redacted (configured keys + patterns) before it is written to the CLI's stdin; the CLI runs in its own process group with no tools or MCP servers; stdout is capped at 64 KB while streaming; on timeout, cap, failure or exit the whole group is SIGKILLed and reaped |
-| The orchestrator (PROTOCOL §9, opt-in: `walkie orchestrator start`) | the person's own `claude` CLI with tools on this machine, fed the person's messages | local only: the conversation is stored in this machine's database and shown only on its dashboard and CLI; never an event, never replicated, never served to a peer or a paired phone (no route, and its stream never carries it); only the person drives its conversation; only a person can grant shell access or elevated permissions; WSL leadership needs a local person's opt-in and all other owner machines offline; each queued message is authorised again when it runs (signed out, past its session's deadline or token rotated: refused); replies are redacted and capped at 256 KiB; its team-wide status is generic; the child excludes inherited Claude setting sources, never inherits `ANTHROPIC_*` or a parent session's `CLAUDE_CODE_*` (subscription, not API billing), runs in its own process group, and its stderr is scrubbed before anything is cut, logged or shown |
-| Remote seats (PROTOCOL §11, opt-in per machine: `walkie seats enable`) | launchers (the team's owners by default) starting `claude`/`codex` with tools on the host, as the host's OS user | nothing runs on a machine whose person hasn't opted in locally (`config.json`, people only; `deny` stops every seat); the host judges each request itself: signed launch/stop posts in `seats-<node>`, the author an allowed launcher at request time (a person; an agent only when named `@h/<machine>/<agent>`), fresh (10 min), judged once, within the launcher's cap, the host's `max` and 10 launches/min; the channel must be private to the host's person and the launchers' people (the authority lets only the host's person shape it, owners included); the prompt is stdin data, never argv or a shell; the child drops API keys and parent-session markers, runs in its own process group with a wall-clock limit, and its output is scrubbed before it is posted |
+| The orchestrator (PROTOCOL §9, opt-in: `walkie orchestrator start`) | the person's own `claude` CLI with tools on this machine, fed the person's messages; shell-capable access runs as the dedicated `walkie-talkie` OS user | local only: the conversation is stored in this machine's database and shown only on its dashboard and CLI; never an event, never replicated, never served to a peer or a paired phone (no route, and its stream never carries it); only the person drives its conversation; only a person can grant shell access or elevated permissions; WSL leadership needs a local person's opt-in and all other owner machines offline; each queued message is authorised again when it runs (signed out, past its session's deadline or token rotated: refused); replies are redacted and capped at 256 KiB; its team-wide status is generic; the child excludes inherited Claude setting sources, never inherits `ANTHROPIC_*` or a parent session's `CLAUDE_CODE_*` (subscription, not API billing), and its stderr is scrubbed before anything is cut, logged or shown; a separate monitor checks wall and monotonic lease deadlines and invokes the existing `talkie-destroy` sudo verb if the daemon disappears; the root helper checks its ownership record before destroying the dedicated uid; long turns using a locally read token with a known expiry are interrupted and resumed with a refreshed login before expiry |
+| Remote seats (PROTOCOL §11, opt-in per machine: `walkie seats enable`) | launchers (the team's owners and their agents by default) starting `claude`/`codex` with tools on the host, as the host's OS user | nothing runs on a machine whose person hasn't opted in locally (`config.json`, people only; `deny` stops every seat); the host judges each request itself: signed launch/stop posts in `seats-<node>`, the author an allowed launcher at request time (`@h` covers h and their agents on admitted machines; `@h/<machine>` limits them to that machine; an exact agent entry covers only that agent), fresh (10 min), judged once, within the launcher's cap, the host's `max` and 10 launches/min; the channel must be private to the host's person and the launchers' people (the authority lets only the host's person shape it, owners included); the prompt is stdin data, never argv or a shell; the child drops API keys and parent-session markers, runs in its own process group with a wall-clock limit, and its output is scrubbed before it is posted |
 
 ## Threats and mitigations
+
+**Join credential delivery.** `POST /v1/team/invite-code` and `/v1/team/add-machine` return raw credentials to an
+unmarked request on the owner's socket or an authenticated person dashboard session. An unmarked owner-socket request
+means a process with the owner's OS-user authority; headers cannot prove a human is present. Agent-marked requests,
+requests carrying the live orchestrator token, and requests carrying the dedicated WalkieTalkie proxy's
+`X-Walkie-Talkie-Shell: 1` marker receive only a receipt. The credential is placed in a private local WalkieTalkie
+message for the person, outside the model transcript. In the integrated pre.10 line, shell-capable WalkieTalkie uses a
+dedicated OS user whose only daemon path is a token-checked proxy that forces the orchestrator agent and shell marker.
+Platform-mode WalkieTalkie uses `walkie_cli`, which refuses `--agent`; seats have their own OS users and seat sockets.
+
+**Other OS users on a member machine (PEER-SIG-1).** Tailscale's source IP and whois login are
+shared by OS users on that machine; the public node id in `X-Walkie-Node` alone does not distinguish
+the owner's daemon from a seat or the `walkie-talkie` uid. The owner-only 0600 node key now signs
+privileged peer requests, closing header-only access to remote admin, vault hand-outs and usage,
+pool controls and tunnels, and re-pinning an admitted node through `/join`. A new Tailscale key under
+a login that has ever had a machine, including a revoked or removed one, waits for owner approval even when `auto_admit` is on;
+a valid owner-issued add-machine credential admits it in one step. The first machine for a login
+keeps the configured auto-admit behavior. Pending requests show hostname, login and request time.
+Replication, vector and blob routes require the same proof after this receiver verifies a node-key
+request signature or signed `/vv` proof, or the authority's signed roster records `peer_sig_v1` for
+that node. The roster marker survives re-pins and replicates to every member. A signed new-node join,
+including a pending join later approved by an owner, produces that marker. Unknown capability is
+served unsigned on Tier B during the mixed-version rollout, with `peer_unsigned` logged at most once
+per node per ten minutes. An unsigned `/vv` reply cannot upgrade or downgrade a node's trust state.
+A member that verifies a node's `/vv` signature sends its compact node-key proof to the authority in
+a signed peer request. The authority verifies the proof against the admitted node's key and the
+reporting member's challenge before writing the roster marker; a member's claim alone is insufficient.
+When every admitted, non-revoked node has trusted evidence, including a founder-only team, the authority
+records strict mode and Tier B becomes strict automatically. An owner may explicitly disable it with
+`walkie team peer-sig-strict off` to admit a legacy machine; the signed waiver is consumed by that
+admission, so automatic strict mode resumes when all nodes have evidence. The owner decision is logged.
+`walkie team peer-sig-strict on` enables it explicitly. Strict mode rejects unsigned Tier B and
+new unsigned joins with an update message on upgraded receivers; a pre.9 daemon cannot enforce the
+new marker until it updates. Cached capability claims lacking authenticated provenance
+are ignored.
+A pre.9 owner cannot remote-admin or borrow the vault of a pre.10 machine until it updates.
+A known pre.9 node without trusted evidence may re-pin unsigned only to its whois-observed source IP
+while retaining its recorded port; the authority logs this legacy re-pin. A port change requires a
+signed request. Once it has signed, every re-pin requires its signature.
+During the mixed window, another OS user on a member machine can still impersonate a node that has
+never produced trusted evidence, as on pre.9. Protection is complete for a node after its first
+verified proof or signed admission and team-wide after strict mode engages.
+Walkie Direct already binds the caller to
+its QUIC key. A receiver refuses signatures stamped before its current boot, so a captured request
+cannot replay after its in-memory nonce book resets. New-key joins never occupy nonce-book slots;
+the requester table evicts old entries rather than refusing a new admitted requester. A busy
+requester's nonce set retains a timestamp floor when trimmed: older signed requests are refused,
+while later fresh nonces continue. Refusals distinguish stale, replay, clock skew and invalid proof.
+Whether seat users can reach the
+tailnet on macOS was not live-tested for this change; the signature gate does not depend on that.
 
 1. **Outsider on the tailnet** (a shared-in device, a guest node): whois login isn't a member → 403 on every peer
    endpoint, including `hello` and `join`. **Outsider on the internet** (Walkie Direct): its key isn't an admitted
@@ -320,8 +373,53 @@ important — each teammate's **agents**, which hold real credentials and can ac
    socket row). The routes' agent refusal is detection, not proof: a process of the person's OS user that sends no
    agent header is the person, as everywhere on the local API. Limits: agent detection in the CLI is by environment, not proof (`env -i walkie orchestrator
    say …` is indistinguishable from the person); what Claude does is bounded by the permission mode the person chose;
-   an `apiKeyHelper` or settings `env` block in the person's own Claude settings still makes that `claude` bill the
-   API, as in their terminal; a process a tool detaches into its own session (`setsid`) survives a stop.
+   for platform access, an `apiKeyHelper` or settings `env` block in the person's own Claude settings still makes that
+   `claude` bill the API, as in their terminal. Shell-capable access (`full` or `bypassPermissions`) requires the person to install the
+   root-owned seat helper with `walkie seats setup-user --apply`; a missing or stale helper refuses the change. Claude
+   and anything it starts run as the dedicated `walkie-talkie` uid, with a Claude login credential and an authenticated
+   local Walkie socket. A local Claude login can provide an expiring access token; a vault login or
+   `CLAUDE_CODE_OAUTH_TOKEN` in the daemon's environment may provide a long-lived setup token. The runner projects the
+   credential without a refresh token into its private config directory and removes it when the run ends. On stop or
+   lease loss, the helper stops every process of that uid, including a detached job
+   reparented after its shell exits, then verifies that the uid's processes, services, schedules, files and account are
+   gone. Platform access continues under the daemon's user and has no shell permission.
+   A qualified destroy helper call is bounded to 180 s. Failed cleanup remains a durable obligation: the daemon hands it to
+   the uid monitor, whose cleanup owner record has a short renewed lease, and keeps a watchdog retry in case that monitor
+   wedges. Boot retry and the automatic pilot guard retain the lead lease during pending cleanup; Stop, close,
+   automatic pause and lease loss release it. A different machine may then lead safely because the uid is local to
+   this machine, and the old shell token is rejected as soon as its lead lease is invalid. A monitor completion for
+   the handed-off generation is accepted only after durable verification; an unverified exit schedules another
+   qualified retry. If a monitor removes
+   the uid unexpectedly while the host is running, the host faults and stops instead of continuing with a stale socket.
+   After twelve failed cleanup attempts, status points the person to `walkie talkie cleanup --repair`.
+   Run it in a terminal: releasing an empty owner row requires the person's fresh sudo password.
+   `talkie-status` remains passwordless. The generated sudoers file gives `talkie-repair` its own
+   `PASSWD` command rule and a command-scoped `timestamp_timeout=0`, so a direct helper invocation
+   cannot reuse a prior sudo authentication timestamp.
+   Run `walkie seats setup-user --apply` to install the updated helper and sudoers rule before repair.
+   At account creation, the root helper records the invoking daemon's PID and process start time in its
+   root-owned ledger. It refuses owner-row release while that process, a daemon lease, or a shell socket
+   is live, even if the daemon user unlinks the lease and socket paths. A legacy row without that
+   process identity cannot pass stopped verification automatically.
+   The empty-uid file check refuses any mount point or skipped subtree it cannot inspect; a sweep note does not
+   count as proof that the uid left no files there.
+   Startup `talkie-reconcile` carries the generation observed before it queues on the shared root lock and the
+   daemon owner's per-socket identity. The helper checks both against its machine-wide ownership ledger under the
+   lock before removing the uid. A stale reconcile from an aborted Start cannot remove a later run, and a daemon
+   using a different socket refuses shell access while the first owns the dedicated uid. An account from an older
+   helper with no daemon owner requires `walkie talkie cleanup --repair`; install the current helper with
+   `walkie seats setup-user --apply` before enabling shell access.
+   The dedicated user operations share `<ledger>.talkie.lock` (`/var/db/walkie-seat-admin.sqlite.talkie.lock` on macOS,
+   `/var/lib/walkie/seat-admin.sqlite.talkie.lock` on Linux). `setup-user --apply` creates it as root with mode `0600`;
+   the first helper use also creates it if missing, including during cleanup of a user left by an older install.
+   Never unlink this file during normal operation: replacing its inode while another helper holds it defeats their
+   shared lock. If it was deleted, run `walkie seats setup-user --apply` from the person's terminal, or let the next
+   helper use recreate and verify it. If the disk is full and the ownership ledger cannot be written but the lock
+   file exists, a generation-qualified cleanup uses the read-only owner record to stop the recorded uid's processes while retaining
+   the account and cleanup obligation. Free disk space; the next cleanup retry resumes the full sweep and removes the
+   account only after processes, services, schedules, mounts, files and home are verified gone. If the lock file is also
+   missing and cannot be created (a full volume), cleanup of a user that still exists fails closed and signals nothing until
+   space is freed; then run `walkie seats setup-user --apply` (or let the next helper use recreate the lock).
    Round 13 (ORCH-FIX-13): an agent-marked caller can't sign out every dashboard or rotate the token either; the agent
    name `orchestrator` is reserved on every write route for the host's own Claude, which proves itself with a per-run
    secret only its process gets (another agent or process naming itself orchestrator is refused; a process of the same
@@ -330,6 +428,15 @@ important — each teammate's **agents**, which hold real credentials and can ac
    `person` turn; live text is redacted, sent as whole lines at most 10 frames a second, tool frames and tool lines are
    capped; Claude's process group survives a daemon crash only until the next start, which ends it after confirming it
    is the same group (leader start time and command); starts are serialised, so no second Claude runs unsupervised.
+
+   **Schedule reset.** Only a team owner may reset a claimed-slot mark, over the owner's local unix socket or an
+   authenticated dashboard session. Paired phones and loopback requests using the durable token are refused. The CLI
+   asks the person to type the exact schedule id, and the server checks the same id in `confirm`; `"reset"` alone is
+   refused. Agent-marked requests (`X-Walkie-Agent` or `X-Walkie-Under-Agent`) are refused, including WalkieTalkie's
+   marked tools. Every accepted reset is logged locally and posted to `#general` as `walkie-admin`. A process running
+   as the owner's OS user can omit its agent identity and use the owner's unix socket, so it has the owner's authority.
+   The separate seat-user socket serves only seat posts and refuses reset. In this checkout, WalkieTalkie's child is
+   launched with the owner's socket path; it does not have a separate restricted socket or dedicated OS user.
 
 16. **Remote seats: remote code execution by design** (PROTOCOL §11). A seat is an agent with tools that a teammate
    starts on someone else's machine. **The boundary is the OS user, a fresh one per run, never reused** (Codex r5,
@@ -344,12 +451,54 @@ important — each teammate's **agents**, which hold real credentials and can ac
    spools checked, **its files removed by the seat user itself** (a descriptor-relative sweep, as that user, of `/tmp`,
    `/var/tmp`, `/Users/Shared`, `/Library/Caches`, its own `/var/folders` folder and its home; Linux `/dev/shm` too), then
    its emptied home, user and group, each stage safe to repeat, all verified. **Root never deletes a file outside the
-   seat's home by path** (the one exception: its crontab file in the root-only cron spool, unlinked by root when
-   `crontab -u` refuses the cron-denied user; Codex r6 CRITICAL 1, HIGH 2: a root `find | rm` of a seat's files turned a name with a newline,
+   seat's home by path** (the one exception: its regular crontab file in the root-only cron spool, unlinked by root
+   directly and verified gone; a directory or symlink entry is refused; Codex r6 CRITICAL 1, HIGH 2: a root `find | rm` of a seat's files turned a name with a newline,
    or a directory swapped for a symlink, into deletion of anyone's files): the seat user can remove only what it could
    while it ran, and the walk never follows a link or crosses a mount, and removes a directory only once empty. It
-   clears its own protections first (macOS `uchg`/`uappnd` and ACLs on its own entries) and keeps nothing of its own
-   (Opus r7 1, 2); it walks only where it could have written, so another owner's deep tree can't block it (Opus r7
+   clears its own protections first (macOS `uchg`/`uappnd` and ACLs on its own entries). macOS can leave protected
+   residue in that user's own `/private/var/folders/<xx>/<hash>` tree. The sweep runs as the seat user. At any depth
+   and under any name, it accepts an opaque entry when `lstat`/`fstatat`, read-open, directory open, or list returns `EPERM` to that user,
+   every ancestor from the verified per-user root is freshly checked as the same uid-owned directory on the root's
+   device and inode, and a stat-visible entry is that uid's non-symlink on the same device. The opaque per-user root
+   itself also requires a verified macOS system-protection flag. `SF_NOUNLINK`,
+   `SF_RESTRICTED`, and `UF_DATAVAULT` can also prevent removal of otherwise verified residue. A stat-visible readable
+   regular file is accepted after unlink `EPERM` only if it has one link and the sweep opens that same inode for write,
+   finds no extended attributes (including a resource fork) on that descriptor, truncates it, and verifies size zero
+   on that descriptor. Read-only rechecks accept such a file only while it remains empty and has no extended attributes.
+   Below the per-user root, flags do not disqualify an entry whose stat or open itself returns `EPERM`. The per-user root and `0/` can be
+   `0755`: accepted opaque entries are refused to the seat user by macOS, while accepted readable files are empty;
+   listable directories are swept and contain only verified residue. User-settable flags alone,
+   `EACCES`, other owners, changed ancestors, symlinks and mounts do not qualify.
+   The sweep removes user extended attributes from every owned, listable per-user directory it keeps, including the
+   root and empty protected shells. It rechecks the directory descriptor after removal. An attribute that remains or
+   cannot be removed prevents verification; the exact system-maintained `com.apple.rootless` and
+   `com.apple.provenance` names are recorded as notes and may remain. Read-only residue verification also rejects
+   user attributes on listable directories.
+   Destroy kills every process of the seat uid before the sweep: a still-running process could otherwise create a
+   hard link between the link-count check and truncation, emptying the file through its other name.
+   On macOS 26.5.1, read-only observations found unflagged `TemporaryItems` and stat-denied `dmd` and nested vaults; attempts by an unprivileged
+   owner to induce `EPERM` with flags, ACLs, modes or xattrs failed or returned `EACCES`, while a mount changed `st_dev`.
+   Those probes ran outside `/private/var/folders`. Inside it, macOS makes some folders (for example `T/**/TemporaryItems`) write-only drop boxes for their owner, so a seat CAN leave content beneath one, and the sweep then accepts it as residue. That content stays on disk, but no later seat user and no other ordinary user can read it: `T/` is `0700`, macOS denies reading it even to the same uid, the uid is retired and its per-user folder is never reused (root and entitled macOS system processes are outside this guarantee). The cost is disk space left behind.
+   A listable directory is still walked and emptied. The sweep records each
+   protected path and why, while still removing entries it can remove. Destroy accepts this residue only after
+   verifying that the account is deleted and no process of its uid exists. The root-owned ledger retains that uid
+   forever and allocates future seat users above every uid ever issued, so no later seat user receives either the
+   uid or its per-user folder. macOS seat homes use the same verified owned-ancestor EPERM rule for protected entries,
+   but the root helper then checks the expected home is a real directory of the seat uid and that no readable
+   unreported entry remains. It changes the home itself to root:wheel `0700`, moves it into root-only
+   `/Users/.walkie-retired/<name>-<uid>`, verifies the move, and records the tombstone before deleting the account.
+   A symlinked or wrong-owner home, failed lock or move, and any readable leftover still quarantine the user.
+   Direct children of `/Library/Caches` are accepted only when the seat-user sweep observed `EPERM` and root's
+   no-follow stat independently confirms the same uid and `UF_DATAVAULT` or `SF_RESTRICTED` flag. The protected
+   vault stays in place and is recorded in the root ledger. Other entries outside the per-user tree, entries owned
+   by another uid, removable files left behind, live processes, failed account deletion, and unverified ownership
+   still refuse destroy and keep the
+   user quarantined. This never-reused uid rule applies to seats. WalkieTalkie uses the fixed uid 550000 for later
+   generations of the same dedicated principal. The root-owned ledger keeps one residue row per per-user folder.
+   Each destroy runs the sweep as that dedicated user over its current folder and every recorded older folder, removes
+   what it can, and refuses account deletion if an older folder cannot be verified. `walkie talkie cleanup --repair`
+   is a person-run retry of that destroy and sweep before it can clear the cleanup obligation. The sweep walks only
+   where it could have written, so another owner's deep tree can't block it (Opus r7
    3); the seat's own mounts are force-unmounted first (Opus r7 4); world-writable directories setup found on the
    machine are swept too (Opus r7 6). A create and a destroy of the same id never run at once (the ledger holds each id
    for one operation: Codex r7 HIGH 1); a process surviving SIGKILL stops the destroy before any sweep or account
@@ -449,10 +598,13 @@ important — each teammate's **agents**, which hold real credentials and can ac
    its `WALKIE_SEAT_TOKEN` a per-seat credential the daemon issues at spawn and revokes when the seat ends, bound to
    the seat's agent name `seat-<id>` (the caller can't omit or change it), good only for posting in the seat's own
    thread of the host's seats channel; the host's own local API refuses `seat-*` names. **Who can launch** is
-   decided on the host at request time, never trusted from the request: an allowed launcher (the owners of the
-   moment, or the host's named list; resetting the list drops named agents), signed by that person's own admitted
-   machine, in person: an agent's request (the CLI names the agent under Claude Code, Codex, Kimi…; the local API
-   takes `X-Walkie-Agent` as authorship) is refused unless the host named that exact agent on that exact machine.
+   decided on the host at request time, never trusted from the request: an allowed launcher (the owners and their
+   agents at that moment, or the host's named list), signed by that person's own admitted machine. `@h` covers h
+   and every agent h runs on an admitted machine; `@h/<machine>` covers h and their agents only there. Allowing a
+   person this way trusts all of their agents to launch and stop seats; to allow fewer, name exact
+   `@h/<machine>/<agent>` entries. An agent's request (the CLI names the agent under Claude Code, Codex, Kimi…;
+   the local API takes `X-Walkie-Agent` as authorship) stays an audited post naming that agent. Observers, a
+   mismatched author node or handle, and seat agents are refused; a seat agent needs its own exact entry.
    **The host itself** must be an admitted, non-observer member when it judges a launch and again just before it
    spawns (a demoted host starts nothing, Codex r2 HIGH 1). **Stopping** is for the seat's own launcher or the host's
    person (another launcher can't end someone's work, Opus r2 LOW 4); the host person's local stop, like a revoke,
@@ -877,13 +1029,21 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   orchestrator (with its defaults), configure integrations other than the private-data ones, share the machine's
   compute for split runs (`pool share on|off`), run pooled models (`pool run`, which moves the model files a run names
   into the team's stages on the sharing machines), and turn seats on for the team. **Remote seats setup by an owner is equivalent to letting that owner run agents as that person**:
-  `seats enable|allow --same-user --launchers @owner --dir …` lets the owner (and the agents they name) start Claude
+  `seats enable|allow --same-user --launchers @owner --dir …` lets the owner (and every agent they run) start Claude
   Code / Codex agents on the teammate's machine, as fresh seat users or, with `--same-user`, as the teammate's own OS
   user with their files and their Walkie. This is on purpose (an owner's agents set up teammates' machines); the
   machine's person is mentioned on every such command in #general, and can refuse it at any time with
   `walkie admin remote off` (and turn seats off with `walkie seats deny`). Setting up seat users needs root: without a terminal it runs
   `sudo -n` and fails with a clear message when sudo would ask for a password, so remote admin never gets root that the
   machine's person did not already grant without a password.
+- **Schedule writers.** Only the current roster authority signs schedule changes. The fold verifies its term and
+  signed sequence window and rejects agent-authored changes; demoting an owner or revoking a machine never changes earlier schedule state.
+  Other owners pass the local admin gate and forward a node-key-signed operation, body, audit id, requester id and
+  timestamp over the rate-limited peer route. The authority derives the requester handle and hostname from its
+  roster, verifies that node's signature and owner role, and checks cron and the 20-schedule limit before committing the change and
+  audit post together. If it is offline, management returns `503` and does not queue a change. The reserved
+  `#talkie-schedules` channel is repaired to exactly the current owners, including newly promoted owners. A process
+  running as the owner's OS user keeps that owner's authority. Reset is local to the authority's person session.
 - **Audit trail.** Every agent or remote admin action is appended to `~/.walkie/admin-audit.jsonl` (0600) on the
   machine it happened on and posted to `#general` by the reserved author `walkie-admin` (no caller may post as it),
   naming the actor as `@handle/machine/agent` (an unnamed agent: its runtime, "claude-code (unnamed)"). A remote
@@ -935,6 +1095,76 @@ What a v2 seat request (PROTOCOL §11 "Seats v2") adds to threat 16, and what bo
   seat user.
 - **Result files** are read without following a symlink (every directory on the way re-checked by device and inode
   after the open), at most 64 KiB, redacted.
+
+## Rental compute (RENT-2)
+
+Teams can rent machines ("Add compute") that Walkie runs in **its own** provider account (v1: DigitalOcean, whose
+terms allow resale) and that join the team like any other machine. The control plane is the site
+(`site/api/compute/*` + a minute cron); the site never talks to a customer's machine and never holds a team key.
+
+- **Customers never see our cost.** The public catalogue (`site/api/_lib/compute/catalog.ts`) carries tier, name,
+  specs and price only; provider, size, region, image, our cost and our provider limits come only from the private
+  env var `COMPUTE_PRIVATE_CONFIG`. The daemon parses every site answer with strict schemas (an unknown field such as a
+  cost is refused as `bad_site_reply`), and tests on the site, the CLI and the dashboard fail if a cost key, a cost
+  figure, a provider size/region slug or the provider name appears in any customer-facing payload, receipt text,
+  user-data or log line. A misconfiguration that prices a tier below its cost is refused at config load.
+- **Money.** Prepaid only: credit blocks bought in Stripe Checkout (a person pays; an agent can only produce the link),
+  credited from the signed webhook once per checkout session. Credit must cover the first hour of every machine in a
+  request. Burn is per started minute (GPU starts at least 5 minutes), computed from the minute count so a doubled,
+  late or concurrent tick can't double-charge (row lock per account, unique ledger keys). At a balance of $0 or below
+  every machine of the account stops; a dispute or refund freezes the account and stops everything. The compute
+  Stripe key must be a test key unless `COMPUTE_STRIPE_LIVE=1`.
+- **Our provider account runs only machines customers paid for** (Alex, binding: the card on file is strictly for
+  selling compute). A tier on a real provider launches only against **paid** credit: Stripe live-mode purchases, never
+  test-mode credit, free adjustments, or internal/test teams. It is checked when a rent is accepted, when the tick
+  moves a queued machine forward, when a fresh code starts it, and once more immediately before the driver's create
+  call (`site/test/compute-paid.test.ts`: no create call without paid credit). FakeCloud is the only driver tests and
+  demos use; the real driver has only been exercised with read-only GETs.
+- **Capacity.** Beyond the provider account's limits machines are queued (FIFO per quota group), never refused; a
+  queued machine starts when the owner's daemon supplies a fresh 1-hour code (the site keeps none).
+- **Abuse.** Mining heuristic: a GPU at 95 % or more with no busy seat and no pool job for 10 minutes stops the machine
+  and puts the account under review (no new rentals). Egress: shaped with `tc` on the machine (rate from the private
+  config), 1 TiB included then billed per GiB, and a hard stop at the private cap (5 TB default). Idle (no busy seat
+  or pool job, default 30 minutes), a heartbeat missing 15 minutes, and a machine that never heartbeats within 15
+  minutes (credited back) stop too. Every tick terminates any provider instance tagged as ours that no live rental
+  owns.
+- **Agents.** Renting and stopping are admin actions (AGENT-ADMIN-1): an agent may, only while agent admin is on, and
+  each action is audited and posted like other admin actions. Buying credit is always a person in Stripe Checkout.
+- **Provider token (least privilege).** The site's DigitalOcean custom-scoped token uses `droplet:create`, `droplet:read`,
+  `droplet:update`, `droplet:delete`, `tag:create`, `tag:read`, and `tag:delete`, plus the required read dependencies
+  `regions:read`, `sizes:read`, `actions:read`, `image:read`, and `snapshot:read`. Tag attachment requires
+  `tag:create` and `droplet:update`. The independent watchdog token uses only `droplet:delete`, `droplet:read`,
+  `regions:read`, `sizes:read`, `actions:read`, `image:read`, and `snapshot:read`; it has no create, update, or tag-write scope.
+  See [DigitalOcean's droplet delete scope](https://docs.digitalocean.com/reference/api/scopes/droplet/delete/) and
+  [tag API scopes](https://docs.digitalocean.com/reference/api/reference/tags/). A Cloud Firewall applied to the tag
+  `walkie-managed` with no inbound rules is created once by an operator; its outbound granularity is **[UNVERIFIED]**
+  (the `tc` shaping and the egress cap do not depend on it). Keep the provider account separate from anything else.
+- **Limits (v1).** The compute token lives on the one owner machine that opened the account (another owner machine
+  would open its own account). Queued machines start only while that owner's daemon runs. The heartbeat is reported by
+  the rented machine itself (root-only timer and token): a customer who is root on the machine could under-report
+  egress or load; the provider's own metering is not yet reconciled against it. A code in flight to the provider is
+  visible to the provider. Stop always wipes: there are no kept disks in v1.
+
+No pre-digest rental compute authority data exists because rental compute has never been deployed with `COMPUTE_ENABLED` set.
+
+Rental compute has a 15-minute paid lease. The guest powers off 15 minutes after its last lease deadline. A launched
+Droplet starts with a `wk-paid-until-<unix>` tag at most 60 minutes ahead. The minute tick renews tags with under
+30 minutes left, oldest deadline first, and persists failures for retry. The independent watchdog deletes only
+`walkie-managed` Droplets after the paid tag plus 20 minutes; an invalid or missing deadline is bounded by creation
+plus 60 minutes, then the same grace. It alerts on invalid tags and continues past individual delete failures.
+
+Run `scripts/compute-watchdog.ts --apply` every five minutes on an operator-owned Mac using
+`scripts/launchd/dev.walkie.compute-watchdog.plist`: replace its checkout, token file, site origin, HMAC secret, and
+log directory placeholders before installing it in `~/Library/LaunchAgents`. Set the token file to mode 0600 and
+use the separate watchdog token scopes above. The script reads only the path from `COMPUTE_WATCHDOG_TOKEN_FILE`;
+neither the token nor the HMAC secret is logged. Set the same `COMPUTE_WATCHDOG_HMAC_SECRET` on the site. Each run
+POSTs a signed timestamp to `/api/compute/watchdog-heartbeat`; a tick alerts via the configured Telegram hook after
+20 minutes without one. The pinned GitHub Actions workflow is an hourly backstop using separate
+`COMPUTE_WATCHDOG_TOKEN` and `COMPUTE_WATCHDOG_HMAC_SECRET` secrets and a `COMPUTE_SITE_ORIGIN` variable. The Vercel
+minute cron in `site/vercel.json` remains registered for billing and renewals; the deployment uses Vercel Pro.
+A powered-off Droplet continues to incur provider charges until deleted.
+
+The provider and approximate region remain observable to a shell user through hardware identifiers, CPU information and the public IP. Bootstrap replaces the provider APT mirror with the standard Ubuntu archive. Provider cost figures remain private to the control plane; provider visibility is not a security boundary.
 
 ## Known limits
 
@@ -1427,9 +1657,9 @@ What a v2 seat request (PROTOCOL §11 "Seats v2") adds to threat 16, and what bo
 - A declined admission (`team.admit` with `approve: false`) is not deduplicated: its retry finds no join request.
 - **Node limits** are lifetime per team: 1024 node ids ever admitted (every re-key or new machine uses one; a
   revoked id still counts). A team that reaches it can't admit new machines and must re-init. Per login, 16
-  non-revoked machines; an owner revokes old ones to make room. With auto-admit on, one member joining fresh keys
-  uses at most 16 of the team's ids until an owner revokes some, so exhausting the team budget takes 64 members'
-  worth of machines or an owner's revocations.
+  non-revoked machines; an owner revokes old ones to make room. Auto-admit now applies only to a
+  login's first machine. More keys under that login require owner approval or an add-machine code;
+  the 16-node limit still applies after approval.
 - A non-member that receives a valid restricted event in full before the authority's watermark covers it (only a
   relay racing a membership change, or a misbehaving one, sends it that) keeps it in full, never shown, like the
   hidden rows every node already keeps in full, so its verdict can be re-judged; one received after it is anchored
@@ -1464,17 +1694,22 @@ What a v2 seat request (PROTOCOL §11 "Seats v2") adds to threat 16, and what bo
   remote roster ingestion accepts any valid authority-signed addition without them, by design (plans never enter
   validity). Team binding closes the cheap bypass (one key on many teams); a patched authority binary is out of
   scope.
-- **Binding is compare-then-write on Stripe metadata** (Stripe has no compare-and-set): of two first binds of the
+- **With no database, binding has the released-client compare-then-write behavior** on Stripe metadata (Stripe has no compare-and-set): of two first binds of the
   same code racing within milliseconds, both may read "unbound"; the read-back after the write refuses the one whose
   write was overwritten, but if the writes don't interleave with the reads both can succeed. Only the code's holder
   can do this, the loser's license can't renew (its token hash was overwritten), and it lapses after its period.
   The one-time reveal writes a nonce with its mark and reads it back: of two concurrent reveals only the one whose
   write stuck shows the code, the other answers 410 (same limit as binding when the writes don't interleave with
   the reads).
+- A released client may send a proofless bind. Its activation code holder can choose any syntactically valid team id;
+  the site has no roster proof on that path. This is the deliberate compatibility path for pre.4/pre.5 clients.
+  It does not authorize changing a compute enrollment. With a database, subscription and team locks protect first
+  binds where compute state may exist; without a database, there can be no funded account, hold, or open checkout.
 - **The renewal token is returned once.** If the bind's answer is lost, or the authority moves to another machine
   without `~/.walkie/license-renew-token`, the license keeps working until expiry but won't renew by itself
   (`walkie license activate` reports `renewal: missing`); support must reset the binding (clear `walkie_team` and
-  `walkie_renew_hash` on the subscription) so the code can be bound again.
+  `walkie_renew_hash` on the subscription) so the code can be bound again. With no database the reset has main's
+  immediate rebind behavior, including within 24 hours; there is no retained bind idempotency key.
 - **Integration slots are the authority's decision, but a daemon's local switch is its own.** A connector enabled
   before this revision (no `team.integration` entry) asks for its slot at startup; if the plan has no room the
   authority refuses, the daemon logs it and keeps the connector on (nothing already enabled is turned off; it asks

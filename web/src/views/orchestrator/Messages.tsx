@@ -44,7 +44,7 @@ export const Message = memo(function Message({ msg, opts }: { msg: ChatMessage; 
   if (msg.role === "user") {
     return (
       <div className={`orch-msg orch-user${msg.note ? " is-unsent" : ""}`}>
-        <h3 className="sr-only">You said:</h3>
+        <h3 className="sr-only">{msg.scheduled ? "Scheduled instruction:" : "You said:"}</h3>
         <div className="orch-bubble">{msg.text}</div>
         {msg.note && <p className="orch-note" role="note">{msg.note}</p>}
       </div>

@@ -4,7 +4,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { doctorChecks, doctorLines, type DoctorFacts } from "../../src/cli/commands/seats-enable.ts";
+import { doctorLines } from "../../src/cli/commands/seats-enable.ts";
+import { doctorChecks, type DoctorFacts } from "../../src/daemon/seats/doctor.ts";
 import {
   HelperVersionCache, UNKNOWN_RETRY_MS, helperVersion, helperVersionAsync, helperVersionProblem, parseVersionLine, realRunVersion, realRunVersionAsync, VERSION_TIMEOUT_MS,
 } from "../../src/daemon/seats/helper-version.ts";
@@ -153,6 +154,12 @@ describe("walkie seats doctor", () => {
   } as SeatsLocalView;
   const facts: DoctorFacts = { team: "aka", release: true, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: "/x/claude", codex: "/x/codex" } };
   const hv = (a: string, want = "0.2.0-pre.5") => helperVersion([RUNNER, ADMIN], want, { pathProblem: ok, run: (p) => (p === ADMIN ? `walkie ${a}` : `walkie ${want}`) });
+
+  test("an ambiguous machine launcher is a warning with a concrete fix", () => {
+    const checks = doctorChecks({ ...local, ambiguous_launchers: ["@alex/alex-mbp"] }, facts);
+    expect(checks).toContainEqual({ ok: "warn", what: "@alex/alex-mbp matches multiple admitted machines and allows none of them", fix: "rename one machine or use @alex" });
+    expect(plain(doctorLines(checks))).toContain("! @alex/alex-mbp matches multiple admitted machines");
+  });
 
   test("a stale helper is a failed check naming the fix; the machine isn't ready", () => {
     const checks = doctorChecks(local, { ...facts, helperVersion: hv("0.2.0-pre.4") });

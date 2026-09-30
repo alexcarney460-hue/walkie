@@ -17,7 +17,7 @@
 // every file the user owns outside its home and empties its home, verified. Ending a seat is that destroy (admin.ts),
 // which removes the user itself. These are separate invocations, never this seat's own runner, which the seat can
 // kill or stop (it runs as the same user).
-import { accessSync, closeSync, constants, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { RELEASE_BUILD } from "../../license/service.ts";
@@ -27,7 +27,9 @@ import { MAX_SEAT_BRIEF, SEAT_TASK_PROMPT, SEAT_TASK_PROMPT_ALT, SeatBranch, Sea
 import { readResultFile, removeTask, writeTask, type TaskFile } from "./v2.ts";
 import { Input } from "./runner-io.ts";
 import { FAKE_UID_ENV, fakeScope, uidOp } from "./runner-uid.ts";
-import { sweepOp, validRoots } from "./runner-sweep.ts";
+import { boundedSweepAnswer, sweepOp, validResidueFolders, validRoots } from "./runner-sweep.ts";
+import { AT_FDCWD, clearProtections, closeFd, openDirAt } from "./fsat.ts";
+import { writeAll } from "../../cli/stdio.ts";
 
 /** Bumped when the stdin/stdout protocol changes: an installed runner copy of another version refuses to run. */
 export const RUNNER_PROTOCOL = 6;
@@ -51,6 +53,44 @@ const REAP_GRACE_MS = 2_000;
 const DRAIN_MS = 2_000;
 /** The seat's credential for the seats' socket, in the seat's own directory (never in an environment: `ps -E`). */
 export const SEAT_TOKEN_FILE = ".walkie-seat-token";
+
+/** Remove and verify every projected Claude credential before a seat user's general file sweep. */
+export function dropClaudeProjections(home: string): boolean {
+  const seats = join(home, "walkie-seats");
+  const clear = (parent: string, name: string, dir: boolean) => {
+    const fd = openDirAt(AT_FDCWD(), parent);
+    try { clearProtections(fd, Buffer.from(name), dir); } finally { closeFd(fd); }
+  };
+  let names: string[];
+  try {
+    const root = lstatSync(seats);
+    if (root.isSymbolicLink()) { rmSync(seats); return true; }
+    if (!root.isDirectory()) return true; // the general home sweep removes a replacement entry
+    clear(home, "walkie-seats", true);
+    names = readdirSync(seats);
+  } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
+  let verified = true;
+  for (const name of names) {
+    const run = join(seats, name);
+    const configDir = join(run, "claude-config");
+    const file = join(configDir, ".credentials.json");
+    try {
+      const dir = lstatSync(run);
+      if (dir.isSymbolicLink()) { rmSync(run); continue; }
+      if (!dir.isDirectory()) continue;
+      clear(seats, name, true);
+      const config = lstatSync(configDir);
+      if (config.isSymbolicLink()) { rmSync(configDir); continue; }
+      if (!config.isDirectory()) continue;
+      clear(run, "claude-config", true);
+      try { lstatSync(file); clear(configDir, ".credentials.json", false); }
+      catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
+      rmSync(file, { force: true });
+      try { lstatSync(file); verified = false; } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") verified = false; }
+    } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") verified = false; }
+  }
+  return verified;
+}
 /** Tests only, never in a release build (and sudo resets the environment anyway): where the fake seat user lives. */
 const HOME_OVERRIDE = "WALKIE_SEAT_RUNNER_HOME";
 
@@ -116,7 +156,7 @@ export function validSpec(v: unknown): RunnerSpec | null {
 }
 
 function send(o: Record<string, unknown>): void {
-  try { process.stdout.write(`r ${JSON.stringify(o)}\n`); } catch { /* the daemon is gone */ }
+  try { writeAll(1, `r ${JSON.stringify(o)}\n`); } catch { /* the daemon is gone */ }
 }
 
 function fail(message: string): number {
@@ -168,7 +208,10 @@ async function knowsPermissionPrompts(bin: string, env: Record<string, string>):
 }
 
 /** `walkie seat-runner`. */
+export function enforceSeatUmask(): void { process.umask(0o077); }
+
 export async function runSeatRunner(): Promise<number> {
+  enforceSeatUmask();
   notDumpable();
   const input = new Input(Bun.stdin.stream());
   const head = await input.line(HEADER_MAX);
@@ -184,16 +227,25 @@ export async function runSeatRunner(): Promise<number> {
       return fail((err as Error).message);
     }
   }
-  if ((raw as { rv?: unknown } | null)?.rv === RUNNER_PROTOCOL && op === "sweep") {
+  if ((raw as { rv?: unknown } | null)?.rv === RUNNER_PROTOCOL && (op === "sweep" || op === "talkie-sweep")) {
     try {
       const roots = validRoots((raw as { roots?: unknown }).roots);
       if (!roots) return fail("the sweep's extra roots are not valid paths");
-      const r = sweepOp(seatHome(), process.env, roots);
-      send({ ...r });
-      return r.verified ? 0 : 1;
+      const folders = validResidueFolders((raw as { residueFolders?: unknown }).residueFolders);
+      if (!folders || (op === "sweep" && folders.length) || (op === "talkie-sweep" && !folders.length))
+        return fail("the dedicated user's previous folders are not valid roots");
+      const r = sweepOp(seatHome(), process.env, roots, folders);
+      const answer = boundedSweepAnswer(r);
+      send({ ...answer });
+      return answer.verified ? 0 : 1;
     } catch (err) {
       return fail((err as Error).message);
     }
+  }
+  if ((raw as { rv?: unknown } | null)?.rv === RUNNER_PROTOCOL && op === "drop-claude") {
+    const verified = dropClaudeProjections(seatHome());
+    send({ verified, left: verified ? 0 : 1 });
+    return verified ? 0 : 1;
   }
   const spec = validSpec(raw);
   if (!spec) return fail(`not a seat request this runner understands (protocol ${RUNNER_PROTOCOL}; re-run: walkie seats setup-user --apply after an update)`);
@@ -225,7 +277,10 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   if (!prompt || (spec.bundle_len && !bundle && !streamed)) return fail("the seat request ended early");
   const tokenFile = join(dir, SEAT_TOKEN_FILE);
   writeFileSync(tokenFile, spec.token, { mode: 0o600 });
-  const dropToken = () => rmSync(tokenFile, { force: true });
+  const dropToken = () => {
+    rmSync(tokenFile, { force: true });
+    rmSync(join(dir, "claude-config", ".credentials.json"), { force: true });
+  };
   const scope = fakeScope();
   // This run's own runtime configuration, fresh in the fresh home, with Walkie's settings: no hooks, whatever an
   // earlier seat or the repository planted (Codex r4 HIGH 2).

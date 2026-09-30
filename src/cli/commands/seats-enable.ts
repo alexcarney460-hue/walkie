@@ -7,14 +7,12 @@
 //   walkie seats doctor     whether this machine is ready to take seats, and what fixes each thing that isn't;
 //   walkie seats start <machine> --count N --provider claude|codex (--prompt "…" | --brief file.md)
 //       N seats on a teammate's machine from here (the dashboard's launch form has the same "How many").
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { WalkieClient } from "../../client/index.ts";
-import { RELEASE_BUILD } from "../../license/service.ts";
-import { DEFAULT_ADMIN, DEFAULT_RUNNER, RUNTIMES_DIR, SEAT_ROOTS_FILE, runnerPathProblem } from "../../daemon/seats/seat-user.ts";
-import { helperVersion, helperVersionProblem, type HelperVersion, type HelperVersionDeps } from "../../daemon/seats/helper-version.ts";
-import { VERSION } from "../../daemon/version.ts";
-import { MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, type SeatMode, type SeatRuntime, type SeatsLocalView } from "../../protocol/seats.ts";
+import { RUNTIMES_DIR } from "../../daemon/seats/seat-user.ts";
+import { doctorChecks, doctorFacts, type Check } from "../../daemon/seats/doctor.ts";
+import { MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, launcherPolicyLabel, parseLauncher, type SeatMode, type SeatRuntime, type SeatsLocalView } from "../../protocol/seats.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, requirePerson, type Ctx } from "../context.ts";
 import { adminCaller } from "../admin-gate.ts";
@@ -37,6 +35,19 @@ export function noTeamAgents(ctx: Pick<Ctx, "args">): boolean {
 /** At most this many seats per `seats start` (a host's own `max` still applies: the rest queue there). */
 export const MAX_START_COUNT = 10;
 
+export function enableConsentLine(): string {
+  return "This lets your team's owners and every agent they run, or listed person launchers and every agent they run, start Claude Code / Codex agents on this machine (remote code execution, on purpose). Exact agent entries cover only that agent.";
+}
+
+export function launcherSummary(entries: readonly string[]): string {
+  return entries.map((entry) => {
+    const parsed = parseLauncher(entry);
+    if (!parsed) return entry;
+    if (parsed.agent) return `${entry} only`;
+    return `${entry} and every agent they run${parsed.machine ? " on that machine" : ""}`;
+  }).join(", ");
+}
+
 export interface EnableOptions {
   sameUser?: boolean; acceptReadableHome?: boolean; launchers?: string[]; max?: number;
   /**
@@ -44,7 +55,7 @@ export interface EnableOptions {
    * `walkie seats enable --claude-token-stdin`, or typed at a hidden prompt when this Mac's login is Keychain-only.
    */
   claudeToken?: string;
-  /** Ask for that token at a hidden prompt when Claude seats would have no login (a terminal only). */
+  /** Ask for an optional override at a hidden prompt when Claude has no usable login (a terminal only). */
   askClaudeToken?: boolean;
   /** The daemon to talk to (default: ctx.client()). */
   client?: WalkieClient;
@@ -84,7 +95,7 @@ export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<Seat
   // may get the machine's own login instead.
   const pre = (await client.seats()).local;
   if (!o.claudeToken && o.askClaudeToken && pre.claude_login === "unavailable" && !o.sameUser && process.stdin.isTTY) {
-    ctx.out("This machine's Claude login is in its Keychain, which seat users can't use. Give seats a token of their own:");
+    ctx.out("This machine has no usable Claude access token for seats. Give seats a token of their own:");
     ctx.out(c.dim("run `claude setup-token` in another terminal, then paste the token here (hidden; Enter skips)."));
     const typed = (await askHidden("Claude token for seats: ")).text.trim();
     if (typed) o = { ...o, claudeToken: typed };
@@ -104,9 +115,14 @@ export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<Seat
     ...(o.launchers ? { launchers: o.launchers } : {}), ...(o.max ? { max: o.max } : {}),
   });
   const local = res.local;
-  did.push(`seats allowed: ${local.launchers?.length ? local.launchers.join(", ") : "the team's owners"} may start up to ${local.max ?? 3} at once here${o.sameUser ? ", as your own OS user" : ", each as a fresh seat user"}`);
+  did.push(`seats allowed: ${local.launcher_policy_empty ? "nobody" : local.launchers?.length ? launcherSummary(local.launchers) : launcherPolicyLabel(local)} may start up to ${local.max ?? 3} at once here${o.sameUser ? ", as your own OS user" : ", each as a fresh seat user"}`);
   ctx.out(c.green("Seats are on for this machine."));
   for (const d of did) ctx.out(`  ${c.green("✓")} ${d}`);
+  ctx.out(local.claude_login === "dedicated"
+    ? "Claude seats use the token set for seats only; a running seat can read it."
+    : local.ephemeral
+      ? "A running seat can read this machine's short-lived Claude access token, never the refresh token."
+      : "A running seat can read everything you can, including your full Claude login.");
   if (local.channel_ok === false) {
     // The seats channel is made through the team's roster authority (ADD-MACHINE-1 finding 3): offline, it is queued.
     ctx.out(`  ${c.yellow("!")} the seats channel waits for the team's roster authority (an owner's machine) to be online`
@@ -125,97 +141,10 @@ export function extractClaudeToken(text: string): string | null {
 
 // ---- doctor --------------------------------------------------------------------------------------------------
 
-export type Check = { ok: boolean | "warn"; what: string; fix?: string };
-
-/** What the doctor looks at on this machine besides the daemon's view (injectable for tests). */
-export interface DoctorFacts {
-  team: string | null;
-  release: boolean;
-  /** For seat users: the runner/helper paths' problems, sudo reaching the helper, the helper's roots file. */
-  runnerProblem: string | null;
-  helper: "ok" | string;
-  rootsFile: "ok" | string;
-  /** The runtimes seats would run: found or not. */
-  runtimes: Record<"claude" | "codex", string | null>;
-  /** The installed runner and helper's versions against this walkie (release builds with seat users; else absent). */
-  helperVersion?: HelperVersion | null;
-}
-
-export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
-  const out: Check[] = [];
-  out.push(f.team ? { ok: true, what: `in the team ${f.team}` } : { ok: false, what: "not in a team", fix: "walkie setup (or walkie join <invite>)" });
-  out.push(local.allow ? { ok: true, what: "seats allowed" } : { ok: false, what: "seats are off here", fix: "walkie seats enable" });
-  if (local.disabled_reason) out.push({ ok: false, what: `seats don't run: ${local.disabled_reason}` });
-  if (local.allow && !local.channel_ok) {
-    const waiting = /offline|queued|waiting/i.test(local.channel_error ?? "waiting");
-    out.push(waiting
-      ? { ok: "warn", what: `the seats channel waits for the team's roster authority: ${local.channel_error ?? "waiting"}`, fix: "nothing to do: it completes when an owner's machine is online" }
-      : { ok: false, what: `the seats channel isn't ready: ${local.channel_error}` });
-  }
-  if (local.ephemeral) {
-    out.push({ ok: true, what: "every seat runs as a fresh OS user, removed after it" });
-    if (f.release) out.push(f.runnerProblem ? { ok: false, what: `the seat runner and helper: ${f.runnerProblem}`, fix: "walkie seats setup-user --apply" } : { ok: true, what: "the runner and user helper are root's" });
-    if (f.release) out.push(f.helper === "ok" ? { ok: true, what: "sudo reaches the user helper without a password" } : { ok: false, what: `the user helper: ${f.helper}`, fix: "walkie seats setup-user --apply" });
-    if (f.release) out.push(f.rootsFile === "ok" ? { ok: true, what: "the helper knows this machine's world-writable directories" } : { ok: false, what: f.rootsFile, fix: "walkie seats setup-user --apply" });
-    // `walkie update` replaces walkie, never the root-owned copies: a stale one lacks this release's helper fixes.
-    if (f.release && !f.runnerProblem && f.helperVersion) {
-      const v = f.helperVersion;
-      const problem = helperVersionProblem(v);
-      out.push(!problem ? { ok: true, what: `the runner and user helper are this Walkie's (${v.want})` }
-        : { ok: v.state === "stale" ? false : "warn", what: problem, fix: "walkie seats setup-user --apply" });
-    }
-  } else if (local.same_user) {
-    out.push({ ok: "warn", what: "seats run as YOUR OS user (they can reach your Walkie and your files)", fix: "walkie seats setup-user --apply" });
-  } else {
-    out.push({ ok: false, what: "no seat users set up", fix: "walkie seats enable" });
-  }
-  const claudeBin = f.runtimes.claude;
-  const claudeLogin = local.claude_login === "dedicated" ? "a token set for seats only"
-    : local.claude_login === "machine" ? "this machine's own login" : null;
-  out.push(!claudeBin ? { ok: false, what: "Claude Code isn't installed where seats can run it", fix: local.ephemeral ? "install claude, then walkie seats setup-user --apply" : "install claude" }
-    : claudeLogin ? { ok: true, what: `Claude seats: logged in (${claudeLogin})` }
-    : { ok: false, what: "Claude seats: this machine's Claude login is only in its Keychain, which seat users can't use", fix: "claude setup-token, then walkie seats token set < token.txt" });
-  const codexBin = f.runtimes.codex;
-  out.push(!codexBin ? { ok: "warn", what: "Codex isn't installed where seats can run it (only Claude seats)", fix: local.ephemeral ? "install codex, then walkie seats setup-user --apply" : "install codex" }
-    : local.codex_login === "unavailable" ? { ok: false, what: "Codex seats: not signed in where seat users can use it (no ~/.codex/auth.json)", fix: "codex login" }
-    : { ok: true, what: "Codex seats: signed in (this machine's own sign-in)" });
-  if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed" });
-  if (local.quarantined?.length) out.push({ ok: false, what: `seat users not verified removed: ${local.quarantined.join(", ")}`, fix: "see walkie seats (the reason), https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional" });
-  if (local.availability?.state === "busy") out.push({ ok: "warn", what: "this machine is busy (its person is using it): new seats queue", fix: "walkie seats resume" });
-  if (!f.release && local.ephemeral) out.push({ ok: "warn", what: "a source build: its own runner and helper, not the installed ones (not checked)" });
-  return out;
-}
-
-/** The facts the doctor needs, read from this machine (`versionDeps`: tests, a fake `version` run). */
-export function doctorFacts(local: SeatsLocalView, team: string | null, versionDeps?: HelperVersionDeps): DoctorFacts {
-  // A source build runs its own runner and helper (never the installed ones): those aren't checked.
-  const installed = local.ephemeral && RELEASE_BUILD;
-  const runner = DEFAULT_RUNNER;
-  const runnerProblem = installed ? runnerPathProblem(runner) ?? runnerPathProblem(DEFAULT_ADMIN) : null;
-  let helper: string = "ok";
-  if (installed) {
-    const p = Bun.spawnSync(["sudo", "-n", DEFAULT_ADMIN, "seat-admin", "pending"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", cwd: "/", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
-    const out = p.stdout.toString().trim();
-    helper = out.startsWith('{"ok":true') ? "ok" : `sudo -n ${DEFAULT_ADMIN} seat-admin pending didn't answer (${(out || p.stderr.toString().trim()).slice(0, 160)})`;
-  }
-  let rootsFile = "ok";
-  if (installed) {
-    const f = join(DEFAULT_ADMIN.replace(/\/[^/]+$/, ""), SEAT_ROOTS_FILE);
-    try { JSON.parse(readFileSync(f, "utf8")); } catch { rootsFile = `${f} is missing or unreadable`; }
-  }
-  const found = (r: SeatRuntime): string | null => {
-    if (installed) { const p = join(RUNTIMES_DIR, r); return existsSync(p) ? p : null; }
-    for (const d of (process.env.PATH ?? "").split(":")) { const p = join(d, r); try { if (statSync(p).isFile()) return p; } catch { /* next */ } }
-    return null;
-  };
-  const helperVersionFact = installed && !runnerProblem ? helperVersion([runner, DEFAULT_ADMIN], VERSION, versionDeps) : null;
-  return { team, release: RELEASE_BUILD, runnerProblem, helper, rootsFile, runtimes: { claude: found("claude"), codex: found("codex") }, helperVersion: helperVersionFact };
-}
-
 export function doctorLines(checks: Check[]): string[] {
   const lines = checks.map((k) => `  ${k.ok === true ? c.green("✓") : k.ok === "warn" ? c.yellow("!") : c.red("✗")} ${k.what}${k.fix && k.ok !== true ? c.dim(`  → ${k.fix}`) : ""}`);
   const bad = checks.filter((k) => k.ok === false);
-  const claudeOk = checks.some((k) => k.ok === true && k.what.startsWith("Claude seats: logged in"));
+  const claudeOk = checks.some((k) => k.ok === true && k.what.startsWith("Claude seats: using"));
   const codexOk = checks.some((k) => k.ok === true && k.what.startsWith("Codex seats: signed in"));
   const ready = bad.filter((k) => !k.what.startsWith("Claude seats") && !k.what.startsWith("Codex seats") && !k.what.startsWith("Claude Code isn't")).length === 0;
   const which = [claudeOk ? "Claude" : "", codexOk ? "Codex" : ""].filter(Boolean).join(" and ");
@@ -243,8 +172,13 @@ async function enable(ctx: Ctx): Promise<number> {
   const yes = bool(ctx.args, "yes") || allowTeamAgents(ctx) || adminCaller(ctx).kind === "agent";
   const sameUser = bool(ctx.args, "same-user");
   if (!yes) {
-    ctx.out("This lets your team's owners start Claude Code / Codex agents on this machine (remote code execution, on purpose),");
+    const before = (await ctx.client().seats()).local;
+    ctx.out(enableConsentLine());
     ctx.out(sameUser ? "as your own OS user." : "each as a fresh OS user of its own, removed after it. Turn it off any time: walkie seats deny.");
+    ctx.out(before.claude_login === "dedicated"
+      ? "Claude seats use the token set for seats only; a running seat can read it."
+      : sameUser ? "A running seat can read everything you can, including your full Claude login."
+        : "A running seat can read this machine's short-lived Claude access token, never the refresh token.");
     await requirePerson(ctx, "let your team start agents on this machine", "yes");
   }
   const launchers = str(ctx.args, "launchers")?.split(",").map((s) => s.trim()).filter(Boolean);

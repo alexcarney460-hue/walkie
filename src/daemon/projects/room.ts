@@ -4,6 +4,7 @@
 // fold). The checks here refuse early, with a clear error, what the fold would ignore for this caller (people-only
 // changes, an agent's version of a pinned file), plus the soft caps and the secret warning.
 import { redactSecrets } from "../../protocol/safety.ts";
+import { containsJoinCredential, containsJoinCredentialBytes } from "../../protocol/join-credential.ts";
 import type { BodyOf, Event } from "../../protocol/schemas.ts";
 import {
   currentVersion, PIN_FETCH, PIN_INLINE_FILE, PIN_INLINE_TOTAL, ROOM_LIMITS, versionCount, roomFileView, roomOpText, roomOrder,
@@ -136,6 +137,8 @@ export interface AddResult {
 export function addFile(w: WriteCtx, channel: string, bytes: Uint8Array, req: AddFile): AddResult {
   namedAgent(w);
   const agent = isAgentCaller(w);
+  if (agent && (containsJoinCredential(req.name) || containsJoinCredentialBytes(bytes)))
+    throw new HttpError(403, "join_credential_private_reply_only", "agents cannot upload join credentials; the daemon delivers minted credentials privately");
   const p = visibleProject(w, channel);
   if (p.state !== "active") throw new HttpError(409, "conflict", `project ${p.name} is ${p.state}`);
   if (req.pin && agent) throw new HttpError(403, "forbidden", "pinning is for people only (pinned documents reach every agent's context; ask your person)");

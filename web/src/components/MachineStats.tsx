@@ -4,6 +4,7 @@ import type { NodeView } from "../api/types.ts";
 import type { MachineStats } from "../../../src/protocol/machine-stats.ts";
 import { gb, memText, tempLevel, tempText } from "../../../src/protocol/machine-stats-format.ts";
 import { agoLong, useNow } from "../lib/time.ts";
+import { machineBusy } from "../../../src/protocol/machine-stats.ts";
 
 type Level = "normal" | "warn" | "critical";
 export function ModelServerLoad({ stats }: { stats?: MachineStats }) {
@@ -17,16 +18,32 @@ export function statsTitle(hostname: string, stats: MachineStats | undefined, on
   if (!stats) return `${hostname}: no memory or temperature reported (turned off, or an older Walkie)`;
   const m = stats.mem;
   const lines = [
-    m ? `Memory ${gb(m.used)} of ${gb(m.total)} GB used${m.pressure ? ` · pressure ${PRESSURE_LABEL[m.pressure]}` : ""}` : "Memory n/a",
+    m ? `Memory ${gb(m.used)} of ${gb(m.total)} GB used, ${gb(m.free ?? Math.max(0, m.total - m.used))} GB free${m.pressure ? ` · pressure ${PRESSURE_LABEL[m.pressure]}` : ""}` : "Memory n/a",
+    stats.sys ? `Load 1/5/15: ${[stats.sys.load1, stats.sys.load5, stats.sys.load15].map((n) => n?.toFixed(2) ?? "n/a").join(" / ")} · CPU busy ${stats.sys.cpu_busy_pct === undefined || stats.sys.cpu_busy_pct === null ? "n/a" : `${stats.sys.cpu_busy_pct}%`}` : null,
+    stats.agent_processes ? `Agent processes: ${stats.agent_processes.map((a) => `${a.name} ${a.count}`).join(", ") || "none"}` : null,
     m ? `Swap ${gb(m.swap_used)} GB used` : null,
     `Temperature ${stats.temp_c === null ? "n/a" : `${stats.temp_c.toFixed(1)} °C (${tempSourceLong(stats)})`}`,
     stats.temp_zones?.length ? `Windows thermal zones: ${stats.temp_zones.map((z) => `${z.name} ${Math.round(z.c)} °C`).join(", ")}` : null,
     stats.gpu_temp?.some((t) => t !== null) && stats.temp_src !== "gpu"
       ? `GPU ${stats.gpu_temp.map((t) => (t === null ? "n/a" : `${Math.round(t)} °C`)).join(", ")}` : null,
     online ? `Updated ${agoLong(stats.at, now)}` : `Last known (machine offline), sampled ${agoLong(stats.at, now)}`,
-    stats.discovery?.incomplete ? `Agent discovery incomplete: ${stats.discovery.unreported} running session(s) not examined in the last scan keep their last status` : null,
+    stats.discovery?.stale ? "Agent discovery: process census is stale while the process list is unavailable"
+      : stats.discovery?.incomplete ? `Agent discovery: ${stats.discovery.unreported} session(s) have details pending or exceed the reporting cap` : null,
   ];
   return lines.filter(Boolean).join("\n");
+}
+
+export function MachineLoad({ stats }: { stats?: MachineStats }) {
+  if (!stats?.sys && !stats?.agent_processes) return null;
+  const sys = stats.sys;
+  const count = stats.agent_processes?.reduce((n, a) => n + a.count, 0);
+  const known = count !== undefined || sys?.load1 != null || sys?.cpu_busy_pct != null;
+  return <span className="ms-load" data-testid="machine-load">
+    {machineBusy(stats) ? "Busy" : known ? "Idle" : "Load unknown"}
+    {count !== undefined ? ` · ${count} agents` : ""}
+    {sys ? ` · load ${[sys.load1, sys.load5, sys.load15].map((n) => n?.toFixed(1) ?? "n/a").join("/")} · CPU ${sys.cpu_busy_pct === undefined || sys.cpu_busy_pct === null ? "n/a" : `${sys.cpu_busy_pct}%`}` : ""}
+    {stats.mem ? ` · ${gb(stats.mem.used)} used, ${gb(stats.mem.free ?? Math.max(0, stats.mem.total - stats.mem.used))} GB free` : ""}
+  </span>;
 }
 
 /** "CPU" or "GPU": where the machine temperature came from (older daemons report CPU/board sensors only). */
@@ -80,8 +97,9 @@ export function MachineStatsLine({ node, part = "rail" }: { node: NodeView; part
     <span className={`ms ms-${part}${node.online ? "" : " ms-stale"}`} title={statsTitle(node.hostname, node.stats, node.online, now)}>
       <MemBar mem={node.stats?.mem} compact />
       <TempReadout stats={node.stats} />
+      <MachineLoad stats={node.stats} />
       <ModelServerLoad stats={node.stats} />
-      {node.stats?.discovery?.incomplete && <span className="ms-disc" data-testid="discovery-incomplete">discovery incomplete</span>}
+      {node.stats?.discovery?.incomplete && <span className="ms-disc" data-testid="discovery-incomplete">{node.stats.discovery.stale ? "discovery stale" : "discovery incomplete"}</span>}
       {!node.online && node.stats && <span className="sr-only"> (last known, machine offline)</span>}
     </span>
   );

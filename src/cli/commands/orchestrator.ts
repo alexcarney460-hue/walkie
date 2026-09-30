@@ -6,11 +6,13 @@ import { resolve } from "node:path";
 import { WalkieClient } from "../../client/index.ts";
 import { MODEL_ALIASES, ORCHESTRATOR_ACCESS, PERMISSION_MODES, validModel, type OrchMessage, type OrchestratorAccess, type OrchestratorView, type PermissionMode } from "../../protocol/orchestrator.ts";
 import { bool, int, str, UsageError } from "../args.ts";
-import { EXIT, readStdin, TERMINAL, type Ctx } from "../context.ts";
+import { EXIT, readStdin, requirePerson, TERMINAL, type Ctx } from "../context.ts";
 import { ago, c, hhmm, safeTerm } from "../format.ts";
+import { talkieRepair } from "./talkie-repair.ts";
+import { ScheduleTask } from "../../protocol/talkie-schedule.ts";
 
 const USAGE = "talkie start [--here] [--access platform|full] [--model m] [--cwd path] [--permission-mode default|acceptEdits|bypassPermissions] [--claude path]"
-  + " | model <default|opus|sonnet|haiku|fable|full-id> | access <platform|full> | lead-eligible <on|off> | auto | stop | status | say <text…|-> [--new] [--thread id] [--timeout 600] | log [--limit 20]";
+  + " | model <default|opus|sonnet|haiku|fable|full-id> | access <platform|full> | lead-eligible <on|off> | auto | stop | status | cleanup --repair | say <text…|-> [--new] [--thread id] [--timeout 600] | log [--limit 20]";
 
 const START_HINT = "start it on this machine: walkie talkie start";
 
@@ -23,7 +25,9 @@ export async function orchestrator(ctx: Ctx): Promise<number> {
   // reached from a person's terminal or the dashboard only.
   const marker = ctx.agentMarker();
   const agent = marker !== null || ctx.args.flags.get("for-agent") === true || adminCaller(ctx).kind === "agent";
+  if (sub === "schedule" || sub === "schedules") return schedule(ctx, agent);
   if (agent && sub === "lead-eligible") return refused(ctx, sub, marker);
+  if (agent && sub === "cleanup") return refused(ctx, sub, marker);
   const admin = sub === "start" || sub === "stop" || sub === "status" || sub === "model" || sub === "access" || sub === "auto" || sub === undefined;
   if (agent && !admin) return refused(ctx, sub ?? "status", marker);
   // A person's client sends no agent header (never the environment's WALKIE_AGENT); an agent's is marked.
@@ -36,10 +40,110 @@ export async function orchestrator(ctx: Ctx): Promise<number> {
     case "lead-eligible": return leadEligible(ctx, client);
     case "auto": return auto(ctx, client);
     case "status": case undefined: return status(ctx, client);
+    case "cleanup":
+      if (ctx.args.pos.length !== 1 || !bool(ctx.args, "repair")) throw new UsageError("talkie cleanup --repair");
+      return talkieRepair(ctx, client);
     case "say": return say(ctx, client);
     case "log": return log(ctx, client);
     default: throw new UsageError(`unknown subcommand "${sub}" (${USAGE})`);
   }
+}
+
+async function schedule(ctx: Ctx, agent: boolean): Promise<number> {
+  const action = ctx.args.pos[1] ?? "list";
+  const client = agent ? adminCtx(ctx, `talkie schedule ${action}`).client() : ctx.client();
+  const id = ctx.args.pos[2];
+  if (action === "list") {
+    const { schedules } = await client.schedules();
+    if (ctx.json) ctx.out(JSON.stringify({ schedules }));
+    else if (!schedules.length) ctx.out("no schedules");
+    else for (const s of schedules) ctx.out(`${s.id}  ${safeTerm(s.name)}  ${s.enabled ? s.cron : "paused"}  next ${s.next_run ? new Date(s.next_run).toLocaleString() : "-"}  last ${safeTerm(s.last_result ?? "-")}`);
+    return EXIT.ok;
+  }
+  if (action === "unresolved") {
+    if (ctx.args.pos.length !== 2) throw new UsageError("talkie schedule unresolved [--after <cursor>] [--limit 1..100]");
+    const limit = int(ctx.args, "limit", 100)!;
+    if (limit < 1 || limit > 100) throw new UsageError("--limit must be between 1 and 100");
+    const page = await client.scheduleUnresolved(str(ctx.args, "after"), limit);
+    if (ctx.json) ctx.out(JSON.stringify(page));
+    else {
+      for (const entry of page.entries) {
+        const claim = entry.claim ? `${entry.claim.term}:${entry.claim.seq}:${entry.claim.generation}` : "-";
+        ctx.out(`${entry.id}  ${safeTerm(entry.name)}  run ${entry.run}  claim ${claim}  local_id ${safeTerm(entry.local_id ?? "-")}`);
+      }
+      ctx.out(`${page.entries.length} shown of ${page.total}; next cursor: ${page.next_cursor ?? "-"}`);
+    }
+    return EXIT.ok;
+  }
+  if (action === "add") {
+    const name = id;
+    const cron = str(ctx.args, "cron");
+    if (!name || !cron || ctx.args.pos.length !== 3) throw new UsageError("talkie schedule add <name> --cron \"<expr>\" (--template <name> | --prompt \"<text>\")");
+    const task = scheduleTask(ctx, true);
+    const { schedule } = await client.scheduleAdd({ name, cron, task: task! });
+    ctx.out(ctx.json ? JSON.stringify(schedule) : `added ${safeTerm(schedule.name)} (${schedule.id}), next ${new Date(schedule.next_run!).toLocaleString()}`);
+    return EXIT.ok;
+  }
+  if (!id || ctx.args.pos.length !== 3) throw new UsageError(`talkie schedule ${action} <id>`);
+  if (action === "edit") {
+    const task = scheduleTask(ctx, false);
+    const patch = { ...(str(ctx.args, "name") ? { name: str(ctx.args, "name")! } : {}), ...(str(ctx.args, "cron") ? { cron: str(ctx.args, "cron")! } : {}), ...(task ? { task } : {}) };
+    if (!Object.keys(patch).length) throw new UsageError("talkie schedule edit <id> [--name <name>] [--cron <expr>] [--template <t> | --prompt <text>]");
+    const { schedule } = await client.scheduleEdit(id, patch);
+    const lost = editLost(patch, schedule);
+    ctx.out(ctx.json ? JSON.stringify(schedule) : lost.length
+      ? `schedule ${safeTerm(schedule.name)} keeps its previous ${lost.join(", ")}; the edit did not win`
+      : `edited ${safeTerm(schedule.name)}`);
+    return EXIT.ok;
+  }
+  if (action === "pause" || action === "resume") {
+    const { schedule } = await client.scheduleEdit(id, { enabled: action === "resume" });
+    const applied = schedule.enabled === (action === "resume");
+    ctx.out(ctx.json ? JSON.stringify(schedule) : applied
+      ? `${action === "pause" ? "paused" : "resumed"} ${safeTerm(schedule.name)}`
+      : `schedule ${safeTerm(schedule.name)} is still ${schedule.enabled ? "active" : "paused"}; the ${action} change did not win`);
+    return EXIT.ok;
+  }
+  if (action === "remove") {
+    const result = await client.scheduleRemove(id);
+    ctx.out(ctx.json ? JSON.stringify(result) : result.removed ? `removed ${id}` : `schedule ${id} is still present; removal did not win`);
+    return EXIT.ok;
+  }
+  if (action === "run-now") {
+    const result = await client.scheduleRunNow(id);
+    ctx.out(ctx.json ? JSON.stringify(result) : `started run ${result.run_id}`);
+    return EXIT.ok;
+  }
+  if (action === "reset") {
+    await requirePerson(ctx, "reset this schedule's claimed-slot mark", id);
+    const { schedule } = await client.scheduleReset(id);
+    ctx.out(ctx.json ? JSON.stringify(schedule) : `reset ${safeTerm(schedule.name)} (${id})\n${JSON.stringify(schedule,
+      (_key, value: unknown) => typeof value === "string" ? safeTerm(value) : value, 2)}`);
+    return EXIT.ok;
+  }
+  throw new UsageError("talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset");
+}
+
+/** Patched fields the folded schedule does not carry (the daemon trims a name and a prompt). */
+function editLost(patch: { name?: string; cron?: string; task?: unknown },
+  folded: { name: string; cron: string; task: unknown }): string[] {
+  return [
+    ...(patch.name !== undefined && folded.name !== patch.name.trim() ? ["name"] : []),
+    ...(patch.cron !== undefined && folded.cron.trim() !== patch.cron.trim() ? ["cron"] : []),
+    ...(patch.task !== undefined && JSON.stringify(folded.task) !== JSON.stringify(patch.task) ? ["task"] : []),
+  ];
+}
+
+function scheduleTask(ctx: Ctx, required: true): NonNullable<ReturnType<typeof scheduleTask>>;
+function scheduleTask(ctx: Ctx, required: false): { template: "board-refresh" | "machine-onboarding" | "project-sync" | "capacity-check" | "data-room-refresh" } | { prompt: string } | undefined;
+function scheduleTask(ctx: Ctx, required: boolean) {
+  const template = str(ctx.args, "template");
+  const prompt = str(ctx.args, "prompt");
+  if ((template && prompt) || (required && !template && !prompt)) throw new UsageError("choose exactly one of --template or --prompt");
+  if (!template && !prompt) return undefined;
+  const parsed = ScheduleTask.safeParse(template ? { template } : { prompt });
+  if (!parsed.success) throw new UsageError("template is board-refresh, machine-onboarding, project-sync, capacity-check, or data-room-refresh; prompt must be 1–8000 characters");
+  return parsed.data;
 }
 
 async function leadEligible(ctx: Ctx, client: WalkieClient): Promise<number> {
@@ -59,6 +163,7 @@ function refused(ctx: Ctx, sub: string, marker: string | null): number {
 
 function stateLine(v: OrchestratorView): string {
   const l = v.local;
+  if (l.state === "cleanup_pending") return `${c.yellow("cleanup pending")} — ${safeTerm(l.last_error ?? "verifying the shell uid is clean")}`;
   if (l.state === "standby") return `${c.cyan("standby")}${l.lead ? ` (lead: ${safeTerm(l.lead)})` : " (no lead machine yet)"} — the team's WalkieTalkie runs on its lead machine`;
   if (l.state === "needs_login") return `${c.yellow("needs a model login")} — ${safeTerm(l.needs ?? "sign in to Claude Code on this machine (run: claude)")}`;
   if (l.state === "failed") return `${c.red("failed")} — ${safeTerm(l.last_error ?? "WalkieTalkie keeps failing")} · restart: walkie talkie start`;

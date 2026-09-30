@@ -15,7 +15,7 @@ import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { fakeSeatWorld, type FakeSeatWorld, signInCodex } from "../helpers/fake-seat-users.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
-const CREDS = '{"claudeAiOauth":{"accessToken":"the-machines-own-login","refreshToken":"the-machines-refresh-token"}}';
+const CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", refreshToken: "the-machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } });
 
 let c: Cluster;
 let alex: TestNode;
@@ -196,7 +196,7 @@ describe("SEATS-FIX-6", () => {
       const { local } = await person(arvid).seatsConfig({ allow: true, ephemeral: true, env: ["FAKE_CODEX_LOG", "FAKE_OUTSIDE_DIR"] });
       expect(local.claude_login).toBe("unavailable");
       const s = await ended(await launch("needs a login", "claude"));
-      expect(s.reason).toMatch(/Keychain, which a seat user can't use/);
+      expect(s.reason).toMatch(/access token is unavailable or near expiry/);
       writeFileSync(envFile, `CLAUDE_CODE_OAUTH_TOKEN=sk${""}-ant-oat01-${"u".repeat(40)}\n`);
       expect((await person(arvid).seatsConfig({ allow: true, ephemeral: true, env: ["FAKE_CODEX_LOG", "FAKE_OUTSIDE_DIR"] })).local.claude_login).toBe("machine");
     } finally {

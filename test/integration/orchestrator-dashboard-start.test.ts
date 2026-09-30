@@ -4,7 +4,7 @@
 // refusals are what the button shows inline (no_team; claude_not_found; an observer); an agent and a paired phone are
 // refused (the phone app has no Orchestrator tab, and its tunnel can't reach these routes either).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hkdfKey, pairingKeys, unb64u } from "../../src/mobile/crypto.ts";
 import { MobileLink, type Registered } from "../../src/mobile/client.ts";
@@ -60,11 +60,25 @@ beforeAll(async () => {
   c = new Cluster();
   const state = join(c.root, "fake-state");
   mkdirSync(state, { recursive: true });
+  const talkieHome = join(c.root, "walkie-talkie");
+  mkdirSync(talkieHome);
+  const runner = join(c.root, "talkie-runner");
+  writeFileSync(runner, `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, "../../src/cli/main.ts")}' "$@"\n`);
+  chmodSync(runner, 0o755);
+  const runtime = join(c.root, "claude-runtime");
+  writeFileSync(runtime, `#!/bin/sh\nexec '${process.execPath}' '${join(FAKE_DIR, "claude")}' "$@"\n`);
+  chmodSync(runtime, 0o755);
   // The daemon's OWN PATH has the fake claude first (and bun, its interpreter): the dashboard sends no path, so this is
   // where start finds it.
   const orchestrator = {
     autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
-    env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: join(c.root, "fake-launches.jsonl") },
+    env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state,
+      FAKE_CLAUDE_LOG: join(c.root, "fake-launches.jsonl"), CLAUDE_CODE_OAUTH_TOKEN: "fake-test-token" },
+    shellUser: { ready: () => true, socketRoot: c.root, runner, runtime,
+      privateHome: () => null, testEnv: { FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: join(c.root, "fake-launches.jsonl") },
+      admin: async () => ({ ok: true, name: "walkie-talkie", uid: 550_000, home: talkieHome }),
+      userSwitch: () => [process.execPath, join(import.meta.dir, "../fixtures/fake-talkie-runner.ts")],
+    },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator, mobile: { relayUrl, appUrl: "http://127.0.0.1:1/m" } });
   kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kiras-mbp", orchestrator });

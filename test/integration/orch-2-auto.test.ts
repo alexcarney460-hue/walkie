@@ -267,16 +267,18 @@ describe("its walkie CLI mints an add-machine link under agent admin (Walkie Dir
   }, 60_000);
   afterAll(async () => { await c.close(); });
 
-  test("ADDMACHINE: the orchestrator's own `walkie team add-machine alex --json` returns a link; audited under its name", async () => {
+  test("ADDMACHINE: the orchestrator gets a receipt while its person gets the link; audited under its name", async () => {
     await alex.client("").orchestratorStart({ cwd: c.root });
     await waitFor(async () => (await view(alex)).state === "idle", { what: "idle" });
     const { message } = await alex.client("").orchestratorSay("please ADDMACHINE alex");
     await waitFor(async () => (await alex.client("").orchestratorMessages({ limit: 500 })).messages.some((m) => m.reply_to === message.id), { what: "reply", timeoutMs: 30_000 });
     const reply = (await alex.client("").orchestratorMessages({ limit: 500 })).messages.find((m) => m.reply_to === message.id);
     expect(reply?.text).toStartWith("minted: ");
-    const res = JSON.parse((reply?.text ?? "").slice("minted: ".length)) as { link: string; handle: string; expires_at: number; command: string };
+    const res = JSON.parse((reply?.text ?? "").slice("minted: ".length)) as { delivered: boolean; handle: string; expires_at: number; command: string };
     expect(res.handle).toBe("alex");
-    expect(res.link).toMatch(/^https:\/\//);
+    expect(res.delivered).toBe(true);
+    expect(JSON.stringify(res)).not.toContain("wk1");
+    expect((await alex.client("").orchestratorMessages({ limit: 500 })).messages.some((m) => m.text.includes("Link: https://getwalkie.vercel.app/join#wk1"))).toBe(true);
     expect(res.expires_at).toBeGreaterThan(Date.now());
     expect(readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8")).toMatch(/orchestrator[^\n]*minted an add-machine link for @alex/);
   }, 60_000);

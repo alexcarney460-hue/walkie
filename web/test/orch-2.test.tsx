@@ -153,3 +153,13 @@ describe("pre.8: no Start press on the lead", () => {
     expect(client).toContain('request<OrchestratorView>("POST", "/v1/orchestrator/auto", {}');
   });
 });
+
+test("the WalkieTalkie card shows one bounded cleanup pending diagnostic", () => {
+  const out = renderToStaticMarkup(<TalkieStateCard view={{ running: false, state: "cleanup_pending", restarts: 0,
+    last_error: "helper unavailable\n" + "x".repeat(500) }} />);
+  expect(out).toContain("WalkieTalkie cleanup pending");
+  expect(out).toContain("helper unavailable");
+  expect(out).not.toContain("Stopped");
+  expect(out).not.toContain("offline");
+  expect(out).not.toContain("x".repeat(241));
+});

@@ -12,7 +12,8 @@ let reading: Reading = { mem: { total: 16 * GiB, used: 9 * GiB, swap_used: 0, pr
 
 beforeAll(async () => {
   c = new Cluster();
-  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", machineStats: { intervalMs: 100, read: async () => reading } });
+  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", machineStats: { intervalMs: 100,
+    read: async () => reading, readSys: () => null } });
   kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kiras-mbp" }); // stats off (as a v0.1.3 peer sends none)
   await alex.client().init("acme", "alex");
   await alex.client().invite("kira@example.com", "kira", "member");
@@ -25,7 +26,7 @@ const nodeOn = async (viewer: TestNode, host: string) => (await viewer.client().
 
 test("own stats on this node; a peer's arrive over vv; a peer without stats has none", async () => {
   const self = await waitFor(async () => (await nodeOn(alex, "alex-mbp"))?.stats, { what: "alex's own stats" });
-  expect(self.mem).toEqual({ total: 16 * GiB, used: 9 * GiB, swap_used: 0, pressure: "normal" });
+  expect(self.mem).toEqual({ total: 16 * GiB, used: 9 * GiB, free: 7 * GiB, swap_used: 0, pressure: "normal" });
   expect(self.temp_c).toBe(58);
   const seen = await waitFor(async () => (await nodeOn(kira, "alex-mbp"))?.stats, { what: "alex's stats on kira" });
   expect(seen.temp_c).toBe(58);

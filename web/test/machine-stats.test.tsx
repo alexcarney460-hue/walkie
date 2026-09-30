@@ -54,11 +54,19 @@ test("offline: values greyed as last known", () => {
 test("tooltip: memory, pressure, swap, temperature and when it was sampled", () => {
   const now = Date.now();
   const title = statsTitle("maren-mbp", node().stats, true, now);
-  expect(title).toContain("Memory 12.0 of 16.0 GB used · pressure elevated");
+  expect(title).toContain("Memory 12.0 of 16.0 GB used, 4.0 GB free · pressure elevated");
   expect(title).toContain("Swap 2.5 GB used");
   expect(title).toContain("Temperature 74.4 °C");
   expect(title).toContain("Updated 2m ago");
   expect(statsTitle("maren-mbp", node().stats, false, now)).toContain("Last known (machine offline), sampled 2m ago");
+});
+
+test("machine row shows process count, load averages, CPU busy and free memory", () => {
+  const stats = { ...node().stats!, mem: { total: 16 * GB, used: 12 * GB, free: 4 * GB, swap_used: 0, pressure: "normal" as const },
+    sys: { os: "darwin" as const, arch: "arm64" as const, cpus: 14, load1: 146, load5: 296, load15: 373, cpu_busy_pct: 91 },
+    agent_processes: [{ name: "claude-code" as const, count: 22 }] };
+  const out = html(node({ stats }));
+  expect(out).toContain("Busy · 22 agents · load 146.0/296.0/373.0 · CPU 91% · 12.0 used, 4.0 GB free");
 });
 
 test("WALKIE-TEMP-WSL: the temperature shows its source; a GPU fallback is labelled GPU; Windows zones in the tooltip", () => {

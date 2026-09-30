@@ -1,0 +1,250 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { createSeatUser, destroySeatUser, pendingSeatUsers } from "../../src/daemon/seats/admin.ts";
+import { stopMacSeatServices } from "../../src/daemon/seats/admin-sys.ts";
+import { SeatsHost } from "../../src/daemon/seats/host.ts";
+import { CleanupQueue } from "../../src/daemon/seats/cleanup-queue.ts";
+import { Ledger } from "../../src/daemon/seats/admin-ledger.ts";
+import { quarantineLines, retiredResidueLine } from "../../src/cli/commands/seats.ts";
+import { doctorChecks } from "../../src/daemon/seats/doctor.ts";
+import type { SeatsLocalView } from "../../src/protocol/seats.ts";
+import { fakeSeatWorld } from "../helpers/fake-seat-users.ts";
+
+const dirs: string[] = [];
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+test("helper distinguishes idle backlog from live and unknown process state", async () => {
+  const dir = mkdtempSync(join(import.meta.dir, ".cleanup-backlog-"));
+  dirs.push(dir);
+  const world = fakeSeatWorld(dir, join(dir, "walkie-home"));
+  expect((await createSeatUser(1, world.sys)).ok).toBe(true);
+  expect((await createSeatUser(2, world.sys)).ok).toBe(true);
+  const live = { ...world.sys, procs: (uid: number) => uid === 600_002 ? [{ pid: 42, stat: "S" }] : [] };
+  expect(pendingSeatUsers(live)).toMatchObject({ ok: true, ids: [1, 2], idleIds: [1] });
+  world.broken.add("destroy-files");
+  expect(await destroySeatUser(1, world.sys)).toMatchObject({ ok: false, processesGone: true });
+  expect(await destroySeatUser(2, { ...world.sys, procs: () => { throw new Error("ps failed"); } }))
+    .toMatchObject({ ok: false });
+});
+
+test("destroy's internal deadline bounds a stuck fake sweep and releases its ledger claim", async () => {
+  const dir = mkdtempSync(join(import.meta.dir, ".cleanup-deadline-"));
+  dirs.push(dir);
+  const world = fakeSeatWorld(dir, join(dir, "walkie-home"));
+  expect((await createSeatUser(1, world.sys)).ok).toBe(true);
+  let receivedTimeout = 0;
+  world.sys.sweepAsUser = async (_name, _uid, _roots, _residue, timeoutMs) => {
+    receivedTimeout = timeoutMs ?? 50;
+    await Bun.sleep(receivedTimeout);
+    return { ok: false, left: ["fake sweep did not finish"] };
+  };
+  const result = await destroySeatUser(1, world.sys, 15);
+  expect(result.ok).toBe(false);
+  expect(result.why).toContain("cleanup timed out; retried later");
+  expect(receivedTimeout).toBeLessThanOrEqual(15);
+  expect(world.sys.ledger().pending(501)).toContain(1);
+});
+
+test("doctor shows an overdue in-flight user and an unfinished outer-bound helper", () => {
+  const local = { allow: true, ephemeral: true, quarantined: ["walkie-s1"],
+    cleanup_in_flight: { user: 1, since: Date.now() - 61_000 }, cleanup_helper_unfinished_since: 1_000,
+    claude_login: "machine", codex_login: "machine", channel_ok: true } as SeatsLocalView;
+  const facts = { team: "test", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: "/fake/claude", codex: "/fake/codex" } };
+  const checks = doctorChecks(local, facts).map((check) => check.what).join("\n");
+  expect(checks).toContain("walkie-s1 cleanup has been running");
+  expect(checks).toContain("a cleanup helper did not finish (since");
+  expect(quarantineLines(local).map(plain).join("\n")).toContain("walkie-s1");
+});
+
+test("repeated busy lock replies stay retryable and doctor names the running helper", async () => {
+  const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
+  Object.assign(host, { quarantine: new Set(["walkie-s1"]), quarantineWhy: new Map(), liveUsers: new Set([1]),
+    seats: new Map(), closing: false, save: () => true, rebalance: () => undefined,
+    log: { warn: () => undefined }, cleanupBusyAttempts: 0, cleanupBusySince: null,
+    adminOp: async () => ({ ok: false, code: "busy", why: "busy: another cleanup helper is still running" }) });
+  const destroy = host.destroyOnce as (n: number) => Promise<{ ok: boolean }>;
+  expect((await destroy.call(host, 1)).ok).toBe(false);
+  expect(host.cleanupBusySince).toBeNull();
+  expect((await destroy.call(host, 1)).ok).toBe(false);
+  expect(host.cleanupBusySince).toBeNumber();
+  const local = { allow: true, ephemeral: true, channel_ok: true, claude_login: "machine", codex_login: "machine",
+    cleanup_helper_busy_since: host.cleanupBusySince } as SeatsLocalView;
+  const facts = { team: "test", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok",
+    runtimes: { claude: "/fake/claude", codex: "/fake/codex" } };
+  expect(doctorChecks(local, facts).map((check) => check.what).join("\n")).toContain("a cleanup helper is still running");
+});
+
+test("a busy create releases its unreserved id without quarantining a seat slot", async () => {
+  const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
+  let destroys = 0;
+  Object.assign(host, {
+    userHigh: 0, liveUsers: new Set<number>(), quarantine: new Set<string>(), seats: new Map(),
+    reconciled: true, reconcileError: null, helperReconciled: Promise.resolve(),
+    startReconcile: () => undefined, save: () => true,
+    adminOp: async () => ({ ok: false, code: "busy", why: "busy: another cleanup helper is still running" }),
+    destroyUser: () => { destroys++; },
+  });
+  await expect((host.makeSeatUser as () => Promise<unknown>).call(host)).rejects.toThrow("busy");
+  expect(host.liveUsers).toEqual(new Set());
+  expect(host.quarantine).toEqual(new Set());
+  expect((host.blockingQuarantine as () => number).call(host)).toBe(0);
+  expect(destroys).toBe(0);
+});
+
+
+test("ledger finalization failures remain unverified even after complete cleanup", async () => {
+  for (const failure of ["services", "schedules", "destroy-files", "account-enabled", "none"]) {
+    const dir = mkdtempSync(join(import.meta.dir, `.cleanup-proof-${failure}-`));
+    dirs.push(dir);
+    const world = fakeSeatWorld(dir, join(dir, "walkie-home"));
+    expect((await createSeatUser(1, world.sys)).ok).toBe(true);
+    const ledger = world.sys.ledger();
+    const finish = ledger.finish.bind(ledger);
+    ledger.finish = ((n, op, state) => {
+      if (state === "destroyed") throw new Error("ledger finalization failed");
+      return finish(n, op, state);
+    }) as typeof ledger.finish;
+    if (failure === "account-enabled") world.sys.deleteUser = () => undefined;
+    else if (failure !== "none") world.broken.add(failure);
+    if (failure === "destroy-files") writeFileSync(join(world.outside, `${world.markers.get("walkie-s1")}-readable`), "leftover", { mode: 0o644 });
+    const result = await destroySeatUser(1, world.sys);
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("fileOnlyVerified");
+  }
+});
+
+test("host counts every failed destroy until ok:true", async () => {
+  const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
+  const quarantine = new Set(["walkie-s1"]);
+  let rebalanced = 0;
+  Object.assign(host, {
+    quarantine, quarantineWhy: new Map(),
+    liveUsers: new Set([1]), seats: new Map(), closing: false, save: () => true, rebalance: () => { rebalanced++; },
+    log: { warn: () => undefined },
+    adminOp: async () => ({ ok: false, processesGone: true, why: "services remain" }),
+  });
+  await (host.destroyOnce as (n: number) => Promise<{ ok: boolean }>).call(host, 1);
+  expect((host.blockingQuarantine as () => number).call(host)).toBe(1);
+  host.adminOp = async () => ({ ok: false, why: "ledger finalization failed" });
+  await (host.destroyOnce as (n: number) => Promise<{ ok: boolean }>).call(host, 1);
+  expect((host.blockingQuarantine as () => number).call(host)).toBe(1);
+  host.adminOp = async () => ({ ok: true });
+  await (host.destroyOnce as (n: number) => Promise<{ ok: boolean }>).call(host, 1);
+  expect((host.blockingQuarantine as () => number).call(host)).toBe(0);
+  expect(rebalanced).toBe(1);
+});
+
+test("launchd domains must be checked absent after bootout", () => {
+  const gone = { code: 113, out: "", err: "Could not find domain for" };
+  const running = { code: 0, out: "service = running", err: "" };
+  const exec = (argv: string[]) => argv[1] === "print" && argv[2] === "user/600001" ? running : gone;
+  expect(stopMacSeatServices(600001, exec)).toContain("user/600001 remains loaded");
+  expect(stopMacSeatServices(600001, () => gone)).toBeNull();
+});
+
+test("57 unverified quarantined users all hold slots", () => {
+  const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
+  host.current = { max: 2 };
+  host.opts = {};
+  host.core = { hostname: "fleet-mac" };
+  host.quarantine = new Set(Array.from({ length: 57 }, (_, i) => `walkie-s${i + 1}`));
+  host.seats = new Map([["running", { launcher: "alex" }]]);
+  host.launches = new Map();
+  host.launchesDay = new Map();
+  host.busy = null;
+  host.queue = [];
+  host.liveSeats = () => [];
+  host.save = () => true;
+  const admit = host.admit as (launcher: string, run: { max_concurrent: number }) => string | null;
+  expect(admit.call(host, "alex", { max_concurrent: 4 })).toContain("still being removed");
+});
+
+test("a concluding seat's own user occupies one slot, not two", () => {
+  const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
+  host.quarantine = new Set(["walkie-s1", "walkie-s2"]);
+  host.seats = new Map([["concluding", { userN: 1 }]]);
+  expect((host.blockingQuarantine as () => number).call(host)).toBe(1);
+});
+
+test("host reconciles 62 idle users into one slow cleanup lane and drains to zero", async () => {
+  const dir = mkdtempSync(join(import.meta.dir, ".host-cleanup-"));
+  dirs.push(dir);
+  const path = join(dir, "ids.sqlite");
+  const seed = new Ledger(path);
+  const create = { pid: process.pid, start: "seed" };
+  for (let n = 1; n <= 62; n++) {
+    seed.reserve(n, 501, create);
+    seed.advance(n, create, "reserved", "making");
+    seed.finish(n, create, "created");
+  }
+  seed.close();
+  let active = 0;
+  let peak = 0;
+  const order: number[] = [];
+  let releaseDestroy: () => void = () => undefined;
+  const holdDestroy = new Promise<void>((resolve) => { releaseDestroy = resolve; });
+  const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
+  Object.assign(host, {
+    current: { max: 2 }, opts: {}, core: { hostname: "fleet-mac" },
+    quarantine: new Set<string>(), quarantineWhy: new Map(),
+    liveUsers: new Set<number>(), userHigh: 0, closing: false, reconciled: false, reconcileError: null,
+    seats: new Map([["running", { launcher: "alex" }]]), launches: new Map(), launchesDay: new Map(), busy: null, queue: [],
+    liveSeats: () => [], save: () => true, rebalance: () => undefined,
+    log: { info: () => undefined, warn: () => undefined },
+    adminOp: async (verb: string, n: number) => {
+      const ledger = new Ledger(path);
+      try {
+        if (verb === "pending") return { ok: true, ids: ledger.pending(501), idleIds: ledger.pending(501) };
+        active++;
+        peak = Math.max(peak, active);
+        order.push(n);
+        const op = { pid: process.pid, start: `destroy-${n}` };
+        if (!ledger.takeForDestroy(n, 501, op).ok) return { ok: false, why: "database is locked" };
+        await holdDestroy;
+        await Bun.sleep(2);
+        ledger.finish(n, op, "destroyed");
+        active--;
+        return { ok: true };
+      } finally { ledger.close(); }
+    },
+  });
+  host.cleanup = new CleanupQueue((n) => (host.destroyOnce as (n: number) => Promise<{ ok: boolean }>).call(host, n));
+  await (host.reconcileHelper as () => Promise<void>).call(host);
+  expect((host.admit as (launcher: string, run: { max_concurrent: number }) => string | null).call(host, "alex", { max_concurrent: 4 })).toContain("still being removed");
+  releaseDestroy();
+  while ((host.quarantine as Set<string>).size && order.length < 62) await Bun.sleep(10);
+  while ((host.quarantine as Set<string>).size) await Bun.sleep(10);
+  await (host.cleanup as CleanupQueue<{ ok: boolean }>).close();
+  expect((host.admit as (launcher: string, run: { max_concurrent: number }) => string | null).call(host, "alex", { max_concurrent: 4 })).toBeNull();
+  const ledger = new Ledger(path);
+  expect(ledger.pending(501)).toEqual([]);
+  ledger.close();
+  expect(peak).toBe(1);
+  expect(order).toEqual(Array.from({ length: 62 }, (_, i) => i + 1));
+  expect((host.quarantine as Set<string>).size).toBe(0);
+});
+
+test("list and doctor show the cleanup backlog count and summarized reason", () => {
+  const names = Array.from({ length: 57 }, (_, i) => `walkie-s${i + 1}`);
+  const local = {
+    quarantined: names,
+    quarantine_why: Object.fromEntries(names.map((n) => [n, "files it owns remain (protected directory)"])),
+  } as unknown as SeatsLocalView;
+  const lines = quarantineLines(local).map(plain);
+  expect(lines[0]).toContain("57 seat users awaiting cleanup");
+  expect(lines.join(" ")).toContain("protected directory");
+  const checks = doctorChecks(local, { team: null, release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: null, codex: null } });
+  expect(checks.some((c) => c.ok === "warn" && c.what.includes("57 seat users awaiting cleanup"))).toBe(true);
+  expect(checks.find((c) => c.what.includes("awaiting cleanup") && c.ok === false)?.what).toContain("protected directory");
+  expect(quarantineLines({ ...local, quarantined: ["walkie-s10", "walkie-s2", "walkie-s1"] })[0]).toContain("walkie-s1, walkie-s2, walkie-s10");
+});
+
+test("list and doctor report retained macOS residue without a readiness failure", () => {
+  const local = { retired_residue: { homes: 57, vaults: 15, knownBytes: 8192 } } as SeatsLocalView;
+  expect(retiredResidueLine(local)).toContain("57 retired seat homes");
+  expect(retiredResidueLine(local)).toContain("8192 B");
+  const checks = doctorChecks(local, { team: "team", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: null, codex: null } });
+  expect(checks.find((c) => c.what.includes("retired seat homes"))?.ok).toBe(true);
+});

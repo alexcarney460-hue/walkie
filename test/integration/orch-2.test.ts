@@ -3,16 +3,23 @@
 // dashboard's Start dialog may choose the access (and nothing else); an agent may too, audited (AGENT-ADMIN-1); the
 // choice is persisted in orchestrator.json.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OrchestratorView } from "../../src/protocol/orchestrator.ts";
+import { hostFor } from "../../src/daemon/orchestrator/host.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
+import { CleanupObligation } from "../../src/daemon/orchestrator/cleanup-obligation.ts";
+import { isWsl, setVmLeadEligible } from "../../src/daemon/orchestrator/vm-lead.ts";
 
 const FAKE_DIR = join(import.meta.dir, "..", "fixtures", "fake-claude");
 let c: Cluster;
 let alex: TestNode;
 let launches: string;
+const talkieProcesses = new Map<number, { uid: number; parent: number }>();
+const helperSignals: number[] = [];
+const helperCalls: string[] = [];
+const monitorExits: Array<(code: number | null) => void> = [];
 
 const url = (n: TestNode, p: string) => `http://127.0.0.1:${n.d.localPort as number}${p}`;
 async function session(n: TestNode): Promise<Record<string, string>> {
@@ -51,12 +58,39 @@ beforeAll(async () => {
   const state = join(c.root, "fake-state");
   mkdirSync(state, { recursive: true });
   launches = join(c.root, "fake-launches.jsonl");
+  const talkieHome = join(c.root, "walkie-talkie");
+  mkdirSync(talkieHome);
+  const runner = join(c.root, "talkie-runner");
+  writeFileSync(runner, `#!/bin/sh\nexec '${process.execPath}' '${join(import.meta.dir, "../../src/cli/main.ts")}' "$@"\n`);
+  chmodSync(runner, 0o755);
+  const runtime = join(c.root, "claude-runtime");
+  writeFileSync(runtime, `#!/bin/sh\nexec '${process.execPath}' '${join(FAKE_DIR, "claude")}' "$@"\n`);
+  chmodSync(runtime, 0o755);
   const orchestrator = {
     autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
-    env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches },
+    env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches,
+      CLAUDE_CODE_OAUTH_TOKEN: "fake-test-token" },
+    shellUser: { ready: () => true, socketRoot: c.root, runner, runtime,
+      privateHome: () => null, testEnv: { FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches },
+      monitor: () => {
+        let exit: (code: number | null) => void = () => undefined;
+        const exited = new Promise<number | null>((resolve) => { exit = resolve; });
+        monitorExits.push(exit);
+        return { exited, kill: () => undefined };
+      },
+      admin: async (verb: string) => {
+        helperCalls.push(verb);
+        if (verb === "talkie-destroy" || verb === "talkie-reconcile") for (const [pid, row] of talkieProcesses) {
+          if (row.uid === 550_000) { helperSignals.push(pid); talkieProcesses.delete(pid); }
+        }
+        return { ok: true, name: "walkie-talkie", uid: 550_000, home: talkieHome };
+      },
+      userSwitch: () => [process.execPath, join(import.meta.dir, "../fixtures/fake-talkie-runner.ts")],
+    },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator });
   await alex.client().init("acme", "alex");
+  if (isWsl()) setVmLeadEligible(alex.d.core, true);
 }, 60_000);
 
 afterAll(async () => { await c.close(); });
@@ -73,12 +107,13 @@ describe("ORCH-2 access", () => {
     const argv = await launchedAfter(n);
     expect(argv).toContain("--allowedTools=mcp__walkie");
     expect(valueOf(argv, "--permission-mode")).toBe("default");
-    expect(valueOf(argv, "--append-system-prompt")).toContain("MISSION: interact with the project orchestrators");
+    expect(valueOf(argv, "--append-system-prompt")).toContain("MISSION: onboard existing members' new machines through one link");
     // Codex RC MEDIUM 5: the walkie MCP server comes with the launch (this daemon's home and socket).
     const mcp = argv.find((x) => x.startsWith("--mcp-config="));
     const cfg = JSON.parse((mcp ?? "").slice("--mcp-config=".length)) as { mcpServers: { walkie: { args: string[]; env: Record<string, string> } } };
     expect(cfg.mcpServers.walkie.args.at(-1)).toBe("mcp");
     expect(cfg.mcpServers.walkie.env).toEqual({ WALKIE_HOME: alex.home, WALKIE_SOCKET: alex.socket });
+    expect(helperCalls).toEqual([]); // platform access did not create or destroy an OS user
   }, 30_000);
 
   test("Codex RC MEDIUM 4: the dashboard switches the access (header control; allow-listed route)", async () => {
@@ -160,6 +195,37 @@ describe("ORCH-2 access", () => {
     expect(out.thresholds.card_hours).toBe(4);
     expect(out.trust).toBe("team-member");
     expect(out.machines).toEqual([expect.objectContaining({ hostname: "alex-mbp", reason: "idle_while_cards_wait" })]);
+  }, 30_000);
+
+  test("monitor crash loop stops shell mode and explains it on the card", async () => {
+    await alex.client("").orchestratorStart({ cwd: c.root, access: "full" });
+    await waitFor(async () => (await alex.client("").orchestrator()).local.state === "idle", { what: "shell mode idle" });
+    for (let i = 0; i < 4; i++) {
+      const count = monitorExits.length;
+      monitorExits.at(-1)!(1);
+      if (i < 3) await waitFor(() => monitorExits.length === count + 1, { what: "monitor restart" });
+    }
+    await waitFor(async () => (await alex.client("").orchestrator()).local.state === "stopped", { what: "shell mode stopped" });
+    const card = (await alex.client("").orchestrator()).local;
+    expect(card.running).toBe(false);
+    expect(card.last_error).toContain("monitor exited repeatedly");
+  }, 30_000);
+
+  test("pending cleanup blocks shell start while platform mode remains available", async () => {
+    const obligation = new CleanupObligation(join(alex.home, "orchestrator-uid-cleanup.sqlite"));
+    expect(obligation.record("pending-generation")).toBe(true);
+    try {
+      const pending = (await alex.client("").orchestrator()).local;
+      expect(pending.state).toBe("cleanup_pending");
+      expect(pending.last_error).toContain("Cleanup pending");
+      await expect(alex.client("").orchestratorStart({ cwd: c.root, access: "full" })).rejects.toThrow("cleanup pending");
+      const platform = await alex.client("").orchestratorStart({ cwd: c.root, access: "platform" });
+      expect(platform.local.running).toBe(true);
+      expect(platform.local.state).toBe("cleanup_pending");
+    } finally {
+      obligation.clear("pending-generation");
+      await alex.client("").orchestratorStop();
+    }
   }, 30_000);
 });
 
@@ -265,3 +331,16 @@ describe("ORCH-2 models", () => {
     await alex.client("").orchestratorStop();
   }, 60_000);
 });
+
+test("a lost lead lease invokes uid-wide cleanup, including a reparented background process", async () => {
+  await alex.client("").orchestratorStart({ access: "full" });
+  const host = hostFor(alex.d.core);
+  expect(host).toBeDefined();
+  talkieProcesses.set(1001, { uid: 550_000, parent: 1 }); // its short-lived shell has exited
+  talkieProcesses.set(1002, { uid: 550_000, parent: 1001 });
+  const lost = host as unknown as { leaseLost(): void };
+  lost.leaseLost();
+  await waitFor(() => talkieProcesses.size === 0, { what: "dedicated uid cleaned on lease loss" });
+  expect(helperSignals).toContain(1001);
+  expect(helperSignals).toContain(1002);
+}, 30_000);

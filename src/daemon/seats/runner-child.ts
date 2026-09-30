@@ -229,9 +229,19 @@ export class RunnerChild<S> {
  * the user (busy), or `reap` them all. Resolves with how many were left (null when the runner couldn't be reached or
  * didn't answer in time: the caller treats the user as still in use).
  */
-export interface RunnerOpResult { verified: boolean; left?: number; samples?: string[]; leftoverDirs?: string[]; why?: string }
+export interface RunnerOpResult { verified: boolean; left?: number; samples?: string[]; leftoverDirs?: string[]; residuePaths?: string[]; residueProofs?: import("./sweep.ts").ResidueProof[]; why?: string }
 
-export async function runnerOp(argv: string[], op: UidOp | "sweep", timeoutMs = 15_000, extra: Record<string, unknown> = {}): Promise<RunnerOpResult | null> {
+async function runnerOpStdout(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) return text + decoder.decode();
+    text += decoder.decode(next.value, { stream: true });
+  }
+}
+
+export async function runnerOp(argv: string[], op: UidOp | "sweep" | "talkie-sweep" | "drop-claude", timeoutMs = 15_000, extra: Record<string, unknown> = {}): Promise<RunnerOpResult | null> {
   let p: ReturnType<typeof Bun.spawn>;
   try {
     p = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "ignore", cwd: "/", env: SPAWN_ENV });
@@ -241,48 +251,118 @@ export async function runnerOp(argv: string[], op: UidOp | "sweep", timeoutMs = 
   const sink = p.stdin as import("bun").FileSink;
   sink.write(`${JSON.stringify({ ...extra, rv: RUNNER_PROTOCOL, op })}\n`);
   sink.end();
-  const out = new Response(p.stdout as ReadableStream<Uint8Array>).text();
-  const timer = setTimeout(() => { try { p.kill("SIGKILL"); } catch { /* gone */ } }, timeoutMs);
+  const reader = (p.stdout as ReadableStream<Uint8Array>).getReader();
+  const out = runnerOpStdout(reader);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      expired = true;
+      try { p.kill("SIGKILL"); } catch { /* gone */ }
+      void reader.cancel().catch(() => undefined);
+      resolve(null);
+    }, Math.max(1, timeoutMs));
+  });
   try {
-    const [text] = await Promise.all([out, p.exited]);
+    const completed = await Promise.race([Promise.all([out, p.exited]), deadline]);
+    if (expired || !completed) return { verified: false, why: "runner did not exit" };
+    const [text] = completed;
     const line = text.split("\n").find((l) => l.startsWith("r {"));
     if (!line) return null;
-    const o = JSON.parse(line.slice(2)) as { left?: unknown; verified?: unknown; samples?: unknown; leftoverDirs?: unknown; why?: unknown; error?: unknown };
+    const o = JSON.parse(line.slice(2)) as { left?: unknown; verified?: unknown; samples?: unknown; leftoverDirs?: unknown; residuePaths?: unknown; residueProofs?: unknown; why?: unknown; error?: unknown };
     // Verified only when the runner says so explicitly; anything else (an error, a missing field) is not done.
     return {
       verified: o.verified === true && o.left === 0,
       ...(Number.isInteger(o.left) ? { left: o.left as number } : {}),
       ...(Array.isArray(o.samples) ? { samples: o.samples.filter((x): x is string => typeof x === "string").slice(0, 10) } : {}),
-      ...(Array.isArray(o.leftoverDirs) ? { leftoverDirs: o.leftoverDirs.filter((x): x is string => typeof x === "string" && x.startsWith("/private/var/folders/")).slice(0, 200) } : {}),
+      ...(Array.isArray(o.leftoverDirs) ? { leftoverDirs: o.leftoverDirs.filter((x): x is string => typeof x === "string" && x.startsWith("/")).slice(0, 2_000) } : {}),
+      ...(Array.isArray(o.residuePaths) ? { residuePaths: o.residuePaths.filter((x): x is string => typeof x === "string" && x.startsWith("/") && !x.includes("\0")).slice(0, 2_000) } : {}),
+      ...(Array.isArray(o.residueProofs) ? { residueProofs: o.residueProofs.filter((x): x is import("./sweep.ts").ResidueProof =>
+        !!x && typeof x === "object" && typeof x.path === "string" && x.path.startsWith("/") && !x.path.includes("\0")
+        && typeof x.reason === "string" && x.reason.startsWith("EPERM") && x.reason.length < 160
+        && (x.dev === undefined && x.ino === undefined || Number.isSafeInteger(x.dev) && Number.isSafeInteger(x.ino)))
+        .slice(0, 2_000) } : {}),
       ...(typeof o.error === "string" ? { why: o.error } : {}),
     };
   } catch {
-    return null;
+    return expired ? { verified: false, why: "runner did not exit" } : null;
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
 /**
  * One call of the root helper (`sudo -n <admin> seat-admin <create|destroy> <n>`, admin.ts): its one JSON line, or
- * null when it couldn't be run or didn't answer in time (the caller treats that as not done).
+ * null when it couldn't be run or didn't answer in time (the caller treats that as not done). Aborting kills the
+ * sudo child, but a root helper already launched may keep running under its own operation lock.
  */
-export async function adminCall(argv: string[], timeoutMs = 180_000): Promise<AdminResult | null> {
+async function boundedStderr(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  let tail = "";
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) break;
+    tail = (tail + new TextDecoder().decode(next.value)).slice(-512);
+  }
+  return tail.trim().split("\n").at(-1)?.slice(0, 240) ?? "";
+}
+
+async function readAdminStdout(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) return text + decoder.decode();
+    text += decoder.decode(next.value, { stream: true });
+    if (text.length > 256 * 1024) throw new Error("seat admin answer exceeded limit");
+  }
+}
+
+export async function adminCall(argv: string[], timeoutMs = 180_000, onStderr?: (line: string) => void,
+  signal?: AbortSignal, onTimeout?: () => void): Promise<AdminResult | null> {
+  if (signal?.aborted) return null;
   let p: ReturnType<typeof Bun.spawn>;
   try {
-    p = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore", cwd: "/", env: SPAWN_ENV });
+    p = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: onStderr ? "pipe" : "ignore", cwd: "/", env: SPAWN_ENV });
   } catch {
     return null;
   }
-  const timer = setTimeout(() => { try { p.kill("SIGKILL"); } catch { /* gone */ } }, timeoutMs);
+  const kill = () => { try { p.kill("SIGKILL"); } catch { /* gone */ } };
+  const stdout = (p.stdout as ReadableStream<Uint8Array>).getReader();
+  const stderr = onStderr ? (p.stderr as ReadableStream<Uint8Array>).getReader() : null;
+  const closeStreams = () => {
+    void stdout.cancel().catch(() => undefined);
+    if (stderr) void stderr.cancel().catch(() => undefined);
+  };
+  let timedOut: (value: null) => void = () => undefined;
+  const deadline = new Promise<null>((resolve) => { timedOut = resolve; });
+  const timer = setTimeout(() => {
+    kill();
+    closeStreams();
+    try { onTimeout?.(); } catch { /* report failure still wins */ }
+    timedOut(null);
+  }, Math.max(1, timeoutMs));
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<null>((resolve) => {
+    abortListener = () => { kill(); closeStreams(); resolve(null); };
+    signal?.addEventListener("abort", abortListener, { once: true });
+    if (signal?.aborted) abortListener();
+  });
   try {
-    const [text] = await Promise.all([new Response(p.stdout as ReadableStream<Uint8Array>).text(), p.exited]);
+    const output = readAdminStdout(stdout);
+    const result = await Promise.race([Promise.all([output, p.exited,
+      stderr ? boundedStderr(stderr) : Promise.resolve("")]), aborted, deadline]);
+    if (!result) return null;
+    const [text, , stderrLine] = result;
+    if (stderrLine) onStderr?.(stderrLine);
     const line = text.trim().split("\n").pop() ?? "";
     const o = JSON.parse(line) as AdminResult;
     return typeof o.ok === "boolean" ? o : null;
   } catch {
+    kill();
+    closeStreams();
     return null;
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
+    if (abortListener) signal?.removeEventListener("abort", abortListener);
   }
 }

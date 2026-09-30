@@ -3,7 +3,7 @@
 // (test/helpers/fake-seat-users.ts: tests can't create OS users; Opus r5 LOW 3); scheduler files parsed as cron does
 // (Codex r5 MEDIUM 4); administrative groups that can't be read fail closed (Codex r5 MEDIUM 6); the setup plan.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSeatUser, destroySeatUser, parseAdminArgv, runSeatAdmin, seatUserName } from "../../src/daemon/seats/admin.ts";
 import { seatUserCheck } from "../../src/daemon/seats/isolation.ts";
@@ -23,6 +23,18 @@ describe("the helper's grammar (the sudo rule allows exactly this)", () => {
   test("create|destroy and a positive integer, nothing else", () => {
     expect(parseAdminArgv(["create", "7"])).toEqual({ verb: "create", n: 7 });
     expect(parseAdminArgv(["destroy", "99999"])).toEqual({ verb: "destroy", n: 99_999 });
+    expect(parseAdminArgv(["talkie-create"])).toBeNull();
+    expect(parseAdminArgv(["talkie-reconcile"])).toBeNull();
+    expect(parseAdminArgv(["talkie-lock-init"])).toEqual({ verb: "talkie-lock-init", n: 0 });
+    expect(parseAdminArgv(["talkie-status"])).toEqual({ verb: "talkie-status", n: 0 });
+    expect(parseAdminArgv(["talkie-destroy"])).toBeNull();
+    const run = "11111111-1111-4111-8111-111111111111";
+    const instance = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    expect(parseAdminArgv(["talkie-create", run, instance])).toEqual({ verb: "talkie-create", n: 0, generation: run, instance });
+    expect(parseAdminArgv(["talkie-reconcile", run, instance])).toEqual({ verb: "talkie-reconcile", n: 0, generation: run, instance });
+    expect(parseAdminArgv(["talkie-create", run])).toBeNull();
+    expect(parseAdminArgv(["talkie-destroy", run])).toEqual({ verb: "talkie-destroy", n: 0, generation: run });
+    expect(parseAdminArgv(["talkie-destroy", "../unsafe"])).toBeNull();
     for (const bad of [[], ["create"], ["create", "0"], ["create", "07"], ["create", "100000"], ["create", "7", "x"], ["create", "-1"],
       ["create", "7;rm"], ["delete", "7"], ["create", " 7"], ["create", "1e3"]]) {
       expect(parseAdminArgv(bad)).toBeNull();
@@ -32,12 +44,40 @@ describe("the helper's grammar (the sudo rule allows exactly this)", () => {
   test("it refuses to run as anyone but root", async () => {
     const w = world();
     const out: string[] = [];
-    const write = process.stdout.write.bind(process.stdout);
-    process.stdout.write = ((s: string) => { out.push(String(s)); return true; }) as typeof process.stdout.write;
-    try { expect(await runSeatAdmin(["create", "1"], w.sys)).toBe(1); } finally { process.stdout.write = write; }
+    expect(await runSeatAdmin(["create", "1"], w.sys, (line) => out.push(line))).toBe(1);
     expect(out.join("")).toContain("runs as root (through sudo) only");
     expect(w.created).toEqual([]);
   });
+});
+
+test("projection removal is verified before the user sweep and retried after quarantine", async () => {
+  const w = world();
+  expect((await createSeatUser(1, w.sys)).ok).toBe(true);
+  const home = join(w.homes, seatUserName(1));
+  const file = join(home, "walkie-seats", "run-1", "claude-config", ".credentials.json");
+  mkdirSync(join(home, "walkie-seats", "run-1", "claude-config"), { recursive: true });
+  writeFileSync(file, "fake-access-only");
+  w.broken.add("projection");
+  w.broken.add("destroy-files");
+  expect((await destroySeatUser(1, w.sys)).ok).toBe(false);
+  expect(existsSync(file)).toBe(true);
+  expect(w.sweeps).toHaveLength(0); // fake sweep refuses before recording a run
+  w.broken.delete("projection");
+  w.broken.delete("destroy-files");
+  expect(await destroySeatUser(1, w.sys)).toMatchObject({ ok: true });
+  expect(existsSync(file)).toBe(false);
+});
+
+test("an interrupted create with a setup home and no account can be cleaned up", async () => {
+  const w = world();
+  expect((await createSeatUser(1, w.sys)).ok).toBe(true);
+  const name = seatUserName(1);
+  const home = join(w.homes, name);
+  w.users.delete(name);
+  w.rootOwned.add(home);
+  w.rootOwned.add(join(home, "walkie-seats"));
+  expect(await destroySeatUser(1, w.sys)).toMatchObject({ ok: true });
+  expect(existsSync(home)).toBe(false);
 });
 
 describe("create: a fresh user, never an id used before (Codex r5 HIGH 1-2, Opus r5 HIGH 1)", () => {
@@ -133,7 +173,7 @@ describe("the new user checked by the daemon (Codex r5 MEDIUM 6)", () => {
 });
 
 describe("the setup plan: the group, the runner and the helper, two sudo rules", () => {
-  test("root-owned copies; the runner as the seats' group only; the helper's two verbs as root only", () => {
+  test("root-owned copies; the runner as the seats' group only; fixed helper verbs as root only", () => {
     const p = seatUserPlan({
       platform: "darwin", daemonUser: "arvid", source: "/usr/local/bin/walkie", groupId: 590_001, walkieHome: "/Users/arvid/.walkie",
       sudoersTmp: "/tmp/x/walkie-seats", home: "/Users/arvid", homeProblem: null, runtimes: { claude: "/opt/claude", codex: null },
@@ -143,8 +183,15 @@ describe("the setup plan: the group, the runner and the helper, two sudo rules",
     expect(argv).toContain("install -m 0755 -o root -g wheel /usr/local/bin/walkie /usr/local/libexec/walkie/walkie-seat-runner");
     expect(argv).toContain("install -m 0755 -o root -g wheel /usr/local/bin/walkie /usr/local/libexec/walkie/walkie-seat-admin");
     expect(argv).toContain("visudo -c -f /etc/sudoers.d/walkie-seats");
-    expect(p.sudoers).toContain("arvid ALL=(%walkie-seats) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-runner seat-runner\n");
-    expect(p.sudoers).toContain("arvid ALL=(root) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-admin seat-admin create *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin destroy *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin pending\n");
+    expect(argv).toContain("/usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-lock-init");
+    expect(p.sudoers).toContain("arvid ALL=(%walkie-seats) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-runner seat-runner, /usr/local/libexec/walkie/walkie-seat-runner talkie-runner\n");
+    expect(p.sudoers).toContain("arvid ALL=(root) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-admin seat-admin create *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin destroy *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin pending, /usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-create *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-reconcile *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-destroy *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-status, /usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-lock-init\n");
+    expect(p.sudoers).toContain("Cmnd_Alias WALKIE_TALKIE_REPAIR = /usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-repair *\n");
+    expect(p.sudoers).toContain("Defaults!WALKIE_TALKIE_REPAIR timestamp_timeout=0\n");
+    expect(p.sudoers).toContain("arvid ALL=(root) PASSWD: WALKIE_TALKIE_REPAIR\n");
+    expect(p.sudoers.match(/NOPASSWD:[^\n]*talkie-repair/g)).toBeNull();
+    expect(p.sudoers).toContain("/usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-status");
+    expect(p.sudoers).toContain("/usr/local/libexec/walkie/walkie-seat-admin seat-admin talkie-lock-init");
     expect(p.sudoers).not.toMatch(/NOPASSWD: ALL/);
     expect(p.skippedRuntimes).toEqual(["codex"]);
   });

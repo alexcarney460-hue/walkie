@@ -52,8 +52,8 @@ export class LicenseService {
   }
 
   /** Exchanges an activation code for a license bound to `teamId` (first bind also returns the renewal token). */
-  bind(code: string, teamId: string): Promise<ServiceReply> {
-    return this.post("/api/license/bind", { code, team_id: teamId });
+  bind(code: string, teamId: string, proof?: unknown): Promise<ServiceReply> {
+    return this.post("/api/license/bind", { code, team_id: teamId, ...(proof === undefined ? {} : { proof }) });
   }
 
   /** A fresh license for a bound subscription, authorized by its renewal token. */
@@ -66,7 +66,7 @@ export class LicenseService {
     return this.post("/api/license/status", { lic_id: licId, renewal_token: renewalToken, issued_at: issuedAt });
   }
 
-  private async post(path: string, body: Record<string, string | number>): Promise<ServiceReply> {
+  private async post(path: string, body: Record<string, unknown>): Promise<ServiceReply> {
     const res = await this.doFetch(`${this.base}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

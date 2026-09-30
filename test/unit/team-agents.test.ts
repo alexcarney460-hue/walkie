@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { WalkieClient } from "../../src/client/index.ts";
 import { parseArgs, UsageError } from "../../src/cli/args.ts";
 import type { Ctx } from "../../src/cli/context.ts";
-import { TEAM_AGENTS_QUESTION, seatsSupported, teamAgentsStep, type RuntimeCheck, type SeatsLocal, type TeamAgentsDeps } from "../../src/cli/commands/team-agents.ts";
+import { TEAM_AGENTS_QUESTION, teamAgentsQuestion, seatsSupported, teamAgentsStep, type RuntimeCheck, type SeatsLocal, type TeamAgentsDeps } from "../../src/cli/commands/team-agents.ts";
 import { fakeDaemon, type FakeDaemon } from "../helpers/fake-daemon.ts";
 import { Cluster, type TestNode } from "../helpers/cluster.ts";
 
@@ -113,6 +113,8 @@ describe("the consent question", () => {
     expect(TEAM_AGENTS_QUESTION).toContain("under their own separate user");
     expect(TEAM_AGENTS_QUESTION).toContain("this machine's own Claude/Codex login");
     expect(TEAM_AGENTS_QUESTION).toContain("walkie seats deny");
+    expect(teamAgentsQuestion("dedicated")).toContain("token set for seats only; a running seat can read it");
+    expect(teamAgentsQuestion("dedicated")).not.toContain("machine's short-lived Claude access token");
     expect(calls.checked).toEqual(["claude", "codex"]);
     expect(calls.sudo).toBe(1);
     expect(r.posted).toEqual([{ allow: true }]);

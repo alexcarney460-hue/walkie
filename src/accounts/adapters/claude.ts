@@ -62,6 +62,8 @@ const Creds = z.object({
   claudeAiOauth: z.object({
     accessToken: z.string().min(8).max(8_192),
     expiresAt: z.number().nullable().optional(),
+    scopes: z.array(z.string().max(128)).max(32).optional(),
+    subscriptionType: z.string().max(128).optional(),
     refreshTokenExpiresAt: z.number().nullable().optional(),
   }),
 });
@@ -76,6 +78,8 @@ export function claudeTokenFrom(raw: string): AccessToken | null {
   const refreshExp = o.refreshTokenExpiresAt ?? null;
   return {
     value: o.accessToken, expiresAt: o.expiresAt ?? null,
+    ...(o.scopes ? { scopes: o.scopes } : {}),
+    ...(o.subscriptionType ? { subscriptionType: o.subscriptionType } : {}),
     ...(refreshExp !== null && refreshExp < Date.now() ? { refreshExpired: true } : {}),
   };
 }
@@ -85,7 +89,7 @@ export function claudeTokenFrom(raw: string): AccessToken | null {
  * finish by the deadline (it may be showing a prompt) and "unavailable" for any other failure (locked Keychain,
  * interaction not allowed, a refused access). Either of the last two turns Keychain reads off for 6 h.
  */
-export type KeychainReader = (service: string) => Promise<string | null | "timeout" | "unavailable">;
+export type KeychainReader = (service: string, signal?: AbortSignal) => Promise<string | null | "timeout" | "unavailable">;
 
 export const KEYCHAIN_TIMEOUT_MS = 3_000;
 /** readClaudeToken's own bound on any reader (a reader that never answers cannot hold up the poll). */
@@ -96,10 +100,11 @@ const SECURITY_NOT_FOUND = 44;
 export type Runner = (argv: string[], opts: RunOptions) => Promise<RunResult>;
 
 export function makeSystemKeychain(run: Runner = runProcess, platform: string = process.platform): KeychainReader {
-  return async (service) => {
+  return async (service, signal) => {
     if (platform !== "darwin") return null;
     const r = await run(["/usr/bin/security", "find-generic-password", "-s", service, "-w"], {
       timeoutMs: KEYCHAIN_TIMEOUT_MS, max: 256 * 1024, detached: true, killGraceMs: 500,
+      signal,
       env: { PATH: "/usr/bin:/bin", LC_ALL: "C", HOME: homedir() },
     });
     if (r.kind === "timeout") return "timeout";
@@ -112,21 +117,57 @@ export function makeSystemKeychain(run: Runner = runProcess, platform: string = 
 
 export const systemKeychain: KeychainReader = makeSystemKeychain();
 
+/** One backoff per reader, shared by accounts polling and seat launches in this process. */
+const keychainHolds = new WeakMap<KeychainReader, number>();
+const keychainReads = new WeakMap<KeychainReader, Promise<Awaited<ReturnType<KeychainReader>>>>();
+export function blockClaudeKeychain(reader: KeychainReader, until: number): void {
+  keychainHolds.set(reader, Math.max(keychainHolds.get(reader) ?? 0, until));
+}
+export function guardedClaudeKeychain(reader: KeychainReader, blockMs: number): KeychainReader {
+  return async (service) => {
+    if ((keychainHolds.get(reader) ?? 0) > Date.now()) return "unavailable";
+    const running = keychainReads.get(reader);
+    if (running) return running;
+    const pending = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const deadline = new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), KEYCHAIN_TIMEOUT_MS + 500); });
+        const result = await Promise.race([Promise.resolve().then(() => reader(service)).catch((): "unavailable" => "unavailable"), deadline]);
+        if (result === "timeout" || result === "unavailable") blockClaudeKeychain(reader, Date.now() + blockMs);
+        return result;
+      } finally {
+        clearTimeout(timer);
+        keychainReads.delete(reader);
+      }
+    })();
+    keychainReads.set(reader, pending);
+    return pending;
+  };
+}
+
 export type TokenResult = AccessToken | "none" | "keychain_unavailable";
 
-export async function readClaudeToken(login: Login, keychain: KeychainReader, deadlineMs = KEYCHAIN_DEADLINE_MS): Promise<TokenResult> {
+export async function readClaudeToken(login: Login, keychain: KeychainReader, deadlineMs = KEYCHAIN_DEADLINE_MS, minLeftMs = 0, signal?: AbortSignal): Promise<TokenResult> {
+  if (signal?.aborted) return "keychain_unavailable";
   const file = join(login.dir, ".credentials.json");
   if (existsSync(file)) {
     try {
       const t = claudeTokenFrom(readFileSync(file, "utf8"));
-      if (t) return t;
+      if (t && (minLeftMs === 0 || (t.expiresAt !== null && Number.isFinite(t.expiresAt) && t.expiresAt >= Date.now() + minLeftMs))) return t;
     } catch { /* fall through */ }
   }
   if (!login.isDefault) return "none";
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), deadlineMs); });
-  const raw = await Promise.race([keychain(KEYCHAIN_SERVICE).catch((): "unavailable" => "unavailable"), late]);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<"unavailable">((resolve) => {
+    onAbort = () => resolve("unavailable");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+  const raw = await Promise.race([keychain(KEYCHAIN_SERVICE, signal).catch((): "unavailable" => "unavailable"), late, aborted]);
   clearTimeout(timer);
+  if (onAbort) signal?.removeEventListener("abort", onAbort);
   if (raw === "timeout" || raw === "unavailable") return "keychain_unavailable";
   return (raw && claudeTokenFrom(raw)) || "none";
 }

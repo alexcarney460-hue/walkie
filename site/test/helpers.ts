@@ -31,6 +31,7 @@ export function fullEnv(pem: string, extra: Record<string, string> = {}): Env {
     STRIPE_PRICE_BUSINESS_MONTH: "price_biz_m",
     STRIPE_PRICE_BUSINESS_YEAR: "price_biz_y",
     SITE_URL: "https://site.test",
+    COMPUTE_HANDOVER_TOKEN_KEY: 'rent-fixture-handover-key-32-bytes',
     ...extra,
   };
 }
@@ -83,7 +84,12 @@ export class MockStripe implements StripeLike {
     const s = this.subs.get(id);
     return s ? structuredClone(s) : null;
   }
-  async setSubscriptionMetadata(id: string, metadata: Record<string, string>): Promise<void> {
+  async listSubscriptionsByTeam(team: string): Promise<SubscriptionLite[]> {
+    this.guard();
+    return [...this.subs.values()].filter(sub => sub.metadata.walkie_team === team).map(sub => structuredClone(sub));
+  }
+  async setSubscriptionMetadata(id: string, metadata: Record<string, string>,
+    _options?: Parameters<StripeLike['setSubscriptionMetadata']>[2]): Promise<void> {
     this.guard();
     this.calls.metadata.push({ id, metadata });
     const s = this.subs.get(id);
@@ -97,8 +103,9 @@ export class MockStripe implements StripeLike {
   }
 }
 
-export function deps(stripe: MockStripe, env: Env): Deps {
-  return { env, stripe: () => stripe, now: () => NOW };
+export function deps(stripe: MockStripe, env: Env): Deps & { previewCompute: true } {
+  // Exercise the future compute path in existing site tests; deployed POST handlers never set this.
+  return { env, stripe: () => stripe, now: () => NOW, previewCompute: true };
 }
 
 export async function body(res: Response): Promise<Record<string, unknown>> {

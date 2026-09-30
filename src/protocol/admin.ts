@@ -3,6 +3,7 @@
 // on any machine; anyone else on their own machines only. The target's person can refuse it (`walkie admin remote
 // off`); a target on an older Walkie answers 404 (`target_outdated`).
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 import { parseArgs, UsageError } from "../cli/args.ts";
 import { CLI_BOOLEANS } from "../cli/booleans.ts";
 
@@ -89,6 +90,15 @@ export function remoteArgvProblem(argv: readonly string[]): string | null {
   for (const key of [cmd, `${cmd} ${sub}`]) {
     for (const opt of REFUSED_OPTIONS[key] ?? []) {
       if (flags.has(opt)) return `--${opt} can't be used remotely with walkie ${key} (the machine's person sets it there)`;
+    }
+  }
+  // seats allow --dir a/relative/path would resolve against the spawned admin run's own working directory on the
+  // TARGET, not anything the caller meant: refused rather than silently wrong (a leading "~" is fine, expanded
+  // against the target's own daemon user by seats/host.ts).
+  if (cmd === "seats" && sub === "allow") {
+    const dir = flags.get("dir");
+    if (typeof dir === "string" && dir !== "~" && !dir.startsWith("~/") && !isAbsolute(dir)) {
+      return "seats allow --dir must be an absolute path or start with ~/ when run remotely (the target's own working directory isn't meaningful here)";
     }
   }
   if (cmd === "integrations" && sub === "enable" && PRIVATE_CONNECTORS.has(pos[1] ?? "")) {

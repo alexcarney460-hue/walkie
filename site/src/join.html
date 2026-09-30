@@ -34,7 +34,7 @@
     </nav>
   </header>
 
-  <main id="main" class="welcome" data-join data-cli="{{cli}}" data-install="{{install_url}}">
+  <main id="main" class="welcome" data-join data-cli="{{cli}}" data-install="{{install_url}}" data-package-available="{{package_available}}">
     <div class="wrap">
       <div class="welcome-card" aria-live="polite">
 
@@ -49,14 +49,31 @@
         <section class="state" data-state="ready" aria-labelledby="j-ready">
           <span class="state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></span>
           <h1 id="j-ready">Add this machine to your team.</h1>
-          <p class="lead">A team owner made this link so another of your machines can join as <b data-field="handle">you</b>. Run one command on the new machine: it installs {{name}} and joins the team as one of your machines.</p>
+          <p class="lead">A team owner made this link so this Mac can join as <b data-field="handle">you</b>.</p>
           <div class="facts">
             <span class="fact">Works once, only for <b data-field="handle">you</b></span>
             <span class="fact">Expires <b data-field="expires">&hellip;</b></span>
           </div>
-          <ol class="welcome-steps">
-            <li>On the new machine (macOS or Linux), open a terminal and run:</li>
-          </ol>
+          <div data-team-agents>
+            <fieldset class="consent">
+              <legend>Let your team run agents on this computer?</legend>
+              <label class="consent-option"><input type="radio" name="agents-consent" data-consent-choice="no"> No</label>
+              <label class="consent-option"><input type="radio" name="agents-consent" data-consent-choice="yes" checked> Yes (default)</label>
+            </fieldset>
+            <div class="consent-max" data-consent-max>
+              <label for="j-seat-max">Seat maximum</label>
+              <input type="number" id="j-seat-max" data-consent-max-input inputmode="numeric" min="1" max="64" step="1" value="4">
+            </div>
+            <p class="welcome-note">Each seat runs as a separate OS user with this machine&rsquo;s Claude login. A running seat can read this machine&rsquo;s short-lived Claude access token, never the refresh token; a dedicated seat token is used instead when one is set. Team owners can start up to this maximum. You can stop seats from {{name}} on this Mac, or any time with <code>{{cli}} seats deny</code>.</p>
+          </div>
+          <div class="welcome-actions">
+            <button class="btn" type="button" data-join-package {{package_hidden}}>Install {{name}} and join</button>
+            <button class="btn btn-ghost" type="button" data-join-open hidden>Open {{name}} to finish joining</button>
+            <a data-package-url href="https://github.com/{{github_owner}}/{{cli}}-releases/releases/download/{{release_version}}/{{name}}.pkg" target="_blank" rel="noopener noreferrer" hidden aria-hidden="true" tabindex="-1">Download package</a>
+          </div>
+          <p class="welcome-note" data-package-instructions {{package_hidden}}>Open the downloaded package. When you return, this page opens {{name}} to finish joining. If it does not, select “Open {{name}} to finish joining.” macOS may ask you to approve the app. Keep this page open until {{name}} starts.</p>
+          <details data-terminal-fallback {{fallback_open}}><summary>Use the terminal command instead</summary>
+          <p class="welcome-note">This fallback puts the private invite code on your command line and may leave it in shell history or process listings.</p>
           <div class="install">
             <div class="install-shell">
               <div class="install-core">
@@ -69,11 +86,8 @@
             </div>
           </div>
           <p class="welcome-note" data-field="version"></p>
-          <ol class="welcome-steps from-2" start="2">
-            <li>It verifies the release signature, installs, starts the background service and joins. Check it with <code>{{cli}} who</code>: this machine shows up under your name.</li>
-            <li>Once it has joined, your own agents and the team&rsquo;s owners can set {{name}} up on this machine for you (seats, accounts, hooks, pool) over {{name}}, never through a shell. Every such action is posted to the team, naming who did it and mentioning you. Turn it off any time on this machine: <code>{{cli}} admin remote off</code> (owners, remotely) and <code>{{cli}} agents admin off</code> (agents).</li>
-            <li data-team-agents hidden>It asks you one question: <strong>may your team start agents on this machine?</strong> No is the default, and nothing else changes. If you say yes, each agent runs as a separate user made just for it (never as you), uses this machine&rsquo;s own Claude or Codex sign-in, and you can turn it off any time with <code>{{cli}} seats deny</code>. Yes asks for your password once, to create those users. You never set up SSH, remote login or user accounts yourself.</li>
-          </ol>
+          <p class="welcome-note">The command verifies the release signature, installs, starts the background service and joins.</p>
+          </details>
           <p class="welcome-note"><strong>Keep this private.</strong> Anyone who runs this command before you do joins the team as one of your machines. Already have {{name}} on that machine? Run <code>{{cli}} join</code> with the code at the end of the command instead.</p>
         </section>
 

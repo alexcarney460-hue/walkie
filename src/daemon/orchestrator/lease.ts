@@ -38,6 +38,9 @@ export class LeaseAuthority {
     this.until = now + this.o.ttl + LEASE_HANDOFF_MS;
     return this.reply(authority, true);
   }
+  holds(node: string, epoch: number): boolean {
+    return this.record.holder === node && this.record.epoch === epoch && this.o.now() < this.until - LEASE_HANDOFF_MS;
+  }
   private reply(authority: string, granted: boolean): LeadGrant {
     return { authority, ...this.record, granted, expires_at: Math.max(0, (this.o.wallNow?.() ?? Date.now()) + this.o.ttl), ttl_ms: this.o.ttl };
   }

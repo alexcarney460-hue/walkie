@@ -44,6 +44,11 @@ describe("rich markdown is XSS-safe", () => {
 });
 
 describe("conversation model (the local conversation only)", () => {
+  test("private join details have a clear title and render for the person", () => {
+    const item = msg("Join details", { role: "orchestrator", via: "private" });
+    expect(conversations([item])[0]?.title).toBe("Private join details");
+    expect(threadMessages([item], item.id)[0]?.text).toBe("Join details");
+  });
   test("threads, roles, tools; an unsent message says why; the title is the person's first line", () => {
     const root = msg("Plan the release\nwith details", { state: "sent" });
     const reply = msg("Here is the plan", { role: "orchestrator", thread: root.id, tools: ["Bash bun test"] });

@@ -1,11 +1,15 @@
 import { LeadGrant } from "./orchestrator/lease.ts";
+import { ScheduleClaim } from "./orchestrator/leadership.ts";
+import { ScheduleClaimResult } from "./orchestrator/schedule-claims.ts";
+import { ScheduleManagementResult, type ScheduleProgress } from "../protocol/talkie-management.ts";
+import type { SignedScheduleManagement, SignedSchedulePeer } from "./orchestrator/schedule-forward.ts";
 // HTTP client for other daemons' peer API (PROTOCOL §4), over Tailscale or Walkie Direct (src/daemon/transport.ts).
 // A peer is not trusted to send well-formed or small responses: bodies are read with a streaming byte cap and
 // validated with zod.
-import type { ZodType, ZodTypeDef } from "zod";
+import { z, type ZodType, type ZodTypeDef } from "zod";
 import {
-  MAX_IDS_PER_FETCH, PeerEventsRes, PeerHelloRes, PeerJoinResSchema, PeerPushResSchema, PeerVvRes, RosterRequestRes,
-  type PeerHello, type PeerJoinRes, type PeerPushRes, type PeerVv, type RosterRequest,
+  Event as EventSchema, MAX_IDS_PER_FETCH, PeerEventsRes, PeerHelloRes, PeerJoinResSchema, PeerPushResSchema, PeerVvRes, PeerVvRelayRes, RosterRequestRes,
+  type PeerHello, type PeerJoinRes, type PeerPushRes, type PeerVv, type PeerVvRelay, type RosterRequest,
 } from "../protocol/schemas.ts";
 import { pickTransport, reachableOver, type NodeRec } from "./roster.ts";
 import type { TransportKind } from "../protocol/schemas.ts";
@@ -15,6 +19,9 @@ import { TunnelRefused } from "./direct/net.ts";
 import { WsEnd, type End } from "../pool/run/tunnel.ts";
 import { BorrowedUsageRes, PeerLeaseRes, type PeerLeaseReq } from "./vault-lease.ts";
 import { RemoteRunRes } from "../protocol/admin.ts";
+import type { NodeKeys } from "./keys.ts";
+import { nodeIdFromPubkey } from "../protocol/ids.ts";
+import { newPeerNonce, signPeerRequest, verifyPeerVv } from "./peer-sig.ts";
 
 export { peerUrl, type PeerAddr } from "./transport.ts";
 
@@ -54,11 +61,13 @@ export class PeerCallError extends Error {
 
 export interface PeerIdentityHeaders {
   team: () => string | null; nodeId: string;
+  /** Production supplies the owner-only node key; omitted by legacy/test clients. */
+  keys?: NodeKeys;
   /** This node's own roster record: which transports it serves, for picking one per peer (PROTOCOL §4). */
   self?: () => Pick<NodeRec, "transports" | "ip"> | undefined;
 }
 
-type PeerNode = Pick<NodeRec, "ip" | "port" | "pubkey" | "transports">;
+type PeerNode = Pick<NodeRec, "ip" | "port" | "pubkey" | "transports"> & Partial<Pick<NodeRec, "node_id">>;
 
 /** Largest JSON response accepted from a peer (servers byte-budget pages to PEER_PAGE_BUDGET). */
 export const PEER_RESPONSE_MAX = 1024 * 1024;
@@ -112,7 +121,7 @@ export class PeerClient {
    */
   addrOf(n: PeerNode): PeerAddr | null {
     const via = pickTransport(this.localTransports(), n);
-    if (via === "tailscale") return { ip: n.ip, port: n.port };
+    if (via === "tailscale") return { ip: n.ip, port: n.port, ...(n.node_id ? { nodeId: n.node_id } : {}) };
     return via === "direct" ? { ip: n.ip, port: n.port, pubkey: n.pubkey } : null;
   }
 
@@ -122,7 +131,7 @@ export class PeerClient {
    */
   addrVia(n: PeerNode, kind: TransportKind): PeerAddr | null {
     if (!reachableOver(this.localTransports()).includes(kind) || !reachableOver(n).includes(kind)) return null;
-    return kind === "tailscale" ? { ip: n.ip, port: n.port } : { ip: n.ip, port: n.port, pubkey: n.pubkey };
+    return kind === "tailscale" ? { ip: n.ip, port: n.port, ...(n.node_id ? { nodeId: n.node_id } : {}) } : { ip: n.ip, port: n.port, pubkey: n.pubkey };
   }
 
   /** Whether this daemon can reach `n` directly at all. */
@@ -160,11 +169,29 @@ export class PeerClient {
     return headers;
   }
 
+  private async requestHeaders(addr: PeerAddr, method: string, path: string, body?: string): Promise<Record<string, string>> {
+    const headers = this.headers(body !== undefined);
+    if (path === "/peer/v1/vv") headers["X-Walkie-Vv-Challenge"] = newPeerNonce();
+    if (addr.pubkey || !this.id.keys) return headers;
+    // Discovery cannot name its target until hello answers; sign hello too when the address already names a node.
+    if (path === "/peer/v1/hello" && (!addr.nodeId || !this.id.team())) return headers;
+    const peer = addr.nodeId ? null : await this.hello(addr);
+    const target = addr.nodeId ?? peer?.node_id;
+    const team = this.id.team() ?? peer?.team;
+    if (!target || !team) throw new PeerCallError(0, "bad_target", "peer identity or team is unknown");
+    const url = new URL(path, "http://peer.invalid");
+    return { ...headers, ...signPeerRequest(this.id.keys, { method, path: url.pathname, query: url.search,
+      body: body ?? "", requester: this.id.nodeId, target, team, ts: Date.now(), nonce: newPeerNonce() }) };
+  }
+
   private async call<T>(
     addr: PeerAddr, method: string, path: string, schema: ZodType<T, ZodTypeDef, unknown>, body?: unknown, timeoutMs = 2_000,
+    validate?: (value: T, headers: Record<string, string>, raw: unknown) => T,
   ): Promise<T> {
     const signal = AbortSignal.timeout(timeoutMs);
-    const res = await this.send(addr, method, path, this.headers(body !== undefined), body === undefined ? undefined : JSON.stringify(body), signal);
+    const wire = body === undefined ? undefined : JSON.stringify(body);
+    const headers = await this.requestHeaders(addr, method, path, wire);
+    const res = await this.send(addr, method, path, headers, wire, signal);
     let data: unknown = {};
     try {
       const bytes = await readCapped(res, PEER_RESPONSE_MAX);
@@ -181,7 +208,7 @@ export class PeerClient {
     }
     const parsed = schema.safeParse(data);
     if (!parsed.success) throw new PeerCallError(res.status, "bad_response", "peer response has the wrong shape");
-    return parsed.data;
+    return validate ? validate(parsed.data, headers, data) : parsed.data;
   }
 
   hello(addr: PeerAddr, timeoutMs = 5_000): Promise<PeerHello> {
@@ -191,7 +218,20 @@ export class PeerClient {
     // A Direct join may first have to find the authority through a relay and discovery.
     return this.call(addr, "POST", "/peer/v1/join", PeerJoinResSchema, body, addr.pubkey ? 30_000 : 10_000);
   }
-  vv(addr: PeerAddr): Promise<PeerVv> { return this.call(addr, "GET", "/peer/v1/vv", PeerVvRes, undefined, 5_000); }
+  vv(addr: PeerAddr, pubkey?: string): Promise<PeerVv & { verified?: boolean; envelope?: PeerVvRelay }> {
+    return this.call(addr, "GET", "/peer/v1/vv", PeerVvRes, undefined, 5_000, (vv, headers, raw) => {
+      if (!pubkey) return vv;
+      const wire = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+      const { proof: _proof, ...body } = wire;
+      const verified = !!vv.proof && vv.node === (addr.nodeId ?? nodeIdFromPubkey(pubkey)) && verifyPeerVv(pubkey,
+        { ...body, node: vv.node, ts: vv.ts }, this.id.nodeId, headers["X-Walkie-Vv-Challenge"] ?? "", vv.proof);
+      const challenge = headers["X-Walkie-Vv-Challenge"] ?? "";
+      const relayBody = { node: vv.node, ts: vv.ts };
+      const envelope = verified && vv.relay_proof && verifyPeerVv(pubkey, relayBody, this.id.nodeId, challenge, vv.relay_proof)
+        ? { node: vv.node, challenge, proof: vv.relay_proof, body: relayBody } : undefined;
+      return { ...vv, verified, ...(envelope ? { envelope } : {}) };
+    });
+  }
   pull(addr: PeerAddr, origin: string, after: number, limit = 500): Promise<{ events: unknown[] }> {
     // status_stubs=1: this node accepts superseded agent.status events as stubs (MISSION-1 fix round 3).
     const qs = new URLSearchParams({ origin, after: String(after), limit: String(limit), status_stubs: "1" });
@@ -206,8 +246,21 @@ export class PeerClient {
     return this.call(addr, "POST", "/peer/v1/events", PeerPushResSchema, { events }, timeoutMs);
   }
   /** ACCOUNTS-2: asks the owner's machine for a setup-token hand-out (reply sealed to our ephemeral key). */
-  leadLease(addr: PeerAddr): Promise<LeadGrant> {
-    return this.call(addr, "POST", "/peer/v1/orchestrator/lease", LeadGrant, {}, 5_000);
+  leadLease(addr: PeerAddr, request: SignedSchedulePeer): Promise<LeadGrant> {
+    return this.call(addr, "POST", "/peer/v1/orchestrator/lease", LeadGrant, request, 5_000);
+  }
+  scheduleClaim(addr: PeerAddr, claim: SignedSchedulePeer): Promise<ScheduleClaimResult> {
+    return this.call(addr, "POST", "/peer/v1/orchestrator/schedule-claim", ScheduleClaimResult, claim, 5_000);
+  }
+  scheduleManage(addr: PeerAddr, request: SignedScheduleManagement): Promise<ScheduleManagementResult> {
+    return this.call(addr, "POST", "/peer/v1/orchestrator/schedule-manage", ScheduleManagementResult, request, 10_000);
+  }
+  scheduleProgress(addr: PeerAddr, progress: SignedSchedulePeer) {
+    return this.call(addr, "POST", "/peer/v1/orchestrator/schedule-progress", EventSchema, progress, 10_000);
+  }
+  scheduleDefaults(addr: PeerAddr, request: SignedSchedulePeer): Promise<{ created: boolean }> {
+    return this.call(addr, "POST", "/peer/v1/orchestrator/schedule-defaults",
+      z.object({ created: z.boolean() }), request, 10_000);
   }
   borrowedUsage(addr: PeerAddr, account: string, grant: string) {
     return this.call(addr, "POST", "/peer/v1/vault/usage", BorrowedUsageRes, { account, grant }, 5_000);
@@ -218,6 +271,9 @@ export class PeerClient {
   /** Asks the roster authority to append a roster event (PROTOCOL §4); `event` is the authority's. */
   rosterRequest(addr: PeerAddr, req: RosterRequest): Promise<{ event?: unknown }> {
     return this.call(addr, "POST", "/peer/v1/roster-request", RosterRequestRes, req, 10_000);
+  }
+  reportPeerProof(addr: PeerAddr, proof: PeerVvRelay): Promise<{ recorded: boolean }> {
+    return this.call(addr, "POST", "/peer/v1/peer-proof", PeerVvRelayRes, proof, 5_000);
   }
 
   /** AGENT-ADMIN-1: runs an allow-listed walkie command on that machine (a 404 = an older Walkie without it). */
@@ -256,14 +312,14 @@ export class PeerClient {
         throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (${(err as Error).message.slice(0, 160)})`);
       }
     }
-    return wsTunnel(peerUrl(addr, path).replace(/^http:/, "ws:"), this.headers(false));
+    return wsTunnel(peerUrl(addr, path).replace(/^http:/, "ws:"), await this.requestHeaders(addr, "GET", path));
   }
 
   /** Fetches blob bytes for a share in `channel`; the peer serves them only with provenance for (channel, hash). */
   async blob(addr: PeerAddr, hash: string, channel: string, maxBytes: number): Promise<Uint8Array | null> {
     try {
       const path = `/peer/v1/blobs/${hash}?${new URLSearchParams({ channel })}`;
-      const res = await this.send(addr, "GET", path, this.headers(false), undefined, AbortSignal.timeout(60_000));
+      const res = await this.send(addr, "GET", path, await this.requestHeaders(addr, "GET", path), undefined, AbortSignal.timeout(60_000));
       if (!res.ok) {
         await res.body?.cancel().catch(() => undefined);
         return null;

@@ -12,9 +12,12 @@ pkgver=$(bun -e 'console.log((await Bun.file("package.json").json()).version)')
 grep -q "^## $tag" CHANGELOG.md || { echo "CHANGELOG.md has no '## $tag' section" >&2; exit 1; }
 
 echo "== gates"
-bun install --frozen-lockfile >/dev/null && (cd web && bun install --frozen-lockfile >/dev/null)
+# One install per line: in an AND-list a failed root install would not stop the script under set -e.
+bun install --frozen-lockfile >/dev/null
+(cd web && bun install --frozen-lockfile >/dev/null)
 bun run typecheck
-timeout 1500 bun test --timeout 30000   # generous per-test timeout: the gate judges correctness, not machine load
+# The suite took 1430 s under load; allow headroom while each test keeps its 30 s hang guard.
+timeout 2400 bun test --timeout 30000
 echo "== build"
 rm -rf dist
 bun run web:build >/dev/null
@@ -23,6 +26,9 @@ bun run web:build >/dev/null
 # install.sh or `walkie update`; installers pin it with WALKIE_VERSION. A real release builds --all.
 case "$tag" in *-*) pre=1 ;; *) pre=0 ;; esac
 if [ "$pre" = 1 ]; then bun scripts/build.ts --targets "${WALKIE_PRE_TARGETS:-darwin-arm64,linux-x64,linux-arm64}"; else bun scripts/build.ts --all; fi
+[ -x dist/walkie-darwin-arm64 ] || { echo "darwin-arm64 binary missing from release build" >&2; exit 1; }
+scripts/smoke-binary.sh dist/walkie-darwin-arm64 "$ver"
+bun scripts/discovery-package-check.ts
 (cd dist && shasum -a 256 walkie-* > SHA256SUMS)
 # SHA256SUMS gets its signed `version <tag>` line and SHA256SUMS.sig (ECDSA P-256, ~/keys/walkie-release-signing-p256.pem,
 # 0600); both are verified by install.sh and `walkie update`, which also refuse a release named otherwise.

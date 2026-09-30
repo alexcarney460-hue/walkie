@@ -55,15 +55,15 @@ export function PendingJoins() {
 
   if (error && !items) return <ErrorState compact message={error} onRetry={() => setNonce((n) => n + 1)} />;
   if (!items) return <SkeletonRows rows={1} />;
-  if (!items.length) return <p className="panel-empty">No machines waiting to join. New machines appear here when auto-admit is off.</p>;
+  if (!items.length) return <p className="panel-empty">No machines waiting to join. Additional machines for an admitted Tailscale login need approval unless they use an add-machine link.</p>;
   return (
     <ul className="pending-list">
       {items.map((p) => (
         <li key={p.node_id} className="pending-row">
           <div className="pending-text">
             <span className="mono">{p.hostname}</span>
-            <span className="muted"> wants to join as <span className="mono">{p.handle ? `@${p.handle}` : p.login}</span></span>
-            <span className="pending-meta muted tnum">{p.ip} · node {p.node_id.slice(0, 8)} · <RelTime ts={p.requested_at} long /></span>
+            <span className="muted">Tailscale login <span className="mono">{p.login}</span>{p.handle ? <> · @{p.handle}</> : null}</span>
+            <span className="pending-meta muted tnum">Requested <RelTime ts={p.requested_at} long /> · {p.ip} · node {p.node_id.slice(0, 8)}</span>
           </div>
           <div className="pending-actions">
             <button type="button" className="btn btn-sm btn-primary" disabled={busy === p.node_id} onClick={() => void decide(p, true)}>

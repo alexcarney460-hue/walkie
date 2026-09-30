@@ -34,6 +34,9 @@ export interface AccessToken {
   value: string;
   /** Unix ms; null when unknown. */
   expiresAt: number | null;
+  /** Claude Code login metadata needed to accept an access-only credential. */
+  scopes?: string[];
+  subscriptionType?: string;
   /** Codex: the ChatGPT-Account-Id header. */
   accountId?: string;
   /** The refresh token is past its own expiry: only a new login helps. */

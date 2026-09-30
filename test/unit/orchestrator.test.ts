@@ -8,7 +8,7 @@ import { validAgentHeader } from "../../src/daemon/local-routes.ts";
 import { interruptRequest, parseClaudeLine, userMessage } from "../../src/daemon/orchestrator/claude-stream.ts";
 import { buildTranscript, capReply } from "../../src/daemon/orchestrator/host.ts";
 import { parsePs, stillOurs, type ProcRow } from "../../src/daemon/orchestrator/group-record.ts";
-import { ClaudeChild, claudeArgs, childEnv, stderrDiagnostic } from "../../src/daemon/orchestrator/process.ts";
+import { ClaudeChild, claudeArgs, childEnv, shellChildEnv, stderrDiagnostic } from "../../src/daemon/orchestrator/process.ts";
 import { Store } from "../../src/daemon/store.ts";
 import { MAX_REPLY_BYTES, ORCHESTRATOR_AGENT, REPLY_TRUNCATED_MARKER } from "../../src/protocol/orchestrator.ts";
 import { redactSecrets } from "../../src/protocol/safety.ts";
@@ -83,6 +83,14 @@ describe("stream-json", () => {
 });
 
 describe("the child environment (Opus LOW)", () => {
+  test("the dedicated uid receives only the projected login and Walkie connection", () => {
+    const env = shellChildEnv({ PATH: "/private/bin", HOME: "/person", SSH_AUTH_SOCK: "/agent.sock",
+      AWS_SECRET_ACCESS_KEY: "secret", OPENAI_API_KEY: "secret", LANG: "en_US.UTF-8", TERM: "xterm" },
+    "/opt/runtime/claude", { WALKIE_HOME: "/walkie", WALKIE_SOCKET: "/talkie.sock",
+      WALKIE_ORCHESTRATOR_TOKEN: "token", CLAUDE_CODE_OAUTH_TOKEN: "access" });
+    expect(env).toEqual({ PATH: "/opt/runtime:/usr/bin:/bin:/usr/sbin:/sbin", LANG: "en_US.UTF-8", TERM: "xterm",
+      WALKIE_HOME: "/walkie", WALKIE_SOCKET: "/talkie.sock", WALKIE_ORCHESTRATOR_TOKEN: "token", CLAUDE_CODE_OAUTH_TOKEN: "access" });
+  });
   test("drops every CLAUDE_CODE_* and ANTHROPIC_* variable (not only the two API credentials)", () => {
     const env = childEnv({
       HOME: "/h", PATH: "/usr/bin", CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDE_CODE_SSE_PORT: "1234",
@@ -243,6 +251,12 @@ describe("a fresh session's transcript can't be forged by a reply (ORCH-FIX-13, 
     expect(json.at(-1)?.text).toBe("last");
     expect(out.length).toBeLessThan(26_000);
     expect(buildTranscript([], "x", "b")).toBe("");
+  });
+  test("private join items remain visible locally but never enter a later model transcript", () => {
+    const privateItem = { ...msg("om_1", "orchestrator", "wk1PRIVATE-CREDENTIAL"), via: "private" as const };
+    const later = msg("om_2", "person", "How do I install?", "sent");
+    expect(buildTranscript([privateItem, later], "om_2", "boundary")).toBe("");
+    expect(privateItem.text).toContain("wk1PRIVATE-CREDENTIAL");
   });
 });
 

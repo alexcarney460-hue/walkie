@@ -127,6 +127,19 @@ export function selectRecordedTargets(snapshot: readonly ProcessRow[], ledger: P
   return { pids: live.map((item) => item.pid), pgids: [...new Set(live.filter((item) => groups.has(item.pgid) && item.pgid > 0 && item.pgid !== self).map((item) => item.pgid))] };
 }
 
+/** Only ESRCH means exited. The privileged uid helper owns cross-uid cleanup after EPERM. */
+export function signalMarkedProcess(pid: number, signal: NodeJS.Signals,
+  kill: (pid: number, signal: NodeJS.Signals) => boolean = process.kill,
+  report: (line: string) => void = (line) => { process.stderr.write(`${line}\n`); }): void {
+  try { kill(pid, signal); }
+  catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return;
+    if (code === "EPERM") { report(`${signal} denied for ${pid < 0 ? "group" : "PID"} ${Math.abs(pid)} (EPERM); privileged uid cleanup is required`); return; }
+    throw err;
+  }
+}
+
 /** Stop descendants, then kill exact recorded PIDs and groups backed by a matching live member. */
 export function killMarkedProcesses(root: number, marker: string, ledger: ProcessLedger = new Map()): number[] {
   if (!/^[0-9]+\.[0-9a-f-]{36}$/.test(marker)) return [];
@@ -141,14 +154,14 @@ export function killMarkedProcesses(root: number, marker: string, ledger: Proces
   }
   const targets = snapshot.filter((item) => item.pid !== process.pid &&
     (marked.has(item.pid) || descendants.has(item.pid) || (root > 0 && item.pgid === root)));
-  for (const item of targets) if (item.pid !== root) { try { process.kill(item.pid, "SIGSTOP"); } catch { /* exited */ } }
+  for (const item of targets) if (item.pid !== root) signalMarkedProcess(item.pid, "SIGSTOP");
   const latest = allRows();
   const recorded = selectRecordedTargets(latest, ledger, process.pid);
   const all = new Set([...targets.map((item) => item.pid), ...recorded.pids,
     ...latest.filter((item) => item.pid !== process.pid && marked.has(item.pid)).map((item) => item.pid)]);
-  for (const pid of all) if (pid !== root) { try { process.kill(pid, "SIGSTOP"); } catch { /* exited */ } }
+  for (const pid of all) if (pid !== root) signalMarkedProcess(pid, "SIGSTOP");
   const ownGroup = row(process.pid)?.pgid;
-  for (const pgid of recorded.pgids) if (pgid !== ownGroup) { try { process.kill(-pgid, "SIGKILL"); } catch { /* exited */ } }
-  for (const pid of all) { try { process.kill(pid, "SIGKILL"); } catch { /* exited */ } }
+  for (const pgid of recorded.pgids) if (pgid !== ownGroup) signalMarkedProcess(-pgid, "SIGKILL");
+  for (const pid of all) signalMarkedProcess(pid, "SIGKILL");
   return [...all];
 }

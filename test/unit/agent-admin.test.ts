@@ -46,6 +46,16 @@ test("remote allow-list: walkie subcommands only, no stdin, no program paths, sw
   expect(remoteArgvProblem([])).toBe("no command");
 });
 
+test("seats allow --dir: a leading ~ or an absolute path are fine remotely; a relative one is refused (the target's spawned admin run's cwd isn't meaningful)", () => {
+  expect(remoteArgvProblem(["seats", "allow", "--dir", "~/walkie-seats"])).toBeNull();
+  expect(remoteArgvProblem(["seats", "allow", "--dir=~"])).toBeNull();
+  expect(remoteArgvProblem(["seats", "allow", "--dir", "/Users/kira/walkie-seats"])).toBeNull();
+  expect(remoteArgvProblem(["seats", "allow"])).toBeNull(); // --dir left out entirely: fine, keeps its value
+  expect(remoteArgvProblem(["seats", "allow", "--dir", "walkie-seats"])).toContain("absolute path or start with ~/");
+  expect(remoteArgvProblem(["seats", "allow", "--dir", "../walkie-seats"])).toContain("absolute path or start with ~/");
+  expect(remoteArgvProblem(["seats", "allow", "--dir=relative/seats"])).toContain("absolute path or start with ~/");
+});
+
 test("the CLI split: leading --machine/--machines/--timeout/--json belong to walkie admin; the rest passes through", () => {
   expect(splitRemote(["status"])).toBeNull();
   expect(splitRemote(["--machine", "almond-wsl", "seats", "enable", "--yes", "--max", "12", "--json"])).toEqual({

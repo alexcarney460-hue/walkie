@@ -43,6 +43,14 @@ describe("a Tailscale team turns on Walkie Direct", () => {
   test("a Tailscale team without a Direct authority can't mint invite codes", async () => {
     const me = await alex.client().init("aka", "alex");
     expect(me.transport?.mode).toBe("tailscale");
+    // The owner explicitly opens the legacy admission window for the pre.1.3 daemon.
+    await alex.client().request("POST", "/v1/team/peer-sig-strict", { strict: false });
+    dave = await startV013();
+    if (dave) {
+      const daveClient = new WalkieClient({ socket: dave.socket, timeoutMs: 15_000 });
+      await alex.client().invite("dave@example.com", "dave", "member");
+      expect((await daveClient.join(alex.peerAddr)).admitted).toBe(true);
+    }
     await alex.client().invite("bob@example.com", "bob", "member");
     expect((await bob.client().join(alex.peerAddr)).admitted).toBe(true);
     await bob.client().post({ channel: "general", text: "bob: before arvid" });
@@ -233,12 +241,9 @@ async function startV013(): Promise<V013 | null> {
 
 describe("compatibility", () => {
   test("a v0.1.3 Tailscale node on the mixed team syncs both ways with the Direct-only member", async () => {
-    dave = await startV013();
     if (!dave) { console.log("[skip] v0.1.3 tag not available in this checkout"); return; }
     const daveClient = new WalkieClient({ socket: dave.socket, timeoutMs: 15_000 });
     expect((await daveClient.me()).version).toBe("0.1.3");
-    await alex.client().invite("dave@example.com", "dave", "member");
-    expect((await daveClient.join(alex.peerAddr)).admitted).toBe(true);
     // The v0.1.3 node holds the whole mixed roster (it ignores the transport fields) and arvid's history.
     expect(await texts(daveClient)).toEqual(expect.arrayContaining(["arvid → bob", "bob: before arvid"]));
     await daveClient.post({ channel: "general", text: "dave (v0.1.3) → arvid" });

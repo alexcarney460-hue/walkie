@@ -22,14 +22,16 @@
 #   4. The signed release is not older than the walkie already installed (a mirror replaying an older
 #      signed release can't roll a machine back), unless WALKIE_ALLOW_DOWNGRADE=1.
 #   5. The downloaded binary reports the signed version (`walkie version`) before it replaces anything.
+# WALKIE_INSTALL_ONLY=1 verifies and installs without running setup (used by the desktop join app).
 set -eu
 
 REPO="${WALKIE_REPO:-alexcarney460-hue/walkie-releases}"
 BIN_DIR="${WALKIE_BIN_DIR:-$HOME/.local/bin}"
 # The release a plain `curl … | sh` installs. Bump this one line when a new release should be what new machines get;
 # site/build.py reads it for the landing page's footer, so the page and the installer can't drift apart.
-DEFAULT_VERSION="v0.2.0-pre.9"
+DEFAULT_VERSION="v0.2.0-pre.10"
 VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"
+if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -n "${WALKIE_BASE_URL:-}" ]; then VERSION="$WALKIE_MIN_VERSION"; fi
 # The Walkie release-signing public key (EC P-256). Not the license key. Rotated only by a new installer.
 RELEASE_PUBKEY_PEM='-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgkx2EdLfMqWSGF8WsQZH3Gtu2spE
@@ -65,6 +67,19 @@ semver_lt() {
     }
     BEGIN { exit !(cmp(a, b) < 0) }'
 }
+
+# A join link names a minimum. Resolve pre-releases too; GitHub's /releases/latest omits them.
+if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -z "${WALKIE_BASE_URL:-}" ]; then
+  case "$WALKIE_MIN_VERSION" in v[0-9]*.[0-9]*.[0-9]*) ;; *) die "invalid WALKIE_MIN_VERSION" ;; esac
+  listing=$(curl -fsSL --max-time 20 "https://api.github.com/repos/$REPO/releases?per_page=100") || die "could not list current releases"
+  newest=""
+  for tag in $(printf '%s\n' "$listing" | sed -n 's/.*"tag_name": *"\(v[0-9][0-9A-Za-z.-]*\)".*/\1/p'); do
+    case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) continue ;; esac
+    if ! semver_lt "$tag" "$WALKIE_MIN_VERSION" && { [ -z "$newest" ] || semver_lt "$newest" "$tag"; }; then newest="$tag"; fi
+  done
+  [ -n "$newest" ] || die "no release meets minimum $WALKIE_MIN_VERSION"
+  VERSION="$newest"
+fi
 
 os=$(uname -s)
 case "$os" in
@@ -149,16 +164,25 @@ else actual=$(sha256sum "$tmp/walkie" | awk '{print $1}'); fi
 [ "$sum_expected" = "$actual" ] || die "checksum mismatch for $asset"
 say "Verified: release signature (openssl), version $signed and SHA-256."
 
-# 4. Never a silent rollback: a walkie already installed that is newer than the signed release stays,
-#    unless asked (WALKIE_ALLOW_DOWNGRADE=1). Its version comes from the binary itself.
+# 4. Never a silent rollback: check every executable Walkie in the effective search path,
+#    plus Homebrew and ~/.local/bin, before replacing the selected destination.
 existing=""
-if [ -x "$BIN_DIR/walkie" ]; then
-  existing=$("$BIN_DIR/walkie" version 2>/dev/null | awk '$1 == "walkie" { print $2; exit }' || true)
-fi
-if [ -n "$existing" ] && semver_lt "${signed#v}" "$existing"; then
-  [ "${WALKIE_ALLOW_DOWNGRADE:-}" = 1 ] \
-    || die "release $signed is older than the installed walkie $existing: refusing to downgrade (the installed binary is unchanged; set WALKIE_ALLOW_DOWNGRADE=1 to replace it anyway)"
-  say "Downgrading walkie $existing → ${signed#v} (WALKIE_ALLOW_DOWNGRADE=1)."
+old_ifs=$IFS
+IFS=:
+for dir in "$BIN_DIR" "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin $PATH; do
+  [ -n "$dir" ] || continue
+  case "$dir" in /*) ;; *) continue ;; esac
+  [ -x "$dir/walkie" ] || continue
+  found=$("$dir/walkie" version 2>/dev/null | awk '$1 == "walkie" { print $2; exit }' || true)
+  [ -n "$found" ] || die "cannot read the installed Walkie version at $dir/walkie"
+  if semver_lt "${signed#v}" "$found"; then
+    [ "${WALKIE_ALLOW_DOWNGRADE:-}" = 1 ] || die "release $signed is older than $dir/walkie ($found): refusing to downgrade (set WALKIE_ALLOW_DOWNGRADE=1 to replace it anyway)"
+  fi
+  existing="$found"
+done
+IFS=$old_ifs
+if [ -n "${WALKIE_MIN_VERSION:-}" ] && semver_lt "$signed" "$WALKIE_MIN_VERSION"; then
+  die "signed release $signed is below the team's minimum $WALKIE_MIN_VERSION"
 fi
 
 # 5. The downloaded binary must report the signed version, checked before anything on PATH changes.
@@ -174,6 +198,7 @@ install -m 755 "$tmp/walkie" "$staged" || die "could not write to $BIN_DIR${exis
 mv -f "$staged" "$BIN_DIR/walkie" || die "could not replace $BIN_DIR/walkie${existing:+ (the installed walkie $existing is unchanged)}"
 staged=""
 say "Installed $BIN_DIR/walkie ($reported)"
+if [ "${WALKIE_INSTALL_ONLY:-}" = 1 ]; then exit 0; fi
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Note: add $BIN_DIR to your PATH." ;; esac
 
 # Tailscale is optional: Walkie Direct connects machines without it.

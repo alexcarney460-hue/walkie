@@ -88,9 +88,10 @@ function world() {
   core.ip = "100.64.0.1";
   core.createTeam("aka", "alex");
   // `walkie direct enable` on the authority: its own record gains "direct" (a re-pin, same address).
-  core.emit("team.node", { node_id: alex.keys.nodeId, login: alex.login, hostname: alex.hostname, pubkey: alex.keys.pubkey, ip: "100.64.0.1", endpoint: hex(alex), transports: ["tailscale", "direct"] });
+  core.emit("team.node", { node_id: alex.keys.nodeId, login: alex.login, hostname: alex.hostname, pubkey: alex.keys.pubkey, ip: "100.64.0.1", endpoint: hex(alex), transports: ["tailscale", "direct"], peer_sig_strict: false });
   core.emit("team.member", { login: bob.login, handle: "bob", role: "member" });
   core.emit("team.node", { node_id: bob.keys.nodeId, login: bob.login, hostname: bob.hostname, pubkey: bob.keys.pubkey, ip: "100.64.0.2" });
+  core.store.setMeta(`peer_capabilities:${bob.keys.nodeId}`, JSON.stringify({ version: "0.1.3", caps: [] }));
   core.emit("team.member", { login: carol.login, handle: "carol", role: "member" });
   core.emit("team.node", { node_id: carol.keys.nodeId, login: carol.login, hostname: carol.hostname, pubkey: carol.keys.pubkey, ip: "", endpoint: hex(carol), transports: ["direct"] });
   core.emit("team.node", { node_id: alex2.keys.nodeId, login: alex.login, hostname: alex2.hostname, pubkey: alex2.keys.pubkey, ip: "", endpoint: hex(alex2), transports: ["direct"] });

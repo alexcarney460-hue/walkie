@@ -1,8 +1,9 @@
 // Read-only views of this user's processes for agent discovery (src/daemon/discovery.ts). Every external call is
 // bounded (timeout + output cap). Environment reads return the NAMED variables' values and nothing else, or (envNames)
 // only which of the named variables are set: a token variable's value is never read into a result.
-import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
-import { readSmallFile } from "../agent/safe-read.ts";
+import { existsSync } from "node:fs";
+import { readdir, readFile, readlink } from "node:fs/promises";
+import { readSmallFileAsync } from "../agent/safe-read.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseCpuTime } from "./activity.ts";
@@ -44,6 +45,7 @@ const TIMEOUT_MS = 5_000;
 const OUTPUT_MAX = 8 * 1024 * 1024;
 
 export interface RunOptions {
+  signal?: AbortSignal;
   timeoutMs?: number;
   /** Stdout cap in bytes; more is "overflow". */
   max?: number;
@@ -65,6 +67,7 @@ export type RunResult =
  * leave the caller waiting. A timeout is reported as such, never as empty output.
  */
 export async function runProcess(argv: string[], opts: RunOptions = {}): Promise<RunResult> {
+  if (opts.signal?.aborted) return { kind: "error" };
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
   const max = opts.max ?? OUTPUT_MAX;
   let proc: ReturnType<typeof Bun.spawn<"ignore", "pipe", "ignore">>;
@@ -77,6 +80,12 @@ export async function runProcess(argv: string[], opts: RunOptions = {}): Promise
     return { kind: "error" };
   }
   const kill = (sig: "SIGTERM" | "SIGKILL") => { try { proc.kill(sig); } catch { /* already gone */ } };
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<RunResult>((resolve) => {
+    abortListener = () => { kill("SIGKILL"); resolve({ kind: "error" }); };
+    opts.signal?.addEventListener("abort", abortListener, { once: true });
+    if (opts.signal?.aborted) abortListener();
+  });
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<RunResult>((resolve) => {
@@ -102,9 +111,10 @@ export async function runProcess(argv: string[], opts: RunOptions = {}): Promise
     const code = await proc.exited;
     return { kind: "ok", stdout: Buffer.concat(chunks).toString("utf8"), code };
   })().catch((): RunResult => ({ kind: "error" }));
-  const result = await Promise.race([work, deadline]);
+  const result = await Promise.race([work, deadline, aborted]);
   settled = true;
   clearTimeout(timer);
+  if (abortListener) opts.signal?.removeEventListener("abort", abortListener);
   return result;
 }
 
@@ -178,10 +188,10 @@ function psLines(out: string | null): Map<number, string> {
 
 function claudeConfigDir(): string { return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"); }
 
-function readClaudeSession(pid: number, configDir = claudeConfigDir()): { sessionId: string; startedAt?: number } | undefined {
+export async function readClaudeSession(pid: number, configDir = claudeConfigDir()): Promise<{ sessionId: string; startedAt?: number } | undefined> {
   try {
     // One descriptor, checked after it is opened (no lstat-then-open window): a FIFO or symlink can't be swapped in.
-    const text = readSmallFile(join(configDir, "sessions", `${pid}.json`), 64 * 1024, process.getuid?.() ?? null);
+    const text = await readSmallFileAsync(join(configDir, "sessions", `${pid}.json`), 64 * 1024, process.getuid?.() ?? null);
     if (text === null) return undefined;
     const d = JSON.parse(text) as { pid?: unknown; sessionId?: unknown; startedAt?: unknown };
     if (d.pid !== pid || typeof d.sessionId !== "string" || !d.sessionId) return undefined;
@@ -203,10 +213,10 @@ export class SystemProcessProvider implements ProcessProvider {
   }
 
   /** Linux: each pid's environment entries ("NAME=value"), from /proc (exact, no parsing of text). */
-  private procEnv(pids: readonly number[]): Map<number, string[]> {
+  private async procEnv(pids: readonly number[]): Promise<Map<number, string[]>> {
     const res = new Map<number, string[]>();
     for (const pid of pids) {
-      try { res.set(pid, readFileSync(`/proc/${pid}/environ`, "latin1").split("\0")); } catch { /* gone, or not ours */ }
+      try { res.set(pid, (await readFile(`/proc/${pid}/environ`, "latin1")).split("\0")); } catch { /* gone, or not ours */ }
     }
     return res;
   }
@@ -231,7 +241,7 @@ export class SystemProcessProvider implements ProcessProvider {
     const res = new Map<number, Record<string, string>>();
     if (!pids.length) return res;
     if (this.linux) {
-      for (const [pid, vars] of this.procEnv(pids)) {
+      for (const [pid, vars] of await this.procEnv(pids)) {
         const got: Record<string, string> = {};
         for (const name of names) {
           const v = vars.find((x) => x.startsWith(`${name}=`));
@@ -249,7 +259,7 @@ export class SystemProcessProvider implements ProcessProvider {
     const res = new Map<number, string[]>();
     if (!pids.length) return res;
     if (this.linux) {
-      for (const [pid, vars] of this.procEnv(pids)) res.set(pid, names.filter((n) => vars.some((x) => x.startsWith(`${n}=`) && x.length > n.length + 1)));
+      for (const [pid, vars] of await this.procEnv(pids)) res.set(pid, names.filter((n) => vars.some((x) => x.startsWith(`${n}=`) && x.length > n.length + 1)));
       return res;
     }
     for (const [pid, text] of await this.envTexts(pids)) res.set(pid, envNamesIn(text, names));
@@ -258,7 +268,7 @@ export class SystemProcessProvider implements ProcessProvider {
 
   async cwd(pid: number): Promise<string | undefined> {
     if (this.linux) {
-      try { return readlinkSync(`/proc/${pid}/cwd`); } catch { return undefined; }
+      try { return await readlink(`/proc/${pid}/cwd`); } catch { return undefined; }
     }
     const out = await runBounded(["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
     const line = out?.split("\n").find((l) => l.startsWith("n/"));
@@ -268,9 +278,9 @@ export class SystemProcessProvider implements ProcessProvider {
   async openFiles(pid: number): Promise<string[]> {
     if (this.linux) {
       try {
-        return readdirSync(`/proc/${pid}/fd`).flatMap((fd) => {
-          try { return [readlinkSync(`/proc/${pid}/fd/${fd}`)]; } catch { return []; }
-        });
+        const fds = await readdir(`/proc/${pid}/fd`);
+        const paths = await Promise.all(fds.map(async (fd) => readlink(`/proc/${pid}/fd/${fd}`).catch(() => null)));
+        return paths.filter((path): path is string => path !== null);
       } catch {
         return [];
       }

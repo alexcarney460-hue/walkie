@@ -10,13 +10,20 @@ import { join } from "node:path";
 import { createInvite } from "../../src/daemon/invite.ts";
 import { generateKeys } from "../../src/daemon/keys.ts";
 import { addMachineCommand, addMachineLink, INSTALL_URL } from "../../src/protocol/add-machine.ts";
+/** The release the site installs (scripts/install.sh DEFAULT_VERSION), which build.py links the package to. */
+const INSTALLER_VERSION = readFileSync(join(import.meta.dir, "../../scripts/install.sh"), "utf8").match(/DEFAULT_VERSION="(v[^"]+)"/)![1];
 
 interface JoinApi {
+  handoff(code: string, yes: boolean, max: number, tag?: string | null): string;
   parseFragment(hash: string): { code?: string; tag?: string | null; agents?: boolean; error?: string };
   describe(code: string): { handle: string; role: string; expiresAt: number } | null;
   command(installUrl: string, code: string, tag: string | null): string;
   run(env: { window: FakeWindow; document: FakeDocument; now: number }): string | null;
   start(win: FakeWindow, doc: FakeDocument, clock: () => number): void;
+  clampSeatMax(raw: unknown): number;
+  SEAT_MAX_DEFAULT: number;
+  SEAT_MAX_MIN: number;
+  SEAT_MAX_MAX: number;
 }
 const SITE = join(import.meta.dir, "..");
 const page = createRequire(import.meta.url)(join(SITE, "assets", "join.js")) as JoinApi;
@@ -32,10 +39,23 @@ const mint = (handle = "arvid", now = NOW, role: "owner" | "member" | "observer"
 class El {
   textContent = "";
   hidden = false;
+  disabled = false;
+  open = false;
+  checked = false;
+  value = "";
   readonly classes = new Set<string>();
   readonly classList = { toggle: (c: string, on: boolean) => { if (on) this.classes.add(c); else this.classes.delete(c); } };
-  constructor(readonly attrs: Record<string, string>, readonly children: El[] = []) {}
+  readonly listeners: Record<string, Array<() => void>> = {};
+  clicks = 0;
+  constructor(readonly attrs: Record<string, string>, readonly children: El[] = []) {
+    if ("checked" in attrs) this.checked = true;
+    if ("value" in attrs) this.value = attrs.value as string;
+  }
   getAttribute(n: string): string | null { return this.attrs[n] ?? null; }
+  addEventListener(type: string, fn: () => void): void { (this.listeners[type] ??= []).push(fn); }
+  /** A stand-in for dispatching a real DOM event: runs every listener registered for `type` on this element. */
+  fire(type: string): void { for (const fn of this.listeners[type] ?? []) fn(); }
+  click(): void { this.clicks++; this.fire("click"); }
   querySelectorAll(sel: string): El[] {
     const m = /^\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(sel);
     if (!m) throw new Error(`unsupported selector ${sel}`);
@@ -46,7 +66,8 @@ class El {
 }
 type FakeDocument = El;
 interface FakeWindow {
-  location: { hash: string; pathname: string; search: string };
+  location: { hash: string; pathname: string; search: string; assign(url: string): void };
+  assigned: string[];
   history: { replaceState(s: unknown, t: string, url: string): void };
   replaced: string[];
   /** The address of each history entry of this document, as the browser keeps it (the current one last). */
@@ -58,13 +79,23 @@ interface FakeWindow {
 function world(hash: string) {
   const f = (name: string) => new El({ "data-field": name });
   const fields = ["handle", "expires", "command", "version"];
-  const consent = new El({ "data-team-agents": "" });
+  const choiceNo = new El({ type: "radio", "data-consent-choice": "no" });
+  const choiceYes = new El({ type: "radio", "data-consent-choice": "yes", checked: "true" });
+  const maxInput = new El({ type: "number", "data-consent-max-input": "", value: "4" });
+  const maxBlock = new El({ "data-consent-max": "" }, [maxInput]);
+  maxBlock.hidden = false;
+  const consent = new El({ "data-team-agents": "" }, [choiceNo, choiceYes, maxBlock]);
+  const button = new El({ "data-join-package": "" });
+  const open = new El({ "data-join-open": "" });
+  const packageLink = new El({ "data-package-url": "" });
+  const fallback = new El({ "data-terminal-fallback": "" });
   consent.hidden = true;
-  const states = ["loading", "ready", "expired", "invalid", "missing"].map((s) => new El({ "data-state": s }, s === "ready" ? [...fields.map(f), consent] : s === "expired" ? [f("handle"), f("expires")] : []));
-  const main = new El({ "data-join": "", "data-cli": "walkie", "data-install": INSTALL_URL }, states);
+  const states = ["loading", "ready", "expired", "invalid", "missing"].map((s) => new El({ "data-state": s }, s === "ready" ? [...fields.map(f), consent, button, open, packageLink, fallback] : s === "expired" ? [f("handle"), f("expires")] : []));
+  const main = new El({ "data-join": "", "data-cli": "walkie", "data-install": INSTALL_URL, "data-package-available": "true" }, states);
   const doc = new El({}, [main]);
   const win: FakeWindow = {
-    location: { hash, pathname: "/join", search: "" },
+    location: { hash, pathname: "/join", search: "", assign: (url) => { win.assigned.push(url); } },
+    assigned: [],
     replaced: [],
     entries: [`/join${hash}`],
     listeners: {},
@@ -79,7 +110,7 @@ function world(hash: string) {
     win.entries.push(`/join${next}`);
     for (const fn of win.listeners.hashchange ?? []) fn();
   };
-  return { win, doc, on, field, consent, navigate };
+  return { win, doc, on, field, consent, choiceNo, choiceYes, maxBlock, maxInput, button, open, packageLink, fallback, navigate };
 }
 
 // ---- fragment + code --------------------------------------------------------------------------------------------------
@@ -122,6 +153,36 @@ describe("fragment parsing", () => {
   });
 });
 
+test("local handoff carries only the invite and selected consent", () => {
+  const code = mint();
+  expect(page.handoff(code, true, 7)).toBe(`walkie-join://join#${code}&seats=yes&max=7`);
+  expect(page.handoff(code, false, 7)).toBe(`walkie-join://join#${code}&seats=no&max=0`);
+  expect(page.handoff(code, true, 7, "v0.2.0-pre.8")).toBe(`walkie-join://join#${code}&seats=yes&max=7&v=v0.2.0-pre.8`);
+});
+
+test("the package download has no invite; opening the app uses only the local scheme", () => {
+  const code = mint();
+  const w = world(`#${code}`);
+  page.start(w.win, w.doc, () => NOW);
+  w.button.click();
+  expect(w.packageLink.clicks).toBe(1);
+  expect(w.win.assigned).toEqual([]);
+  w.choiceYes.checked = false;
+  w.choiceNo.checked = true;
+  w.open.click();
+  expect(w.win.assigned).toEqual([`walkie-join://join#${code}&seats=no&max=0`]);
+});
+
+test("an unavailable signed package opens the command path and never downloads", () => {
+  const w = world(`#${mint()}`);
+  w.doc.querySelector("[data-join]")!.attrs["data-package-available"] = "false";
+  page.start(w.win, w.doc, () => NOW);
+  expect(w.button.hidden).toBe(true);
+  expect(w.fallback.open).toBe(true);
+  w.button.click();
+  expect(w.packageLink.clicks).toBe(0);
+});
+
 // ---- page states -------------------------------------------------------------------------------------------------------
 
 describe("the page", () => {
@@ -132,7 +193,7 @@ describe("the page", () => {
     expect(w.win.replaced).toEqual(["/join"]); // no fragment in the address bar or this history entry
     expect(w.win.location.hash).toBe("");
     expect(w.on()).toEqual(["ready"]);
-    expect(w.field("command")).toEqual([`curl -fsSL ${INSTALL_URL} | WALKIE_VERSION=v0.2.0-pre.2 sh -s -- --invite ${code}`]);
+    expect(w.field("command")).toEqual([`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${code}`]);
     expect(w.field("handle")).toEqual(["@arvid", "@arvid"]); // the ready and expired sections both name them
     expect(w.field("version")[0]).toContain("v0.2.0-pre.2");
     expect(w.field("expires")[0]).not.toBe("");
@@ -189,7 +250,7 @@ describe("more than one link in the same tab (audit r1 MEDIUM)", () => {
     expect(w.on()).toEqual(["expired"]);
     w.navigate(`#${good}&v=v0.2.0-pre.2`);
     expect(w.on()).toEqual(["ready"]);
-    expect(w.field("command")[0]).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_VERSION=v0.2.0-pre.2 sh -s -- --invite ${good}`);
+    expect(w.field("command")[0]).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${good}`);
     expect(w.win.entries).toEqual(["/join", "/join"]);
     for (const fn of w.win.listeners.popstate ?? []) fn(); // back: the entry has no fragment any more
     expect(w.on()).toEqual(["missing"]);
@@ -217,23 +278,140 @@ describe("more than one link in the same tab (audit r1 MEDIUM)", () => {
   });
 });
 
-describe("the consent step is described only when the team's build asks it (audit r1 MEDIUM)", () => {
-  test("a=1 shows it; without it (a build with no seats, like v0.2.0-pre.2) it stays hidden", () => {
+describe("the local consent step", () => {
+  test("the link's a flag does not choose or hide consent", () => {
     const code = mint();
     const on = world(`#${code}&v=v0.2.0-pre.2&a=1`);
     page.run({ window: on.win, document: on.doc, now: NOW });
     expect(on.consent.hidden).toBe(false);
     const off = world(`#${code}&v=v0.2.0-pre.2`);
     page.run({ window: off.win, document: off.doc, now: NOW });
-    expect(off.consent.hidden).toBe(true);
-    // …and a later link without it hides it again.
+    expect(off.consent.hidden).toBe(false);
     on.navigate(`#${code}`);
     page.start(on.win, on.doc, () => NOW);
-    expect(on.consent.hidden).toBe(true);
+    expect(on.consent.hidden).toBe(false);
   });
   test("the page's markup hides the step until the script shows it", () => {
     const html = readFileSync(join(SITE, "join.html"), "utf8");
-    expect(html).toMatch(/<li data-team-agents hidden>It asks you one question/);
+    expect(html).toMatch(/<div data-team-agents>/);
+  });
+  test("the markup has a real No/Yes consent control, Yes checked by default, and the seat maximum shown", () => {
+    const html = readFileSync(join(SITE, "join.html"), "utf8");
+    expect(html).toMatch(/<legend>Let your team run agents on this computer\?<\/legend>/);
+    expect(html).toMatch(/<input type="radio" name="agents-consent" data-consent-choice="no">/);
+    expect(html).toMatch(/<input type="radio" name="agents-consent" data-consent-choice="yes" checked>/);
+    expect(html).toMatch(/<div class="consent-max" data-consent-max>/);
+    expect(html).toMatch(/<label for="j-seat-max">Seat maximum<\/label>/);
+    expect(html).toMatch(/<input type="number" id="j-seat-max" data-consent-max-input[^>]* value="4">/);
+  });
+  test("the markup explains what a seat is and names all three stop switches in plain text", () => {
+    const html = readFileSync(join(SITE, "join.html"), "utf8");
+    expect(html).toContain("Each seat runs as a separate OS user");
+    expect(html).toContain("You can stop seats from Walkie on this Mac");
+  });
+});
+
+describe("the consent control itself (OCJ-A)", () => {
+  test("clampSeatMax: keeps a valid integer in range, and falls back to the default 4 otherwise", () => {
+    expect(page.SEAT_MAX_DEFAULT).toBe(4);
+    expect(page.SEAT_MAX_MIN).toBe(1);
+    expect(page.SEAT_MAX_MAX).toBe(64);
+    expect(page.clampSeatMax("4")).toBe(4);
+    expect(page.clampSeatMax("12")).toBe(12);
+    expect(page.clampSeatMax("1")).toBe(1);
+    expect(page.clampSeatMax("64")).toBe(64);
+    expect(page.clampSeatMax("0")).toBe(1); // clamped up to the minimum
+    expect(page.clampSeatMax("-3")).toBe(1);
+    expect(page.clampSeatMax("999")).toBe(64); // clamped down to the maximum
+    expect(page.clampSeatMax("4.7")).toBe(4); // truncated, not rounded
+    expect(page.clampSeatMax("")).toBe(4);
+    expect(page.clampSeatMax("  ")).toBe(4);
+    expect(page.clampSeatMax("abc")).toBe(4);
+    expect(page.clampSeatMax("4;rm -rf")).toBe(4);
+    expect(page.clampSeatMax(null)).toBe(4);
+    expect(page.clampSeatMax(undefined)).toBe(4);
+  });
+
+  test("a fresh 'ready' link starts at Yes (the default), with the seat maximum shown and reset to 4", () => {
+    const code = mint();
+    const w = world(`#${code}&a=1`);
+    page.run({ window: w.win, document: w.doc, now: NOW });
+    expect(w.choiceYes.checked).toBe(true);
+    expect(w.choiceNo.checked).toBe(false);
+    expect(w.maxBlock.hidden).toBe(false);
+    expect(w.maxInput.value).toBe("4");
+  });
+
+  test("an observer invite pre-fills No and cannot pre-fill seats", () => {
+    const w = world(`#${mint("kira", NOW, "observer")}`);
+    page.run({ window: w.win, document: w.doc, now: NOW });
+    expect(w.choiceYes.checked).toBe(false);
+    expect(w.choiceYes.disabled).toBe(true);
+    expect(w.choiceNo.checked).toBe(true);
+    expect(w.maxBlock.hidden).toBe(true);
+  });
+
+  test("choosing No hides the seat maximum; back to Yes reveals it again (start() wires the change listeners)", () => {
+    const code = mint();
+    const w = world(`#${code}&a=1`);
+    page.start(w.win, w.doc, () => NOW);
+    expect(w.maxBlock.hidden).toBe(false);
+    w.choiceNo.checked = true;
+    w.choiceYes.checked = false;
+    w.choiceNo.fire("change");
+    expect(w.maxBlock.hidden).toBe(true);
+    w.choiceYes.checked = true;
+    w.choiceNo.checked = false;
+    w.choiceYes.fire("change");
+    expect(w.maxBlock.hidden).toBe(false);
+    w.choiceNo.checked = true;
+    w.choiceYes.checked = false;
+    w.choiceNo.fire("change");
+    expect(w.maxBlock.hidden).toBe(true);
+  });
+
+  test("an out-of-range or non-numeric seat maximum is clamped back once the field changes (not on every keystroke)", () => {
+    const code = mint();
+    const w = world(`#${code}&a=1`);
+    page.start(w.win, w.doc, () => NOW);
+    w.maxInput.value = "999";
+    w.maxInput.fire("change");
+    expect(w.maxInput.value).toBe("64");
+    w.maxInput.value = "abc";
+    w.maxInput.fire("change");
+    expect(w.maxInput.value).toBe("4");
+  });
+
+  test("a No answer and a custom maximum don't survive a new link (reset to the Yes default with the rest of the fields)", () => {
+    const code1 = mint("arvid");
+    const code2 = mint("kira");
+    const w = world(`#${code1}&a=1`);
+    page.start(w.win, w.doc, () => NOW);
+    w.maxInput.value = "9";
+    w.maxInput.fire("change");
+    expect(w.maxInput.value).toBe("9");
+    w.choiceNo.checked = true;
+    w.choiceYes.checked = false;
+    w.choiceNo.fire("change");
+    expect(w.maxBlock.hidden).toBe(true);
+    w.navigate(`#${code2}&a=1`);
+    expect(w.choiceYes.checked).toBe(true);
+    expect(w.choiceNo.checked).toBe(false);
+    expect(w.maxBlock.hidden).toBe(false);
+    expect(w.maxInput.value).toBe("4");
+  });
+
+  test("choosing Yes never changes the pinned install command (it stays the daemon's, byte for byte)", () => {
+    const code = mint();
+    const w = world(`#${code}&v=v0.2.0-pre.2&a=1`);
+    page.start(w.win, w.doc, () => NOW);
+    const before = w.field("command");
+    w.choiceYes.checked = true;
+    w.choiceYes.fire("change");
+    w.maxInput.value = "9";
+    w.maxInput.fire("change");
+    expect(w.field("command")).toEqual(before);
+    expect(w.field("command")[0]).toBe(addMachineCommand(code, "v0.2.0-pre.2"));
   });
 });
 
@@ -251,9 +429,16 @@ describe("the code never leaves the page", () => {
   });
   test("the page loads only its own scripts, none inline, and no third-party resource", () => {
     expect(html).not.toMatch(/<script(?![^>]*\bsrc="\/assets\/[a-z]+\.js")[^>]*>/);
-    expect(html).not.toMatch(/https?:\/\/(?!getwalkie\.vercel\.app)/);
+    expect(html.match(/https?:\/\/[^" ]+/g)?.sort()).toEqual([
+      "https://getwalkie.vercel.app/install.sh",
+      `https://github.com/alexcarney460-hue/walkie-releases/releases/download/${INSTALLER_VERSION}/Walkie.pkg`,
+    ]);
     expect(html).toContain('<meta name="referrer" content="no-referrer">');
     expect(html).toContain('data-install="https://getwalkie.vercel.app/install.sh"');
+    expect(html).toContain('Install Walkie and join');
+    expect(html).toContain('data-join-package');
+    expect(html).toContain('target="_blank" rel="noopener noreferrer"');
+    expect(html).toContain("puts the private invite code on your command line");
   });
   test("site.js (loaded too) makes no request either", () => {
     const site = readFileSync(join(SITE, "assets", "site.js"), "utf8");

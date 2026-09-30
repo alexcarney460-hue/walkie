@@ -18,7 +18,7 @@ import {
 } from "../protocol/accounts.ts";
 import { scrubMessage } from "../integrations/scrub.ts";
 import type { Logger } from "../daemon/logger.ts";
-import { identifyClaude, systemKeychain, type KeychainReader } from "./adapters/claude.ts";
+import { blockClaudeKeychain, guardedClaudeKeychain, identifyClaude, systemKeychain, type KeychainReader } from "./adapters/claude.ts";
 import { codexAuthSnapshot, identifyCodex } from "./adapters/codex.ts";
 import { ResetAttempts, type Attempt } from "./attempts.ts";
 import {
@@ -29,7 +29,7 @@ import { identifyGrok } from "./adapters/grok.ts";
 import { provisionalKimiIdentity } from "./adapters/kimi.ts";
 import type { FetchLike } from "./http.ts";
 import { accountId } from "./mask.ts";
-import { pollAccount, POLL_MS } from "./poll.ts";
+import { KEYCHAIN_BLOCK_MS, pollAccount, POLL_MS } from "./poll.ts";
 import { launchCodexAppServer, redeemCodexReset, renewCodexLogin, type AppServerLauncher, type ResetResult } from "./resets.ts";
 import { freshRoomOf } from "./select.ts";
 import { sweepLeaseHomes } from "./vault/codex-lease-home.ts";
@@ -163,6 +163,7 @@ export class AccountsService {
   private readonly home: string;
   private readonly fetchFn: FetchLike;
   private readonly keychain: KeychainReader;
+  private readonly keychainSource: KeychainReader;
   private readonly clock: () => number;
   private readonly tickMs: number;
   private readonly polling: boolean;
@@ -197,7 +198,8 @@ export class AccountsService {
   constructor(walkieHome: string, private readonly log: Logger, private readonly onChange: (s: AccountsSnapshot) => void, opts: AccountsOptions = {}) {
     this.home = opts.home ?? homedir();
     this.fetchFn = opts.fetch ?? ((url, init) => fetch(url, init));
-    this.keychain = opts.keychain ?? systemKeychain;
+    this.keychainSource = opts.keychain ?? systemKeychain;
+    this.keychain = guardedClaudeKeychain(this.keychainSource, KEYCHAIN_BLOCK_MS);
     this.clock = opts.clock ?? Date.now;
     this.tickMs = opts.tickMs ?? TICK_MS;
     this.polling = opts.poll !== false;
@@ -209,6 +211,7 @@ export class AccountsService {
     this.walkieHome = walkieHome;
     this.ledgerFile = join(walkieHome, LEDGER_FILE);
     this.load();
+    if (this.keychainBlockedUntil > Date.now()) blockClaudeKeychain(this.keychainSource, this.keychainBlockedUntil);
   }
 
   start(): void {

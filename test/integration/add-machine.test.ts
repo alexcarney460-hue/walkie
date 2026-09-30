@@ -66,7 +66,7 @@ describe("POST /v1/team/add-machine", () => {
     expect(res.link).toBe(`${JOIN_URL}#${res.code}&v=${TAG}&a=1`);
     expect(new URL(res.link).search).toBe(""); // nothing a server would see
     expect(new URL(res.link).pathname).toBe("/join");
-    expect(res.command).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_VERSION=${TAG} sh -s -- --invite ${res.code}`);
+    expect(res.command).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=${TAG} sh -s -- --invite ${res.code}`);
     const inv = decodeInvite(res.code);
     expect("error" in inv).toBe(false);
     if (!("error" in inv)) {
@@ -88,9 +88,16 @@ describe("POST /v1/team/add-machine", () => {
   });
 
   test("AGENT-ADMIN-1: an agent mints add-machine links and invite codes for its person (audited)", async () => {
-    expect((await alex.client("claude-3f9a").addMachine("kira")).handle).toBe("kira");
-    expect((await alex.client("claude-3f9a").inviteCode("kira", "member")).existing_member).toBe(true);
+    const delivered = await alex.client("claude-3f9a").addMachine("kira");
+    expect(delivered.handle).toBe("kira");
+    expect(JSON.stringify(delivered)).not.toContain("wk1");
+    expect((delivered as unknown as { delivered: boolean }).delivered).toBe(true);
+    expect((await alex.client("claude-3f9a").inviteCode("kira", "member")).handle).toBe("kira");
     expect((await alex.client("claude-3f9a").inviteCode("newperson", "member")).handle).toBe("newperson");
+    const privateMessages = (await alex.client().orchestratorMessages({ limit: 20 })).messages;
+    expect(privateMessages.some((m) => m.via === "private" && m.text.includes("Link: https://getwalkie.vercel.app/join#wk1"))).toBe(true);
+    expect(privateMessages.some((m) => m.text.includes("Code: wk1"))).toBe(true);
+    expect((await refused(alex.client("claude-3f9a").orchestratorMessages({ limit: 20 }))).code).toBe("forbidden");
     const log = readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8");
     expect(log).toContain("@alex/alex-mbp/claude-3f9a");
     expect(log).toContain("minted an add-machine link for @kira");
@@ -124,7 +131,7 @@ describe("walkie team add-machine", () => {
     expect(r.transcript).toContain(`To mint an add-machine link for @kira, type "kira" to confirm: kira`);
     expect(r.out).toMatch(/^add a machine for @kira \(member\) · works once, only for @kira · expires in 7 days/);
     expect(r.out).toContain(`  ${JOIN_URL}#wk1`);
-    expect(r.out).toMatch(new RegExp(`  curl -fsSL ${INSTALL_URL.replace(/\./g, "\\.")} \\| WALKIE_VERSION=${TAG.replace(/\./g, "\\.")} sh -s -- --invite wk1[A-Za-z0-9_-]+\\n`));
+    expect(r.out).toMatch(new RegExp(`  curl -fsSL ${INSTALL_URL.replace(/\./g, "\\.")} \\| WALKIE_MIN_VERSION=${TAG.replace(/\./g, "\\.")} sh -s -- --invite wk1[A-Za-z0-9_-]+\\n`));
     expect(r.out).toContain("anyone with this link or command can join once as one of @kira's machines");
   });
 
@@ -137,15 +144,26 @@ describe("walkie team add-machine", () => {
     expect(j.command).toContain(`--invite ${j.code}`);
   });
 
-  test("AGENT-ADMIN-1: under an agent (its environment, or --for-agent) it runs without asking: the link is printed", async () => {
+  test("AGENT-ADMIN-1: under an agent it runs without asking and prints only a delivery receipt", async () => {
     const agentEnvs: Record<string, string>[] = [{ CLAUDECODE: "1" }, { CODEX_SANDBOX: "seatbelt" }, { WALKIE_AGENT: "cc-1" }];
     for (const env of agentEnvs) {
       const r = await walkie(alex, ["team", "add-machine", "kira"], env, "kira");
-      expect([JSON.stringify(env), r.code, r.out.includes("wk1")]).toEqual([JSON.stringify(env), 0, true]);
+      expect([JSON.stringify(env), r.code, r.out.includes("wk1")]).toEqual([JSON.stringify(env), 0, false]);
+      expect(r.out).toContain("link delivered privately to @alex");
       expect(r.transcript).not.toContain("to confirm:"); // an agent is never asked
     }
     const r = await walkie(alex, ["team", "add-machine", "kira", "--for-agent"], {}, "kira");
-    expect([r.code, r.out.includes("wk1")]).toEqual([0, true]);
+    expect([r.code, r.out.includes("wk1")]).toEqual([0, false]);
+  });
+
+  test("agent JSON and raw variants contain only a private-delivery receipt", async () => {
+    for (const args of [["team", "add-machine", "kira", "--json", "--raw"],
+      ["invite", "--handle", "newperson", "--json", "--raw"]]) {
+      const r = await walkie(alex, args, { WALKIE_AGENT: "helper" });
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("wk1");
+      expect(JSON.parse(r.out)).toMatchObject({ delivered: true, to: "@alex" });
+    }
   });
 
   test("a member's terminal is refused by the daemon (owner only)", async () => {
@@ -163,7 +181,7 @@ describe("person-only: an interactive confirmation at a terminal", () => {
   test("no terminal, no markers (an unattended caller): admin runs as its person's agent; what stays a person's is refused", async () => {
     for (const args of [["invite", "--handle", "kira", "--json"], ["team", "add-machine", "kira"]]) {
       const r = await walkie(alex, args);
-      expect([args.join(" "), r.code, r.out.includes("wk1")]).toEqual([args.join(" "), 0, true]);
+      expect([args.join(" "), r.code, r.out.includes("wk1")]).toEqual([args.join(" "), 0, false]);
     }
     for (const args of [["team", "role", "kira", "removed"], ["team", "revoke", "kiras-mbp"], ["team", "authority", "kiras-mbp"], ["dashboard", "--no-open"]]) {
       const r = await walkie(alex, args);
@@ -200,7 +218,7 @@ describe("person-only: an interactive confirmation at a terminal", () => {
     // …but a piped stdin is not a person answering: it is an unattended caller, which never gets the prompt
     // (AGENT-ADMIN-1: it runs as an agent of the person's, audited; the piped "kira" is never read as an answer).
     const piped = await runAsPerson(["/bin/sh", "-c", `echo kira | "${process.execPath}" "${CLI}" team add-machine kira`], env(), { tty: true });
-    expect([piped.code, piped.out.includes("to confirm:"), piped.out.includes("wk1")]).toEqual([0, false, true]);
+    expect([piped.code, piped.out.includes("to confirm:"), piped.out.includes("wk1")]).toEqual([0, false, false]);
   });
 
   test("Ctrl-C, Ctrl-D, Ctrl-Z, Ctrl-\\ and silence cancel the prompt: not confirmed, nothing done (Opus r4 MEDIUM 1)", async () => {
@@ -249,7 +267,7 @@ process.stdout.write(o); process.stderr.write(e); process.exit(c);`);
         // AGENT-ADMIN-1: an admin command runs for the person (no prompt); what stays a person's is refused either way.
         const ok = await runConfirmed(["python3", "-m", mod, process.execPath, CLI, "invite", "--handle", "alex", "--json"],
           { ...env(), PYTHONPATH: dir }, "alex");
-        expect([mod, ok.code, ok.transcript.includes("wk1"), ok.transcript.includes("to confirm:")]).toEqual([mod, 0, true, false]);
+        expect([mod, ok.code, ok.transcript.includes("wk1"), ok.transcript.includes("to confirm:")]).toEqual([mod, 0, false, false]);
         const r = await runConfirmed(["python3", "-m", mod, process.execPath, CLI, "team", "authority", "kiras-mbp"],
           { ...env(), PYTHONPATH: dir }, "kiras-mbp");
         expect([mod, r.code, r.transcript.includes("to confirm:")]).toEqual([mod, 1, false]);
@@ -313,11 +331,11 @@ describe("the CLI in an agent's environment (no WALKIE_AGENT)", () => {
   test("AGENT-ADMIN-1: walkie invite runs for the person without a prompt, whatever marks the agent (flag values too)", async () => {
     for (const env of AGENT_ENVS) {
       const r = await walkie(alex, ["invite", "--handle", "newbie", "--json"], env, "newbie");
-      expect([JSON.stringify(env), r.code, r.out.includes("wk1"), r.transcript.includes("to confirm:")]).toEqual([JSON.stringify(env), 0, true, false]);
+      expect([JSON.stringify(env), r.code, r.out.includes("wk1"), r.transcript.includes("to confirm:")]).toEqual([JSON.stringify(env), 0, false, false]);
     }
     for (const flag of ["--for-agent", "--for-agent=true", "--for-agent=1", "--for-agent=yes", "--for-agent=TRUE"]) {
       const flagged = await walkie(alex, ["invite", "--handle", "alex", flag], {}, "alex");
-      expect([flag, flagged.code, flagged.out.includes("wk1"), flagged.transcript.includes("to confirm:")]).toEqual([flag, 0, true, false]);
+      expect([flag, flagged.code, flagged.out.includes("wk1"), flagged.transcript.includes("to confirm:")]).toEqual([flag, 0, false, false]);
     }
     // =false is a person saying so; any other value is refused as a usage error, never read as "off".
     const off = await walkie(alex, ["invite", "--handle", "kira", "--for-agent=false", "--json"], {}, "kira");
@@ -373,7 +391,7 @@ process.exit(await p.exited);`);
       }
       const invited = await runConfirmed([join(dir, "kimi"), join(dir, "tool.ts"), process.execPath, CLI, "invite", "--handle", "alex", "--json"],
         { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: alex.home, WALKIE_SOCKET: alex.socket }, "alex");
-      expect([invited.code, invited.out.includes("wk1"), invited.out.includes("to confirm:")]).toEqual([0, true, false]);
+    expect([invited.code, invited.out.includes("wk1"), invited.out.includes("to confirm:")]).toEqual([0, false, false]);
       // …and the same process tree, one level down from a plain shell instead, is a person's.
       const plain = await runConfirmed([process.execPath, join(dir, "tool.ts"), process.execPath, CLI, "invite", "--handle", "kira", "--json"],
         { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: alex.home, WALKIE_SOCKET: alex.socket }, "kira");
@@ -407,7 +425,7 @@ describe("the daemon, for every caller marked as an agent (AGENT-ADMIN-1)", () =
   test("invite codes and add-machine links pass; removing a member, the authority and another member's machine: 403 person_only", async () => {
     for (const cl of [named, marked]) {
       expect((await cl().inviteCode("alex", "member")).handle).toBe("alex");
-      expect((await cl().addMachine("kira")).handle).toBe("kira");
+      expect(JSON.stringify(await cl().addMachine("kira"))).not.toContain("wk1");
       expect(await code(cl().setRole("kira", "removed"))).toBe("person_only");
       expect(await code(cl().setAuthority("kiras-mbp"))).toBe("person_only");
       expect(await code(cl().revokeNode("kiras-mbp"))).toBe("person_only");
@@ -460,7 +478,7 @@ describe.skipIf(!["curl", "openssl", "sh"].every((t) => existsSync(`/usr/bin/${t
     const minted = await walkie(alex, ["team", "add-machine", "kira"], {}, "kira");
     expect(minted.code).toBe(0);
     const printed = minted.out.split("\n").map((l) => l.trim()).find((l) => l.startsWith("curl ")) as string;
-    expect(printed.startsWith(`curl -fsSL ${INSTALL_URL} | WALKIE_VERSION=${TAG} sh -s -- --invite wk1`)).toBe(true);
+    expect(printed.startsWith(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=${TAG} sh -s -- --invite wk1`)).toBe(true);
     const cmd = printed.replace(INSTALL_URL, `${mirror}/install.sh`);
 
     // A fresh machine: its own HOME and bin dir, the system PATH only, its daemon already running (kira2).

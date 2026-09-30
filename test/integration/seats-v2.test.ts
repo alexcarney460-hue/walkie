@@ -108,7 +108,7 @@ describe("v2 seats", () => {
 
   test("r1 MEDIUM 7: Kimi is off until the host's person turns it on, and then only full access", async () => {
     const off = await v2("kimi while off");
-    expect((await ended(off.seat)).reason).toMatch(/doesn't allow that runtime/);
+    expect((await ended(off.seat)).reason).toMatch(/doesn't allow kimi: its person runs `walkie seats allow --runtimes claude,codex,kimi` there/);
     const { local } = await person(arvid).seatsConfig({ allow: true, runtimes: ["claude", "codex", "kimi"] });
     expect(local.runtimes).toEqual(["claude", "codex", "kimi"]);
     for (const permission_mode of ["acceptEdits", "default"]) {

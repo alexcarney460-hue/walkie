@@ -11,10 +11,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "paths": {
-      "zod": ["../node_modules/zod"]
-    }
+    "verbatimModuleSyntax": true
   },
-  "include": ["api", "test"]
+  "include": ["api"]
 }

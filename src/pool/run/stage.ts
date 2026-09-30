@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { HttpError } from "../../daemon/http.ts";
 import type { Logger } from "../../daemon/logger.ts";
 import { StageReq, type PoolShare, type StageRes, type StageView } from "../../protocol/pool.ts";
-import { SEATS_POOL_CODE, SEATS_POOL_CONFLICT } from "../../protocol/seats.ts";
+import { SEATS_POOL_CODE } from "../../protocol/seats.ts";
 import { freeLoopbackPort, minimalEnv, residentBytes, spawnChild, waitForPort, type Child, type ChildRegistry } from "./child.ts";
 import { guardSelfTest, RpcGuard } from "./rpc-guard.ts";
 import { hasRuntime, INSTALL_HINT, verifyPinnedRpc, type Runtime } from "./runtime.ts";

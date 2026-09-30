@@ -40,6 +40,7 @@ const SESSION_DIR_RE = /^session_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 export class ScanBudget {
   private ops = 0;
   constructor(private readonly deadline: number, private readonly maxOps: number, private readonly now: () => number = Date.now) {}
+  get deadlineAt(): number { return this.deadline; }
   /** Takes `n` operations; false (and nothing may be read) once the deadline passed or the operations ran out. */
   take(n = 1): boolean {
     if (this.ops + n > this.maxOps || this.now() >= this.deadline) { this.ops = this.maxOps; return false; }

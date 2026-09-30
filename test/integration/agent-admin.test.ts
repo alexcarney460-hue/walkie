@@ -158,10 +158,15 @@ describe("remote admin over Walkie", () => {
   });
 
   test("the machine list says what this caller may administer", async () => {
+    kira.d.core.machineStats = { at: Date.now(), mem: { total: 16, used: 12, free: 4, swap_used: 0, pressure: "normal" }, temp_c: null,
+      sys: { os: "darwin", arch: "arm64", cpus: 14, load1: 146, load5: 296, load15: 373, cpu_busy_pct: 91 } };
+    kira.d.core.agentProcesses = [{ name: "claude-code", count: 22 }];
     const m = await kira.client().adminMachines();
     const byHost = Object.fromEntries(m.machines.map((x) => [x.hostname, x]));
     expect([byHost["kiras-studio"]?.can_admin, byHost["alex-mbp"]?.can_admin, byHost["kiras-mbp"]?.self]).toEqual([true, false, true]);
     expect(byHost["kiras-studio"]?.last_result).toBe("ok");
+    expect(byHost["kiras-mbp"]?.stats?.agent_processes).toEqual([{ name: "claude-code", count: 22 }]);
+    expect(byHost["kiras-mbp"]?.stats?.sys?.load15).toBe(373);
   });
 
   test("an older target (no /peer/v1/admin/run): target_outdated", async () => {

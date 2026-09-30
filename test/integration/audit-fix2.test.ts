@@ -7,6 +7,7 @@ import { sha256Hex } from "../../src/daemon/blobs.ts";
 import { renderWho } from "../../src/cli/commands/team.ts";
 import { PEER_PAGE_BUDGET, PROTOCOL_VERSION, type UnsignedEvent } from "../../src/protocol/schemas.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { signedPeerFetch } from "../helpers/signed-peer-fetch.ts";
 
 let c: Cluster | null = null;
 afterEach(async () => { await c?.close(); c = null; });
@@ -21,16 +22,12 @@ function forge(n: TestNode, over: Partial<UnsignedEvent> & Pick<UnsignedEvent, "
 }
 
 async function pushAs(from: TestNode, to: TestNode, events: unknown[]): Promise<{ accepted: number; rejected: { id: string; reason: string }[] }> {
-  const res = await fetch(`http://127.0.0.1:${to.peerPort}/peer/v1/events`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-walkie-node": from.d.nodeId, "x-walkie-team": from.d.core.teamId as string },
-    body: JSON.stringify({ events }),
-  });
+  const res = await signedPeerFetch(from, to, "/peer/v1/events", { method: "POST", body: JSON.stringify({ events }) });
   return (await res.json()) as never;
 }
 
 function peerGet(from: TestNode, to: TestNode, path: string): Promise<Response> {
-  return fetch(`http://127.0.0.1:${to.peerPort}${path}`, { headers: { "x-walkie-node": from.d.nodeId, "x-walkie-team": from.d.core.teamId as string } });
+  return signedPeerFetch(from, to, path);
 }
 
 /** alex (authority/founder) + kira and bob, both owners, joined. */
@@ -87,6 +84,8 @@ describe("re-audit #4: byte-budgeted pages", () => {
     expect(page).toBeLessThan(alex.d.core.store.vvOf(alex.d.nodeId)); // the budget, not the 500 limit, ended it
     const late = await c?.add({ name: "dan", login: "kira@example.com", hostname: "kiras-pi" });
     if (!late) throw new Error("no cluster");
+    expect(await late.client().join(alex.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
+    await alex.client().request("POST", "/v1/team/admit", { node_id: late.d.nodeId, approve: true });
     expect((await late.client().join(alex.peerAddr)).admitted).toBe(true);
     await waitFor(() => late.d.core.store.vvOf(alex.d.nodeId) >= alex.d.core.store.vvOf(alex.d.nodeId), { what: "late joiner caught up", timeoutMs: 10_000 });
   }, 30_000);

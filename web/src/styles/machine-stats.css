@@ -76,7 +76,8 @@
 .ms-rail .ms-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ms-rail .ms-temp { justify-self: end; }
 .ms-rail [data-testid="model-server-load"],
-.ms-rail .ms-disc {
+.ms-rail .ms-disc,
+.ms-rail .ms-load {
   grid-column: 1 / -1;
   justify-self: start;
   max-width: 100%;
@@ -85,6 +86,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ms-load { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ms-cell { flex-wrap: wrap; }
 
 /* Team page: a line under the machine name. */
 .ms-cell { display: flex; margin: 4px 0 0 15px; gap: 12px; }

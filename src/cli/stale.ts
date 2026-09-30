@@ -4,6 +4,7 @@
 import type { CardView, ColumnRole } from "../protocol/projects/schema.ts";
 import type { AgentView, NodeView } from "../protocol/schemas.ts";
 import { defang } from "../protocol/safety.ts";
+import { machineBusy } from "../protocol/machine-stats.ts";
 
 export const DEFAULT_CARD_HOURS = 4;
 export const DEFAULT_AGENT_MINUTES = 30;
@@ -27,7 +28,7 @@ export interface StaleInput {
 
 export interface StaleCard { key: string; ref: string; project: string; column: string; role: "active" | "review"; title: string; assignee: string | null; updated_at: number; idle_hours: number }
 export interface SilentAgent { id: string; hostname: string; agent: string; state: string; title: string; task: string | null; updated_at: number; silent_minutes: number }
-export interface MachineFlag { hostname: string; handle: string; reason: "idle_while_cards_wait" | "pressure_without_agents"; working_agents: number; pressure: string | null }
+export interface MachineFlag { hostname: string; handle: string; reason: "idle_while_cards_wait" | "pressure_without_agents" | "load_without_agents"; working_agents: number; pressure: string | null }
 export interface StaleReport {
   generated_at: number;
   thresholds: { card_hours: number; agent_minutes: number };
@@ -86,10 +87,11 @@ function machineFlags(i: StaleInput, todoWaiting: number): MachineFlag[] {
   for (const n of i.nodes) {
     if (!n.online) continue;
     const working = i.agents.filter((a) => a.node === n.node_id && a.effective_state === "working").length;
-    if (working > 0) continue;
+    if (working > 0 || n.stats?.agent_processes?.some((a) => a.count > 0)) continue;
     const pressure = n.stats?.mem?.pressure ?? null;
     const base = { hostname: defang(n.hostname, 63), handle: n.handle, working_agents: 0, pressure };
     if (pressure === "warn" || pressure === "critical") out.push({ ...base, reason: "pressure_without_agents" });
+    else if (machineBusy(n.stats)) out.push({ ...base, reason: "load_without_agents" });
     else if (todoWaiting > 0) out.push({ ...base, reason: "idle_while_cards_wait" });
   }
   return out;

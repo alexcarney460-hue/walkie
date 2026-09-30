@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { MAX_BLOB_BYTES } from "../blobs.ts";
 import { HttpError, json, parseWith, readBytes, readJson } from "../http.ts";
-import { blobFor, LOCAL_BODY_MAX, limitWrite, requireTeam, route, type RouteCtx } from "../local-routes.ts";
+import { blobFor, LOCAL_BODY_MAX, limitWrite, refuseAgentJoinContent, requireTeam, route, type RouteCtx } from "../local-routes.ts";
 import type { ProjectsIndex } from "./index.ts";
 import { addFile, changeFile, fileContent, fileDetail, listRoom, taskContext, type PeerBlob } from "./room.ts";
 import type { WriteCtx } from "./service.ts";
@@ -67,6 +67,7 @@ route("GET", new RegExp(`${ROOM}\\/${FILE}$`), (c, [channel, file]) => json(file
 route("POST", new RegExp(`${ROOM}\\/${FILE}$`), async (c, [channel, file]) => {
   const w = ctx(c);
   const b = parseWith(ChangeReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b.name ?? "");
   limitWrite(c);
   return json({ file: changeFile(w, channel as string, file as string, b) });
 });

@@ -19,6 +19,12 @@ test("stopping a daemon with a running seat retires refreshes and late signals b
     await waitFor(async () => (await alex.client().seats()).hosts.find((h) => h.node === arvid.d.nodeId && h.allows), { what: "seat host" });
     const id = (await alex.client("").seatRun({ machine: arvid.hostname, runtime: "codex", prompt: "ticker 600" })).seat;
     const daemon = arvid.d;
+    const finalStatuses: string[] = [];
+    const submitFinal = daemon.core.statuses.submitFinal.bind(daemon.core.statuses);
+    daemon.core.statuses.submitFinal = ((agent, body, provenance) => {
+      if (agent === seatAgentName(id) && body.state === "offline") finalStatuses.push(body.state);
+      return submitFinal(agent, body, provenance);
+    }) as typeof daemon.core.statuses.submitFinal;
     const host = seatsFor(daemon.core) as unknown as {
       seats: Map<string, unknown>;
       seatStatus: (seat: unknown) => void;
@@ -28,6 +34,7 @@ test("stopping a daemon with a running seat retires refreshes and late signals b
     const seat = await waitFor(() => host.seats.get(id), { what: "running seat" });
     host.onSignal(seat, { kind: "tool", text: "queued status update" });
     await arvid.stop();
+    expect(finalStatuses).toEqual(["offline"]);
     expect(() => host.seatStatus(seat)).not.toThrow();
     expect(() => host.seatStatuses.flush()).not.toThrow();
     expect(() => host.onSignal(seat, { kind: "tool", text: "late signal" })).not.toThrow();

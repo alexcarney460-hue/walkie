@@ -20,9 +20,9 @@ export function releaseTag(version: string): string | null {
   return RELEASE_TAG_RE.test(tag) ? tag : null;
 }
 
-/** The one-line install for another machine: pinned to the running release when there is one. */
+/** The one-line install for another machine: the running release is a minimum. */
 export function addMachineCommand(code: string, tag: string | null): string {
-  return `curl -fsSL ${INSTALL_URL} | ${tag ? `WALKIE_VERSION=${tag} ` : ""}sh -s -- --invite ${code}`;
+  return `curl -fsSL ${INSTALL_URL} | ${tag ? `WALKIE_MIN_VERSION=${tag} ` : ""}sh -s -- --invite ${code}`;
 }
 
 /**
@@ -40,7 +40,7 @@ export interface AddMachine {
   role: "owner" | "member" | "observer";
   expires_at: number;
   existing_member: true;
-  /** The daemon's version (the release the command pins, when it is one). */
+  /** The daemon's version (the release the command requires at minimum, when it is one). */
   version: string;
   /** This build hosts seats, so its setup asks the new machine's person "may your team start agents here?". */
   team_agents: boolean;

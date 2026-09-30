@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import re
 import sys
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
@@ -20,6 +22,16 @@ GUARDED = [*SRC.glob("*.html"), *(SITE / "assets").glob("*.css"), *(SITE / "asse
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 INSTALLER = SITE.parent / "scripts" / "install.sh"
 DEFAULT_VERSION = re.compile(r'^DEFAULT_VERSION="(v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"$', re.MULTILINE)
+
+
+def signed_package_available(url: str) -> bool:
+    """Fail closed when the signed asset has not been published or cannot be checked."""
+    try:
+        request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "walkie-site-build"})
+        with urllib.request.urlopen(request, timeout=8) as response:
+            return response.status == 200
+    except (urllib.error.URLError, TimeoutError):
+        return False
 
 
 def installer_version() -> str:
@@ -42,14 +54,21 @@ def load_brand() -> dict[str, str]:
     repo = str(raw.get("repo") or f"{owner}/{cli}")
     site_url = str(raw.get("site_url", "")).rstrip("/")
     tagline = str(raw.get("tagline", "")).strip()
+    package_url = f"https://github.com/{owner}/{cli}-releases/releases/download/v{installer_version()}/{name}.pkg"
+    package_available = signed_package_available(package_url)
     return {
         "name": name,
         "cli": cli,
         "tagline": tagline,
         "version": installer_version(),
+        "release_version": "v" + installer_version(),
+        "package_available": "true" if package_available else "false",
+        "package_hidden": "" if package_available else "hidden",
+        "fallback_open": "" if package_available else "open",
         # "0.2.0-pre.3 (pre-release)" for a semver prerelease, else the bare version: footer and install note.
         "release": installer_version() + (" (pre-release)" if "-" in installer_version() else ""),
         "repo": repo,
+        "github_owner": owner,
         # The public source repository (FSL-1.1-ALv2): nav and footer links.
         "source_url": f"https://github.com/{repo}",
         "install": f"curl -fsSL {site_url}/install.sh | sh" if site_url else "curl -fsSL /install.sh | sh",

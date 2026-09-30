@@ -30,10 +30,17 @@ export function auditPath(home: string): string {
   return join(home, AUDIT_FILE);
 }
 
+function cleanAudit(e: AuditEntry): AuditEntry {
+  const clean = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+  return { ...e, actor: clean(e.actor), action: clean(e.action), machine: clean(e.machine),
+    ...(e.refused ? { refused: clean(e.refused) } : {}) };
+}
+
 /** One line of the team post. */
 export function auditText(e: AuditEntry): string {
   // Redacted first, then cut (fix round 2, Codex LOW): a cut must never leave half a secret that no pattern matches.
-  const text = redactSecrets(`[admin] ${e.actor} ${e.via === "remote" ? "(remote) " : ""}on ${e.machine}: ${e.action}`).text;
+  const text = redactSecrets(`[admin] ${e.actor} ${e.via === "remote" ? "(remote) " : ""}on ${e.machine}: ${e.action}`)
+    .text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
   return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text;
 }
 
@@ -44,15 +51,16 @@ const AUDIT_TAIL_BYTES = 256 * 1024;
 
 /** Appends the entry to this machine's audit log; a failure is logged, never thrown (the action already ran). */
 export function appendAudit(core: Core, e: AuditEntry): void {
+  const safe = cleanAudit(e);
   try {
     const p = auditPath(core.paths.home);
     if (existsSync(p) && statSync(p).size > AUDIT_ROTATE_BYTES) renameSync(p, `${p}.1`);
-    appendFileSync(p, JSON.stringify({ ts: Date.now(), ...e, action: redactSecrets(e.action).text }) + "\n", { mode: 0o600 });
+    appendFileSync(p, JSON.stringify({ ts: Date.now(), ...safe, action: redactSecrets(safe.action).text }) + "\n", { mode: 0o600 });
     chmodSync(p, 0o600); // appending never repairs an existing file's mode
   } catch (err) {
     core.log.warn("admin_audit_write_failed", { error: (err as Error).message });
   }
-  core.log.info("admin_action", { actor: e.actor, via: e.via, machine: e.machine, ...(e.refused ? { refused: e.refused } : {}) });
+  core.log.info("admin_action", { actor: safe.actor, via: safe.via, machine: safe.machine, ...(safe.refused ? { refused: safe.refused } : {}) });
 }
 
 /**
@@ -66,14 +74,16 @@ export function recordAdmin(core: Core, e: AuditEntry, o: { post: boolean; notif
 }
 
 /** A post from `walkie-admin` in #general (the audit line, or the upgrade notice). */
-export function postAudit(core: Core, text: string, notify?: string): void {
-  if (!core.teamId || !core.me() || !core.roster.channels.has(AUDIT_CHANNEL)) return;
+export function postAudit(core: Core, text: string, notify?: string): boolean {
+  if (!core.teamId || !core.me() || !core.roster.channels.has(AUDIT_CHANNEL)) return false;
   const mention = notify ? `@${notify}` : null;
   const body = { text: mention && !text.includes(mention) ? `${mention} ${text}` : text, ...(mention ? { mentions: [mention] } : {}) };
   try {
     core.emit("msg.post", body, { channel: AUDIT_CHANNEL, agent: ADMIN_AGENT });
+    return true;
   } catch (err) {
     core.log.warn("admin_audit_post_failed", { error: (err as Error).message });
+    return false;
   }
 }
 

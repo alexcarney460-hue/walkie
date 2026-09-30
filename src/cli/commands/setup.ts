@@ -13,6 +13,7 @@ import { WalkieClient, WalkieError } from "../../client/index.ts";
 import { isInviteCode } from "../../daemon/invite.ts";
 import { defaultHome } from "../../daemon/paths.ts";
 import { installService } from "../../daemon/service.ts";
+import { VERSION } from "../../daemon/version.ts";
 import { installClaude, installCodex } from "../../hooks/install.ts";
 import { installShims, profileFile } from "../../switch/shims.ts";
 import { recordClis } from "./vault.ts";
@@ -24,6 +25,7 @@ import { c } from "../format.ts";
 import type { MeView } from "../../protocol/schemas.ts";
 import { inviteHint, transportFlag } from "./team.ts";
 import { checkRuntime, installSeatUsers, teamAgentsFlag, teamAgentsStep } from "./team-agents.ts";
+import { RESTART_WAIT_MS, restartService, sameVersion, waitForDaemon as waitForVersion, type HealthProbe, type RestartDeps } from "./update.ts";
 
 const compiled = (): boolean => import.meta.dir.startsWith("/$bunfs") || basename(process.execPath).startsWith("walkie");
 
@@ -68,11 +70,31 @@ async function ensureInstalled(ctx: Ctx, argv: string[]): Promise<number | null>
   return await child.exited;
 }
 
-async function waitForDaemon(client: WalkieClient): Promise<boolean> {
-  for (let i = 0; i < 100; i++) {
-    try { if ((await client.healthz()).ok) return true; } catch { /* starting */ }
-    await Bun.sleep(100);
+export interface ServiceDeps extends RestartDeps { install?: () => Promise<unknown> }
+
+/**
+ * Brings the background service to this binary's version: already running as VERSION → nothing to do; running
+ * an older (or otherwise mismatched) version → restart it (update.ts's restartService, the same logic `walkie
+ * update` uses) and wait for healthz to answer as VERSION; not running at all → install it fresh and wait. A
+ * healthy old daemon is never left in place just because it answers healthz (WALK-50).
+ */
+export async function ensureService(ctx: Ctx, client: WalkieClient, deps: ServiceDeps = {}): Promise<boolean> {
+  const probe: HealthProbe = deps.probe ?? (() => client.healthz());
+  const health = await probe().catch((): { ok: boolean; version: string } => ({ ok: false, version: "" }));
+  if (health.ok && sameVersion(health.version, VERSION)) {
+    ctx.out(`   daemon already running (${VERSION})`);
+    return true;
   }
+  if (health.ok) {
+    ctx.out(`   daemon running ${health.version}, not ${VERSION}; restarting…`);
+    return restartService(ctx, VERSION, deps);
+  }
+  const install = deps.install ?? (() => installService(defaultHome(), false));
+  await install();
+  const limit = deps.timeoutMs ?? RESTART_WAIT_MS;
+  const up = await waitForVersion(VERSION, probe, limit, deps.intervalMs);
+  if (up.ok) { ctx.out(`   ${c.green("running")} (starts at login, restarts on crash), answering as ${VERSION} after ${(up.ms / 1000).toFixed(1)} s`); return true; }
+  ctx.err(c.red(`   the daemon did not come up within ${limit / 1000} s (last: ${up.last}); run walkie doctor`));
   return false;
 }
 
@@ -162,12 +184,8 @@ export async function setup(ctx: Ctx): Promise<number> {
   step(ctx, 1, "Background service");
   if (bool(ctx.args, "no-service")) {
     ctx.out(c.dim("   skipped (--no-service); run walkie daemon start yourself"));
-  } else if (await client.healthz().then((h) => h.ok, () => false)) {
-    ctx.out("   daemon already running");
-  } else {
-    await installService(defaultHome(), false);
-    if (!(await waitForDaemon(client))) { ctx.err(c.red("   the daemon did not come up; run walkie doctor")); return EXIT.error; }
-    ctx.out(`   ${c.green("running")} (starts at login, restarts on crash)`);
+  } else if (!(await ensureService(ctx, client))) {
+    return EXIT.error;
   }
 
   step(ctx, 2, "Team");

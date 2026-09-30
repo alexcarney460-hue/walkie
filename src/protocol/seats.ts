@@ -63,6 +63,8 @@ export const SeatRun = z.object({
   model: SeatModel.optional(),
   permission_mode: z.enum(SEAT_MODES).optional(),
   prompt: z.string().min(1).max(MAX_SEAT_PROMPT),
+  /** A shell-capable WalkieTalkie requested this seat; the host must use a fresh seat user. */
+  shell_user: z.literal(true).optional(),
   /** A git bundle shared as an artifact in the same channel: cloned into the seat's directory. */
   bundle: BlobHash.optional(),
   timeout_s: z.number().int().min(MIN_SEAT_TIMEOUT_S).max(MAX_SEAT_TIMEOUT_S),
@@ -129,6 +131,8 @@ export const SeatRunV2 = z.object({
   permission_mode: z.enum(SEAT_MODES).optional(),
   /** The brief, a blob (UTF-8 text, at most MAX_SEAT_BRIEF bytes) the request references like a v1 bundle. */
   brief: BlobHash,
+  /** A shell-capable WalkieTalkie requested this seat; the host must use a fresh seat user. */
+  shell_user: z.literal(true).optional(),
   label: SeatLabel.optional(),
   workspace: SeatWorkspace.optional(),
   account: SeatAccountKey.optional(),
@@ -190,6 +194,8 @@ export const SeatHost = z.object({
   running: z.number().int().nonnegative().optional(),
   paused: z.number().int().nonnegative().optional(),
   queued: z.number().int().nonnegative().optional(),
+  /** True only when this host uses a fresh separate OS user for each seat. */
+  ephemeral: z.literal(true).optional(),
   /** Who set it: the host's person. */
   by: Handle.optional(),
   since: z.number().int().nonnegative().optional(),
@@ -301,9 +307,9 @@ export function isSeatAgent(agent: string | undefined): boolean {
 }
 
 /**
- * One launcher entry of the host's config: `@alex` (the person, from any of their machines), `@alex/alex-mac` (the
- * person at that machine) or `@alex/alex-mac/orchestrator` (that agent on that machine; agents are allowed only
- * when named this way).
+ * One launcher entry of the host's config: `@alex` (the person and their agents, from any admitted machine),
+ * `@alex/alex-mac` (the person and their agents there), or `@alex/alex-mac/orchestrator` (only that agent there).
+ * Seat agents require an exact entry; a person entry never covers them.
  */
 export interface LauncherEntry { handle: string; machine?: string; agent?: string }
 
@@ -413,8 +419,14 @@ export interface SeatsLocalView {
    * launch): the refusal, naming what to turn off (Opus seats r9 HIGH).
    */
   pool_conflict?: string;
-  /** The configured launchers, or [] when they default to the team's owners. */
+  /** Configured launchers; [] can also mean the default, distinguished by launchers_default. */
   launchers: string[];
+  /** Absent on older peers; true means the team's owners and their agents. */
+  launchers_default?: boolean;
+  /** True when an explicit list has no valid entries; no one can launch. */
+  launcher_policy_empty?: boolean;
+  /** Machine-scoped entries whose hostname belongs to multiple admitted machines. */
+  ambiguous_launchers?: string[];
   runtimes: SeatRuntime[];
   /** Seats running at once here (the person's `max`, else DEFAULT_HOST_MAX). */
   max: number;
@@ -440,10 +452,18 @@ export interface SeatsLocalView {
   codex_login?: "machine" | "unavailable";
   /** Seat users whose destroy could not be verified: something of them may remain (listed until it is). */
   quarantined?: string[];
+  /** Root helper's retained macOS residue, measured from entry metadata (opaque contents may be larger). */
+  retired_residue?: { homes: number; vaults: number; knownBytes: number };
   /** Why new seat users wait: the helper's pending ids couldn't be listed at start (retried every 30 s). */
   reconcile_error?: string;
   /** Why each one isn't verified removed (the user helper's answer), when it said. */
   quarantine_why?: Record<string, string>;
+  /** Current serialized destroy, for a doctor warning once it has run for over 60 seconds. */
+  cleanup_in_flight?: { user: number; since: number };
+  /** An outer adminCall bound expired; this warning survives a daemon restart. */
+  cleanup_helper_unfinished_since?: number;
+  /** Two or more busy replies show that an earlier root helper still holds the cleanup lock. */
+  cleanup_helper_busy_since?: number;
   /**
    * Seats are allowed in config.json but do not run, and why (e.g. no seat users and no --same-user, a seat user
    * that is root or an administrator, a readable home): with the command that fixes it.
@@ -464,3 +484,12 @@ export interface SeatsLocalView {
 }
 
 export interface SeatsView { local: SeatsLocalView; hosts: SeatHostView[]; seats: SeatView[] }
+
+/** Human-readable policy; older peers without flags retain their historical default display. */
+export function launcherPolicyLabel(view: Partial<Pick<SeatsLocalView, "launchers" | "launchers_default" | "launcher_policy_empty">>): string {
+  const launchers = view.launchers ?? [];
+  if (view.launcher_policy_empty) return "nobody";
+  if (view.launchers_default || (!launchers.length && view.launchers_default === undefined)) return "the team's owners and their agents";
+  if (!launchers.length) return "nobody";
+  return launchers.join(", ");
+}

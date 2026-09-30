@@ -28,6 +28,20 @@
 }
 .mission-extras > * + * { margin-top: 20px; }
 
+.project-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: -2px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+.project-count-chip { min-width: 0; max-width: 100%; }
+.project-count-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.project-count-n { flex: none; margin-left: 2px; font-weight: 650; }
+.project-count-chip.is-unmatched { color: var(--text-3); border-color: var(--line-soft); }
+
 /* ---- avatars ---- */
 .avatar {
   display: inline-grid;

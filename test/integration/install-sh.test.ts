@@ -80,6 +80,34 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
     chmodSync(r.bin, 0o755);
   });
 
+  test("desktop install-only verifies and installs without running setup", async () => {
+    current = release();
+    const r = await install({ WALKIE_VERSION: "v0.1.0", WALKIE_INSTALL_ONLY: "1" });
+    expect([r.code, r.err]).toEqual([0, ""]);
+    expect(r.out).toContain("Verified: release signature");
+    expect(r.out).toContain("Installed");
+    expect(r.out).not.toContain("setup ran:");
+    expect(existsSync(r.bin)).toBe(true);
+  });
+
+  test("a newer Walkie elsewhere on PATH blocks replacing the local destination", async () => {
+    current = release({ version: "v0.2.0-pre.8" });
+    const other = mkdtempSync(join(root, "brew-like-"));
+    writeFileSync(join(other, "walkie"), fakeBinary("0.2.0-pre.9"), { mode: 0o755 });
+    const r = await install({ PATH: `${other}:${SYSTEM_PATH}`, WALKIE_INSTALL_ONLY: "1" });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`${other}/walkie (0.2.0-pre.9)`);
+    expect(existsSync(r.bin)).toBe(false);
+  });
+
+  test("a signed release below the link minimum is refused", async () => {
+    current = release({ version: "v0.2.0-pre.8" });
+    const r = await install({ WALKIE_VERSION: "v0.2.0-pre.8", WALKIE_MIN_VERSION: "v0.2.0-pre.9", WALKIE_INSTALL_ONLY: "1" });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("below the team's minimum");
+    expect(existsSync(r.bin)).toBe(false);
+  });
+
   test("a mirror without WALKIE_VERSION installs the signed release; a wrong WALKIE_VERSION is refused", async () => {
     current = release();
     expect((await install()).code).toBe(0);
@@ -127,7 +155,7 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
       current = release({ version: "v0.0.9" });
       const r = await install({}, { existing: "0.1.0" });
       expect(r.code).toBe(1);
-      expect(r.err).toContain("older than the installed walkie 0.1.0");
+      expect(r.err).toContain("(0.1.0): refusing to downgrade");
       expect(r.err).toContain("WALKIE_ALLOW_DOWNGRADE=1");
       expect(r.out).not.toContain("Installed");
       expect(readFileSync(r.bin, "utf8")).toBe(fakeBinary("0.1.0"));
@@ -160,7 +188,7 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
       current = release({ version: "v0.2.0-rc.1" });
       const down = await install({}, { existing: "0.2.0" });
       expect(down.code).toBe(1);
-      expect(down.err).toContain("older than the installed walkie 0.2.0");
+      expect(down.err).toContain("(0.2.0): refusing to downgrade");
       expect(readFileSync(down.bin, "utf8")).toBe(fakeBinary("0.2.0"));
     });
 

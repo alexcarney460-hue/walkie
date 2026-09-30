@@ -232,7 +232,8 @@ event itself with `requested_by: <handle>` and `request_id: <sha256 of the canon
 looks up the pre-FIX-4 id, which hashed the whole request, so requests applied before the upgrade stay
 deduplicated). An owner's `team.node` request may only bind a key to the **owner's own login**
 (`not_own_node` otherwise): another member's machine is admitted only through that member's whois-bound
-`/peer/v1/join` (with `team.admit` approval when auto-admit is off). Revoking any node, or re-admitting a node with
+`/peer/v1/join` (with `team.admit` approval when auto-admit is off or the login already has an
+admitted node and no add-machine credential). Revoking any node, or re-admitting a node with
 the login and pubkey it already has in the roster, stays allowed. Requests are
 idempotent: an authority that finds a chain entry with that `request_id` returns it instead of appending, so a
 retry after a transfer is deduplicated by the new authority from the replicated chain (the entry and its dedup mark
@@ -367,8 +368,11 @@ row that becomes valid in re-validation is likewise kept in full.
   any element is validated (zod 3 would otherwise validate every element of an oversized array).
   Plausibility caps: `mem.total` ≤ 16 TiB, `gpu_limit` ≤ 16 TiB, each GPU's `vram` and `gpu_free` entry ≤ 512 GiB.
   Platform facts (`sys`, v0.2, for the dashboard's machine page): `{os: darwin|linux|win32|other, arch: arm64|x64|other,
-  version, cpus, load1}` — the OS family and architecture bucketed from Node's names, the Walkie version, the logical
-  CPU count and the 1-minute load average (`null` on Windows). Optional; a malformed `sys` is dropped and the rest kept,
+  version, cpus, load1, load5?, load15?, cpu_busy_pct?}` — the OS family and architecture bucketed from Node's names,
+  the Walkie version, logical CPU count, load averages (`null` on Windows) and CPU busy percentage between samples.
+  `mem.free` is available physical memory derived from `total - used`; `agent_processes` is the cheap process-table
+  count by runtime, including processes whose details are pending. These additions are optional and older peers drop
+  them. A malformed `sys` is dropped and the rest kept,
   and a malformed `version` (semver with optional pre-release and `+build` metadata) drops only the version. A load
   move of at least max(0.5, 25 %) publishes on the next sample, like the memory and temperature steps.
   Optional **`accel`** (read once at daemon start; `MachineAccel`): `{ chip: string | null, unified: boolean,
@@ -681,8 +685,12 @@ row that becomes valid in re-validation is likewise kept in full.
     child's `CLAUDE_CODE_SESSION_ID`) and must be a plain id. A session with no id (`claude-pid<N>`) takes over a hook
     / MCP card of this node with the same runtime and directory (the same, or one inside the other) that no running
     session claims, instead of posting a second card. Sessions under claude-mem's worker or in `~/.claude-mem/` are not
-    agents. At most 100 sessions per runtime are reported (the most recently started); one not reported, or not
-    examined within a scan's 10 s budget (6 at a time), keeps its agent and state: only a process that is gone is
+    agents. Set `WALKIE_AGENT=<name>` on a worker's own process to show it under that name after enrichment; the
+    first process-table pass never waits for environment reads. At most 100 sessions per runtime are reported; each
+    selected live process appears as working with "Working (details pending)" before the budgeted environment,
+    session and transcript lookups finish. The least recently enriched run is examined first across scans. An unnamed
+    placeholder reserves an unmatched hook card of the same runtime while its directory is unknown. One over the cap
+    keeps its prior agent and state: only a process that is gone is
     offline, and nothing is swept after an incomplete scan. A tool verifiably still running (the last turn record is a
     tool call and a process the session started for it is alive) keeps a session working, and a hook's `working` is
     re-posted every 10 min while it runs, so it never turns stale.
@@ -860,13 +868,64 @@ non-member gets `403 {code: "not_member"}` on every endpoint, `/join` included).
 Header `X-Walkie-Team: <team id>` must match (409 otherwise). `X-Walkie-Node: <node_id>` identifies the caller's node.
 The rate limit is keyed on the (WireGuard-authenticated) source IP and checked before whois.
 
+**Peer request signatures.** Tailscale peers sign requests with their owner-only node key. Headers
+`X-Walkie-Ts` (Unix milliseconds), `X-Walkie-Nonce` (16 random bytes, lowercase hex) and `X-Walkie-Sig`
+(canonical base64 Ed25519) cover `"walkie-peer-sig-v1\n"` followed by canonical JSON of
+`{v:1, method, path, query, body_sha256, requester, target, team, ts, nonce}`. `query` is the raw URL
+search string in wire order, including duplicate parameters; the body hash is SHA-256 of the exact
+sent bytes (empty bytes for GET). The receiver checks
+the roster key for `requester`, its own node id as `target`, the team, a ±2-minute timestamp and a bounded
+per-requester nonce replay book. A signed timestamp older than the receiver's boot is refused.
+An invalid presented signature returns `403 bad_peer_sig` on any route; its message distinguishes
+invalid proof, clock skew, replayed nonce and a timestamp below the receiver's boot or replay floor.
+The in-memory nonce set ages out by signed timestamp and trims oldest timestamps with a retained floor.
+`admin/run`, `vault/lease`, `vault/usage`, `pool/stage`, `pool/serve` and pool WebSocket upgrades
+require signatures. `orchestrator/lease`, `events` GET/POST, blobs and `vv` require one after a
+verified request signature, a signed `/vv` proof, or a signed `team.node` admission with
+`peer_sig_v1: true`. That marker is sticky across re-pins and replicated to every member. An unsigned
+Tier B call by a node without trusted evidence is served during the mixed-version window; `peer_unsigned`
+is logged at most once per node per ten minutes. An unsigned `/vv` reply never changes this decision.
+A signed `/vv` also carries `relay_proof`, a second signature over its node id and timestamp bound to
+the caller's challenge. A non-authority member that verifies both signatures sends the compact
+`{node, body: {node, ts}, challenge, proof}` envelope to the authority through signed
+`POST /peer/v1/peer-proof`. The authority checks the reporter's peer signature, verifies the node-key
+proof itself, and records `peer_sig_v1` in its signed roster. A member persists the signed envelope
+locally until the authority records the marker, the node loses admission, or the proof reaches 30 days.
+Failed reports retry with exponential backoff up to one minute, including after a daemon restart.
+If the proof holder becomes the authority, it verifies its pending envelopes locally and records
+the signed roster markers before clearing them, even when the proved nodes are offline.
+For this marker only, the authority accepts a proof older than the normal two-minute replay window
+if it is no more than 30 days old, is not over two minutes in the future, and verifies against the
+currently admitted node key. The old proof never authorizes its original `/vv` request.
+The authority stores the digest of the envelope that caused the marker. A retry with a new signed
+HTTP request returns the existing marker without appending another roster event; a revoked node's
+proof is still refused.
+Once every admitted, non-revoked node has trusted evidence, including a founder-only team, the authority
+records strict mode in its signed roster and unsigned Tier B is refused automatically. An owner can
+set `peer_sig_strict: false` with `walkie team peer-sig-strict off` to admit a legacy machine; its
+unsigned admission consumes the waiver and automatic strict mode resumes when all nodes have evidence.
+`walkie team peer-sig-strict on` records `peer_sig_strict: true` explicitly. Strict mode rejects a new
+unsigned join with `update_required` and the required pre.10 version in the error message.
+Upgraded receivers enforce the marker; a pre.9 daemon must update before it can enforce strict mode.
+Unknown `/peer/v1/*` paths, all four orchestrator schedule routes,
+and both tunnel shapes for every HTTP method are Tier A. `hello`, the separately signed
+`roster-request` and new-node `join` are exempt. Walkie Direct authenticates its QUIC connection key and
+does not require these headers. A pre.9 owner must update before remotely administering a pre.10 machine
+or borrowing its vault. A known pre.9 node without trusted evidence may rejoin unsigned and re-pin
+only its IP to the whois-observed source, retaining the recorded port; this is logged. Changing the
+port requires a signed request. A signed hello from a new key is served before
+admission. A signed join, including one approved from the pending queue, marks the node in the roster;
+an unsigned first join leaves it without trusted evidence. During the mixed window a local OS user
+can impersonate such an unproved node, as on pre.9. The protection is complete per node after its
+first verified proof or signed admission, and team-wide once strict mode engages.
+
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/peer/v1/hello` | – (no team header needed; caller's login must be a member, node need not be admitted) | `{ team, name, node_id, hostname, authority: {node_id, hostname, ip, port} \| null }` |
-| GET | `/peer/v1/vv` | – | `{ node, vv: {origin: seq}, ts, stats?, accounts?, online?, pool? }` (`stats`: this machine's published `MachineStats`, with `peer_rtt` since POOL-2; `accounts`: its `AccountsSnapshot`, §3; `online`, v0.2 additive: node ids the server reached itself within its liveness window, ≤1024; §4 "Mixed teams"; `pool`: its `PoolShare`, §3 "Split runs") |
+| GET | `/peer/v1/vv` | Optional `X-Walkie-Vv-Challenge` (32 lowercase hex bytes) | `{ node, vv: {origin: seq}, ts, capabilities?, proof?, stats?, accounts?, online?, pool? }` (`proof`: node-key signature over a digest of the response body plus requester, target, timestamp, and challenge; `stats`: this machine's published `MachineStats`, with `peer_rtt` since POOL-2; `accounts`: its `AccountsSnapshot`, §3; `online`, v0.2 additive: node ids the server reached itself within its liveness window, ≤1024; §4 "Mixed teams"; `pool`: its `PoolShare`, §3 "Split runs") |
 | GET | `/peer/v1/events` | `origin, after, limit≤500`, or `ids=a,b,…` (≤100, stub fill) | `{ events: (Event \| Stub)[] }` ascending seq, stopped before 768 KiB serialized (≥1 event); unknown ids are omitted |
 | POST | `/peer/v1/events` | `{ events: (Event \| Stub)[] }` (≤100) | `{ accepted, pending, rejected: [{id, reason}] }` (duplicates count as accepted) |
-| POST | `/peer/v1/join` | `{ pubkey, hostname, ip, port? }` (`PeerJoinReq`; `port` = joiner's peer port, default 7458) | Served by the **roster authority**: if the whois login is a member, emits `team.node` pinning the **observed source IP** (not the claimed `ip`) and returns `{ admitted: true, team, node_id }`. Any other node returns `{ admitted: false, reason: "not_authority", authority }` and the joiner retries there; `pending_approval` with auto-admit off. Idempotent for an already-admitted pubkey (any node answers); a revoked node gets 403; `409 node_limit` past the node limits (§2), before anything is queued. |
+| POST | `/peer/v1/join` | `{ pubkey, hostname, ip, port?, invite? }` (`PeerJoinReq`; `port` = joiner's peer port, default 7458; `invite` = owner-issued add-machine credential) | Served by the **roster authority**: if the whois login is a member, emits `team.node` pinning the **observed source IP** (not the claimed `ip`) and returns `{ admitted: true, team, node_id }`. Any other node returns `{ admitted: false, reason: "not_authority", authority }` and the joiner retries there; `pending_approval` when auto-admit is off or that login has ever had a machine and no valid add-machine credential. Idempotent for an already-admitted pubkey (any node answers); a revoked node gets 403; `409 node_limit` past the node limits (§2), before anything is queued. |
 | POST | `/peer/v1/roster-request` | `RosterRequest` `{ id, kind, body, node, ts, sig }` (`kind`: `team.member`, `team.node`, `channel.upsert`, `team.authority`, `team.license`, `team.integration` `{connector, node, enabled}` (own node only), or `team.admit` `{node_id, approve}`; `node` = the caller; `sig` by the caller's node over the other fields plus `team`) | Authority only (others: `409 not_authority`). `{ event }`: the appended roster event (null for a declined admission). 403/400/404 when refused, `402 plan_limit` past the plan (§2 "Licenses"); idempotent per `id`. |
 | POST | `/peer/v1/pool/stage` | `{ action: "start", run, bytes, model }` \| `{ action: "renew" \| "stop", run }` (`run` = 32 hex, minted by the head; WALKIE-POOL-2) | `{ ok, lease_ms? }`. `start`: `403 forbidden` from an observer's machine, `403 not_sharing`, `409 seats_pool_conflict` (the worker allows remote seats, §11), `409 busy`, `409 no_runtime`, `413 over_cap`, `507 insufficient_memory` (over the worker's own budget), `503 memory_unknown`, `409 cancelled` (stopped or sharing turned off while starting), `409 wrong_runtime` (not the pinned rpc-server), `500 guard_selftest_failed`, `500 rpc_start_failed`; idempotent for the same run and head. `renew`/`stop`: only the node that started it (else `404 no_run`; a renew from a head that may no longer head a run: `403`, and the stage stops). `stop` also cancels a stage that is still starting. 30 per peer, then 1/s. Older daemons: 404. |
 | GET (WebSocket) | `/peer/v1/pool/tunnel/:run` | Tailscale: an `Upgrade: websocket` request with the usual identity headers; Walkie Direct: a `CONNECT` stream (below) | Raw bytes to the stage's rpc-server (§3 "Split runs"). Refused before any byte: the peer gate (403), not an upgrade (426), not the run's head (403 forbidden), no such stage (404 no_run), sharing off or the head no longer allowed (403), 4 open or reserved or 20 new in a minute (429). Closed later by the credit window or the RPC guard (§3 "Split runs"). |
@@ -876,9 +935,12 @@ The rate limit is keyed on the (WireGuard-authenticated) source IP and checked b
 | POST | `/peer/v1/admin/run` | `{ argv: string[], agent?, timeout_s? }` (AGENT-ADMIN-1; `agent` = the caller's agent label, absent for a person) | `{ machine, exit, stdout, stderr, truncated, timed_out }`: runs `walkie <argv>` as this machine's OS user (no shell, stdin closed, `timeout_s` default 300 max 1800, 64 KB per stream) with `WALKIE_AGENT=remote-admin` and a per-run token its gates accept as the remote actor. Refused: `403 not_your_machine` unless the caller's member is an owner or this machine's person, `403 remote_admin_off` / `403 agent_admin_off` (this machine's switches), `400 not_allowed_remotely` (src/protocol/admin.ts allow-list). One `#general` post by `walkie-admin` per command, mentioning this machine's person. Older daemons: 404. |
 | GET | `/peer/v1/blobs/:hash?channel=X` | – | the bytes, only if this node holds **provenance** for `(X, hash)` (it uploaded them with a share in X, or fetched them for an accepted share in X from a peer with provenance), an accepted `artifact.share` of the hash in X exists, and the caller can see X. A share announcement alone never creates provenance; a hash named in `msg.post`/`ask`/`answer` `artifacts` authorizes nothing. |
 
-`/join` with auto-admit off: the request is queued on the authority as a pending admission, the authority's dashboard
+`/join` with auto-admit off, or from a new key under a Tailscale login that has ever had a node:
+the request is queued on the authority as a pending admission, the authority's dashboard
 shows it to owners, and the joiner polls. Another owner decides it with `/v1/team/admit` (sent as a `team.admit`
-roster request). A node revoked only because its member was removed may `/join` again after a re-invite; an explicitly
+roster request). A valid unused owner-signed add-machine invite naming that login's current handle
+admits it directly and consumes the credential on the roster. The first node of a login still follows
+`auto_admit`. A node revoked only because its member was removed may `/join` again after a re-invite; an explicitly
 revoked node gets 403. Bodies are capped at 1 MB (blobs 25 MB) in both directions: the client stops reading a peer
 response as soon as it passes the cap and validates every response's shape. Rate limit is 60 req/s per peer (token
 bucket).
@@ -1356,6 +1418,173 @@ queued work, spawns and writes under `orchestrator` are fenced. If the authority
 finish their lease and then nobody leads until it returns. This requires upgraded daemons; older releases cannot
 be retroactively made lease-aware. Conversations remain local; this peer endpoint grants leadership only.
 
+**Schedules.** The authority creates three enabled defaults on the lead's first schedule check: `board-refresh` (`0 * * * *`),
+`capacity-check` (`*/15 * * * *`), and `data-room-refresh` (`0 9 * * *`). An owner may manage at most 20 schedules.
+Each record carries `id`, `name`, a validated five-field cron in the lead machine's local time zone, a built-in
+template or free-form prompt, `enabled`, `created_by`, `last_run`, `next_run`, `last_result`, consecutive failures,
+`run_id`, optional last accepted progress time, and optional per-orchestrator capacity check times. Changes are signed `msg.post` records in the owner-only `talkie-schedules` channel. Older peers accept
+these ordinary posts and ignore their schedule meaning; neither `VALIDITY_VERSION` nor `FOLD_VERSION` changes.
+Each schedule change carries its authority `term`, transfer `after` id, logical `epoch`, and `rev`. The fold accepts
+only the term's authority signature, its person's unmarked author, and matching `after` id in that term's signed sequence window and orders by
+`(term, seq)`; epoch and revision fence stale changes to the same schedule id. Arrival order and
+later roster changes do not revise earlier decisions. The authority increments the highest folded revision for each
+schedule. A person reset increments the epoch and starts at revision zero. These posts live only in
+`talkie-schedules`, outside the projects fold. This unreleased lane does not migrate earlier schedule posts.
+Schedule records and claim requests validate known fields and ignore unknown optional fields from newer peers.
+The lease holder checks due slots every 15 seconds. Before running, it claims the computed due slot through the
+roster authority's synchronous, durable `POST /peer/v1/orchestrator/schedule-claim`. The authority accepts only its
+current lease holder and epoch, refuses slots more than five seconds in the future, slots at or below the schedule's
+durable `last_run`, and slots at or below the highest retained claim or refusal floor. An accepted run-now claim
+can cover an earlier due slot; a later refusal reconciles `next_run` past the covered slot. The authority appends a post signed by its own node to
+`talkie-schedules` with the schedule id, slot, holder, lease epoch,
+authority term and any per-target capacity check times before acknowledging the claim. An accepted response includes
+`claim: {term, seq, generation}`, identifying the signed claim post and schedule generation. The claim decision uses the
+authority's durable local store; the signed post carries that decision across a handover. A retry of an accepted
+claim returns `claimed=false` with `just_ran` and does not add another claim post. Each accepted run adds one signed claim post, like other status posts. Claim posts
+follow the team event log's normal retention; they have no separate retention rule. The configured `retention_days`
+is currently not enforced, so the event log is not yet time-pruned.
+
+The lease, claim, defaults, progress and management peer requests carry a node-key signature over the route,
+canonical body digest, requester node, timestamp, target authority node and authority term. The authority checks
+the admitted roster key, target and term, and a two-minute clock window before acting; excess offset returns
+`clock_skew` with the offset in milliseconds. A request signed for one authority cannot be replayed to its successor.
+For run progress, the authority derives `last_run` from the accepted claimed slot and `next_run` from the
+schedule cron and that slot; the lead's timestamp fields are not trusted. After a long outage, one due slot
+is claimed and run, and the intervening missed slots are skipped in one step. If a claim was accepted but
+its progress write was missed, the authority reconciles the consumed slot from the signed claim without
+replacing the previous completed result.
+The authority binds every progress put to an accepted claim and fences same-run updates with the monotonic
+`progress_rev`; `progress_at` is display-only and does not order requests. It rejects duplicate content by a
+content-derived `request_key` bound to the requester and accepted claim, and keeps the highest capacity check time
+for each target. A completion put carries `completion_run` and `completion_claim` (term, seq, generation), with its
+`request_key` recording the stable request identity. If its acknowledgement
+is lost, the authority returns the original signed completion post instead of appending another. A local index keyed
+by run, claim and generation makes that lookup direct and is rebuilt from signed events after handover. The lead retries
+a pending completion with backoff; hard refusals use exponential delays. Catch-up, unreachable authority and lease errors do not consume the
+five hard-refusal attempts. If hard refusals persist, it records
+an owner-visible unresolved status on the lead machine and releases the local run so later slots can proceed.
+The local unresolved list retains every run identity; owner status shows the first and a count. The local owner-only
+`GET /v1/orchestrator/schedules/unresolved?limit=100&after=<cursor>` route and
+`walkie talkie schedule unresolved [--limit N] [--after cursor]` expose pages of up to 100 identities in stable
+identity order. A page returns `next_cursor` when more entries remain; a cleared earlier entry does not shift later pages.
+An entry clears after its matching completion appears, the authority moves to a later run, or its schedule is removed,
+with one durable `#general` note for superseded entries. A count-only overflow written by an older version remains visible for manual review because
+those dropped identities cannot be reconstructed.
+Each hard-failure append reconciles old entries and collapses repeated failures of the same run and claim identity,
+so the durable list does not depend on a status read to shrink.
+A captured completion stays in memory across lease loss and is retried if that machine reacquires the lease before a
+newer run supersedes it; a run without a captured result is abandoned.
+
+Current limits: a captured completion keeps its original management fields, so an owner edit before its first commit
+can make later attempts receive `forbidden`. A completion held on a machine that does not regain the lead may remain
+uncommitted, and a newer run can supersede it before it is committed. An owner edit made while a lead's clock is ahead
+can leave `next_run` on an already claimed slot until a later repair. A pause notification to `#general` is only sent
+after the lead observes a successful completion acknowledgement, so lost acknowledgements can leave a committed pause
+without that notification.
+
+A new authority refuses claims, defaults, reset, progress and management writes until its local store covers the previous authority's own origin stream
+through that origin's sequence in the signed transfer watermark (`wm`) and has filled readable schedule stubs from authority origins within their signed term windows.
+Only fillable (`ok`) stubs count; junk and `hidden_cap` rows and posts from other origins do not block schedules.
+The version vector alone includes stubs and does not prove that schedule history is readable. Only a term authority could have
+signed acknowledged claims, so another origin that remains offline cannot block schedules. Catch-up status names the missing origin and is local;
+it never emits a full schedule put from a partial history. After ten minutes, the authority posts one alert to `#general` for that
+transfer. If the predecessor vanishes before those events arrive, schedule claims remain blocked indefinitely: the
+alert does not time out or bypass the catch-up gate. Bring the previous authority's machine online to sync its events,
+or have a team owner run `walkie team authority <other-owner-machine>` from the stuck authority's machine to move
+authority to another reachable owner machine. That transfer issues a new watermark from the current authority's event
+set; the current authority cannot transfer to itself.
+If authority-origin junk arrives only as an `ok` stub, it can stall the next authority until its full copy
+can be served. There is no in-product escape for that stall while the full copy remains unavailable; moving
+authority to another machine does not make the missing event readable.
+After catch-up, it seeds its local claim store from posts signed by the authority of
+each term. The post must name that term's transfer, and the signer's sequence must fall inside that authority's
+term. Posts from any other signer are ignored. All posts acknowledged before the transfer are inside its watermark,
+so a successor cannot repeat their slots even when both clocks move backward. There is no first-slot skip or
+transfer-time clock check; repeated handovers do not postpone an unclaimed due slot. Older released peers without
+schedules treat claim records as ordinary posts and ignore their meaning. The authority retains the latest claim
+record per live schedule indefinitely in its local store. It keeps older records only for seven days and up to 50 per
+schedule. A removed schedule keeps only its newest record, and only for the 48 hours after its removal is signed; the
+local store never holds more than 1,000 records, evicting the removals furthest in the past first and never a live
+schedule's record. A local indexed lookup reads at most the latest 50 posts in signed term and sequence order per live
+schedule. It keeps the newest regardless of age, and other posts only within seven days. It verifies each post
+against its signed authority term before retaining it. A new authority term seeds the signed claims of every known
+live schedule on its first claim, and of any other schedule on that schedule's first claim in the term, so a schedule
+whose changes arrive after the seeding still honors a slot the predecessor already acknowledged. Clock checks never
+erase a retained claim; expired removed schedules are pruned on a later grant.
+Progress waits for the same catch-up gate and fills a missing claim from signed posts even when the local claim
+store already contains another claim for that schedule.
+
+Only the current roster authority writes schedule changes. Each owner's management route runs its local audited
+admin gate, then forwards a node-key-signed request from another machine to authenticated, rate-limited
+`POST /peer/v1/orchestrator/schedule-manage`. The signature binds operation, body, audit id, requesting node and timestamp
+to that daemon; the authority accepts a two-minute clock window, derives the handle and hostname from its roster,
+and checks the requesting node's current owner role. A process running as that owner's OS user retains the owner's
+authority on that machine. Reset cannot be forwarded; it requires a person on the authority's own socket or dashboard.
+The authority validates cron and the 20-schedule cap before writing, and commits the audit
+post with the change. An unreachable authority gives `503` naming its machine; changes are never queued. Lease-holder
+run progress is forwarded to the authority separately and checked against the live lease and prior run id. A removed id cannot be
+reused. Forwarded audit ids return the prior decision on replay for seven days. The fold caps the surviving schedules
+after applying changes in authority term and sequence order as defense in depth. `#talkie-schedules`
+is reserved; the manager repairs membership until it is exactly the current owners, alerting `#general` once per
+offending membership.
+
+A peer authority without the claim route causes schedules to wait. Lease loss abandons the turn and terminates its
+Claude child. A run cannot overlap an earlier local run of the same schedule. Runs have a 10-minute timeout; results
+are redacted and capped at 2,000 characters. Three consecutive failures pause a schedule and post the reason in
+`#general`. A capacity turn sends its candidate targets with the claim. The authority records the accepted target
+ids and check time in its signed claim post before replying, and returns the accepted targets to the holder. Checks
+and asks each impose a two-hour per-target cooldown, including checks that sent no ask. A successor seeds those
+checks from signed claim posts even if the predecessor's schedule update has not arrived.
+
+The authority keeps a claimed-slot high-water mark for each schedule: the greatest slot in its indexed,
+authority-signed claim tail, the schedule's durable `last_run`, or a signed reset refusal floor, whichever is later. It refuses every slot at or
+below that mark, including `run-now` requests (shown as “just ran”). This favors at-most-once execution when a clock
+or delayed schedule state would otherwise reopen an old slot. The newest signed claim is retained indefinitely even
+after the seven-day/50-record tail is compacted. Claim posts themselves are not pruned and continue to grow in the
+replicated log.
+
+If the mark is later than the authority's clock by more than the schedule advance bound, the
+authority blocks the schedule with “Schedule blocked: claimed slot is in the future (clock error)” and sends one
+`#general` alert. An owner can recover on the roster authority machine with
+`walkie talkie schedule reset <id>`. Reset appends an authority-signed record carrying a refusal floor equal to the
+maximum of the reset time, durable `last_run` and prior reset floor if no later than the reset time plus the advance
+bound, and claims through that same bound. The advance bound is the cron gap, floored at one hour and capped at
+48 hours. Marks beyond the bound are treated as
+clock errors and excluded, so a second reset after clock correction can recover; a small rollback cannot reopen a
+recently claimed slot. Accepted claims carry the floor forward after the reset record leaves the bounded claim tail.
+A repeated reset max-merges a floor within that bound; a
+successor or restarted daemon seeds it from the signed stream. The schedule's next cadence slot is strictly after the
+later of reset time and refusal floor. A refused `just_ran` cadence slot advances to the following slot and records
+the skipped time. A later `run-now` slot may be claimed above the floor. A reset is refused before writing anything
+when the authority clock trails its newest claim time (including a predecessor authority's signed claim) or its own
+schedule event timestamp by more than the advance bound. The refusal and clock alert name the value that tripped
+the guard (a claimed slot, the schedule's last run time, a reset refusal floor, a claim or reset record time, or this
+machine's own schedule change time), the machine that signed it when one did, and how far ahead of this clock it is,
+and say: “the schedule resumes on its own at <time>. Removing and re-adding it with a new id resumes it now.”
+The at-most-once guarantee is per schedule id; a new id has no old claim history.
+Remote schedule event timestamps
+do not establish the authority clock, but authority-signed claim times from previous terms do.
+The reset route requires an owner, team membership, an unmarked person request, and `{confirm: "<exact schedule id>"}`.
+The CLI prompts for that id; the server refuses a bare `"reset"`. The route accepts the owner's unix socket or a
+dashboard session, not a paired phone or a durable-token loopback request. A reset requires `#general` and records
+one `walkie-admin` post in the same durable transaction before changing the schedule; a missing channel or failed
+post refuses the reset. Each accepted reset is also logged locally. The person-only check detects agent headers,
+not an owner-uid process that omits them; that process has the owner's local API authority.
+
+Migration 14 indexes historical claim posts in 500-row transactions, storing a cursor after each batch. The daemon
+can serve during the backfill, but schedule claims wait until it completes. A restart resumes at the stored cursor;
+the migration version is recorded only after the final batch commits.
+
+The local API offers `GET /v1/orchestrator/schedules`, `GET /v1/orchestrator/schedules/next?cron=…` (next three
+times), `POST /v1/orchestrator/schedules`, `PATCH` and `DELETE /v1/orchestrator/schedules/:id`, and
+`POST /v1/orchestrator/schedules/:id/run-now`, and the person-only
+`POST /v1/orchestrator/schedules/:id/reset`. Owners and their own agents pass the existing audited agent-admin
+gate for management. WalkieTalkie's reserved agent cannot change schedules, but its lease-fenced child can run one.
+The CLI exposes `walkie talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset`; the dashboard has matching
+list, add, pause/resume, and run controls. A board refresh first calls the existing steward for each active project
+with a lease check before its writes, then gives WalkieTalkie the results to summarize. The other built-in prompts
+use the Data Room, machine stats, seats, accounts, and `walkie ask` tools. Free-form prompts use its normal access.
+
 Any authorized explicit stop (`POST /v1/orchestrator/stop`), including a non-TTY person or an owner's agent through admin, is sticky. Upgrade clears legacy stop flags unless they carry
 the pre.8 explicit-stop marker. A manual start still requires the exclusive lease;
 `--here` cannot override it. On the lead a manual start becomes automatic, with generation checks preventing stale
@@ -1371,7 +1600,7 @@ agents may lower access. The local person-only `POST /v1/orchestrator/lead-eligi
 
 **Local only** (ORCH-FIX-11/12). The conversation is not an event and involves no channel: the host stores it in its own
 database (table `orch_messages`: `OrchMessage` `{id, thread, role: "person"|"orchestrator", text, ts, via:
-"dashboard"|"cli", state: "queued"|"sent"|"refused"|"dropped", tools, reply_to}`: a reply's `reply_to` is the id of the
+"dashboard"|"cli"|"schedule", state: "queued"|"sent"|"refused"|"dropped", tools, reply_to}`: a reply's `reply_to` is the id of the
 person's message it answers, which is how it is matched, never by order), `src/protocol/orchestrator.ts`), serves it on
 its local API only (§5) and streams it (`orchestrator_message`, and the live `orchestrator` progress below) only to this
 machine's dashboard streams (a dashboard session with no agent header and no channel filter). It is never replicated,
@@ -1778,18 +2007,23 @@ seats run or wait (`409`). The route refuses any
 sets `allow: false` and stops every running seat, in whatever phase it is, before it returns, **even when
 `config.json` can't be written** (the seats stop first; the route then answers `500` saying they would be on again
 after a restart). Defaults: launchers = the
-team's **owners at the time of each request**; runtimes = `claude` and `codex`; host `max` = **3** running seats
+team's **owners and every agent they run at the time of each request**; runtimes = `claude` and `codex`; host `max` = **3** running seats
 (1–64); `dir` = `~/walkie-seats`; `env` = no extra variables. A `null` field resets it to the default (launchers
-`null` = the owners again: a previously named agent is dropped). Turning seats off (`allow: false`) and stopping a
+`null` = the owners and every agent they run again; an earlier named-agent list no longer limits them). Turning seats off (`allow: false`) and stopping a
 seat running on this machine (`POST /v1/seats/stop`) are the machine's own emergency controls: they need only the
 person (no agent header), never team admission, so they work after the person is removed, the machine revoked or
 demoted.
 
-**Launchers.** A `launchers` entry is `@h` (the person h, from any of their machines), `@h/<machine>` (h at that
-machine) or `@h/<machine>/<agent>` (that agent on that machine). With a list, only listed entries launch (they need
-not be owners: the host named them). A request whose `author.agent` is set is an agent's: refused unless the exact
-`@h/<machine>/<agent>` is listed (e.g. `@alex/alex-mac/orchestrator`), never by default. The host's own person may
-always stop a seat on their machine; launching needs them to be a launcher like anyone else.
+**Launchers.** A `launchers` entry is `@h` (the person h and any of their agents, from any admitted machine),
+`@h/<machine>` (h and their agents on that machine), or `@h/<machine>/<agent>` (only that agent on that machine).
+Machine-scoped entries match only if exactly one admitted, non-revoked, non-observer machine of h has that hostname;
+if two share it, neither matches until one is renamed or revoked. `walkie seats` and `walkie seats doctor` warn about the ambiguity.
+With a list, only covered people and agents launch (they need not be owners: the host named them). Without a list,
+the team's owners and their agents launch. A person allowing `@h` trusts every agent h runs on admitted machines;
+to allow fewer, name exact agents. Agents whose author handle does not match the signing node, observers, and seat
+agents (`seats` or `seat-*`) are refused; a seat agent needs its own exact entry even when its person is covered.
+The same coverage applies to stop requests. The host's own person may always stop a seat on their machine;
+launching needs them to be a launcher like anyone else. Each request remains a signed post naming its author agent.
 
 **Channel.** Everything travels in `seats-<host node id>`, a restricted channel whose members are the host's person
 and the launchers' people (the owners by default); there are no new peer endpoints, so seats work over any transport
@@ -1863,7 +2097,7 @@ included; none older than a day); requests already in the channel when seats are
 was unreadable, are never run.
 
 **Stopping** a seat (a `stop` request) is for the seat's own launcher (the same person, from any of their machines
-or allowed agents) or the host's person in person; another launcher's stop is refused (logged). Like a launch, a stop
+or covered agents) or the host's person in person; another launcher's stop is refused (logged). Like a launch, a stop
 from an agent must name it: marked as an agent's (`X-Walkie-Under-Agent`) without `X-Walkie-Agent`, `POST
 /v1/seats/stop` answers `403 agent_unnamed` before anything is posted (Codex r9 MEDIUM 1). The host person's
 local stop (`POST /v1/seats/stop` on the host) also aborts the post-run git, like a revoke (no result bundle).
@@ -1949,9 +2183,9 @@ and at deny files are edited under the same lock, each written to an exclusive t
   process of the uid is stopped (SIGSTOP passes until none runs) and killed until none is left (a process surviving
   SIGKILL for 10 s stops the destroy there: Codex r7 MEDIUM 2); its launchd domains are booted out (`launchctl bootout
   gui/<uid>`, `user/<uid>`; "no such domain" is fine) or its systemd user manager stopped and verified inactive (an
-  `is-active` that can't tell is a problem); its crontab removed (`crontab -u <user> -r`, only while the account
-  exists; macOS's crontab refuses a user in cron.deny even for root, so then root checks the root-only spool directory
-  itself and unlinks a `<spool>/<user>` there, verified gone) and the cron and at spools inspected read-only by name and uid (anything of it there is reported, never
+  `is-active` that can't tell is a problem); its regular crontab file removed directly from the root-only cron spool
+  while the account exists (a directory or symlink entry is refused, and removal is verified), then the cron and at
+  spools inspected by name and uid (anything of it there is reported, never
   guessed away); its processes checked gone again; every mount it owns (statfs `f_owner` on macOS, FUSE `user_id` on
   Linux) force-unmounted and checked gone (Opus r7 4); a home whose creation was interrupted (still root's) removed only
   if it holds nothing but what create makes. Then, while the account exists, **the seat user sweeps its own files, as
@@ -1981,11 +2215,24 @@ with `lchflags`, and its ACL emptied, both on that very entry from its directory
 `fchmodat(AT_SYMLINK_NOFOLLOW)`, which fails closed where the libc can't honour it: Opus r7 2, Codex r7 LOW 7); its own
 directories are removed only once empty; entries of others are left (and a directory of its that holds one is
 reported as holding others' entries, distinct from its own entry it couldn't unprotect, e.g. a system flag). Nothing of
-it is kept (Opus r7 1): only the roots themselves (its home, its per-user folder) survive the walk. Its own permissions
+it is kept except verified macOS-protected residue in its own per-user folder. The sweep runs as the seat user and
+accepts an opaque entry at any depth and name when its `lstat`/`fstatat`, read-open, directory open, or list returns `EPERM`; all ancestors
+from the per-user root must be freshly verified as unchanged directories of that uid on the same device, and a
+stat-visible entry must itself be owned by that uid, on the same device, and not a symlink. Unflagged `TemporaryItems`,
+`0/dmd`, and nested vaults were observed on macOS 26.5.1. An unprivileged owner could not create `EPERM` with flags,
+ACLs, modes or xattrs in the measured probes; a mount changed `st_dev`. Those probes ran outside `/private/var/folders`. Inside it, macOS makes some folders (for example `T/**/TemporaryItems`) write-only drop boxes for their owner, so a seat CAN leave content beneath one, and the sweep then accepts it as residue. That content stays on disk, but no later seat user and no other ordinary user can read it: `T/` is `0700`, macOS denies reading it even to the same uid, the uid is retired and its per-user folder is never reused (root and entitled macOS system processes are outside this guarantee). The cost is disk space left behind. Listable directories are still emptied.
+`SF_NOUNLINK`, `SF_RESTRICTED`, and `UF_DATAVAULT` can also prevent removal of verified residue. A readable regular
+file whose unlink returns `EPERM` qualifies only after the same single-link inode is opened for write, truncated,
+and verified empty by `fstat`; read-only rechecks require that it remain empty. Flags do not disqualify an entry
+whose stat or open returns `EPERM`. The per-user root and `0/` may be `0755`; accepted opaque entries are denied
+by macOS, readable files are emptied, and listable directories contain only verified residue. Other user flags alone,
+`EACCES`, changed ancestors, another uid's entries, mounts, symlinks, and residue outside that folder fail verification.
+Each accepted path, the operation that returned `EPERM`, and known flags are reported and
+logged on destroy. Its own permissions
 are the containment: it can remove only what it could while it ran (sticky world-writable directories keep everyone
 else's entries). Verification is the same walk again, repeated while it still removes something (at most three
-passes): the last must remove nothing, find nothing of it and have no inspection problem. It answers `{ verified, left,
-removed, samples, notes }`. Not covered: files in directories of others that it could write but not read, other mounts,
+passes): the last must remove nothing, find no unaccepted entry of it and have no inspection problem. It answers `{ verified, left,
+removed, samples, notes, leftoverDirs }`. Not covered: files in directories of others that it could write but not read, other mounts,
 and named POSIX shared-memory objects, which macOS can't list (a seat can leave one; later seats run under other uids).
 
 The daemon asks for n = one above the highest it ever asked for (kept in `seats.json`; above the helper's own record
@@ -1999,12 +2246,16 @@ administrative one, the seats' group aside; administrative groups that can't be 
 answer is never kept; cron and at deny it, parsed exactly as cron does, an entry with a trailing space or a CR refused
 as ambiguous), runs the seat as it, and destroys it when the seat has ended (after its post-run git, before the seat's
 final state is posted). A user whose destroy isn't verified is **quarantined**: listed in `local.quarantined`, counted
-against the machine's `max` while something of it may run, retried every 60 s; its seat is reported `stopped`
+against the machine's `max` after its seat ends, retried with backoff from 60 s to 15 min; its seat is reported `stopped`
 "Walkie could not verify that its seat user was removed: its processes or files may remain (the seat user is
 quarantined)". Users made and not verified destroyed are kept in `seats.json` and destroyed at the next daemon start
-before anything else; a seat that ran when a daemon died is reported `failed` "(its processes were stopped)" only once
-its user's destroy is verified, else "(its seat user could not be verified removed: its processes may still be
-running; it is quarantined)".
+in the background, with live seat end, stop, and deny cleanup taking priority. One destroy attempt is scheduled at a time;
+after its deadline, the old helper may still be exiting while the queue continues. Shutdown
+defers unstarted cleanup to the ledger for the next start, and each attempt has a 15 s queue deadline. A seat that ran
+when a daemon died is reported `failed` "(its processes were stopped)" only once its user's destroy is verified, else
+"(its seat user could not be verified removed: its processes may still be running; it is quarantined)". The seat runner
+sets umask `077` before doing work, so a new file it creates in a shared directory starts without group or other read
+permission.
 
 `walkie seats setup-user [--apply] [--accept-readable-home]` (the person, with their own sudo) makes the seats' group
 `walkie-seats` (macOS: a free gid 590000–599999; Linux `groupadd --system`), a root-owned `/usr/local/libexec/walkie`
@@ -2261,3 +2512,38 @@ across peers and daemon restarts.
   its path (each directory re-checked by device and inode after the open), at most 64 KiB of UTF-8, redacted, and
   shares it as an artifact in the seat's thread; the final `state` post carries `file: <hash>` or `file_error`
   ("refused: it is a symlink", "not found", …). A shutdown returns nothing.
+
+## 12. Rental compute (RENT-2, additive)
+
+No event, peer route or chain rule changes. A rented machine joins with an ordinary add-machine code (§4 "Direct"),
+minted by the renting owner's daemon for the owner's own handle with a **1-hour** expiry (`createInvite` takes a
+`ttlMs` up to the 7-day TTL; the authority already accepted any expiry up to that, so older authorities accept these
+codes). `VALIDITY_VERSION` and `FOLD_VERSION` are unchanged. The contract is `src/protocol/compute.ts` (the site keeps
+a copy in `site/api/_lib/compute/types.ts`); money is integer micro-dollars; **no shape carries a cost, a margin, a
+provider or an instance type**, and the daemon parses every site answer with strict schemas, so an extra field is a
+`502 bad_site_reply`, never passed on.
+
+Local API (owner machines; the dashboard may call all five):
+
+| Route | Body → answer |
+|---|---|
+| `GET /v1/compute/quotes` | → `Quotes` (any member) |
+| `GET /v1/compute/state` | → `ComputeState`, or `{account_id: null, status: "none", …zeros, rentals: []}` before this machine opened a compute account (reading never opens one) |
+| `POST /v1/compute/rent` | `{machines: [{tier, count}], idle_minutes?}` → `RentResult` ("N started, M queued"). Admin (AGENT-ADMIN-1): an agent only with agent admin on, audited with the prices. Mints one 1-hour code per machine; a dev build refuses (`409 dev_build`) unless `WALKIE_COMPUTE_VERSION` names a release |
+| `POST /v1/compute/stop` | `{rental_id}` or `{all: true}` → `{stopped, rentals}` (admin, audited) |
+| `POST /v1/compute/credit` | `{block: 50\|200\|1000}` → `{url}` (Stripe Checkout; a person pays) |
+
+The daemon keeps `~/.walkie/compute-account` (`{account_id, team, token}`, 0600) and `~/.walkie/compute-rentals.json`
+(rental → the chain ids of the codes it was given, never a code; the node the chain says each code admitted; whether
+it was revoked). A poller (60 s + jitter, backoff on errors; no network until there is an account and an open rental)
+supplies a fresh 1-hour code to every rental the site moved to `needs_code`, and revokes a rental's node once when the
+rental ends (never this machine or the roster authority). `node_id` in the local state comes from the chain when it
+knows it.
+
+Site API (`https://getwalkie.vercel.app/api/compute/*`, site/README.md): `quotes`, `account {team_id}` → the bearer
+token once, then with `Authorization: Bearer <token>`: `state`, `credit {block}`, `rent {idempotency_key, machines,
+codes, walkie_version, idle_minutes?}` (same key → the first answer with `replay: true`), `start {rental_id, code,
+walkie_version?}`, `stop`. Rental states: `queued` (beyond the provider limits, FIFO per quota group) → `needs_code`
+(capacity reserved; the site holds no code) → `starting` (provider asked; billing starts) → `running` (first
+heartbeat) → `stopping` → `ended`, or `failed` (launch failed 3 times). End reasons: `user`, `no_credit`, `idle`,
+`heartbeat_lost`, `boot_timeout` (credited back), `mining`, `egress_cap`, `frozen`, `launch_failed`.

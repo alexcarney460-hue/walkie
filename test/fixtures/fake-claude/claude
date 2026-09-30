@@ -9,7 +9,7 @@
 // seat's home and per-run config; "history" answers with the session's turn count and first message; "HUGE" answers 1.5 MB; "TEAMPOST" posts to #general as the orchestrator; "ADDMACHINE <handle>" mints an add-machine link with the walkie CLI; "MANYTOOLS", "SECRETLINES" and "FLOOD" exercise the live-progress bounds; "demo" streams a Markdown
 // reply (heading, list, table, code) over ~FAKE_CLAUDE_DEMO_MS (default 4000) for dashboard screenshots; anything
 // else: "pong: <text>".
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const argv = process.argv.slice(2);
@@ -24,7 +24,17 @@ const log = (o: Record<string, unknown>) => { if (logFile) appendFileSync(logFil
 // Which credentials reached this process (names only, never values): remote seats must drop API keys.
 const SEEN = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_HOME", "UNIT_MARK", "CLAUDECODE",
   "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "UNIT_EXTRA", "WALKIE_HOME", "LC_ALL"];
-log({ argv, cwd: process.cwd(), walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined) });
+const credentialsPath = process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, ".credentials.json") : null;
+let accessFile = false; let refreshFile = false; let credentialMode: number | null = null;
+if (credentialsPath && existsSync(credentialsPath)) {
+  try {
+    credentialMode = statSync(credentialsPath).mode & 0o777;
+    const login = JSON.parse(readFileSync(credentialsPath, "utf8")) as { claudeAiOauth?: { accessToken?: string; refreshToken?: string } };
+    accessFile = !!login.claudeAiOauth?.accessToken;
+    refreshFile = !!login.claudeAiOauth?.refreshToken;
+  } catch { /* the test will report missing projected access */ }
+}
+log({ argv, cwd: process.cwd(), walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined), access_file: accessFile, refresh_file: refreshFile, credential_mode: credentialMode });
 
 const need = ["-p", "--verbose", "--include-partial-messages"];
 for (const f of need) if (!argv.includes(f)) { process.stderr.write(`fake claude: missing ${f}\n`); process.exit(2); }

@@ -87,6 +87,24 @@ test("offline status bypasses both seat spacing and the shared bucket", () => {
   expect(emitted.at(-1)?.body.state).toBe("offline");
 });
 
+test("final offline status retries transient failures until the sink accepts it", () => {
+  let attempts = 0;
+  const emitted: string[] = [];
+  const throttle = new SeatStatusThrottle((_agent, value) => {
+    attempts++;
+    if (attempts <= 3) throw new Error("transient store failure");
+    emitted.push(value.state);
+    return {} as Event;
+  }, () => 1_000_000, () => {});
+  expect(() => throttle.submit("seat-test", body("offline"))).toThrow("transient store failure");
+  throttle.flush();
+  throttle.flush();
+  throttle.flush();
+  expect(attempts).toBe(4);
+  expect(emitted).toEqual(["offline"]);
+  throttle.stop();
+});
+
 test("stopping a throttle discards held updates and ignores late submissions", () => {
   const { throttle, emitted, advance } = setup();
   throttle.submit("seat-test", body("working", "first"));

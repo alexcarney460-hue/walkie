@@ -26,7 +26,7 @@ const REFUSED_SUBS: Readonly<Record<string, ReadonlySet<string>>> = {
   orchestrator: new Set(["start", "stop", "say", "log", "model", "access"]),
 };
 /** Options that read a terminal or stdin, or name a program to run (the remote allow-list's list). */
-const REFUSED_FLAGS = new Set(["--claude", "--claude-token-stdin", "--key", "--bin-dir"]);
+const REFUSED_FLAGS = new Set(["--claude", "--claude-token-stdin", "--key", "--bin-dir", "--agent"]);
 
 /** Why walkie_cli won't run `args` (without the leading "walkie"), or null. */
 export function cliArgvProblem(args: readonly unknown[]): string | null {

@@ -96,7 +96,8 @@ export function AddMachineResult({ res }: { res: AddMachine }) {
       {res.team_agents && (
         <p className="field-hint">
           The installer asks them one question: may the team start agents on that machine? No is the default. Yes runs each agent
-          as a separate user of its own on their Claude or Codex sign-in, and they can turn it off any time.
+          as a separate user of its own on their Claude or Codex sign-in. A running seat can read that machine&apos;s short-lived
+          Claude access token, never the refresh token. A dedicated seat token is used instead when they set one. They can turn seats off any time.
         </p>
       )}
       <div className="am-warn" role="note">

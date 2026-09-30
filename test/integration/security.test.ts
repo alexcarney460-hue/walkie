@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { signEvent } from "../../src/daemon/keys.ts";
+import { newPeerNonce, signPeerRequest } from "../../src/daemon/peer-sig.ts";
 import { eventId } from "../../src/protocol/ids.ts";
 import { PROTOCOL_VERSION, type UnsignedEvent } from "../../src/protocol/schemas.ts";
 import { Cluster, standardTeam, TEST_LIMITS, waitFor, type TestNode } from "../helpers/cluster.ts";
@@ -16,9 +17,15 @@ afterAll(async () => { await c.close(); });
 
 function peerFetch(target: TestNode, as: TestNode, path: string, init: RequestInit = {}): Promise<Response> {
   const team = alex.d.core.teamId ?? "";
+  const url = new URL(path, `http://127.0.0.1:${target.peerPort}`);
+  const method = init.method ?? "GET";
+  const body = typeof init.body === "string" ? init.body : "";
+  const signature = signPeerRequest(as.d.core.keys, { method, path: url.pathname, query: url.search,
+    body, requester: as.d.nodeId, target: target.d.nodeId, team, ts: Date.now(), nonce: newPeerNonce() });
   return fetch(`http://127.0.0.1:${target.peerPort}${path}`, {
     ...init,
-    headers: { "X-Walkie-Node": as.d.nodeId, "X-Walkie-Team": team, "Content-Type": "application/json", ...(init.headers ?? {}) },
+    headers: { "X-Walkie-Node": as.d.nodeId, "X-Walkie-Team": team, "Content-Type": "application/json",
+      ...signature, ...(init.headers ?? {}) },
   });
 }
 

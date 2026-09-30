@@ -152,6 +152,12 @@ route("POST", "/v1/orchestrator/lead-eligible", async (c) => {
   return json({ eligible: b.eligible });
 });
 
+/** A verified local repair has completed; release any live monitor handle. */
+route("POST", "/v1/orchestrator/cleanup-repaired", async (c) => {
+  personOnly(c, "repaired");
+  return json({ stopped_monitor: await host(c).finishRepairedCleanup() });
+});
+
 /** Stops the orchestrator on this machine. */
 route("POST", "/v1/orchestrator/stop", async (c) => {
   requireTeam(c);

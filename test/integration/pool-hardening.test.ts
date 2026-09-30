@@ -8,6 +8,7 @@
 // (Orphans on daemon death: pool-orphans.test.ts.)
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { PeerCallError } from "../../src/daemon/peer-client.ts";
+import { newPeerNonce, signPeerRequest } from "../../src/daemon/peer-sig.ts";
 import { WINDOW } from "../../src/pool/run/tunnel.ts";
 import { MAX_TUNNELS } from "../../src/pool/run/stage.ts";
 import { RPC_TENSOR_SIZE } from "../../src/pool/run/rpc-guard.ts";
@@ -52,7 +53,11 @@ describe("HIGH: receive budget", () => {
     const R = run("a");
     expect((await alex.d.client.stage(addrOn(alex, kira), { action: "start", run: R, bytes: 1024, model: "x" })).ok).toBe(true);
     // A raw WebSocket that never honours "pause": a valid HELLO, then one big tensor upload streamed flat out.
-    const ws = new WebSocket(`ws://127.0.0.1:${kira.peerPort}/peer/v1/pool/tunnel/${R}`, { headers: { "X-Walkie-Node": alex.d.nodeId, "X-Walkie-Team": alex.d.core.teamId! } } as unknown as string[]);
+    const path = `/peer/v1/pool/tunnel/${R}`;
+    const signed = signPeerRequest(alex.d.core.keys, { method: "GET", path, query: "", body: "", requester: alex.d.nodeId,
+      target: kira.d.nodeId, team: alex.d.core.teamId!, ts: Date.now(), nonce: newPeerNonce() });
+    const ws = new WebSocket(`ws://127.0.0.1:${kira.peerPort}${path}`, { headers: { "X-Walkie-Node": alex.d.nodeId,
+      "X-Walkie-Team": alex.d.core.teamId!, ...signed } } as unknown as string[]);
     let acks = 0;
     let closed = false;
     ws.onmessage = (e) => { if (typeof e.data === "string" && e.data.startsWith("a")) acks++; };

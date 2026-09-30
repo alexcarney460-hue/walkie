@@ -8,6 +8,7 @@ import { plainPreview } from "../../lib/markdown.tsx";
 export interface ChatMessage {
   id: string; ts: number;
   role: "user" | "assistant" | "system";
+  scheduled?: boolean;
   text: string;
   tools: string[];
   /** For `user`: why it never reached Claude (refused: its session ended first; dropped: stopped, too old, a restart). */
@@ -27,7 +28,7 @@ export function conversations(messages: readonly OrchMessage[]): Conversation[] 
   for (const [id, list] of groups) {
     const sorted = [...list].sort(byTime);
     const first = sorted.find((m) => m.role === "person");
-    const title = first ? plainPreview(first.text.split("\n").find((l) => l.trim()) ?? "", 60) : "Conversation";
+    const title = sorted[0]?.via === "private" ? "Private join details" : first?.via === "schedule" ? "Scheduled run" : first ? plainPreview(first.text.split("\n").find((l) => l.trim()) ?? "", 60) : "Conversation";
     out.push({ id, title: title || "Conversation", lastTs: (sorted[sorted.length - 1] as OrchMessage).ts, count: sorted.length });
   }
   return out.sort((a, b) => b.lastTs - a.lastTs);
@@ -45,7 +46,7 @@ const NOTES: Record<string, string> = {
 /** The messages of one conversation, in order. */
 export function threadMessages(messages: readonly OrchMessage[], thread: string): ChatMessage[] {
   return messages.filter((m) => m.thread === thread).sort(byTime).map((m) => m.role === "person"
-    ? { id: m.id, ts: m.ts, role: "user" as const, text: m.text, tools: [], ...(m.state && NOTES[m.state] ? { note: NOTES[m.state] } : {}) }
+    ? { id: m.id, ts: m.ts, role: "user" as const, text: m.text, tools: [], ...(m.via === "schedule" ? { scheduled: true } : {}), ...(m.state && NOTES[m.state] ? { note: NOTES[m.state] } : {}) }
     : { id: m.id, ts: m.ts, role: "assistant" as const, text: m.text, tools: m.tools ?? [] });
 }
 

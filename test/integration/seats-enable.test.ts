@@ -8,7 +8,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Ctx } from "../../src/cli/context.ts";
-import { doctorChecks, doctorLines, enableSeats } from "../../src/cli/commands/seats-enable.ts";
+import { doctorLines, enableSeats } from "../../src/cli/commands/seats-enable.ts";
+import { doctorChecks } from "../../src/daemon/seats/doctor.ts";
 import { TERMINAL_STATES, type SeatView, type SeatsLocalView } from "../../src/protocol/seats.ts";
 import { seatsFor } from "../../src/daemon/seats/host.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
@@ -40,7 +41,7 @@ beforeAll(async () => {
   personHome = join(c.root, "arvid-home");
   mkdirSync(join(personHome, ".claude"), { recursive: true });
   chmodSync(personHome, 0o700);
-  writeFileSync(join(personHome, ".claude", ".credentials.json"), '{"claudeAiOauth":{"accessToken":"the-machines-own-login","refreshToken":"the-machines-refresh-token"}}', { mode: 0o600 });
+  writeFileSync(join(personHome, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", refreshToken: "the-machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   signInCodex(personHome);
   log = join(c.root, "codex.jsonl");
   const walkieHome = join(c.root, "arvid");
@@ -93,8 +94,9 @@ describe("seats from the sign-up link", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Seats are on for this machine.");
     expect(r.out).toContain("✓ seat users were already set up");
-    expect(r.out).toContain("✓ seats allowed: the team's owners may start up to 3 at once here, each as a fresh seat user");
-    expect(r.out).toContain("✓ Claude seats: logged in (this machine's own login)");
+    expect(r.out).toContain("✓ seats allowed: the team's owners and their agents may start up to 3 at once here, each as a fresh seat user");
+    expect(r.out).toContain("✓ Claude seats: using this machine's login");
+    expect(r.out).toContain("a running seat can read this machine's short-lived Claude access token, never the refresh token");
     expect(r.out).toContain("✓ Codex seats: signed in (this machine's own sign-in)");
     expect(r.out).toContain("Ready: the team can start Claude and Codex seats on this machine.");
     await waitFor(async () => (await alex.client().seats()).hosts.find((h) => h.hostname === "arvid-mac" && h.allows && h.member), { what: "alex sees arvid-mac take seats" });
@@ -197,10 +199,16 @@ describe("the doctor's verdict", () => {
   test("ready with both; Keychain-only Claude still ready for Codex; a helper sudo can't reach is not ready", () => {
     expect(plain(doctorLines(doctorChecks(base, facts)))).toContain("Ready: the team can start Claude and Codex seats on this machine.");
     const kc = plain(doctorLines(doctorChecks({ ...base, claude_login: "unavailable" }, facts)));
-    expect(kc).toContain("✗ Claude seats: this machine's Claude login is only in its Keychain, which seat users can't use  → claude setup-token, then walkie seats token set < token.txt");
+    expect(kc).toContain("✗ Claude seats: this machine has no usable access token or it is near expiry");
     expect(kc).toContain("Ready: the team can start Codex seats on this machine.");
     const noHelper = plain(doctorLines(doctorChecks(base, { ...facts, helper: "sudo -n … didn't answer (a password is required)" })));
     expect(noHelper).toContain("✗ the user helper: sudo -n … didn't answer (a password is required)  → walkie seats setup-user --apply");
     expect(noHelper).toContain("Not ready");
+  });
+
+  test("seat readiness does not depend on a crontab utility", () => {
+    const text = plain(doctorLines(doctorChecks(base, facts)));
+    expect(text).not.toContain("crontab is missing");
+    expect(text).toContain("Ready: the team can start Claude and Codex seats on this machine.");
   });
 });

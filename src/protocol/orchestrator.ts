@@ -80,7 +80,8 @@ export function effectiveMode(access: OrchestratorAccess, mode: PermissionMode):
  */
 export interface OrchMessage {
   id: string; thread: string; role: "person" | "orchestrator"; text: string; ts: number;
-  via?: "dashboard" | "cli";
+  /** Private deliveries are visible in the person's local chat, never sent back to the model as history. */
+  via?: "dashboard" | "cli" | "schedule" | "private";
   state?: "queued" | "sent" | "refused" | "dropped";
   tools?: string[];
   /** For `orchestrator`: the id of the person's message it answers (ORCH-FIX-13: a reply is matched by it, never by order). */
@@ -95,7 +96,7 @@ export interface OrchestratorView {
      * ORCH-2: "standby" = another machine of the team is the lead (`lead`); "needs_login" = no Claude login here yet
      * (`needs` says how to add one). Older daemons never send them.
      */
-    state: "stopped" | "starting" | "idle" | "working" | "restarting" | "failed" | "standby" | "needs_login";
+    state: "stopped" | "starting" | "idle" | "working" | "restarting" | "failed" | "standby" | "needs_login" | "cleanup_pending";
     /** ORCH-2: it starts on its own (the team's lead with a model login); false after a stop by hand. */
     auto?: boolean;
     /** Stopped by hand (sticky until started again by hand). */

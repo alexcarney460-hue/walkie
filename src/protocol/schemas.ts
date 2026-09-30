@@ -88,6 +88,7 @@ export const Bodies = {
     owner_handle: Handle,
     node_hostname: z.string().min(1).max(63),
     node_pubkey: z.string(), // base64 raw ed25519 public key
+    peer_sig_v1: z.literal(true).optional(), // founder runs a signature-capable daemon
     node_ip: z.string().max(45),
     node_port: z.number().int().min(1).max(65535).optional(), // default 7458
   }),
@@ -108,6 +109,8 @@ export const Bodies = {
     ip: z.string().max(45),
     port: z.number().int().min(1).max(65535).optional(), // default 7458
     revoked: z.boolean().optional(),
+    peer_sig_v1: z.literal(true).optional(), // authority witnessed node-key possession
+    peer_sig_strict: z.boolean().optional(), // signed team-wide policy; false is an explicit owner decision
     /** v0.2 (additive): the node's iroh endpoint id (= its pubkey, hex); informational, the pubkey is what's trusted. */
     endpoint: EndpointHex.optional(),
     /** v0.2 (additive): transports the node serves; absent = ["tailscale"] (every v0.1 node). */
@@ -322,6 +325,8 @@ export const PeerHelloRes = z.object({
   authority: PeerOwnerAddrSchema.nullable(),
 });
 export const PeerVvRes = z.object({
+  proof: z.string().max(100).optional(),
+  relay_proof: z.string().max(100).optional(),
   capabilities: PeerCapabilities.optional().catch(undefined),
   node: z.string().max(64), vv: z.record(z.number().int().nonnegative()), ts: z.number(),
   /** The peer's machine stats (PROTOCOL §3 "Machine stats"); a malformed value is dropped, never fails the sync. */
@@ -333,6 +338,13 @@ export const PeerVvRes = z.object({
   /** WALKIE-POOL-2 (additive): the peer's split-run sharing state; malformed is dropped. */
   pool: PoolShare.optional().catch(undefined),
 });
+/** A compact node-key proof bound to the reporting member's challenge. */
+export const PeerVvRelay = z.object({
+  node: NodeId, challenge: z.string().regex(/^[0-9a-f]{32}$/), proof: z.string().min(1).max(100),
+  body: z.object({ node: NodeId, ts: z.number().int().nonnegative() }).strict(),
+}).strict();
+export type PeerVvRelay = z.infer<typeof PeerVvRelay>;
+export const PeerVvRelayRes = z.object({ recorded: z.boolean() });
 export const PeerEventsRes = z.object({ events: z.array(z.unknown()).max(500) });
 export const PeerPushResSchema = z.object({
   accepted: z.number().int(), pending: z.number().int(), rejected: z.array(z.object({ id: z.string(), reason: z.string() })).max(500),
@@ -365,7 +377,7 @@ export interface PeerOwnerAddr {
   pubkey?: string; transports?: string[]; relay?: string;
 }
 export interface PeerHello { team: string; name: string; node_id: string; hostname: string; authority: PeerOwnerAddr | null }
-export interface PeerVv { capabilities?: PeerCapabilities; node: string; vv: Record<string, number>; ts: number; stats?: MachineStats; accounts?: AccountsSnapshot; online?: string[]; pool?: PoolShare }
+export interface PeerVv { proof?: string; capabilities?: PeerCapabilities; node: string; vv: Record<string, number>; ts: number; stats?: MachineStats; accounts?: AccountsSnapshot; online?: string[]; pool?: PoolShare }
 export interface PeerJoinRes {
   admitted: boolean; team?: string; node_id?: string;
   reason?: "not_member" | "not_authority" | "pending_approval"; authority?: PeerOwnerAddr;

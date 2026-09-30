@@ -8,7 +8,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Ctx } from "../../src/cli/context.ts";
-import { doctorChecks, enableSeats } from "../../src/cli/commands/seats-enable.ts";
+import { enableSeats } from "../../src/cli/commands/seats-enable.ts";
+import { doctorChecks } from "../../src/daemon/seats/doctor.ts";
 import { saveConfigField } from "../../src/daemon/config.ts";
 import { PeerCallError } from "../../src/daemon/peer-client.ts";
 import { SEATS_POOL_CONFLICT, TERMINAL_STATES, type SeatView } from "../../src/protocol/seats.ts";
@@ -46,7 +47,7 @@ beforeAll(async () => {
   const personHome = join(c.root, "arvid-home");
   mkdirSync(join(personHome, ".claude"), { recursive: true });
   chmodSync(personHome, 0o700);
-  writeFileSync(join(personHome, ".claude", ".credentials.json"), '{"claudeAiOauth":{"accessToken":"at","refreshToken":"rt"}}', { mode: 0o600 });
+  writeFileSync(join(personHome, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   signInCodex(personHome);
   const walkieHome = join(c.root, "arvid");
   const world = fakeSeatWorld(c.root, walkieHome);

@@ -25,9 +25,12 @@ const Vram = z.number().nonnegative().max(MAX_VRAM_BYTES);
 export const MachineMem = z.object({
   total: Bytes.max(MAX_MEM_BYTES),
   used: Bytes,
+  /** Available physical memory; optional for older peers. */
+  free: Bytes.optional().catch(undefined),
   swap_used: Bytes,
   pressure: MemPressure.nullable(),
 }).refine((m) => m.used <= m.total, { message: "used exceeds total" })
+  .refine((m) => m.free === undefined || m.free <= m.total, { message: "free exceeds total" })
   .refine((m) => m.swap_used <= MAX_SWAP_RATIO * m.total, { message: "swap out of range" });
 export type MachineMem = z.infer<typeof MachineMem>;
 
@@ -84,6 +87,9 @@ export const MachineSys = z.object({
   version: z.string().max(48).regex(/^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:-[0-9A-Za-z.-]{1,20})?(?:\+[0-9A-Za-z.-]{1,20})?$/).optional().catch(undefined),
   cpus: z.number().int().min(1).max(4096),
   load1: z.number().min(0).max(100_000).nullable(),
+  load5: z.number().min(0).max(100_000).nullable().optional().catch(undefined),
+  load15: z.number().min(0).max(100_000).nullable().optional().catch(undefined),
+  cpu_busy_pct: z.number().min(0).max(100).nullable().optional().catch(undefined),
   /**
    * What this daemon's version can do for teammates (FO-2: `seats_v2` = it runs v2 seat requests). Absent from older
    * daemons; malformed: dropped (the rest kept).
@@ -137,10 +143,11 @@ export const MachineStats = z.object({
    */
   gpu_free: cappedArray(Vram, MAX_GPUS).optional().catch(undefined),
   /**
-   * Agent discovery on that machine could not report every running session in its last scan (over the per-runtime
-   * cap, or out of its time budget): `unreported` sessions keep their last status. Absent = complete.
+   * Agent discovery could not enrich every selected session in its last scan, or exceeded the per-runtime cap.
+   * `unreported` is the legacy field name; selected sessions still have process-only working cards. Absent = complete.
    */
-  discovery: z.object({ incomplete: z.boolean(), unreported: z.number().int().nonnegative().max(1_000_000) }).optional().catch(undefined),
+  discovery: z.object({ incomplete: z.boolean(), unreported: z.number().int().nonnegative().max(1_000_000),
+    stale: z.boolean().optional() }).optional().catch(undefined),
   /**
    * WALKIE-POOL-2: this machine's measured round trip (ms, its sync `vv` call) to each peer it reached within its
    * liveness window, by node id, at most 64. Lets a viewer estimate the latency between two OTHER machines for a
@@ -155,8 +162,18 @@ export const MachineStats = z.object({
    * and count: machine load, not agents. Absent: none seen, or an older daemon (which drops it). Malformed: dropped.
    */
   model_servers: cappedArray(z.object({ name: cappedName(24).pipe(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,23}$/)), count: z.number().int().min(1).max(1_000) }), 8).optional().catch(undefined),
+  /** Counts from the one cheap process-table pass; optional for pre.10 peers. */
+  agent_processes: cappedArray(z.object({ name: z.enum(["claude-code", "codex", "kimi", "grok", "gemini", "opencode"]), count: z.number().int().min(1).max(100_000) }), 6).optional().catch(undefined),
 });
 export type MachineStats = z.infer<typeof MachineStats>;
+
+/** A machine with agent processes or appreciable load must never be offered as idle. */
+export function machineBusy(stats: MachineStats | null | undefined): boolean {
+  if (!stats) return false;
+  if (stats.agent_processes?.some((a) => a.count > 0)) return true;
+  const sys = stats.sys;
+  return !!sys && ((sys.load1 !== null && sys.load1 / sys.cpus >= 0.75) || (sys.cpu_busy_pct ?? 0) >= 70);
+}
 
 /** Whether a machine's announced facts say it runs v2 seat requests (FO-2); an older daemon (no caps) does not. */
 export function hasCap(stats: { sys?: MachineSys } | null | undefined, cap: string): boolean {

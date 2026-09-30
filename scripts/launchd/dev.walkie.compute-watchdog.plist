@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.walkie.compute-watchdog</string>
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/bin/bun</string><string>__WALKIE_CHECKOUT__/scripts/compute-watchdog.ts</string><string>--apply</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>COMPUTE_WATCHDOG_TOKEN_FILE</key><string>__WATCHDOG_TOKEN_FILE__</string>
+    <key>COMPUTE_WATCHDOG_HMAC_SECRET</key><string>__WATCHDOG_HMAC_SECRET__</string>
+    <key>COMPUTE_SITE_ORIGIN</key><string>__COMPUTE_SITE_ORIGIN__</string>
+  </dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__WATCHDOG_LOG_DIR__/watchdog.out.log</string>
+  <key>StandardErrorPath</key><string>__WATCHDOG_LOG_DIR__/watchdog.err.log</string>
+</dict></plist>

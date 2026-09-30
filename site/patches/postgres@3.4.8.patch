@@ -1,0 +1,129 @@
+diff --git a/src/index.js b/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..c8bfea29b799d7982dde3292ebd5c57e587bf250 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -237,12 +237,16 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , connectionClosed = false
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = error => {
++          connectionClosed = true
++          reject(error)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -265,14 +269,15 @@ function Postgres(a, b) {
+         if (uncaughtError)
+           throw uncaughtError
+       } catch (e) {
+-        await (name
+-          ? sql`rollback to ${ sql(name) }`
+-          : sql`rollback`
+-        )
++        if (!connectionClosed)
++          await (name
++            ? sql`rollback to ${ sql(name) }`
++            : sql`rollback`
++          )
+         throw e instanceof PostgresError && e.code === '25P02' && uncaughtError || e
+       }
+ 
+-      if (!name) {
++      if (!name && !connectionClosed) {
+         prepare
+           ? await sql`prepare transaction '${ sql.unsafe(prepare) }'`
+           : await sql`commit`
+diff --git a/cjs/src/index.js b/cjs/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..c8bfea29b799d7982dde3292ebd5c57e587bf250 100644
+--- a/cjs/src/index.js
++++ b/cjs/src/index.js
+@@ -237,12 +237,16 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , connectionClosed = false
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = error => {
++          connectionClosed = true
++          reject(error)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -265,14 +269,15 @@ function Postgres(a, b) {
+         if (uncaughtError)
+           throw uncaughtError
+       } catch (e) {
+-        await (name
+-          ? sql`rollback to ${ sql(name) }`
+-          : sql`rollback`
+-        )
++        if (!connectionClosed)
++          await (name
++            ? sql`rollback to ${ sql(name) }`
++            : sql`rollback`
++          )
+         throw e instanceof PostgresError && e.code === '25P02' && uncaughtError || e
+       }
+ 
+-      if (!name) {
++      if (!name && !connectionClosed) {
+         prepare
+           ? await sql`prepare transaction '${ sql.unsafe(prepare) }'`
+           : await sql`commit`
+diff --git a/cf/src/index.js b/cf/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..c8bfea29b799d7982dde3292ebd5c57e587bf250 100644
+--- a/cf/src/index.js
++++ b/cf/src/index.js
+@@ -238,12 +238,16 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , connectionClosed = false
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = error => {
++          connectionClosed = true
++          reject(error)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -266,14 +270,15 @@ function Postgres(a, b) {
+         if (uncaughtError)
+           throw uncaughtError
+       } catch (e) {
+-        await (name
+-          ? sql`rollback to ${ sql(name) }`
+-          : sql`rollback`
+-        )
++        if (!connectionClosed)
++          await (name
++            ? sql`rollback to ${ sql(name) }`
++            : sql`rollback`
++          )
+         throw e instanceof PostgresError && e.code === '25P02' && uncaughtError || e
+       }
+ 
+-      if (!name) {
++      if (!name && !connectionClosed) {
+         prepare
+           ? await sql`prepare transaction '${ sql.unsafe(prepare) }'`
+           : await sql`commit`

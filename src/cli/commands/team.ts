@@ -52,6 +52,7 @@ async function inviteCode(ctx: Ctx, handle: string): Promise<number> {
   const client = await requireAdmin(ctx, `mint an invite code for @${handle}`, handle);
   const res = await client.inviteCode(handle, roleArg(ctx));
   if (ctx.json) { ctx.out(JSON.stringify(res)); return EXIT.ok; }
+  if ("delivered" in res) { ctx.out(String("message" in res ? res.message : "delivered privately")); return EXIT.ok; }
   const days = Math.max(1, Math.round((res.expires_at - Date.now()) / 86_400_000));
   ctx.out(`${c.green("invite")} for @${res.handle} (${res.role}${res.existing_member ? ", another machine" : ""}) · single use · expires in ${days} days\n\n` +
     `  ${c.bold(res.code)}\n\n` +
@@ -171,11 +172,13 @@ export function statsDetail(n: NodeView): string {
   const swap = s?.mem && s.mem.swap_used >= 0.1 * 1024 ** 3 ? ` (swap ${gb(s.mem.swap_used)})` : "";
   const mem = `mem ${memText(s?.mem)}${swap}`;
   const temp = s?.temp_c == null ? "temp n/a" : `${tempText(s.temp_c)}${s.temp_src === "gpu" ? " GPU" : ""}`;
+  const load = s?.sys ? ` · load ${[s.sys.load1, s.sys.load5, s.sys.load15].map((n) => n?.toFixed(1) ?? "n/a").join("/")} · CPU ${s.sys.cpu_busy_pct ?? "n/a"}%` : "";
+  const agents = s?.agent_processes ? ` · ${s.agent_processes.reduce((n, a) => n + a.count, 0)} agent processes` : "";
   // AGENT-SEE-1: local model servers are machine load, shown with the machine ("models: ollama, rpc-server ×2").
   const models = s?.model_servers?.length ? ` · models: ${s.model_servers.map((m) => `${safeTerm(m.name)}${m.count > 1 ? ` ×${m.count}` : ""}`).join(", ")}` : "";
-  if (!n.online) return c.gray(`${mem} · ${temp}${models}${s ? " (last known)" : ""}`);
+  if (!n.online) return c.gray(`${mem} · ${temp}${load}${agents}${models}${s ? " (last known)" : ""}`);
   const color = (l: MemPressure | null | undefined): ((x: string) => string) => (l ? LEVEL_COLOR[l] : c.dim);
-  return `${color(s?.mem?.pressure)(mem)} · ${color(tempLevel(s?.temp_c ?? null))(temp)}${c.dim(models)}`;
+  return `${color(s?.mem?.pressure)(mem)} · ${color(tempLevel(s?.temp_c ?? null))(temp)}${c.dim(load + agents + models)}`;
 }
 
 /**
@@ -230,9 +233,20 @@ export function renderWho(team: TeamView, agents: AgentView[], now = Date.now(),
 const ROLES = ["owner", "member", "observer", "removed"];
 
 export async function teamCmd(ctx: Ctx): Promise<number> {
-  const sub = need(ctx.args, 0, "subcommand (add-machine | authority | revoke | role)");
+  const sub = need(ctx.args, 0, "subcommand (add-machine | authority | revoke | role | peer-sig-strict)");
   if (sub === "role") return teamRole(ctx);
   if (sub === "add-machine") return addMachine(ctx);
+  if (sub === "peer-sig-strict") {
+    const mode = ctx.args.pos[1];
+    if (mode && mode !== "on" && mode !== "off") throw new UsageError("peer-sig-strict accepts on or off");
+    const strict = mode !== "off";
+    await requirePerson(ctx, strict ? "require signed peer requests team-wide" : "allow legacy unsigned peers team-wide", "team");
+    const res = await ctx.client().request<{ queued?: boolean }>("POST", "/v1/team/peer-sig-strict", { strict });
+    ctx.out(ctx.json ? JSON.stringify(res) : res.queued
+      ? c.yellow("queued: peer signature policy applies when the roster authority is reachable")
+      : strict ? c.green("peer signatures required team-wide") : c.yellow("legacy unsigned peers allowed team-wide"));
+    return EXIT.ok;
+  }
   if (sub !== "authority" && sub !== "revoke") throw new UsageError(`unknown team subcommand: ${sub}`);
   const node = need(ctx.args, 1, "machine (node id or hostname)");
   if (sub === "revoke") {
@@ -270,6 +284,7 @@ async function addMachine(ctx: Ctx): Promise<number> {
   const handle = need(ctx.args, 1, "handle (a current member, e.g. arvid)").replace(/^@/, "");
   const res = await (await requireAdmin(ctx, `mint an add-machine link for @${handle}`, handle)).addMachine(handle);
   if (ctx.json) { ctx.out(JSON.stringify(res)); return EXIT.ok; }
+  if ("delivered" in res) { ctx.out(String("message" in res ? res.message : "delivered privately")); return EXIT.ok; }
   const days = Math.max(1, Math.round((res.expires_at - Date.now()) / 86_400_000));
   ctx.out(`${c.green("add a machine")} for @${res.handle} (${res.role}) · works once, only for @${res.handle} · expires in ${days} days\n\n` +
     `send them this link (privately):\n  ${c.bold(res.link)}\n\n` +

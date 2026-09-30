@@ -12,6 +12,10 @@ import { BillingPanel } from "./Billing.tsx";
 import { AddMachineSheet } from "./AddMachineSheet.tsx";
 import { ChannelForm, InviteForm, PendingJoins } from "./TeamForms.tsx";
 import { PhoneDevices } from "./PhoneDevices.tsx";
+import { rentalForNode, useCompute } from "../api/compute.ts";
+import { AddComputeButton, AddComputeSheet, rentalStateLabel } from "./compute/AddComputeSheet.tsx";
+import { RentedChip } from "./compute/RentedChip.tsx";
+import { ACTIVE_STATES } from "../../../src/protocol/compute.ts";
 
 const ROLE_LABEL = { owner: "Owner", member: "Member", observer: "Observer" };
 
@@ -43,8 +47,13 @@ export function Team() {
   }, [route.tab, !!plan]);
   const [adding, setAdding] = useState<{ handle: string; name: string } | null>(null);
   const closeAdding = useCallback(() => setAdding(null), []);
-  if (!team) return null;
+  const [renting, setRenting] = useState(false);
+  const closeRenting = useCallback(() => setRenting(false), []);
   const owner = me?.role === "owner";
+  const compute = useCompute(owner);
+  if (!team) return null;
+  // RENT-2: rentals that haven't joined as a machine yet (queued, starting) are listed under the table.
+  const unjoined = (compute.state?.rentals ?? []).filter((r) => ACTIVE_STATES.has(r.state) && !(r.node_id && nodes.some((n) => n.node_id === r.node_id)));
   const canCreateChannel = me?.role === "owner" || me?.role === "member";
 
   return (
@@ -93,7 +102,9 @@ export function Team() {
             </div>
           </Section>
 
-          <Section title="Machines" meta={`${nodes.filter((n) => n.online).length} of ${nodes.length} online`} id="machines-h">
+          <Section title="Machines" meta={`${nodes.filter((n) => n.online).length} of ${nodes.length} online`} id="machines-h"
+            actions={owner && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined}>
+            {compute.state?.alerts?.map(alert => <p key={alert} role="alert">{alert === 'tick_stale' ? 'Compute monitoring is delayed. New rentals are paused.' : 'Shutdown is delayed. Billing continues until deletion is confirmed.'}</p>)}
             <div className="table-wrap">
               <table className="table table-compact">
                 <thead>
@@ -108,6 +119,7 @@ export function Team() {
                           <a className="mono text-link host-link" href={hrefFor({ view: "machine", node: n.node_id })} title="Open machine details">{n.hostname}</a>
                           {n.self && <span className="chip">this machine</span>}
                           {n.authority && <span className="chip" title="Writes the team roster; owners' changes go through it">roster authority</span>}
+                          {(() => { const r = rentalForNode(compute.state, n.node_id); return r ? <RentedChip rental={r} quotes={compute.quotes} canStop={owner} /> : null; })()}
                         </span>
                         <MachineStatsLine node={n} part="cell" />
                       </td>
@@ -120,6 +132,18 @@ export function Team() {
                 </tbody>
               </table>
             </div>
+            {unjoined.length > 0 && (
+              <ul className="ac-rental-list rented-pending" aria-label="Rented machines not joined yet">
+                <li className="rented-pending-h muted">Rented, not joined yet</li>
+                {unjoined.map((r) => (
+                  <li key={r.id} className="ac-rental" data-testid={`rented-pending-${r.id}`}>
+                    <span className="mono">{r.name}</span>
+                    <RentedChip rental={r} quotes={compute.quotes} canStop={owner} />
+                    <span className={`chip ac-state is-${r.state}`}>{rentalStateLabel(r)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Section>
 
           <Section title="What your team could run locally" meta="estimate" id="models-h">
@@ -181,6 +205,7 @@ export function Team() {
         </div>
       </div>
       {adding && <AddMachineSheet handle={adding.handle} name={adding.name} onClose={closeAdding} />}
+      {renting && <AddComputeSheet onClose={closeRenting} />}
     </div>
   );
 }

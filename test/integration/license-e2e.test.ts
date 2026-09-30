@@ -120,7 +120,7 @@ describe("license end to end (mocked Stripe, the site's functions as the license
     expect(bob.d.core.roster.license).toBeUndefined();
     expect(stripe.subs.get(SUB)?.metadata).toEqual(before);
     const direct = await makeBind(deps)(new Request("https://site.test/api/license/bind", { method: "POST", body: JSON.stringify({ code, team_id: teamB }) }));
-    expect(direct.status).toBe(409);
+    expect(direct.status).toBe(409); // The already-bound subscription stays with A; legacy callers get the same conflict.
   });
 
   test("renewal: the right token gets a fresh key (and the authority's renewer activates it); a wrong token is 403", async () => {

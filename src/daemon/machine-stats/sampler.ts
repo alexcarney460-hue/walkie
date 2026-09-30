@@ -5,7 +5,7 @@
 // heartbeat is due. The published snapshot is what peers read on `vv` and what the dashboard shows; nothing is
 // written to the event log.
 import { cpus, loadavg } from "node:os";
-import type { MachineAccel, MachineStats, MachineSys } from "../../protocol/machine-stats.ts";
+import { machineBusy, type MachineAccel, type MachineStats, type MachineSys } from "../../protocol/machine-stats.ts";
 import type { Logger } from "../logger.ts";
 import { VERSION } from "../version.ts";
 import { SEATS_V2_CAP } from "../../protocol/seats.ts";
@@ -40,16 +40,35 @@ export interface SamplerOptions {
   readSys?: () => MachineSys | null;
 }
 
+/** Busy share of CPU time since the previous sample, across all logical CPUs. */
+export class CpuBusyTracker {
+  private before: { total: number; idle: number } | null = null;
+  constructor(private readonly read: () => ReadonlyArray<Pick<ReturnType<typeof cpus>[number], "times">> = cpus) {}
+  sample(): number | null {
+    const rows = this.read();
+    if (!rows.length) return null;
+    const next = rows.reduce((acc, cpu) => ({
+      total: acc.total + Object.values(cpu.times).reduce((sum, n) => sum + n, 0),
+      idle: acc.idle + cpu.times.idle,
+    }), { total: 0, idle: 0 });
+    const prev = this.before;
+    this.before = next;
+    if (!prev || next.total <= prev.total || next.idle < prev.idle) return null;
+    return Math.round(Math.max(0, Math.min(100, 100 * (1 - (next.idle - prev.idle) / (next.total - prev.total)))));
+  }
+}
+
 /** This machine's platform facts and 1-minute load average; Windows reports no load average (null). */
-export function hostSys(platform: string = process.platform, arch: string = process.arch): MachineSys {
+export function hostSys(platform: string = process.platform, arch: string = process.arch, busy: number | null = null): MachineSys {
   const os: MachineSys["os"] = platform === "darwin" || platform === "linux" || platform === "win32" ? platform : "other";
-  const load = os === "win32" ? null : loadavg()[0] ?? null;
+  const loads = os === "win32" ? [null, null, null] : loadavg();
+  const rounded = (v: number | null | undefined): number | null => v === null || v === undefined || !Number.isFinite(v) ? null : Math.round(Math.max(0, v) * 100) / 100;
   return {
     os,
     arch: arch === "arm64" || arch === "x64" ? arch : "other",
     version: VERSION,
     cpus: Math.max(1, Math.min(4096, cpus().length || 1)),
-    load1: load === null || !Number.isFinite(load) ? null : Math.round(Math.max(0, load) * 100) / 100,
+    load1: rounded(loads[0]), load5: rounded(loads[1]), load15: rounded(loads[2]), cpu_busy_pct: busy,
     caps: [SEATS_V2_CAP],
   };
 }
@@ -57,6 +76,8 @@ export function hostSys(platform: string = process.platform, arch: string = proc
 /** The 1-minute load average moving by at least this much (and at least LOAD_STEP_RATIO of the last one) publishes. */
 export const LOAD_STEP = 0.5;
 export const LOAD_STEP_RATIO = 0.25;
+/** Prevent a fluctuating busy threshold from publishing more often than this. */
+export const BUSY_TRANSITION_MIN_MS = 10_000;
 
 /** Free VRAM moving by this much (bytes, summed over the GPUs) publishes. */
 export const GPU_FREE_STEP = 1024 ** 3;
@@ -69,6 +90,8 @@ export function shouldPublish(
 ): boolean {
   if (!prev) return true;
   if (now - prev.at >= heartbeatMs) return true;
+  if (now - prev.at >= BUSY_TRANSITION_MIN_MS
+    && machineBusy(prev) !== machineBusy({ at: now, mem: next.mem, temp_c: next.temp_c, ...(next.sys ? { sys: next.sys } : {}) })) return true;
   if ((prev.temp_src ?? null) !== (next.temp_src ?? null)) return true;
   const t0 = maxTemp(prev.gpu_temp), t1 = maxTemp(next.gpu_temp);
   if ((t0 === null) !== (t1 === null)) return true;
@@ -76,6 +99,9 @@ export function shouldPublish(
   const l0 = prev.sys?.load1 ?? null, l1 = next.sys?.load1 ?? null;
   if ((l0 === null) !== (l1 === null)) return true;
   if (l0 !== null && l1 !== null && Math.abs(l1 - l0) >= Math.max(LOAD_STEP, LOAD_STEP_RATIO * l0)) return true;
+  const b0 = prev.sys?.cpu_busy_pct ?? null, b1 = next.sys?.cpu_busy_pct ?? null;
+  if ((b0 === null) !== (b1 === null)) return true;
+  if (b0 !== null && b1 !== null && (Math.abs(b1 - b0) >= 20 || (b0 >= 70) !== (b1 >= 70))) return true;
   const gf = (v: number[] | null | undefined): number | null => (v ? v.reduce((s, x) => s + x, 0) : null);
   const g0 = gf(prev.gpu_free), g1 = gf(next.gpu_free);
   if ((g0 === null) !== (g1 === null)) return true;
@@ -126,6 +152,7 @@ export class MachineStatsSampler {
   private accelAt = 0;
   private readonly clock: () => number;
   private readonly readSys: () => MachineSys | null;
+  private readonly cpuBusy = new CpuBusyTracker();
   private readonly platform: NodeJS.Platform;
 
   constructor(private readonly publish: (s: MachineStats) => void, private readonly log: Logger, opts: SamplerOptions = {}) {
@@ -136,7 +163,7 @@ export class MachineStatsSampler {
     const readFree = opts.readGpuFree;
     this.readGpu = opts.readGpu ?? (readFree ? async (n) => ({ free: await readFree(n), temp: null }) : (n) => readGpuNow(n));
     this.clock = opts.clock ?? Date.now;
-    this.readSys = opts.readSys ?? (() => hostSys());
+    this.readSys = opts.readSys ?? (() => hostSys(process.platform, process.arch, this.cpuBusy.sample()));
     this.platform = opts.platform ?? process.platform;
   }
 
@@ -195,7 +222,8 @@ export class MachineStatsSampler {
       const next = { ...r, ...temp, gpu_free: gpuFree, gpu_temp: gpu.temp, sys };
       if (!shouldPublish(this.published, next, now, this.heartbeatMs)) return false;
       this.published = {
-        at: now, mem: r.mem, temp_c: temp.temp_c, ...(temp.temp_src ? { temp_src: temp.temp_src } : {}),
+        at: now, mem: r.mem ? { ...r.mem, free: Math.max(0, r.mem.total - r.mem.used) } : null,
+        temp_c: temp.temp_c, ...(temp.temp_src ? { temp_src: temp.temp_src } : {}),
         ...(r.temp_zones?.length && temp.temp_src === "cpu" ? { temp_zones: r.temp_zones, ...(r.temp_route ? { temp_route: r.temp_route } : {}) } : {}),
         ...(this.accel ? { accel: this.accel } : {}), ...(gpuFree ? { gpu_free: gpuFree } : {}),
         ...(gpu.temp ? { gpu_temp: gpu.temp } : {}), ...(sys ? { sys } : {}),

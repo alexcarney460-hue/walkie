@@ -1,7 +1,83 @@
 # Changelog
 
-Releases are cut with `scripts/release.sh vX.Y.Z` (or the `release` workflow on a `v*` tag); both refuse a tag
-without a matching `## vX.Y.Z` section here. The section becomes the GitHub release notes.
+Releases are cut with `scripts/release.sh vX.Y.Z`; a real (non-pre-release) tag can also be cut by the `release`
+workflow on push. Both refuse a tag without a matching `## vX.Y.Z` section here, and that section becomes the GitHub
+release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as a GitHub prerelease by
+`scripts/release.sh` only — the workflow's push trigger excludes pre-release tags.
+
+## v0.2.0-pre.10
+
+- **Join from an invitation link.** The macOS join app can install the matching Walkie CLI, join the team and set up
+  seats in one flow. The join page offers the app when a signed package for this version is available; its terminal
+  command remains available otherwise.
+- **WalkieTalkie gets its own OS user for shell access.** Its token-checked local socket keeps shell work under that
+  user, and a root helper plus an independent monitor clean up the user's processes after a stop or lost lease.
+  Cleanup remains pending across daemon restarts until it is verified. Platform access does not need the helper.
+- **Scheduled duties.** WalkieTalkie adds board refresh, machine onboarding, project sync, capacity checks and data
+  room refresh. It checks new machines and recommends suitable work using available seats, machine load and accounts.
+  Owners can manage schedules in the dashboard or with `walkie talkie schedule`; `walkie talkie schedules` lists them.
+  The roster authority accepts at most one run per due slot; runs time out after ten minutes and pause after three
+  failures. Schedule owners can page through unresolved runs with `walkie talkie schedule unresolved`. Each schedule
+  keeps only its newest unresolved outcome; older ones are superseded with a note in #general (at most one note an
+  hour per schedule, with a count). Update the roster authority first so it can accept these claims.
+- **Seats and machine load.** Existing seat launcher rules for a person, including owners by default, now cover that
+  person's agents: they can start and stop seats they launched. Coverage widens on upgrade with no configuration
+  change; rolling back to pre.9 narrows it again. A machine-scoped entry whose hostname is shared by several
+  admitted machines matches none. Seat-user cleanup handles macOS protected folders and no longer needs a `crontab`
+  utility on macOS or Linux. Discovery publishes process and local model load early enough that a busy machine is not
+  presented as idle. On machines with many agents, discovery keeps showing every agent under heavy load, including
+  when a scan reaches its deadline.
+- **Mission Control project counts.** The live page shows how many agents are working on each project, with agents
+  that have no matching project counted separately.
+- **Signed Tailscale peer requests.** Upgraded peers sign privileged requests with their node keys. During rollout,
+  update every machine: a pre.9 owner cannot remotely administer or borrow the vault of a pre.10 machine. Strict
+  mode rejects unsigned peers once the team has verified proof for every admitted machine, or when an owner enables it.
+- **Additional machines need approval.** A second machine under an existing login waits for owner approval or an
+  owner-issued add-machine link, even when auto-admit is on.
+- **Private links from WalkieTalkie.** The shell can mint join and add-machine links and deliver them privately to
+  the requester. Credentials do not enter its shared conversation history.
+- **Rental compute is unavailable in this version.** The CLI and daemon refuse compute commands; the site returns
+  503 for every compute endpoint, even if `COMPUTE_ENABLED=1` is set. That setting is a configuration error. Keep
+  `COMPUTE_ENABLED=1` unset. Other compute variables, including `COMPUTE_PRIVATE_CONFIG` and `DATABASE_URL`, may
+  stay set but have no compute effect in pre.10. License bind and renew ignore the database and roster proof and keep
+  the released license path for every client.
+- **Seat cleanup on macOS.** Seat users are removed again when Apple leaves protected folders in their homes or cache
+  vaults under `/Library/Caches`. After verifying the other contents are gone, the root helper locks each retained home
+  root:wheel `0700` under `/Users/.walkie-retired`; Apple's cache vaults stay in place. Seat users and other ordinary
+  users cannot read the retained folders. Seat user IDs are never reused. `walkie seats` and doctor show retained
+  counts and the size observable from entry metadata; inaccessible contents cannot be measured.
+- **Seat cleanup on Linux.** Seat users on machines with cronie, including Arch and Fedora, are removed again. The
+  root helper removes and verifies their crontab directly in the root-only cron spool.
+- **Finishing seats get cleanup priority.** Stuck seat-user cleanup runs one at a time, with live seats first so a
+  finishing seat does not wait behind a backlog. At most one root cleanup helper runs at a time, and each helper stops
+  itself after 120 seconds. Files a seat leaves in shared folders are private to it through umask `077`.
+
+### After updating
+
+- Update the roster authority before relying on scheduled duties, then update every machine for peer signatures.
+- Run `walkie seats setup-user --apply` on each machine that grants WalkieTalkie shell access. An older helper keeps
+  shell access off until it is replaced. If cleanup is stuck, a person can run `walkie talkie cleanup --repair`.
+- After upgrading the daemon, run `walkie seats setup-user --apply` once on each machine that runs seat users. The new
+  cleanup rules live in the root helper.
+
+## v0.2.0-pre.9.1
+
+Hotfix on top of pre.9 for Macs that run seats.
+
+- **Seat users on macOS are removed again.** macOS keeps protected items of its own in each seat user's private
+  temporary folder (for example a LaunchServices data vault, trustd and pluginkit folders, and TemporaryItems), and the
+  seat user cannot open or delete them. Walkie used to count them as leftovers, so every finished seat user stayed
+  quarantined, and once enough of them piled up the Mac refused new seats ("this machine is full"). Walkie now removes
+  everything it can and accepts only what macOS itself refuses to the seat user ("operation not permitted"), plus
+  protected files it has emptied first (never one that carries extended attributes or a resource fork). It records each item with the reason and retires that user's number so it is
+  never reused. Some of these macOS folders are write-only drop boxes, so content a seat put there stays on disk, but
+  no later seat user and no other ordinary user can read it. Anything else that cannot be removed (a "permission
+  denied" item, another user's file, a mount, a changed folder) still keeps the seat user quarantined, as before.
+- **Update the seat helper too.** `walkie update` does not replace the seat helper, so after installing this version on a
+  Mac that runs seats, run `walkie seats setup-user --apply` once (it asks for your password). Seat users already
+  stuck in quarantine then clear on their own within a minute or two; `walkie seats doctor` shows when they have.
+- This is a pre-release: `walkie update` and the site's installer stay on pre.9. Install it by name:
+  `curl -fsSL https://getwalkie.vercel.app/install.sh -o /tmp/walkie-install.sh && WALKIE_VERSION=v0.2.0-pre.9.1 sh /tmp/walkie-install.sh`
 
 ## v0.2.0-pre.9
 
@@ -115,15 +191,6 @@ Hotfix on top of pre.8.
 - **Sync while switching.** `walkie import linear --sync` / `--schedule 10m`: new Linear issues become cards, moves and
   renames reach imported cards; `--two-way` also sets the Linear issue's state when a card moves in Walkie. Both
   changed: the latest change wins and the card gets a note.
-
-### Known limitation
-
-- **WalkieTalkie with shell access.** When a person lets WalkieTalkie run shell commands, a background job
-  that a short-lived shell starts and detaches can outlive a lease handoff on macOS: the machine that loses the lead
-  stops WalkieTalkie and every tool call is refused, but such a job keeps running until it ends or is stopped by hand.
-  WalkieTalkie's default setup runs no shell commands, so this arises only when a person turns on full access or the
-  bypassPermissions permission mode. A later
-  release will run full-access WalkieTalkie as its own OS user, so its processes can be found and stopped reliably.
 
 ## v0.2.0-pre.7
 

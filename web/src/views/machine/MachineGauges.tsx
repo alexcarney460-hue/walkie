@@ -81,9 +81,11 @@ function CpuGauge({ stats }: { stats: MachineStats | undefined }) {
   return (
     <Gauge
       icon={icon} title="CPU"
-      ring={<Ring pct={cpu.pct} level={cpu.level} label={`CPU load ${Math.round(cpu.pct)} % of ${sys.cpus} cores`}>{Math.round(cpu.pct)}<small>%</small></Ring>}
-      value={<>{sys.load1?.toFixed(2)} <span className="muted">load</span></>}
-      sub={<>{sys.cpus} cores{chip ? ` · ${chip}` : ""} · 1-minute average</>}
+      ring={<Ring pct={sys.cpu_busy_pct ?? cpu.pct} level={cpu.level} label={sys.cpu_busy_pct === undefined || sys.cpu_busy_pct === null
+        ? `CPU load ${Math.round(cpu.pct)} % of ${sys.cpus} cores` : `CPU busy ${sys.cpu_busy_pct} %`}>
+        {Math.round(sys.cpu_busy_pct ?? cpu.pct)}<small>%</small></Ring>}
+      value={<>{[sys.load1, sys.load5, sys.load15].map((n) => n?.toFixed(2) ?? "n/a").join(" / ")} <span className="muted">load 1/5/15</span></>}
+      sub={<>{sys.cpus} cores{chip ? ` · ${chip}` : ""} · CPU busy {sys.cpu_busy_pct === undefined || sys.cpu_busy_pct === null ? "n/a" : `${sys.cpu_busy_pct}%`}</>}
     />
   );
 }
@@ -170,7 +172,9 @@ export function MachineGauges({ node }: { node: NodeView }) {
         <AccelCard stats={stats} />
       </div>
       {stats?.discovery?.incomplete && (
-        <p className="mg-note">Agent discovery could not look at {stats.discovery.unreported} running session(s) in its last scan: they keep their last status.</p>
+        <p className="mg-note">{stats.discovery.stale
+          ? "The process list is unavailable. Agent counts and cards reflect the last successful scan."
+          : `${stats.discovery.unreported} agent session(s) have details pending or exceed the reporting cap. Process-only sessions still appear as working.`}</p>
       )}
     </section>
   );

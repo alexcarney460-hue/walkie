@@ -19,7 +19,7 @@ import { detectTask } from "../agent/identity.ts";
 import { SEATS_AGENT, SEAT_AGENT_PREFIX } from "./seats.ts";
 import { redactSecrets } from "./safety.ts";
 import { BUILTIN_SUBAGENT_TYPES, cleanSubagentType, namedUnder, shareableSubagentType } from "./subagents.ts";
-import type { AgentState, BodyOf } from "./schemas.ts";
+import type { BodyOf } from "./schemas.ts";
 
 type Status = BodyOf<"agent.status">;
 

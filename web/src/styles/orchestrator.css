@@ -475,3 +475,30 @@ ul.mdr-list ul.mdr-list { list-style: circle; }
 @media (max-width: 860px) {
   .orch-head-stop { width: 30px; padding: 0; justify-content: center; }
 }
+
+/* ---- Mission Control's WalkieTalkie card (ORCH-STATUS-1): this host's real state, at a glance ---- */
+.wt-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.wt-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wt-icon { flex: none; color: var(--text-3); }
+.wt-card-title { font-size: var(--fs-13); font-weight: 600; letter-spacing: -0.005em; }
+.wt-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-4); }
+.wt-dot.is-on { background: var(--signal); }
+.wt-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.wt-more:hover { color: var(--text); }
+.wt-card-meta { color: var(--text-2); font-size: var(--fs-12); }
+.wt-card-controls .orch-start { gap: 6px; }

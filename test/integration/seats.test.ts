@@ -2,7 +2,7 @@
 // (test/fixtures/fake-claude, test/fixtures/fake-codex): alex (owner, the roster authority) starts agents on arvid's
 // machine (a member who opted in). Covers: a host that hasn't opted in, the opt-in (channel through the authority),
 // a claude seat with a repo bundle that commits (output streamed back, the commits returned as a bundle), a codex seat,
-// refusals (not a launcher, an agent), a named agent launcher, stop (the whole process group), the launcher's
+// refusals (not a launcher, an agent outside the list), agent launchers, stop (the whole process group), the launcher's
 // concurrency cap, revoke (kills running seats), and prompt injection that must not escalate.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -284,15 +284,15 @@ describe("remote seats over a 2-machine team", () => {
     }
   }, 60_000);
 
-  test("a non-launcher (the host's own non-owner person) and an agent are refused, with the reason posted back", async () => {
+  test("a non-launcher person and their agent are refused, with the reason posted back", async () => {
     const mine = await person(arvid).seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "hello from arvid" });
     const s1 = await ended(arvid, mine.seat);
     expect(s1.state).toBe("refused");
-    expect(s1.reason).toContain("not allowed to start seats");
-    const agent = await alex.client("cc-7").seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "hello from an agent" });
-    const s2 = await ended(alex, agent.seat);
+    expect(s1.reason).toBe("@arvid is not allowed to start seats on arvid-mac: its person runs `walkie seats allow --launchers @arvid` there to add you");
+    const agent = await arvid.client("cc-7").seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "hello from an agent" });
+    const s2 = await ended(arvid, agent.seat);
     expect(s2.state).toBe("refused");
-    expect(s2.reason).toContain("agents can't start");
+    expect(s2.reason).toContain("@arvid/arvid-mac/cc-7");
     expect(lines(claudeLog).some((l) => l.turn === "hello from an agent" || l.turn === "hello from arvid")).toBe(false);
   }, 30_000);
 
@@ -301,11 +301,8 @@ describe("remote seats over a 2-machine team", () => {
     await running(alex, res.seat);
     const grandchild = await waitFor(() => lines(claudeLog).find((l) => typeof l.grandchild === "number")?.grandchild as number | undefined, { what: "grandchild pid" });
     expect(alive(grandchild)).toBe(true);
-    // An agent can't stop it (the host ignores agents' stops unless allowed by name).
-    await alex.client("cc-7").seatStop(res.seat);
-    await Bun.sleep(500);
-    expect((await seatOn(alex, res.seat))?.state).toBe("running");
-    const r = await person(alex).seatStop(res.seat);
+    // An owner's covered agent can stop a seat launched by that owner.
+    const r = await alex.client("cc-7").seatStop(res.seat);
     expect(r.stopped).toBe("requested");
     const s = await ended(alex, res.seat);
     expect(s.state).toBe("stopped");
@@ -332,7 +329,7 @@ describe("remote seats over a 2-machine team", () => {
     const fourth = await person(alex).seatRun({ machine: "arvid-mac", runtime: "codex", prompt: "one too many", max_concurrent: 9 });
     const s = await ended(alex, fourth.seat);
     expect(s.state).toBe("refused");
-    expect(s.reason).toBe("this machine is full: 3 of 3 seats running");
+    expect(s.reason).toBe("this machine is full: 3 of 3 seats running on arvid-mac: its person runs `walkie seats allow --max 4` there to raise the limit, or waits for one to finish (walkie seats there)");
     expect(lines(codexLog).some((l) => l.prompt === "one too many")).toBe(false);
     for (const r of first) await person(alex).seatStop(r.seat);
     for (const r of first) expect((await ended(alex, r.seat)).state).toBe("stopped");
@@ -364,19 +361,23 @@ describe("remote seats over a 2-machine team", () => {
     expect(seatOf(general.event.body)).toBeNull();
   }, 60_000);
 
-  test("a launcher agent named by the host (@alex/alex-mbp/planner) may launch; other agents still can't", async () => {
-    await person(arvid).seatsConfig({ allow: true, same_user: true, launchers: ["@alex", "@alex/alex-mbp/planner"] });
+  test("an exact agent entry limits launches; a person entry and owner default cover agents", async () => {
+    await person(arvid).seatsConfig({ allow: true, same_user: true, launchers: ["@alex/alex-mbp/planner"] });
     const ok = await alex.client("planner").seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "from the planner" });
     expect((await ended(alex, ok.seat)).state).toBe("done");
+    const posts = (await alex.client().events({ channel, kinds: "msg.post", limit: 200 })).events;
+    expect(posts.find((e) => e.id === ok.seat)?.author.agent).toBe("planner");
     const no = await alex.client("cc-8").seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "from another agent" });
     expect((await ended(alex, no.seat)).state).toBe("refused");
-    // Back to the default (owners, in person): the named agent is no longer allowed (Codex HIGH 1).
+    await person(arvid).seatsConfig({ allow: true, same_user: true, launchers: ["@alex"] });
+    const covered = await alex.client("cc-8").seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "from a covered agent" });
+    expect((await ended(alex, covered.seat)).state).toBe("done");
+    // Back to the default: the team's owners and their agents may launch.
     const { local } = await person(arvid).seatsConfig({ allow: true, same_user: true, launchers: null });
     expect(local.launchers).toEqual([]);
     const after = await alex.client("planner").seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "from the planner after the reset" });
     const s = await ended(alex, after.seat);
-    expect(s.state).toBe("refused");
-    expect(s.reason).toContain("agents can't start");
+    expect(s.state).toBe("done");
   }, 60_000);
 
   test("a judged request is never run again: 2,000+ later judgments and a restart don't evict it (Codex MEDIUM 4)", async () => {
@@ -481,7 +482,7 @@ describe("remote seats over a 2-machine team", () => {
     const later = await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "anyone home?" });
     const s2 = await ended(alex, later.seat);
     expect(s2.state).toBe("refused");
-    expect(s2.reason).toBe("seats are turned off on this machine");
+    expect(s2.reason).toBe("seats are turned off on arvid-mac: its person runs `walkie seats allow` there to turn them on");
   }, 60_000);
 
   test("a host that stops being an admitted member (demoted, removed) ends its seats; its person's local stop and deny still work", async () => {

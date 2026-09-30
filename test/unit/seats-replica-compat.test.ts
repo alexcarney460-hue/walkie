@@ -68,5 +68,5 @@ test("vv advertises protocol capabilities with machine_stats false", async () =>
   expect(res.status).toBe(200);
   const vv = PeerVvRes.parse(await res.json());
   expect(vv.stats).toBeUndefined();
-  expect(vv.capabilities).toEqual({ version: VERSION, caps: ["seats_v2"] });
+  expect(vv.capabilities).toEqual({ version: VERSION, caps: ["seats_v2", "peer_sig_v1"] });
 });

@@ -80,9 +80,13 @@ function sysFor(m: MockMachine): NonNullable<MachineStats["sys"]> {
 
 const POOL_LAN = process.env.WALKIE_MOCK_POOL === "lan";
 const POOL_FLEET = process.env.WALKIE_MOCK_POOL === "fleet";
-const MACHINES: readonly MockMachine[] = POOL_FLEET ? FLEET : POOL_LAN
+/** WALKIE_MOCK_COMPUTE=1 (RENT-2): a rented Agent box that joined as one of maren's machines. */
+const RENTED: readonly MockMachine[] = process.env.WALKIE_MOCK_COMPUTE === "1"
+  ? [{ hostname: "rent-agent-7f3a", handle: "maren", ip: "100.88.60.2", rtt: 14, mem: [32, 6.8, 0, "normal"], temp: null, accel: pc("Intel(R) Xeon(R) Platinum 8488C") }]
+  : [];
+const MACHINES: readonly MockMachine[] = [...(POOL_FLEET ? FLEET : POOL_LAN
   ? [...SCATTERED.map((m) => (m.hostname === "atlas" ? { ...m, rtt: 1 } : m)), ...OFFICE]
-  : SCATTERED;
+  : SCATTERED), ...RENTED];
 
 export const CHANNELS = [
   { name: "build", topic: "CI, merges, releases. Agents post here when a branch is ready." },

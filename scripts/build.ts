@@ -129,9 +129,9 @@ try {
     const p = Bun.spawnSync(["bun", "build", "--compile", "--minify", `--target=${target}`,
       "--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv", "--no-compile-autoload-tsconfig", "--no-compile-autoload-package-json",
       `--define`, `WALKIE_VERSION=${JSON.stringify(version)}`, "--define", "WALKIE_EMBEDDED=true",
-      // The macOS temperature worker (src/daemon/machine-stats/thermal-client.ts) is a second entry point: the binary
-      // serves it at ./daemon/machine-stats/thermal-worker.ts relative to the bundle root (src/).
+      // Workers are separate entry points, served relative to the bundle root (src/) in the binary.
       join(root, "src", "cli", "main.ts"), join(root, "src", "daemon", "machine-stats", "thermal-worker.ts"),
+      join(root, "src", "daemon", "discovery-files-worker.ts"),
       "--outfile", out], { stdout: "inherit", stderr: "inherit" });
     if (p.exitCode !== 0) process.exit(p.exitCode ?? 1);
     console.log(`built ${relative(root, out)} (iroh ${irohVersion}: ${relative(root, native)})`);

@@ -499,6 +499,8 @@ describe("one person, two machines (round-4 Opus HIGH, D4)", () => {
       const m1 = await c5.add({ name: "am1", login: "am@example.com", hostname: "am-mbp" });
       const m2 = await c5.add({ name: "am2", login: "am@example.com", hostname: "am-air" });
       await m1.client().init("t", "am");
+      expect(await m2.client().join(m1.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
+      await m1.client().request("POST", "/v1/team/admit", { node_id: m2.d.nodeId, approve: true });
       expect((await m2.client().join(m1.peerAddr)).admitted).toBe(true);
       await waitFor(() => m2.d.core.chainLength === m1.d.core.chainLength, { timeoutMs: 15_000, what: "synced" });
       const hi = m1.d.core.nodeId > m2.d.core.nodeId ? m1 : m2;

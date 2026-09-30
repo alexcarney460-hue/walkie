@@ -111,7 +111,7 @@ describe("finding 5: free VRAM for 'now', total VRAM for 'if idle'", () => {
     let now = 1_000;
     const s = new MachineStatsSampler((x) => published.push(x), logger, {
       read: async () => ({ mem: { total: 64 * GiB, used: 20 * GiB, swap_used: 0, pressure: "normal" }, temp_c: 50 }),
-      readAccel: async () => nv(24), readGpuFree: async () => free, clock: () => now,
+      readAccel: async () => nv(24), readGpuFree: async () => free, clock: () => now, readSys: () => null,
     });
     expect(await s.tick()).toBe(true);
     expect(published[0]!.gpu_free).toEqual([20 * GiB]);

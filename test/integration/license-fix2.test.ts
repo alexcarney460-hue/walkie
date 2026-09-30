@@ -32,7 +32,10 @@ beforeAll(async () => {
   await alex.client().invite("kira@example.com", "kira", "member");
   for (const n of [kira, kira2]) {
     const j = await n.client().join(alex.peerAddr);
-    if (!j.admitted) throw new Error(`join failed: ${j.reason}`);
+    if (!j.admitted && j.reason === "pending_approval") {
+      await alex.client().request("POST", "/v1/team/admit", { node_id: n.d.nodeId, approve: true });
+      if (!(await n.client().join(alex.peerAddr)).admitted) throw new Error("approved join failed");
+    } else if (!j.admitted) throw new Error(`join failed: ${j.reason}`);
   }
   for (const name of ["meetings", "linear"]) await alex.client().channel({ name });
   await waitFor(async () => (await kira2.client().team()).channels.some((ch) => ch.name === "linear") && (await kira.client().team()).channels.some((ch) => ch.name === "meetings"), { what: "channels replicated" });

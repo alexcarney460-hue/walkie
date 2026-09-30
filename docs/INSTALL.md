@@ -334,9 +334,10 @@ WALKIE_MOBILE_APP_URL=http://localhost:<port>/m` points a source-run daemon at a
 
 ## 8. Remote seats (optional)
 
-A **seat** is a Claude Code or Codex agent that a teammate starts on your machine through Walkie (PROTOCOL §11). It
-is remote code execution by design, so it is off until you turn it on, and each seat should run as an OS user of its
-own: a seat running as **your** user can reach your Walkie daemon (and act as you on the team) and every file you can.
+A **seat** is a Claude Code or Codex agent that a teammate starts on your machine through Walkie
+([PROTOCOL.md](PROTOCOL.md#11-remote-seats)). It is remote code execution by design, so it is off until you turn it
+on, and each seat should run as an OS user of its own: a seat running as **your** user can reach your Walkie daemon
+(and act as you on the team) and every file you can.
 
 Seats and compute sharing (`walkie pool share on`, split runs) can't be on together on one machine: the shared model
 server listens where any user of the machine, a seat user included, can reach it. Walkie refuses the second one and
@@ -442,17 +443,46 @@ refused; the second runs as a **different** `walkie-sM` whose home has no `.clau
 /Users | grep walkie-s` lists no user of an ended seat, and `ps -U <uid>` of each is empty (the forking seat that
 ignores SIGTERM included); `walkie seats` shows nothing quarantined.
 
-**A seat user that stays quarantined.** `walkie seats` (and the dashboard) list it with the helper's reason. Walkie
-retries every minute; a reason that doesn't clear on its own names what to look at: a process that survives SIGKILL
+**A seat user that stays quarantined.** `walkie seats` (and the dashboard) show a count, a few names in numeric order,
+and a reason summary; `--json` has every name and reason. Walkie retries with backoff (one minute initially, up to
+15 minutes). Live seat cleanup takes priority over the recovery backlog. A reason that doesn't clear on its own names what to look at: a process that survives SIGKILL
 (`ps -U <uid>`: usually one stuck in the kernel, gone after a reboot), a mount it couldn't force off (`mount`), a file
 of its with a system flag (`ls -lO`; `sudo chflags noschg <path>`), an entry of another user inside a directory of its
 (`sudo ls -la <dir>`: whose it is), or a missing `seat-roots.json` (re-run `walkie seats setup-user --apply`). Once
 fixed, the next retry removes it; a daemon restart retries too.
 
-On macOS, empty per-user directories under `/private/var/folders` may remain with the system `sunlnk` flag, which
-SIP prevents even root from clearing. Walkie records these empty directories and verifies the destroy after checking
-the account and its processes are gone. Files, nonempty directories, other flags, and other users' entries still
-quarantine the seat user.
+On macOS, protected residue may remain in the seat user's own per-user folder under `/private/var/folders`.
+Walkie records each accepted path, the operation that returned `EPERM`, and flags when known. The sweep runs as the
+seat user: `EPERM` on stat, read-open, directory open, or list at any depth or name qualifies only under a freshly verified chain of unchanged directories owned
+by that uid on the per-user root's device; a stat-visible entry must also be owned by that uid, on that device, and
+not a symlink. This covers unflagged `TemporaryItems`, `0/dmd`, and nested vaults observed on macOS 26.5.1. In
+read-only probes an unprivileged owner could not cause `EPERM` using flags, ACLs, modes or xattrs (`EACCES` did not
+qualify), and a mount changed `st_dev`. Those probes ran outside `/private/var/folders`. Inside it, macOS makes some folders (for example `T/**/TemporaryItems`) write-only drop boxes for their owner, so a seat CAN leave content beneath one, and the sweep then accepts it as residue. That content stays on disk, but no later seat user and no other ordinary user can read it: `T/` is `0700`, macOS denies reading it even to the same uid, the uid is retired and its per-user folder is never reused (root and entitled macOS system processes are outside this guarantee). The cost is disk space left behind. A readable regular file with unlink `EPERM` is accepted only after it is
+opened for write, truncated, and verified empty on the same single-link inode; a failed write, a hard link, or any
+extended attribute on it (a resource fork included: "protected file carries extended attributes") keeps the user
+quarantined. The per-user folder itself is accepted as protected only when macOS marks it with a system protection
+flag; an unopenable folder without one keeps the user quarantined. The per-user root and `0/` can be `0755`, so containment comes from macOS denying opaque
+entries and from emptying readable files. Listable Apple directories are still swept before their protected shell
+is accepted. At most 2,000 residue entries are recorded; hitting that cap is reported and blocks verification.
+It verifies the destroy after the account and its processes are gone. User-settable protection flags alone,
+unverified entries, and other users' entries still quarantine the seat user.
+
+macOS also leaves protected entries in a seat home, including `Library/Mail`, `Library/Preferences`,
+`Library/ContainerManager`, and ContainerManager metadata. When the seat-user sweep verifies every remaining entry
+as refused to that user, the helper checks the home is the expected real directory of that uid, checks for readable
+leftovers, locks the home root:wheel `0700`, and moves it under root-only `/Users/.walkie-retired/<name>-<uid>` before
+deleting the account. A failed ownership, mode, or move check keeps the user quarantined. Flagged Apple data vaults
+directly inside `/Library/Caches` may remain only when the sweep observed `EPERM` and root independently verifies
+the seat uid and `UF_DATAVAULT` or `SF_RESTRICTED` flag. Other cache leftovers keep the user quarantined. The ledger
+records retained homes and vaults; `walkie seats` and doctor show their counts and size known from directory-entry
+metadata. Contents of opaque entries cannot be measured. A failed destroy still holds a slot, including a failed
+ledger write; only a verified `ok:true` cleanup frees it. Walkie cannot read retained protected contents; entitled
+macOS services may still access their own vaults.
+
+WalkieTalkie uses a fixed uid across generations. Its destroy sweeps every older recorded per-user folder as the
+dedicated user before deleting that account, and keeps one ledger row per folder that still has accepted residue.
+If this cleanup cannot verify an older folder, `walkie talkie cleanup --repair` is a person-run retry of the sweep;
+the cleanup obligation remains until the account, processes, home, and ledger owner are verified gone.
 
 One person per machine takes seats for now: the sudo rules name one daemon user, and a second person's `setup-user`
 is refused (it names whose seats the machine takes; `/usr/local/libexec/walkie/seat-owner`). Seat user ids run

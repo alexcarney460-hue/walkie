@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { WalkieClient } from "../../src/client/index.ts";
 import { FakeIdentity, type Identity, type WhoisResult } from "../../src/daemon/identity.ts";
 import { startDaemon, type DaemonHandle } from "../../src/daemon/main.ts";
+import { admitJoin } from "../../src/daemon/requests.ts";
+import type { ComputeOptions } from "../../src/daemon/compute/service.ts";
+import { ComputeSite } from "../../src/daemon/compute/site.ts";
 import { DEFAULT_LIMITS, type RateLimits } from "../../src/daemon/ratelimit.ts";
 import type { DiscoveryOptions } from "../../src/daemon/discovery.ts";
 import type { OrchestratorOptions } from "../../src/daemon/orchestrator/host.ts";
@@ -74,6 +77,8 @@ export interface NodeSpec {
   seats?: SeatsOptions;
   /** Serve this dashboard build on the loopback port (scripts/orchestrator-demo.ts); default none. */
   webDir?: string;
+  /** RENT-2 rental compute: a fake site (base + fetch) and poll timing; false tests the release lock. */
+  compute?: ComputeOptions | false;
 }
 
 /** A machine without Tailscale (Walkie Direct nodes). */
@@ -126,6 +131,8 @@ export class TestNode {
       ...(this.spec.dual ? { direct: { preset: "minimal" as const, bindAddr: "127.0.0.1:0", addressBook: this.cluster.addressBook } } : {}),
       ...(this.spec.pool ? { pool: this.spec.pool } : {}),
       ...(this.spec.linearImport ? { linearImport: this.spec.linearImport } : {}),
+      ...(this.spec.compute === false ? {} : { compute: this.spec.compute ?? { site: new ComputeSite({ base: "http://127.0.0.1",
+        fetch: async () => { throw new Error("compute site unavailable in cluster test; inject a local stub"); } }) } }),
     });
     this.peerPort = this.daemon.peerPort ?? this.peerPort;
     if (!direct) this.cluster.identities.set(this.daemon.nodeId, { login: this.spec.login, nodeName: this.hostname });
@@ -187,7 +194,10 @@ export async function standardTeam(c: Cluster): Promise<{ alex: TestNode; kira: 
   await alex.client().invite("kira@example.com", "kira", "member");
   const j1 = await kira.client().join(alex.peerAddr);
   if (!j1.admitted) throw new Error(`kira join failed: ${j1.reason}`);
-  const j2 = await kira2.client().join(kira.peerAddr); // via a member node → redirected to the owner
-  if (!j2.admitted) throw new Error(`kira2 join failed: ${j2.reason}`);
+  const pending = await kira2.client().join(kira.peerAddr); // via a member node → redirected to the owner
+  if (pending.reason !== "pending_approval") throw new Error(`kira2 should wait for approval: ${pending.reason}`);
+  admitJoin(alex.d.core, kira2.d.nodeId, true);
+  const j2 = await kira2.client().join(kira.peerAddr);
+  if (!j2.admitted) throw new Error(`kira2 join failed after approval: ${j2.reason}`);
   return { alex, kira, kira2 };
 }

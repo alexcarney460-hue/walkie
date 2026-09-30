@@ -9,7 +9,7 @@
 // ownership ref `refs/walkie/lanes/<branch>`). Anything else of that name is refused, never reset or removed.
 import {
   appendFileSync, chmodSync, closeSync, fsyncSync, linkSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync,
-  rmSync, rmdirSync, statSync, writeFileSync,
+  rmSync, rmdirSync, writeFileSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";

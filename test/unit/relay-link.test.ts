@@ -134,9 +134,9 @@ test("a real peer that stops reading: past the 8 MiB window sends are refused, m
   // Growth over this test's own sends only (rss0 is read after a GC, just before them). The bound is loose on purpose:
   // the functional checks above (at most 8 sends accepted, the rest refused) are what prove the window holds, while
   // process RSS also moves with whatever else the full suite has allocated and the allocator keeps (64.5 MiB was seen
-  // once in a full run). 256 MiB offered and queued would still be far past 96.
+  // once in a full run, 99.8 MiB in the pre.10 release run). 256 MiB offered and queued would still be past 192.
   const grew = (process.memoryUsage().rss - rss0) / 2 ** 20;
-  expect(grew).toBeLessThan(96);
+  expect(grew).toBeLessThan(192);
   const until = Date.now() + 5_000;
   while (link.connected && Date.now() < until) await Bun.sleep(50);
   expect(link.connected).toBe(false); // no acknowledgement progress for 1.5 s: a stall

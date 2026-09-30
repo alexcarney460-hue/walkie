@@ -123,10 +123,10 @@ describe("the playbook: WalkieTalkie, first-run onboarding, other computers", ()
   test("other computers: ask, mint the right link, reply privately with expiry, who, 3 steps; watch and set up", () => {
     expect(p).toMatch(/Ask whether they, or their company, have other computers to add/);
     expect(p).toContain("`walkie team add-machine <handle> --json`");
-    expect(p).toContain("`walkie invite --handle <h>`");
-    expect(p).toMatch(/Reply here only \(never post a link anywhere else\) with the link, its expiry, who the machine joins as, and 3 steps/);
-    expect(p).toMatch(/1\. open the link, or run the one command on the new machine \(macOS\/Linux; Windows = WSL\); 2\. approve the one question it asks; 3\. done: it shows up in Mission Control/);
-    expect(p).toMatch(/confirm each new machine when it joins[^\n]*offer to set it up over remote admin/);
+    expect(p).toContain("`walkie invite --handle <h> --json`");
+    expect(p).toMatch(/daemon places the one-click link or one-time code directly in your person's local WalkieTalkie conversation/);
+    expect(p).toMatch(/The new machine's person approves the consent question and then it appears in Mission Control/);
+    expect(p).toMatch(/confirm each new machine when it joins[^\n]*Set up another person's machine only while its agent admin is on/);
     expect(p).toMatch(/When the team looks small for its work[^\n]*other computers to add/);
   });
 });

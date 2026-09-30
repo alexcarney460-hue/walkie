@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Archive as ArchiveIcon, ArrowUpRight, ChevronRight, Laptop, Server } from "lucide-react";
-import type { AgentState, AgentView, ArchiveCount, NodeView } from "../../api/types.ts";
+import type { AgentState, AgentView, ArchiveCount, NodeView, TeamView } from "../../api/types.ts";
 import { PageHeader } from "../../components/Shell.tsx";
 import { LocalModelsCard } from "../../components/LocalModels.tsx";
 import { ModelServerLoad } from "../../components/MachineStats.tsx";
@@ -15,6 +15,12 @@ import { accountForAgent, AccountsRow } from "../../components/Accounts.tsx";
 import type { AccountView } from "../../api/types.ts";
 import { AgentGroupView, groupAgents } from "./Subagents.tsx";
 import { ArchiveView } from "./Archive.tsx";
+import { WalkieTalkieCard } from "../orchestrator/TalkieState.tsx";
+import { rentalForNode, useCompute, type ComputeSnapshot } from "../../api/compute.ts";
+import { AddComputeButton, AddComputeSheet } from "../compute/AddComputeSheet.tsx";
+import { RentedChip } from "../compute/RentedChip.tsx";
+import { projectCounts } from "../../lib/project-counts.ts";
+import { useProjects } from "../../state/projects.ts";
 
 /** Mission Control shows working agents and those needing a person; the strip narrows it to one of those. */
 type StateFilter = "all" | "working" | "waiting" | "blocked";
@@ -31,6 +37,12 @@ function matches(a: AgentView, f: StateFilter): boolean {
   return f === "all" ? shownByDefault(a) : a.effective_state === f;
 }
 
+/** LiveView draws rows only for nodes belonging to listed team members. */
+function defaultLiveAgents(shown: AgentView[], team: TeamView | null, nodes: NodeView[]): AgentView[] {
+  return (team?.members ?? []).flatMap((member) => nodes.filter((node) => node.handle === member.handle)
+    .flatMap((node) => shown.filter((agent) => agent.node === node.node_id)));
+}
+
 /** The live roster split: what Mission Control shows, and per machine what waits in the archive. */
 export function useRosterSplit(): { shown: AgentView[]; hidden: ArchiveCount[]; archivedTotal: number } {
   const { agents, archive } = useStore();
@@ -41,6 +53,26 @@ export function useRosterSplit(): { shown: AgentView[]; hidden: ArchiveCount[]; 
     const hidden = hiddenByNode(live, archive);
     return { shown: live.filter(shownByDefault), hidden, archivedTotal: hidden.reduce((n, h) => n + h.idle + h.offline, 0) };
   }, [agents, archive, now]);
+}
+
+function ProjectCountStrip({ shown }: { shown: readonly AgentView[] }) {
+  const { projects } = useProjects();
+  const counts = useMemo(() => projectCounts(shown, projects), [shown, projects]);
+  if (!counts.length) return null;
+  return (
+    <ul className="project-counts" aria-label="Projects agents are working on" data-testid="project-counts">
+      {counts.map((item) => {
+        const label = `${item.name}${item.prefix ? ` (${item.prefix})` : ""}: ${plural(item.count, "agent")}`;
+        return (
+          <li key={item.channel ?? "none"} className={`chip project-count-chip${item.channel ? "" : " is-unmatched"}`} title={label}>
+            <span className="sr-only">{label}</span>
+            <span className="project-count-name" aria-hidden="true">{item.name}</span>
+            <span className="project-count-n tnum" aria-hidden="true">{item.count}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function SummaryStrip({ agents, nodes, onPick, active }: { agents: AgentView[]; nodes: NodeView[]; onPick: (f: StateFilter) => void; active: StateFilter }) {
@@ -155,9 +187,11 @@ function ArchiveLink({ node, count }: { node: NodeView; count: ArchiveCount | un
   );
 }
 
-function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered }: {
+function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered, compute, owner }: {
   node: NodeView; agents: AgentView[]; hidden: ArchiveCount | undefined; accounts: AccountView[]; onOpen: (id: string) => void; filtered: boolean;
+  compute: ComputeSnapshot; owner: boolean;
 }) {
+  const rental = rentalForNode(compute.state, node.node_id);
   const Icon = /mbp|air|x1|laptop|studio|macbook/.test(node.hostname) ? Laptop : Server;
   const sync = !node.online ? (node.sync.error ?? "unreachable") : node.sync.behind > 0 ? `syncing, ${node.sync.behind} behind` : "in sync";
   const known = agents.length + (hidden ? hidden.idle + hidden.offline : 0);
@@ -168,6 +202,7 @@ function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered }: {
         <Icon size={14} strokeWidth={1.75} aria-hidden="true" className="machine-icon" />
         <span className="machine-name mono">{node.hostname}</span>
         {node.self && <span className="chip">this machine</span>}
+        {rental && <RentedChip rental={rental} quotes={compute.quotes} canStop={owner} />}
         <span className={`machine-live tnum${working ? " is-on" : ""}`} data-testid={`machine-live-${node.hostname}`}>{working} working</span>
         <span className={`dot ${node.online ? "dot-on" : "dot-off"}`} aria-hidden="true" />
         <span className="machine-stat tnum">{node.online ? (node.self ? "local" : `${node.rtt_ms ?? "?"} ms`) : "offline"}</span>
@@ -194,28 +229,36 @@ function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered }: {
 export function MissionControl() {
   const route = getRoute();
   const tab = route.tab === "archive" ? "archive" : "live";
-  const { archivedTotal } = useRosterSplit();
+  const { shown, hidden, archivedTotal } = useRosterSplit();
+  const { me, team, nodes } = useStore();
+  const counted = useMemo(() => defaultLiveAgents(shown, team, nodes), [shown, team, nodes]);
+  const compute = useCompute(me?.role === "owner");
+  const [renting, setRenting] = useState(false);
+  const closeRenting = useCallback(() => setRenting(false), []);
   return (
     <div className="mission">
       <div className="mission-main">
-        <PageHeader title="Mission Control" />
+        <PageHeader title="Mission Control" actions={me?.role === "owner" && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined} />
+        {tab === "live" && <ProjectCountStrip shown={counted} />}
         <nav className="tabs" role="tablist" aria-label="Agents">
           <a role="tab" aria-selected={tab === "live"} href={hrefFor({ view: "mission" })} className={tab === "live" ? "tab-link is-on" : "tab-link"}>Live</a>
           <a role="tab" aria-selected={tab === "archive"} href={hrefFor({ view: "mission", tab: "archive" })} className={tab === "archive" ? "tab-link is-on" : "tab-link"} data-testid="archive-tab">
             Archive <span className="seg-n tnum">{archivedTotal}</span>
           </a>
         </nav>
-        {tab === "archive" ? <ArchiveView machine={route.machine} /> : <LiveView />}
+        {tab === "archive" ? <ArchiveView machine={route.machine} /> : <LiveView shown={shown} hidden={hidden} />}
       </div>
       <ActivityFeed />
       {tab === "live" && <MissionExtras />}
+      {renting && <AddComputeSheet onClose={closeRenting} />}
     </div>
   );
 }
 
-function LiveView() {
+function LiveView({ shown, hidden }: { shown: AgentView[]; hidden: ArchiveCount[] }) {
   const { team, nodes, me, accounts } = useStore();
-  const { shown, hidden } = useRosterSplit();
+  const owner = me?.role === "owner";
+  const compute = useCompute(owner);
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [people, setPeople] = useState<string[]>([]);
   const open = useCallback((id: string) => navigate({ ...getRoute(), agent: id }), []);
@@ -296,7 +339,7 @@ function LiveView() {
               <span className="person-meta tnum">{plural(working, "active agent")} · {plural(nodes.filter((n) => n.handle === member.handle).length, "machine")}</span>
             </header>
             {machines.length ? (
-              machines.map(({ node, agents: list, hidden: h }) => <MachineBlock key={node.node_id} node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} />)
+              machines.map(({ node, agents: list, hidden: h }) => <MachineBlock key={node.node_id} node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} compute={compute} owner={owner} />)
             ) : (
               <div className="machine-empty"><span>No machines joined yet.</span><CopyCommand command="walkie join <teammate-machine>" /></div>
             )}
@@ -315,6 +358,7 @@ function MissionExtras() {
   const now = useNow();
   return (
     <div className="mission-extras">
+      <WalkieTalkieCard />
       <AccountsRow accounts={accounts} now={now} />
       <LocalModelsCard nodes={nodes} />
     </div>

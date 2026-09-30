@@ -1,0 +1,63 @@
+/* ---- add compute / rented machines (RENT-2) ---- */
+.drawer.add-compute { width: min(560px, 100%); }
+.ac-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; contain: inline-size; }
+.ac-credit {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.ac-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: var(--fs-13); }
+.ac-balance-label { color: var(--text-3); font-size: var(--fs-12); }
+.ac-balance b { font-size: var(--fs-14); font-weight: 600; color: var(--text); }
+.ac-buy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ac-buy-label { color: var(--text-3); font-size: var(--fs-12); margin-right: 2px; }
+.ac-tiers { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ac-tier {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.ac-tier.is-on { border-color: var(--accent-line); background: var(--accent-soft); }
+.ac-tier-text { display: grid; gap: 3px; min-width: 0; }
+.ac-tier-name { margin: 0; font-size: var(--fs-14); font-weight: 600; color: var(--text); }
+.ac-tier-specs { margin: 0; color: var(--text-2); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.ac-tier-gpu { margin: 0; color: var(--accent-text); font-size: var(--fs-12); font-weight: 500; }
+.ac-tier-good { margin: 0; color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+.ac-tier-side { display: grid; justify-items: end; align-content: start; gap: 4px; flex: none; }
+.ac-price { font-size: var(--fs-14); }
+.ac-price b { font-weight: 600; color: var(--text); }
+.ac-price-month, .ac-price-min { font-size: var(--fs-11); }
+.ac-egress { margin: 0; font-size: var(--fs-12); }
+.ac-step { display: inline-flex; align-items: center; gap: 2px; margin-top: 4px; }
+.ac-step-n { min-width: 24px; text-align: center; font-size: var(--fs-13); font-weight: 600; }
+.ac-total { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; font-size: var(--fs-13); }
+.ac-short, .ac-error, .ac-result { margin: 0; padding: 10px 12px; border-radius: var(--r-card); font-size: var(--fs-13); line-height: 1.5; }
+.ac-short { border: 1px solid var(--amber-line); background: var(--amber-soft); color: var(--text-2); }
+.ac-error { border: 1px solid var(--red-line); color: var(--text-2); }
+.ac-result { border: 1px solid var(--signal-line); color: var(--text-2); }
+.ac-rentals .drawer-h { margin-bottom: 6px; }
+.ac-rental-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.rented-pending { margin-top: 10px; }
+.rented-pending-h { font-size: var(--fs-12); }
+.ac-rental { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--fs-12); }
+.ac-rental .btn { margin-left: auto; }
+.ac-state.is-running { border-color: var(--signal-line); }
+.ac-state.is-queued, .ac-state.is-needs_code, .ac-state.is-starting { border-color: var(--amber-line); }
+.rented { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.chip.chip-rented { border-color: var(--accent-line); color: var(--accent-text); }
+.btn.rented-stop { height: 22px; min-height: 22px; padding: 0 9px; font-size: var(--fs-11); }
+.add-compute-btn svg { margin-right: 4px; }
+@media (max-width: 860px) {
+  .ac-tier { flex-direction: column; }
+  .ac-tier-side { justify-items: start; grid-template-columns: auto auto; align-items: center; column-gap: 10px; }
+  .ac-step { grid-column: 1 / -1; }
+  .rented { flex-wrap: wrap; }
+  .btn.rented-stop { height: 32px; min-height: 32px; }
+}

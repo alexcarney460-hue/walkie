@@ -9,6 +9,7 @@ import { appendAudit, readAudit, recordAdmin } from "./audit.ts";
 import { adminGate, agentCaller, AGENT_ADMIN_OFF, localActor, personOnly } from "./gate.ts";
 import { mayAdminister, resolveMachines, servePeerAdmin } from "./remote.ts";
 import { readSwitches, writeSwitch } from "./switches.ts";
+import { nodesView } from "../views.ts";
 
 /** What the last remote admin call to each machine found (`ok`, or an error code), for `walkie admin machines`. */
 const lastResult = new WeakMap<object, Map<string, { at: number; result: string }>>();
@@ -72,6 +73,7 @@ route("GET", "/v1/admin/machines", (c) => {
   const me = c.core.me();
   if (!me) throw new HttpError(403, "forbidden", "this node is not an admitted member");
   const seen = lastResult.get(c.core);
+  const nodeStats = new Map(nodesView(c.core, c.sync).map((n) => [n.node_id, n.stats]));
   const machines = resolveMachines(c.core, "all").map((n) => {
     const may = mayAdminister(c.core, me, n);
     const last = seen?.get(n.node_id);
@@ -79,6 +81,7 @@ route("GET", "/v1/admin/machines", (c) => {
       hostname: n.hostname, node_id: n.node_id, handle: nodeMember(c.core.roster, n.node_id)?.handle ?? null,
       self: n.node_id === c.core.nodeId, online: n.node_id === c.core.nodeId || c.sync.isOnline(n.node_id),
       can_admin: may.ok, ...(may.ok ? {} : { why: may.why }),
+      ...(nodeStats.get(n.node_id) ? { stats: nodeStats.get(n.node_id) } : {}),
       ...(n.node_id === c.core.nodeId ? readSwitches(c.core.paths.config) : {}),
       ...(last ? { last_result: last.result, last_at: last.at } : {}),
     };

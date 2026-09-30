@@ -37,6 +37,11 @@ export interface InviteFields {
   team: string; authority: string; relay?: string; handle: string; role: Role; now: number;
   /** The issuer's roster chain length now (`roster.pos`). */
   pos: number;
+  /**
+   * How long the code stays valid (default INVITE_TTL_MS, never longer). RENT-2: a rented machine's code lives 1 hour.
+   * No wire change: the expiry was always a signed field, and the authority accepts any expiry up to the TTL.
+   */
+  ttlMs?: number;
 }
 
 export interface Invite {
@@ -101,8 +106,10 @@ export function createInvite(keys: NodeKeys, f: InviteFields): { code: string; i
   if (team.length !== 8 || authority.length !== 32 || issuer.length !== 8) throw new Error("invalid invite fields");
   if (!Number.isInteger(f.pos) || f.pos < 0 || f.pos > 0xffffffff) throw new Error("invalid chain position");
   if (!Handle.safeParse(f.handle).success) throw new Error("invalid handle");
+  const ttl = f.ttlMs ?? INVITE_TTL_MS;
+  if (!Number.isInteger(ttl) || ttl <= 0 || ttl > INVITE_TTL_MS) throw new Error("invalid invite ttl");
   const secret = randomBytes(16);
-  const expirySeconds = Math.floor((f.now + INVITE_TTL_MS) / 1000);
+  const expirySeconds = Math.floor((f.now + ttl) / 1000);
   const head = Buffer.alloc(FIXED);
   let o = 0;
   head.writeUInt8(1, o); o += 1;

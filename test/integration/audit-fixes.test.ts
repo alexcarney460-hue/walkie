@@ -2,6 +2,7 @@
 // Ports of the Fable repro scripts r1, r2, r5, r6, r8, r10 (deep nesting) and r11.
 import { afterEach, describe, expect, test } from "bun:test";
 import { signEvent } from "../../src/daemon/keys.ts";
+import { newPeerNonce, signPeerRequest } from "../../src/daemon/peer-sig.ts";
 import { PROTOCOL_VERSION, type Event, type UnsignedEvent } from "../../src/protocol/schemas.ts";
 import { Cluster, standardTeam, waitFor, type TestNode } from "../helpers/cluster.ts";
 
@@ -22,12 +23,20 @@ function forge(n: TestNode, over: Partial<UnsignedEvent> & Pick<UnsignedEvent, "
   });
 }
 
-async function pushAs(from: TestNode, to: TestNode, events: unknown[]): Promise<{ status: number; body: { accepted: number; rejected: { id: string; reason: string }[] } }> {
-  const res = await fetch(`http://127.0.0.1:${to.peerPort}/peer/v1/events`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-walkie-node": from.d.nodeId, "x-walkie-team": from.d.core.teamId as string },
-    body: JSON.stringify({ events }),
+function peerRequest(from: TestNode, to: TestNode, path: string, method: "GET" | "POST", body = ""): Promise<Response> {
+  const url = new URL(path, `http://127.0.0.1:${to.peerPort}`);
+  const team = from.d.core.teamId as string;
+  const signature = signPeerRequest(from.d.core.keys, { method, path: url.pathname, query: url.search, body,
+    requester: from.d.nodeId, target: to.d.nodeId, team, ts: Date.now(), nonce: newPeerNonce() });
+  return fetch(url, {
+    method,
+    headers: { "content-type": "application/json", "x-walkie-node": from.d.nodeId, "x-walkie-team": team, ...signature },
+    ...(method === "POST" ? { body } : {}),
   });
+}
+
+async function pushAs(from: TestNode, to: TestNode, events: unknown[]): Promise<{ status: number; body: { accepted: number; rejected: { id: string; reason: string }[] } }> {
+  const res = await peerRequest(from, to, "/peer/v1/events", "POST", JSON.stringify({ events }));
   return { status: res.status, body: (await res.json()) as never };
 }
 
@@ -113,7 +122,9 @@ describe("hestia #5: stub fill after access is granted", () => {
     // A machine joining later stubs history while its own admission is still unknown, then fills it.
     const kira3 = await c?.add({ name: "kira3", login: "kira@example.com", hostname: "kiras-pi" });
     if (!kira3) throw new Error("no cluster");
-    expect((await kira3.client().join(alex.peerAddr)).admitted).toBe(true);
+    expect(await kira3.client().join(alex.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
+    await alex.client().request("POST", "/v1/team/admit", { node_id: kira3.d.nodeId, approve: true });
+    expect(await kira3.client().join(alex.peerAddr)).toMatchObject({ admitted: true });
     await waitFor(async () => (await kira3.client().events({ channel: "vault" })).events.length === 3, { what: "bootstrap backfill", timeoutMs: 8_000 });
   }, 20_000);
 });
@@ -127,9 +138,7 @@ describe("hestia #6: blob authorization", () => {
     const hash = (event.body as { hash: string }).hash;
     await kira.client().post({ channel: "general", text: "look", artifacts: [hash] });
     await waitFor(() => alex.d.core.store.queryEvents({ channel: "general", limit: 50 }).some((r) => r.json.includes(hash)), { what: "public ref on alex" });
-    const res = await fetch(`http://127.0.0.1:${alex.peerPort}/peer/v1/blobs/${hash}?channel=general`, {
-      headers: { "x-walkie-node": kira.d.nodeId, "x-walkie-team": kira.d.core.teamId as string },
-    });
+    const res = await peerRequest(kira, alex, `/peer/v1/blobs/${hash}?channel=general`, "GET");
     expect(res.status).toBe(404);
     await expect(kira.client().fetchArtifact(hash)).rejects.toMatchObject({ status: 404 });
     expect(new TextDecoder().decode(await alex.client().fetchArtifact(hash))).toBe("restricted bytes");
@@ -200,8 +209,10 @@ describe("Fable F6 (r11): re-invite after removal", () => {
     await Bun.sleep(1_500);
     expect(alex.d.core.roster.nodes.get(kira.d.nodeId)?.revoked).toBe(true);
     await expect(kira.client().post({ channel: "general", text: "old laptop is back" })).rejects.toMatchObject({ status: 403 });
+    expect(await kira.client().join(alex.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
+    await alex.client().request("POST", "/v1/team/admit", { node_id: kira.d.nodeId, approve: true });
     const again = await kira.client().join(alex.peerAddr);
-    expect(again.admitted).toBe(true);
+    expect(again).toMatchObject({ admitted: true });
     const { event } = await kira.client().post({ channel: "general", text: "re-joined" });
     await waitFor(() => alex.d.core.store.getRow(event.id)?.status === "ok", { what: "post accepted on alex" });
   }, 20_000);
@@ -214,11 +225,7 @@ describe("Fable F7 (r10): deep nesting in a peer batch", () => {
     const good = forge(kira, { kind: "msg.post", channel: "general", body: { text: "fine" } });
     const bomb = `{"v":1,"team":"${alex.d.core.teamId}","id":"${kira.d.nodeId}:999","origin":"${kira.d.nodeId}","seq":999,"ts":1,`
       + `"author":{"handle":"kira","node":"${kira.d.nodeId}"},"kind":"msg.post","channel":"general","body":{"a":${"[".repeat(20_000)}${"]".repeat(20_000)}},"sig":"x"}`;
-    const res = await fetch(`http://127.0.0.1:${alex.peerPort}/peer/v1/events`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-walkie-node": kira.d.nodeId, "x-walkie-team": kira.d.core.teamId as string },
-      body: `{"events":[${bomb},${JSON.stringify(good)}]}`,
-    });
+    const res = await peerRequest(kira, alex, "/peer/v1/events", "POST", `{"events":[${bomb},${JSON.stringify(good)}]}`);
     expect(res.status).toBe(200);
     const out = (await res.json()) as { accepted: number; rejected: { reason: string }[] };
     expect(out.accepted).toBe(1);

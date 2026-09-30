@@ -33,6 +33,7 @@ export interface NodeRec {
   readonly ip: string; readonly port: number; readonly revoked: boolean;
   /** Revoked implicitly by the member's removal (a fresh `walkie join` may re-admit it after a re-invite). */
   readonly revoked_by_removal?: boolean;
+  readonly peer_sig_v1?: true;
   /** v0.2: transports the node serves (known ones only); absent = tailscale only (v0.1). */
   readonly transports?: readonly TransportKind[];
 }
@@ -100,6 +101,7 @@ export interface Roster {
   readonly pos?: number;
   /** Handle → its invite cut-off (the latest removal of a member holding it). Local, derived from the chain. */
   readonly voids?: ReadonlyMap<string, VoidBefore>;
+  readonly peer_sig_strict?: boolean;
 }
 
 export const EMPTY_ROSTER: Roster = Object.freeze({ team: null, members: new Map(), nodes: new Map(), channels: new Map() });
@@ -546,11 +548,12 @@ export function memberRecOf(b: BodyOf<"team.member">): MemberRec {
   return { login: b.login, handle: b.handle, role: b.role, ...(b.display_name ? { display_name: b.display_name } : {}) };
 }
 
-export function nodeRecOf(b: BodyOf<"team.node">): NodeRec {
+export function nodeRecOf(b: BodyOf<"team.node">, previous?: NodeRec): NodeRec {
   const transports = knownTransports(b.transports);
   return {
     node_id: b.node_id, login: b.login, hostname: b.hostname, pubkey: b.pubkey, ip: b.ip,
     port: b.port ?? DEFAULT_PEER_PORT, revoked: b.revoked === true, ...(transports ? { transports } : {}),
+    ...(b.peer_sig_v1 === true || previous?.peer_sig_v1 ? { peer_sig_v1: true as const } : {}),
   };
 }
 
@@ -572,6 +575,7 @@ export function founderRecs(ev: Event): { member: MemberRec; node: NodeRec } {
     node: {
       node_id: ev.origin, login: b.owner_login, hostname: b.node_hostname, pubkey: b.node_pubkey,
       ip: b.node_ip, port: b.node_port ?? DEFAULT_PEER_PORT, revoked: false,
+      ...(b.peer_sig_v1 ? { peer_sig_v1: true } : {}),
     },
   };
 }
@@ -657,7 +661,14 @@ function applyKind(r: Roster, ev: Event): Roster {
     case "team.node": {
       const b = ev.body as BodyOf<"team.node">;
       const invites = typeof b.invite === "string" ? new Set(r.invites ?? []).add(b.invite) : r.invites;
-      return { ...r, nodes: new Map(r.nodes).set(b.node_id, nodeRecOf(b)), ...(invites ? { invites } : {}) };
+      // An explicit owner waiver admits a legacy machine. Consume the waiver in the signed chain so
+      // automatic strict mode resumes when that machine later proves possession of its key.
+      const prior = r.nodes.get(b.node_id);
+      const legacyAdmitted = r.peer_sig_strict === false && (!prior || prior.revoked) && !b.peer_sig_v1;
+      return { ...r, nodes: new Map(r.nodes).set(b.node_id, nodeRecOf(b, r.nodes.get(b.node_id))),
+        ...(invites ? { invites } : {}),
+        ...(b.peer_sig_strict !== undefined ? { peer_sig_strict: b.peer_sig_strict }
+          : legacyAdmitted ? { peer_sig_strict: undefined } : {}) };
     }
     case "channel.upsert": {
       const b = ev.body as BodyOf<"channel.upsert">;

@@ -166,11 +166,12 @@ describe("destroy after partial progress (Codex r6 MEDIUM 5)", () => {
     const w = fakeSeatWorld(tmp(), "/nonexistent-walkie-home");
     await createSeatUser(1, w.sys);
     w.broken.add("services");
-    const r = await destroySeatUser(1, w.sys);
+    const sys: AdminSys = { ...w.sys, dropClaudeProjection: async () => false };
+    const r = await destroySeatUser(1, sys);
     expect(r.ok).toBe(false);
     expect(r.left?.[0]).toMatch(/^services:/);
     expect(w.users.has("walkie-s1")).toBe(true);
-    expect(w.sweeps).toEqual([]);
+    expect(w.sweeps).toHaveLength(1); // projection cleanup failed; general sweep still runs
     w.broken.delete("services");
     expect((await destroySeatUser(1, w.sys)).ok).toBe(true);
     expect(w.users.has("walkie-s1")).toBe(false);
@@ -245,7 +246,7 @@ describe("the CLI (Codex r6 LOW 9, MEDIUM 8)", () => {
   const base = { allow: false, claude_login: "machine", quarantined: ["walkie-s7"] } as unknown as SeatsLocalView;
   test("an unavailable login is never described as the machine's", () => {
     const text = loginLines({ ...base, claude_login: "unavailable" }).map(stripAnsi).join("\n");
-    expect(text).toMatch(/can't start here yet: this machine's Claude login is in its Keychain/);
+    expect(text).toMatch(/can't start here yet: this machine has no usable Claude access token/);
     expect(text).not.toMatch(/run on this machine's own Claude login/);
   });
   test("quarantined seat users are shown with seats off", () => {

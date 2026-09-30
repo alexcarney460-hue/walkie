@@ -7,11 +7,12 @@ import { connect } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import type { Core } from "./core.ts";
 import { DashboardSessions, type Session, type SessionOptions } from "./dashboard-sessions.ts";
-import { ORCHESTRATOR_TOKEN_HEADER } from "../protocol/orchestrator.ts";
+import { ORCHESTRATOR_AGENT, ORCHESTRATOR_TOKEN_HEADER } from "../protocol/orchestrator.ts";
 import { HttpError, errorResponse } from "./http.ts";
 import { acquireInstanceLock, type InstanceLock } from "./instance-lock.ts";
 import { dispatch, validAgentHeader, type RouteCtx } from "./local-routes.ts";
 import { adminGate } from "./admin/gate.ts";
+import { hostFor } from "./orchestrator/host.ts";
 import type { TransportControl } from "./direct/link.ts";
 import type { PeerClient } from "./peer-client.ts";
 import type { PeerApiStatus } from "./peer-link.ts";
@@ -136,6 +137,11 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   // The Orchestrator tab (ORCH-FIX-11): this machine's host, its local conversation, sending and stopping a reply;
   // its Start and Stop buttons (PRE5-INT: start with the daemon's defaults only, orchestrator/routes.ts).
   ["GET", /^\/v1\/orchestrator(?:\/messages)?$/],
+  ["GET", /^\/v1\/orchestrator\/schedules(?:\/next)?$/],
+  ["POST", /^\/v1\/orchestrator\/schedules(?:\/[^/]+\/run-now)?$/],
+  ["POST", /^\/v1\/orchestrator\/schedules\/[0-9a-f-]{36}\/reset$/],
+  ["PATCH", /^\/v1\/orchestrator\/schedules\/[^/]+$/],
+  ["DELETE", /^\/v1\/orchestrator\/schedules\/[^/]+$/],
   // ORCH-2: and its model picker (the chat header).
   ["POST", /^\/v1\/orchestrator\/(?:say|stop-reply|start|stop|model|access|auto)$/],
   // Team > Devices (WALKIE-PWA-1): pair a phone, list and revoke paired phones.
@@ -145,6 +151,10 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   // AGENT-ADMIN-1: the person's admin switches (the Seats view's "Agents set up Walkie" card) and the audit log.
   ["GET", /^\/v1\/admin$/],
   ["POST", /^\/v1\/admin\/switches$/],
+  // RENT-2: "Add compute" (Machines, Mission Control): prices, the credit balance and rentals, renting, stopping and
+  // a credit checkout link (the person pays in Stripe Checkout). Owner machines only (compute/routes.ts).
+  ["GET", /^\/v1\/compute\/(?:quotes|state)$/],
+  ["POST", /^\/v1\/compute\/(?:rent|stop|credit)$/],
 ];
 
 export function dashboardRoute(method: string, path: string): boolean {
@@ -391,8 +401,14 @@ export class LocalApi {
     // same-OS-user limit applies (SECURITY.md).
     // AGENT-ADMIN-1: a dashboard session is a credential handed out in plain text (the login link), so it stays a
     // person's; signing out every dashboard and rotating the token are admin actions an agent may take (audited).
-    const agent = validAgentHeader(req.headers.get("x-walkie-agent"));
-    const underAgent = req.headers.get("x-walkie-under-agent") === "1";
+    const namedAgent = validAgentHeader(req.headers.get("x-walkie-agent"));
+    const token = req.headers.get(ORCHESTRATOR_TOKEN_HEADER);
+    if (token !== null && (!hostFor(this.d.core)?.acceptsToken(token)
+      || (namedAgent !== undefined && namedAgent !== ORCHESTRATOR_AGENT))) {
+      throw new HttpError(403, "forbidden", "the orchestrator token requires the orchestrator agent identity");
+    }
+    const agent = token !== null ? ORCHESTRATOR_AGENT : namedAgent;
+    const underAgent = token !== null || req.headers.get("x-walkie-under-agent") === "1";
     if ((agent || underAgent) && url.pathname === "/v1/auth/nonce") {
       throw new HttpError(403, "person_only", "agents can't open the dashboard (its login link is a credential in plain text); a person runs walkie dashboard in their own terminal");
     }

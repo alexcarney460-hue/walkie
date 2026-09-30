@@ -1,12 +1,12 @@
 // walkie seats [list] | seats allow|deny | seats busy|resume  ·  walkie seat run|stop|show|fetch  (PROTOCOL §11)
-import { adminCtx, auditLocal } from "../admin-gate.ts";
+import { adminCaller, adminCtx } from "../admin-gate.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { WalkieClient } from "../../client/index.ts";
 import { wrapForModel } from "../../protocol/safety.ts";
 import {
-  DEFAULT_SEAT_MODE, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, SEAT_WORKSPACE_MODES, TERMINAL_STATES, busyDetail, parseLauncher, seatsChannel,
+  DEFAULT_SEAT_MODE, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, SEAT_WORKSPACE_MODES, TERMINAL_STATES, busyDetail, launcherPolicyLabel, parseLauncher, seatsChannel,
   type HostAvailability, type SeatMode, type SeatRuntime, type SeatView, type SeatWorkspace, type SeatsLocalView,
 } from "../../protocol/seats.ts";
 import { parseDuration } from "../../daemon/seats/busy.ts";
@@ -19,7 +19,7 @@ import { ago, c, safeTerm } from "../format.ts";
 const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user] | seats doctor"
   + " | seats start <machine> [--count n] [--provider claude|codex] (--prompt \"…\" | --brief file|-)"
   + " | seats setup-user [--apply] [--accept-readable-home] | seats allow [--same-user]"
-  + " [--accept-readable-home] [--launchers @a,@a/machine/agent] [--max n]"
+  + " [--accept-readable-home] [--launchers @a,@a/machine,@a/machine/agent] [--max n]"
   + " [--runtimes claude,codex,kimi] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
   + " | seats repo [list] | seats repo add <id> <path> | seats repo rm <id>";
 const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
@@ -39,7 +39,8 @@ export async function seats(ctx: Ctx): Promise<number> {
     case "start": return startCommand(ctx);
     case "deny": return configure(adminCtx(ctx, "turn seats off here"), false);
     case "busy": return busy(adminCtx(ctx, "mark this machine busy"));
-    case "setup-user": return setupUserAdmin(adminCtx(ctx, "set up seat users here"));
+    case "setup-user": return process.getuid?.() === 0 && process.env.WALKIE_APP_AUTHORIZED === "1"
+      ? setupUser(ctx) : setupUserAdmin(adminCtx(ctx, "set up seat users here"));
     case "token": return token(adminCtx(ctx, "set the seats' Claude token"));
     case "repo": return repoCommand(ctx);
     case "resume": return resume(adminCtx(ctx, "resume seats here"));
@@ -48,8 +49,9 @@ export async function seats(ctx: Ctx): Promise<number> {
 }
 
 /** `seats setup-user`: its sudo steps never reach the daemon, so an agent's --apply is audited here. */
-async function setupUserAdmin(ctx: Ctx): Promise<number> {
-  if (ctx.args.flags.get("apply") === true) await auditLocal(ctx, "set up seat users (the root helper, runner and sudo rules) on this machine");
+export async function setupUserAdmin(ctx: Ctx): Promise<number> {
+  if (ctx.args.flags.get("apply") === true && adminCaller(ctx).kind !== "person")
+    throw new UsageError("seats setup-user --apply is for the person at this machine's terminal");
   return setupUser(ctx);
 }
 
@@ -85,11 +87,28 @@ export function availabilityLine(a: HostAvailability | undefined): string {
 /** Seat users whose removal isn't verified, whether seats are on or off (Codex r6 MEDIUM 8). */
 export function quarantineLines(l: SeatsLocalView): string[] {
   if (!l.quarantined?.length) return [];
+  const names = [...l.quarantined].sort((a, b) => Number(a.slice(8)) - Number(b.slice(8)));
+  const reasons = new Map<string, number>();
+  for (const name of names) {
+    const why = l.quarantine_why?.[name] ?? "cleanup has not answered yet";
+    reasons.set(why, (reasons.get(why) ?? 0) + 1);
+  }
+  const sample = names.length <= 5 ? names.join(", ") : `${names.slice(0, 5).join(", ")} …`;
   return [
-    c.yellow(`Seat users not verified removed (their processes or files may remain; Walkie retries every minute): ${l.quarantined.join(", ")}`),
-    ...l.quarantined.filter((u) => l.quarantine_why?.[u]).map((u) => c.dim(`  ${u}: ${safeTerm(l.quarantine_why?.[u] ?? "")}`)),
+    c.yellow(`${names.length} seat user${names.length === 1 ? "" : "s"} awaiting cleanup (hold slots after their seats end; retry backs off to 15 min): ${sample}`),
+    ...(names.length <= 5
+      ? names.map((name) => c.dim(`  ${name}: ${safeTerm(l.quarantine_why?.[name] ?? "cleanup has not answered yet").slice(0, 180)}`))
+      : [...reasons].slice(0, 3).map(([why, count]) => c.dim(`  ${count} × ${safeTerm(why).slice(0, 180)}`))),
+    ...(names.length > 5 && reasons.size > 3 ? [c.dim(`  ${reasons.size - 3} more distinct reasons; use --json for every user`)] : []),
     c.dim("  If one stays: https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional"),
   ];
+}
+
+export function retiredResidueLine(l: SeatsLocalView): string | null {
+  const r = l.retired_residue;
+  if (!r || (!r.homes && !r.vaults)) return null;
+  return `${r.homes} retired seat home${r.homes === 1 ? "" : "s"} hold protected macOS files; Walkie cannot read them. `
+    + `${r.vaults} Apple cache vault entr${r.vaults === 1 ? "y" : "ies"} remain; known entry size ${r.knownBytes} B (opaque contents cannot be measured).`;
 }
 
 export function isolationLines(l: SeatsLocalView): string[] {
@@ -115,10 +134,10 @@ export function isolationLines(l: SeatsLocalView): string[] {
 
 function localLine(l: SeatsLocalView): string {
   if (!l.allow) return `this machine: ${c.dim("seats off")} (turn on: walkie seats allow)`;
-  const who = l.launchers.length ? l.launchers.join(", ") : "the team's owners";
+  const who = launcherPolicyLabel(l);
   const channel = l.channel_ok ? c.dim(`#${l.channel}`) : c.yellow(`#${l.channel}: ${l.channel_error ?? "not ready"}`);
   const as = l.disabled_reason ? c.red("but not running (see below)") : l.ephemeral ? "as fresh seat users" : c.yellow("as your own user");
-  return `this machine: ${c.green("seats allowed")} ${as} · ${availabilityLine(l.availability)} · launchers ${who} · ${l.runtimes.join("+")} · ${l.running} running`
+  return `this machine: ${c.green("seats allowed")} ${as} · ${availabilityLine(l.availability)} · launchers ${who} (person entries cover their agents) · ${l.runtimes.join("+")} · ${l.running} running`
     + `${l.max ? ` (max ${l.max})` : ""} · dir ${l.dir}${l.env?.length ? ` · env +${l.env.join(",")}` : ""} · ${channel}`;
 }
 
@@ -126,15 +145,16 @@ function localLine(l: SeatsLocalView): string {
 export function loginLines(l: SeatsLocalView): string[] {
   if (l.claude_login === "dedicated") return [c.dim("Claude seats use the token set for seats only (walkie seats token set); a running seat can read it.")];
   if (l.claude_login === "unavailable") {
-    // Codex r6 LOW 9: never "runs on this machine's login" when no seat user could use it.
     return [
-      c.yellow("Claude seats can't start here yet: this machine's Claude login is in its Keychain, which a seat user can't use."),
-      c.dim("Give seats a token: claude setup-token, then walkie seats token set (paste it on stdin). Codex seats are not affected."),
+      c.yellow("Claude seats can't start here yet: this machine has no usable Claude access token, or it is near expiry."),
+      c.dim("Use Claude Code here to refresh its login; walkie seats token set is an optional override. Codex seats are not affected."),
     ];
   }
   return [
-    c.yellow("Claude seats run on this machine's own Claude login (your subscription), and a running seat can read that login."),
-    c.dim("To keep it to a token of its own: claude setup-token, then walkie seats token set (paste it on stdin)."),
+    c.yellow(l.ephemeral
+      ? "Claude seats use this machine's Claude subscription; a running seat can read this machine's short-lived Claude access token, never the refresh token."
+      : "Claude seats run as your user and can read everything you can, including your full Claude login."),
+    c.dim("Near expiry, use Claude Code here to refresh the login. walkie seats token set is an optional override."),
   ];
 }
 
@@ -149,7 +169,7 @@ async function token(ctx: Ctx): Promise<number> {
   // What the daemon now says, not what clearing would usually mean (Codex r7 LOW 8).
   if (local.claude_login === "dedicated") ctx.out(`${c.green("set")}: Claude seats use that token only`);
   else if (local.claude_login === "machine") ctx.out(`${c.green("cleared")}: Claude seats use this machine's own login again`);
-  else ctx.out(`${c.green("cleared")}: ${c.yellow("Claude seats can't start here until seats get a token (this machine's login is only in its Keychain)")}`);
+  else ctx.out(`${c.green("cleared")}: ${c.yellow("Claude seats can't start here until this machine has a usable Claude access token")}`);
   return EXIT.ok;
 }
 
@@ -257,6 +277,9 @@ async function list(ctx: Ctx): Promise<number> {
   const v = await ctx.client().seats();
   if (ctx.json) { ctx.out(JSON.stringify(v)); return EXIT.ok; }
   ctx.out(localLine(v.local));
+  for (const entry of v.local.ambiguous_launchers ?? []) ctx.out(c.yellow(`Warning: ${entry} matches multiple admitted machines; rename one machine or use @${entry.slice(1).split("/")[0]}.`));
+  const retired = retiredResidueLine(v.local);
+  if (retired) ctx.out(c.dim(retired));
   for (const line of quarantineLines(v.local)) ctx.out(line);
   const hosts = v.hosts.filter((h) => !h.self);
   if (hosts.length) {
@@ -356,14 +379,19 @@ async function run(ctx: Ctx): Promise<number> {
   const a = res.host.availability;
   // A busy host queues the launch unless fewer than its limit run there (it decides; this is what it last said).
   const queued = a?.state === "busy" && ((a.running ?? 0) >= (a.max ?? 0) || (a.queued ?? 0) > 0) ? busyNote(res.host.hostname, a) : null;
+  const note = permissionModeNote(mode ?? DEFAULT_SEAT_MODE);
   if (!bool(ctx.args, "wait")) {
     if (ctx.json) { ctx.out(JSON.stringify(res)); return EXIT.ok; }
     if (queued) ctx.out(`${c.yellow(queued)} · seat ${res.seat} starts when its person is done`);
     else ctx.out(`${c.green("requested")} a ${runtime} seat on ${res.host.hostname} (${mode ?? DEFAULT_SEAT_MODE}) · seat ${res.seat}`);
+    if (note) ctx.out(c.dim(note));
     ctx.out(c.dim(`follow it: walkie seat show ${res.seat} --follow · stop it: walkie seat stop ${res.seat}`));
     return EXIT.ok;
   }
-  if (!ctx.json) ctx.err(c.dim(`requested a ${runtime} seat on ${res.host.hostname} · seat ${res.seat}; following…`));
+  if (!ctx.json) {
+    ctx.err(c.dim(`requested a ${runtime} seat on ${res.host.hostname} · seat ${res.seat}; following…`));
+    if (note) ctx.err(c.dim(note));
+  }
   return follow(ctx, client, res.seat, int(ctx.args, "wait-timeout", 0) ?? 0);
 }
 
@@ -429,6 +457,15 @@ async function show(ctx: Ctx): Promise<number> {
   printOutput(ctx, s, 0);
   if (TERMINAL_STATES.has(s.state)) printEnd(ctx, s);
   return EXIT.ok;
+}
+
+/**
+ * acceptEdits (the seat's default) auto-approves file edits but still asks before running a shell command, and a
+ * seat can't answer that ask (nobody is at the terminal): those commands are refused, not just asked about.
+ */
+export function permissionModeNote(mode: SeatMode): string | null {
+  if (mode !== "acceptEdits") return null;
+  return "acceptEdits can't run shell commands in a seat (only file edits are auto-approved): add --permission-mode bypassPermissions to allow them.";
 }
 
 /** "queued: arvid-mac is busy until 3:40 PM". */

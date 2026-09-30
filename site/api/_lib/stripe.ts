@@ -3,6 +3,7 @@
 import Stripe from "stripe";
 import { isHttpStatus } from "./http.js";
 import type { LicenseInterval, LicensePlan } from "./license.js";
+import { TEAM_META } from './metadata.js';
 
 export interface PriceLite {
   id: string;
@@ -52,7 +53,9 @@ export interface StripeLike {
   getCheckoutSession(id: string): Promise<CheckoutSessionLite | null>;
   /** With the customer expanded; null when Stripe has no such subscription. */
   getSubscription(id: string): Promise<SubscriptionLite | null>;
-  setSubscriptionMetadata(id: string, metadata: Record<string, string>): Promise<void>;
+  listSubscriptionsByTeam(team: string): Promise<SubscriptionLite[]>;
+  setSubscriptionMetadata(id: string, metadata: Record<string, string>,
+    options?: { idempotencyKey?: string; timeout?: number; maxNetworkRetries?: number }): Promise<void>;
 }
 
 async function orNull<T>(p: Promise<T>): Promise<T | null> {
@@ -88,8 +91,16 @@ export function realStripe(secretKey: string): StripeLike {
     async getSubscription(id) {
       return (await orNull(s.subscriptions.retrieve(id, { expand: ["customer"] }))) as unknown as SubscriptionLite | null;
     },
-    async setSubscriptionMetadata(id, metadata) {
-      await s.subscriptions.update(id, { metadata });
+    async listSubscriptionsByTeam(team) {
+      const found: SubscriptionLite[] = [];
+      if (!/^[0-9a-f]{16}$/.test(team)) throw new Error('invalid_team_id');
+      for await (const sub of s.subscriptions.search({ query: `metadata['${TEAM_META}']:'${team}'`, limit: 100 })) {
+        if (sub.metadata[TEAM_META] === team) found.push(sub as unknown as SubscriptionLite);
+      }
+      return found;
+    },
+    async setSubscriptionMetadata(id, metadata, options) {
+      await s.subscriptions.update(id, { metadata }, options);
     },
   };
 }

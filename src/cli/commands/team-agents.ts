@@ -20,7 +20,13 @@ import { c } from "../format.ts";
 import { enableSeats } from "./seats-enable.ts";
 
 export const TEAM_AGENTS_QUESTION = "Let your team start agents on this machine? They run under their own separate user, use this machine's "
-  + "own Claude/Codex login, and you can turn it off any time with walkie seats deny.";
+  + "own Claude/Codex login. A running seat can read this machine's short-lived Claude access token, never the refresh token. "
+  + "You can turn it off any time with walkie seats deny.";
+export function teamAgentsQuestion(claudeLogin: SeatsLocal["claude_login"]): string {
+  return claudeLogin === "dedicated"
+    ? "Let your team start agents on this machine? They run under their own separate user. Claude seats use the token set for seats only; a running seat can read it. You can turn seats off any time with walkie seats deny."
+    : TEAM_AGENTS_QUESTION;
+}
 
 export const OFF_COMMAND = "walkie seats deny";
 
@@ -92,7 +98,9 @@ export async function teamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
     ctx.out(c.yellow("   --allow-team-agents not applied: agent admin is off on this machine (its person turns it back on: walkie agents admin on)"));
     return "refused";
   }
-  const answer = flag ?? (deps.interactive && !agent ? (isYes(await deps.ask(`${TEAM_AGENTS_QUESTION} (y/N)`)) ? "yes" : "no") : "no");
+  const question = flag === undefined && deps.interactive && !agent
+    ? teamAgentsQuestion((await client.seats()).local.claude_login) : TEAM_AGENTS_QUESTION;
+  const answer = flag ?? (deps.interactive && !agent ? (isYes(await deps.ask(`${question} (y/N)`)) ? "yes" : "no") : "no");
   if (answer === "no") {
     ctx.out(`   ${c.dim(`team agents off${flag || deps.interactive ? "" : " (no terminal to ask; --allow-team-agents turns them on)"}. Later: walkie seats enable`)}`);
     return "declined";
@@ -139,8 +147,8 @@ export async function teamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
   ctx.out(`   ${c.green("team agents on")}: owners can start agents here, each as a fresh user. Off any time: ${c.bold(OFF_COMMAND)}`);
   if (local.disabled_reason) ctx.out(c.yellow(`   they don't run yet: ${local.disabled_reason}`));
   if (local.claude_login === "unavailable") {
-    ctx.out(c.yellow("   Claude agents need a sign-in of their own here (this Mac keeps yours in its Keychain, which their users can't open):"));
-    ctx.out(`   ${c.bold("claude setup-token")}, then ${c.bold("walkie seats token set")} (paste the token)`);
+    ctx.out(c.yellow("   Claude agents need a usable access token from this machine's login. Use Claude Code here to refresh it."));
+    ctx.out(`   Optional override: ${c.bold("claude setup-token")}, then ${c.bold("walkie seats token set")} (paste the token)`);
   }
   if (usable === 0) ctx.out(c.yellow("   no signed-in Claude Code or Codex yet: agents start once one is (see above)"));
   return "allowed";

@@ -40,7 +40,7 @@ beforeAll(async () => {
   const personHome = join(c.root, "arvid-home");
   mkdirSync(join(personHome, ".claude"), { recursive: true });
   chmodSync(personHome, 0o700);
-  writeFileSync(join(personHome, ".claude", ".credentials.json"), '{"claudeAiOauth":{"accessToken":"at","refreshToken":"rt"}}', { mode: 0o600 });
+  writeFileSync(join(personHome, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   signInCodex(personHome);
   const walkieHome = join(c.root, "arvid");
   world = fakeSeatWorld(c.root, walkieHome);

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { RUNNER_PROTOCOL, validSpec } from "../../src/daemon/seats/runner.ts";
+import { MAX_SWEEP_ANSWER_BYTES, boundedSweepAnswer, realRoots, validResidueFolders } from "../../src/daemon/seats/runner-sweep.ts";
 
 const CLI = join(import.meta.dir, "..", "..", "src", "cli", "main.ts");
 const FAKE_CODEX = join(import.meta.dir, "..", "fixtures", "fake-codex", "codex");
@@ -13,6 +14,40 @@ afterEach(() => { while (cleanups.length) cleanups.pop()?.(); });
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const stat = (pid: number) => Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe" }).stdout.toString().trim();
+
+test("previous Talkie folders are exact owned sweep roots, never arbitrary paths", () => {
+  const folder = "/private/var/folders/ab/old-talkie";
+  expect(validResidueFolders([folder, folder])).toEqual([folder]);
+  expect(validResidueFolders([`${folder}/T`])).toBeNull();
+  expect(validResidueFolders(["/tmp/other"])).toBeNull();
+  if (process.platform === "darwin") {
+    expect(realRoots("/Users/walkie-talkie", 550_000, [], [folder]).roots)
+      .toContainEqual({ path: folder, owned: true, sunlnk: true });
+  }
+});
+
+test("a large residue answer is capped by serialized bytes and fails closed", () => {
+  const answer = { verified: true, left: 0, removed: 0, samples: [], notes: [],
+    leftoverDirs: Array.from({ length: 2_000 }, (_, i) => `/private/var/folders/ab/seat/${i}-${"x".repeat(300)}`) };
+  expect(Buffer.byteLength(JSON.stringify(answer))).toBeGreaterThan(MAX_SWEEP_ANSWER_BYTES);
+  const bounded = boundedSweepAnswer(answer);
+  expect(bounded.verified).toBe(false);
+  expect(bounded.left).toBeGreaterThan(0);
+  expect(Buffer.byteLength(`r ${JSON.stringify(bounded)}\n`)).toBeLessThanOrEqual(MAX_SWEEP_ANSWER_BYTES);
+  expect(boundedSweepAnswer({ ...answer, leftoverDirs: [] }).verified).toBe(true);
+});
+
+test("a seat process creates a shared temporary file with mode 0600", () => {
+  const dir = mkdtempSync("/tmp/walkie-seat-umask-");
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "seat-file");
+  const runner = join(import.meta.dir, "..", "..", "src", "daemon", "seats", "runner.ts");
+  const child = 'import { writeFileSync } from "node:fs"; writeFileSync(process.argv[1], "seat");';
+  const script = `import { enforceSeatUmask } from ${JSON.stringify(runner)}; process.umask(0o022); enforceSeatUmask(); const child = Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(child)}, process.argv[1]]); if (child.exitCode !== 0) process.exit(1);`;
+  const result = Bun.spawnSync([process.execPath, "-e", script, file], { stdout: "pipe", stderr: "pipe" });
+  expect(result.exitCode).toBe(0);
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+});
 
 async function waitFor<T>(fn: () => T | undefined | null | false, what: string, ms = 10_000): Promise<T> {
   const until = Date.now() + ms;

@@ -14,6 +14,7 @@ import { MAX_REPLY_BYTES, ORCHESTRATOR_AGENT, ORCHESTRATOR_TOKEN_HEADER, REPLY_T
 import { startRelay, type RelayHandle } from "../../src/relay/server.ts";
 import { hostFor } from "../../src/daemon/orchestrator/host.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { signedPeerFetch } from "../helpers/signed-peer-fetch.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
 
 const FAKE_DIR = join(import.meta.dir, "..", "fixtures", "fake-claude");
@@ -99,6 +100,8 @@ beforeAll(async () => {
   await alex.client().init("acme", "alex");
   await alex.client().invite("kira@example.com", "kira", "member");
   expect((await kira.client().join(alex.peerAddr)).admitted).toBe(true);
+  expect(await kira2.client().join(kira.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
+  await alex.client().request("POST", "/v1/team/admit", { node_id: kira2.d.nodeId, approve: true });
   expect((await kira2.client().join(kira.peerAddr)).admitted).toBe(true);
   await alex.client().post({ channel: "general", text: "hello team" });
 }, 60_000);
@@ -233,7 +236,7 @@ describe("the local orchestrator (ORCH-FIX-11)", () => {
     await expect(person(kira2).orchestratorSay("from the studio")).rejects.toThrow(/WalkieTalkie isn.t running/);
     await expect(person(kira2).orchestratorSay("into kira's thread", first)).rejects.toThrow();
     // and the peer API has no orchestrator route at all
-    const res = await fetch(`http://127.0.0.1:${kira.peerPort}/peer/v1/orchestrator/messages`, { headers: { "X-Walkie-Node": kira2.d.nodeId, "X-Walkie-Team": kira.d.core.teamId as string } });
+    const res = await signedPeerFetch(kira2, kira, "/peer/v1/orchestrator/messages");
     expect(res.status).toBe(404);
   }, 30_000);
 

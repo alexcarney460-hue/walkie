@@ -193,6 +193,7 @@ describe("scan budget and cap (Codex r3 #4)", () => {
     const d = w.disc({ scanBudgetMs: 300, concurrency: 1 });
     await d.tick();
     expect(w.core.discoveryHealth).toMatchObject({ incomplete: true });
+    expect(w.core.store.agents().filter((r) => r.agent.startsWith("kimi-pid")).length).toBeGreaterThan(0);
     for (let i = 0; i < 8; i++) { w.clock.t += TICK; await d.tick(); }
     expect(w.core.store.agents().filter((r) => r.agent.startsWith("kimi-pid")).length).toBe(12);
   });

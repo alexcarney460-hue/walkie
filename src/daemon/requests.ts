@@ -111,10 +111,13 @@ export function admitJoin(core: Core, nodeId: string, approve: boolean, requeste
   core.store.deleteJoinRequest(nodeId);
   core.hub.nodesChanged();
   if (!approve) return null;
-  return core.emit("team.node", {
+  const event = core.emit("team.node", {
     node_id: j.node_id, login: j.login, hostname: j.hostname, pubkey: j.pubkey, ip: j.ip, port: j.port,
+    ...(core.store.getMeta(`peer_sig_required:${j.node_id}`) === "1" && core.store.getMeta(`peer_caps_verified:${j.node_id}`) === "1"
+      ? { peer_sig_v1: true } : {}),
     ...(requestedBy ? { requested_by: requestedBy } : {}),
   }, requestId ? { requestId } : {});
+  return event;
 }
 
 function storedEvent(core: Core, id: string): Event | null {

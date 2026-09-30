@@ -124,9 +124,9 @@ describe("a seats channel is no general restricted channel (Opus r8 1, Codex r8 
 describe("seats get access tokens only (Opus r8 2)", () => {
   test("Claude: the refresh token is dropped; an expiring access token isn't handed over", () => {
     const now = Date.now();
-    const file = JSON.stringify({ claudeAiOauth: { accessToken: "at", refreshToken: "rt", expiresAt: now + 8 * 3_600_000, scopes: ["x"] } });
-    expect(JSON.parse(accessOnlyClaude(file, now) as string)).toEqual({ claudeAiOauth: { accessToken: "at", expiresAt: now + 8 * 3_600_000, scopes: ["x"] } });
-    expect(accessOnlyClaude(JSON.stringify({ claudeAiOauth: { accessToken: "at", refreshToken: "rt", expiresAt: now + 60_000 } }), now)).toBeNull();
+    const file = JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: now + 8 * 3_600_000, scopes: ["user:inference"] } });
+    expect(JSON.parse(accessOnlyClaude(file, now) as string)).toEqual({ claudeAiOauth: { accessToken: "access-token", expiresAt: now + 8 * 3_600_000, scopes: ["user:inference"] } });
+    expect(accessOnlyClaude(JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: now + 60_000 } }), now)).toBeNull();
     expect(accessOnlyClaude(JSON.stringify({ claudeAiOauth: {} }), now)).toBeNull();
     expect(accessOnlyClaude("not json", now)).toBeNull();
   });

@@ -37,6 +37,8 @@ export interface RunOpts {
   readonly caller?: "person" | "agent" | "loop";
   /** A loop run: the lease (node id) it ran under, re-checked before every write (round 3, Codex r2 MED 4). */
   readonly lease?: string;
+  /** A WalkieTalkie scheduled run's renewable leadership check before each write. */
+  readonly canAct?: () => boolean;
 }
 
 export interface RunResult {
@@ -164,7 +166,9 @@ type Expected = Map<string, string>;
  *  - a duplicate flag: both cards still open, on the same board.
  * Then the op(s) and the evidence comment; a duplicate flag is a comment on both cards.
  */
-function apply(d: StewardDeps, m: StewardMove, channel: string, expected: Expected, lease: string | undefined): void {
+function apply(d: StewardDeps, m: StewardMove, channel: string, expected: Expected, lease: string | undefined, canAct?: () => boolean): void {
+  const fence = () => { if (canAct && !canAct()) throw new Error("WalkieTalkie lease expired"); };
+  fence();
   d.idx.flushAll();
   const p = d.idx.project(channel);
   if (!p || p.steward === "off" || p.state !== "active") throw new Error("the project's steward was turned off");
@@ -181,10 +185,11 @@ function apply(d: StewardDeps, m: StewardMove, channel: string, expected: Expect
     if (!keep || keep.state !== "open" || keep.board !== cur.board || expected.get(keep.id) !== fingerprint(keep)) throw new Error("the kept card changed since the plan");
   }
   const w = stewardCtx(d);
-  if (m.to) updateCard(w, m.card, { column: m.to });
-  if (m.blocked_reason) updateCard(w, m.card, { blocked: true, blocked_reason: m.blocked_reason });
+  if (m.to) { fence(); updateCard(w, m.card, { column: m.to }); }
+  if (m.blocked_reason) { fence(); updateCard(w, m.card, { blocked: true, blocked_reason: m.blocked_reason }); }
+  fence();
   comment(w, m.card, m.comment, m.ping.map((h) => `@${h}`));
-  if (!m.to && !m.blocked_reason && keep) comment(w, keep.id, `Board steward: ${m.key} looks like a duplicate of this card (flagged, not archived; a person archives one).`);
+  if (!m.to && !m.blocked_reason && keep) { fence(); comment(w, keep.id, `Board steward: ${m.key} looks like a duplicate of this card (flagged, not archived; a person archives one).`); }
   // This run's own writes are expected from now on (a flag's comment must not void a later move of the same card).
   d.idx.flushAll();
   for (const id of [m.card, ...(keep ? [keep.id] : [])]) {
@@ -248,7 +253,7 @@ async function runLocked(d: StewardDeps, channel: string, prefix: string, opts: 
     // The board write limits apply to the steward like to any agent, per post, the op and its comments together.
     if (!d.core.limiter.take(`write:${STEWARD_AGENT}`, d.core.limits.agentWrite, Date.now(), eventsOf(m))) { deferred++; continue; }
     try {
-      apply(d, m, p.channel, expected, opts.lease);
+      apply(d, m, p.channel, expected, opts.lease, opts.canAct);
       result.applied.push(m.key);
       d.log?.info("steward_move", { project: p.prefix, card: m.key, rule: m.rule, from: m.from, to: m.to ?? null });
     } catch (err) {
@@ -338,4 +343,3 @@ export class StewardLoop {
     }
   }
 }
-

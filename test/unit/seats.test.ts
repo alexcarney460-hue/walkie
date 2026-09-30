@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { requestAllowed, memberByHandle, seatsChannelRule } from "../../src/daemon/roster.ts";
 import { SeatsConfig } from "../../src/daemon/config.ts";
 import { git, readHead } from "../../src/daemon/seats/git.ts";
-import { channelFit, decideRun, decideStop, desiredMembers, launcherAllowed, parseLaunchers, type SeatsPolicy } from "../../src/daemon/seats/rules.ts";
+import { ambiguousLaunchers, channelFit, decideRun, decideStop, desiredMembers, launcherAllowed, launcherPolicyEmpty, parseLaunchers, type SeatsPolicy } from "../../src/daemon/seats/rules.ts";
 import { claudeSeatArgs, codexSeatArgs, codexSeatLine, claudeSeatParser, dropFromSeat, findRuntime, loginEnv, seatEnvFile, seatEnvNameProblem } from "../../src/daemon/seats/runtime.ts";
 import {
   isSeatAgent, parseLauncher, runText, seatAgentName, seatOf, seatsChannel, seatsChannelNode, type SeatRun,
@@ -77,14 +77,59 @@ describe("seat bodies", () => {
 });
 
 describe("who may launch", () => {
-  test("default launchers are the owners at request time; a person, not an agent", () => {
+  test("an empty or all-invalid explicit launcher list admits nobody", () => {
+    expect(launcherPolicyEmpty(null)).toBe(false);
+    expect(launcherPolicyEmpty([])).toBe(true);
+    expect(launcherPolicyEmpty(["bad entry"])).toBe(true);
+    expect(launcherPolicyEmpty(["@alex"])).toBe(false);
+  });
+  test("default launchers are the owners and their agents at request time", () => {
     const t = team();
     const byAlex = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel });
     expect(launcherAllowed(byAlex, t.core.roster, POLICY)).toBeNull();
     const byArvid = ev(t.id, t.arvid, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel });
     expect(launcherAllowed(byArvid, t.core.roster, POLICY)).toBe("not_a_launcher");
     const byAgent = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "orchestrator" });
-    expect(launcherAllowed(byAgent, t.core.roster, POLICY)).toBe("agent_not_allowed");
+    expect(launcherAllowed(byAgent, t.core.roster, POLICY)).toBeNull();
+    const memberAgent = ev(t.id, t.arvid, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "cc-1" });
+    expect(launcherAllowed(memberAgent, t.core.roster, POLICY)).toBe("agent_not_allowed");
+  });
+
+  test("a person entry covers their agents on its admitted machines, with an optional machine limit", () => {
+    const t = team();
+    const otherMachine = tnode("alex", t.alex.login, "alex-studio");
+    feed(t.core, [nodeEv(t.id, t.alex, otherMachine)]);
+    const onMbp = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "cc-1" });
+    const onStudio = ev(t.id, otherMachine, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "cc-2" });
+    const anyMachine = { ...POLICY, launchers: parseLaunchers(["@alex"]) };
+    const mbpOnly = { ...POLICY, launchers: parseLaunchers(["@alex/alex-mbp"]) };
+    expect(launcherAllowed(onMbp, t.core.roster, anyMachine)).toBeNull();
+    expect(launcherAllowed(onStudio, t.core.roster, anyMachine)).toBeNull();
+    expect(launcherAllowed(onMbp, t.core.roster, mbpOnly)).toBeNull();
+    expect(launcherAllowed(onStudio, t.core.roster, mbpOnly)).toBe("agent_not_allowed");
+    expect(desiredMembers(t.core.roster, "arvid", anyMachine)).toEqual(["arvid", "alex"]);
+    expect(desiredMembers(t.core.roster, "arvid", mbpOnly)).toEqual(["arvid", "alex"]);
+  });
+
+  test("a machine entry refuses duplicate admitted hostnames and works again after revocation", () => {
+    const t = team();
+    const duplicate = tnode("alex", t.alex.login, t.alex.hostname);
+    const policy = { ...POLICY, launchers: parseLaunchers([`@alex/${t.alex.hostname}`]) };
+    feed(t.core, [nodeEv(t.id, t.alex, duplicate)]);
+    const person = ev(t.id, duplicate, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel });
+    const agent = ev(t.id, duplicate, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "cc-2" });
+    expect(ambiguousLaunchers(t.core.roster, policy)).toEqual([`@alex/${t.alex.hostname}`]);
+    expect(launcherAllowed(person, t.core.roster, policy)).toBe("launcher_machine_ambiguous");
+    expect(launcherAllowed(agent, t.core.roster, policy)).toBe("launcher_machine_ambiguous");
+    expect(decideRun(agent, { ...ctxFor(t, policy, agent.ts), queued: true })).toMatchObject({ ok: false, reason: "launcher_machine_ambiguous" });
+    expect(decideRun(person, { ...ctxFor(t, policy, person.ts), queued: true })).toMatchObject({ ok: false, reason: "launcher_machine_ambiguous" });
+    const exact = { ...POLICY, launchers: parseLaunchers([`@alex/${t.alex.hostname}/cc-2`]) };
+    expect(launcherAllowed(agent, t.core.roster, exact)).toBe("launcher_machine_ambiguous");
+    expect(launcherAllowed(agent, t.core.roster, { ...POLICY, launchers: parseLaunchers([`@alex/${t.alex.hostname}`, "@alex"]) })).toBeNull();
+    feed(t.core, [nodeEv(t.id, t.alex, duplicate, true)]);
+    expect(ambiguousLaunchers(t.core.roster, policy)).toEqual([]);
+    const original = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel });
+    expect(launcherAllowed(original, t.core.roster, policy)).toBeNull();
   });
 
   test("a named agent is allowed only with its exact machine; a named person from any or the named machine", () => {
@@ -106,6 +151,32 @@ describe("who may launch", () => {
     const t = team();
     const forged = ev(t.id, t.kira, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, handle: "alex" });
     expect(launcherAllowed(forged, t.core.roster, POLICY)).toBe("node_not_admitted");
+  });
+
+  test("an agent keeps the signer, admission, observer and seat-agent boundaries", () => {
+    const t = team();
+    const policy = { ...POLICY, launchers: parseLaunchers(["@alex", "@kira", "@alex/alex-mbp/seat-123", "@alex/alex-mbp/seats"]) };
+    feed(t.core, [memberEv(t.id, t.alex, t.kira, "observer")]);
+    const agent = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "cc-1" });
+    expect(launcherAllowed({ ...agent, author: { ...agent.author, node: t.arvid.keys.nodeId } }, t.core.roster, policy)).toBe("author_node_mismatch");
+    expect(launcherAllowed({ ...agent, author: { ...agent.author, handle: "kira" } }, t.core.roster, policy)).toBe("node_not_admitted");
+    const observer = ev(t.id, t.kira, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: "cc-2" });
+    expect(launcherAllowed(observer, t.core.roster, policy)).toBe("observer");
+    for (const seatAgent of ["seat-123", "seats"]) {
+      const seat = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel, agent: seatAgent });
+      expect(launcherAllowed(seat, t.core.roster, { ...POLICY, launchers: parseLaunchers(["@alex"]) })).toBe("agent_not_allowed");
+      expect(launcherAllowed(seat, t.core.roster, policy)).toBeNull();
+    }
+  });
+
+  test("covered agents may stop as well as launch; other agents cannot stop", () => {
+    const t = team();
+    const stop = { op: "stop", v: 1, seat: "0123456789abcdef:7" };
+    const agent = ev(t.id, t.alex, "msg.post", { text: "Stop seat 0123456789abcdef:7", thread: stop.seat, seat: stop } as never, { channel: t.channel, agent: "cc-1" });
+    const allowed = { ...POLICY, launchers: parseLaunchers(["@alex/alex-mbp"]) };
+    const refused = { ...POLICY, launchers: parseLaunchers(["@alex/alex-studio"]) };
+    expect(decideStop(agent, ctxFor(t, allowed, agent.ts))).toMatchObject({ ok: true, launcher: "alex", hostPerson: false });
+    expect(decideStop(agent, ctxFor(t, refused, agent.ts))).toMatchObject({ ok: false, reason: "agent_not_allowed" });
   });
 
   test("decideRun: fresh, allowed, runtime allowed; stale and turned-off requests are refused", () => {

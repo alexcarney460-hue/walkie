@@ -6,16 +6,13 @@ import { signRequest } from "../../src/daemon/requests.ts";
 import { eventId } from "../../src/protocol/ids.ts";
 import { PROTOCOL_VERSION, type Event, type RosterRequest } from "../../src/protocol/schemas.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { signedPeerFetch } from "../helpers/signed-peer-fetch.ts";
 
 let c: Cluster | null = null;
 afterEach(async () => { await c?.close(); c = null; });
 
 async function sendReq(caller: TestNode, to: TestNode, req: RosterRequest): Promise<{ status: number; json: { event?: { id: string } | null; error?: { code: string; message: string } } }> {
-  const res = await fetch(`http://127.0.0.1:${to.peerPort}/peer/v1/roster-request`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-walkie-node": caller.d.nodeId, "x-walkie-team": to.d.core.teamId as string },
-    body: JSON.stringify(req),
-  });
+  const res = await signedPeerFetch(caller, to, "/peer/v1/roster-request", { method: "POST", body: JSON.stringify(req) });
   return { status: res.status, json: (await res.json()) as never };
 }
 
@@ -62,10 +59,7 @@ describe("F4: an owner's team.node request can't bind a key to another member's 
       v: PROTOCOL_VERSION, team: alex.d.core.teamId as string, id: eventId(fake.nodeId, 1), origin: fake.nodeId, seq: 1, ts: Date.now(),
       author: { handle: "mem", node: fake.nodeId }, kind: "msg.post", channel: "general", body: { text: "I (mem) resign" },
     });
-    const push = await fetch(`http://127.0.0.1:${alex.peerPort}/peer/v1/events`, {
-      method: "POST", headers: { "content-type": "application/json", "x-walkie-node": kira.d.nodeId, "x-walkie-team": alex.d.core.teamId as string },
-      body: JSON.stringify({ events: [forged] }),
-    });
+    const push = await signedPeerFetch(kira, alex, "/peer/v1/events", { method: "POST", body: JSON.stringify({ events: [forged] }) });
     expect(((await push.json()) as { accepted: number }).accepted).toBe(0);
     await Bun.sleep(1_000);
     expect((await mem.client().events({ channel: "general" })).events.find((e) => e.id === forged.id)).toBeUndefined();

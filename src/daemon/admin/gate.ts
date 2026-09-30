@@ -5,6 +5,7 @@
 import { ORCHESTRATOR_AGENT, ORCHESTRATOR_TOKEN_HEADER } from "../../protocol/orchestrator.ts";
 import { HttpError } from "../http.ts";
 import { hostFor } from "../orchestrator/host.ts";
+import { TALKIE_SHELL_HEADER } from "../orchestrator/os-user.ts";
 import type { RouteCtx } from "../local-routes.ts";
 import { appendAudit, recordAdmin } from "./audit.ts";
 import { runFor } from "./runs.ts";
@@ -37,7 +38,11 @@ export function localActor(c: GateCtx): string {
  * An admin action: a person passes (nothing recorded, as before); an agent passes while agent admin is on and the
  * action is audited. `action` says what was done, for the audit line ("enabled seats: same-user, max 12").
  */
-export function adminGate(c: GateCtx, action: string): void {
+export function adminGate(c: GateCtx, action: string, options: { post?: boolean } = {}): void {
+  const privateJoinMint = c.req.method === "POST" && ["/v1/team/invite-code", "/v1/team/add-machine"].includes(new URL(c.req.url).pathname);
+  if (c.req.headers.get(TALKIE_SHELL_HEADER) === "1" && !privateJoinMint) {
+    throw new HttpError(403, "talkie_shell_forbidden", "WalkieTalkie shell access cannot make admin changes; switch WalkieTalkie back to Walkie platform access");
+  }
   if (!agentCaller(c)) return;
   // The name "orchestrator" is this machine's orchestrator's alone (its per-run token proves it): nobody else is
   // audited under it (local-routes.ts refuseReservedAgent, for admin too).
@@ -51,7 +56,7 @@ export function adminGate(c: GateCtx, action: string): void {
     throw new HttpError(403, "agent_admin_off", AGENT_ADMIN_OFF);
   }
   // A remote run's command line is posted once by the peer route (remote.ts); its steps are logged here only.
-  recordAdmin(c.core, entry, { post: !run });
+  recordAdmin(c.core, entry, { post: !run && options.post !== false });
 }
 
 /** A read for an agent (orchestrator status, …): allowed while agent admin is on, not audited (no action). */

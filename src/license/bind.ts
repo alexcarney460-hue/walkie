@@ -10,6 +10,7 @@ import { activateOnAuthority, verifiedPayload } from "./activate.ts";
 import { licenseForTeam } from "./format.ts";
 import { loadRenewToken, RENEWAL_TOKEN, saveRenewToken } from "./renew-token.ts";
 import { replyKey, type LicenseService, type ServiceReply } from "./service.ts";
+import { rosterProof } from '../daemon/compute/team-proof.ts';
 
 /** What happened to the renewal token: stored now, already held for this license, or not available. */
 export type RenewalState = "saved" | "kept" | "missing";
@@ -47,7 +48,9 @@ export async function activateCode(core: Core, service: LicenseService, code: st
   }
   let res: ServiceReply;
   try {
-    res = await service.bind(c, team);
+    const expires_at = core.clock() + 240_000;
+    res = await service.bind(c, team, { ...rosterProof(core), expires_at,
+      bind_signature: core.keys.sign(`walkie-license-bind-v1\n${team}\n${p.lic_id}\n${expires_at}`) });
   } catch (err) {
     core.log.warn("license_bind_failed", { err: err instanceof Error ? err.message : String(err) });
     throw new HttpError(502, "license_service_unavailable", "couldn't reach the license service; check the connection and try again");

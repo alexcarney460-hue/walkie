@@ -14,7 +14,26 @@ export const REVEAL_NONCE_META = "walkie_code_reveal_nonce";
 /** Unix ms when a reveal COMPLETED (the code left the function). Set after the read-back (FINAL Fable 3). */
 export const SHOWN_META = "walkie_code_shown_at";
 export const TEAM_META = "walkie_team";
+export const AUTHORITY_META = "walkie_authority";
+export const AUTHORITY_DEPTH_META = 'walkie_authority_depth';
+export const AUTHORITY_CHAIN_META = 'walkie_authority_chain';
+export const AUTHORITY_PATH_META = 'walkie_authority_path_';
+const AUTHORITY_PATH_CHUNKS = 17; // 100 SHA-256 digests plus separators fit in 6,800 chars.
+export function authorityPathMetadata(chain: readonly string[]): Record<string, string> {
+  const text = chain.join(',');
+  if (text.length > AUTHORITY_PATH_CHUNKS * 400) throw new RangeError('authority_chain_metadata_limit');
+  return Object.fromEntries(Array.from({ length: AUTHORITY_PATH_CHUNKS }, (_, i) =>
+    [`${AUTHORITY_PATH_META}${i}`, text.slice(i * 400, (i + 1) * 400)]));
+}
+export function readAuthorityPath(meta: Readonly<Record<string, string>>): string[] | undefined {
+  const first = meta[`${AUTHORITY_PATH_META}0`];
+  if (!first) return undefined;
+  return Array.from({ length: AUTHORITY_PATH_CHUNKS }, (_, i) => meta[`${AUTHORITY_PATH_META}${i}`] ?? '').join('').split(',');
+}
 export const RENEW_HASH_META = "walkie_renew_hash";
+/** Authority that received the token. These move only when a new renewal hash is issued. */
+export const RENEW_AUTHORITY_META = 'walkie_renew_authority';
+export const RENEW_CHAIN_META = 'walkie_renew_chain';
 /** Unix ms of the last seat/price change the webhook saw: the daemon's daily status check-in compares it (FINAL Codex 4). */
 export const REFRESH_META = "walkie_refresh_at";
 const LEGACY_LICENSE_META = "walkie_license";

@@ -2,7 +2,7 @@
 // (host.ts) decides when to start, restart and switch sessions.
 import { randomUUID } from "node:crypto";
 import { walkieArgv } from "../../hooks/install.ts";
-import { HEARTBEAT_MS } from "./supervisor.ts";
+import { HEARTBEAT_MS, OS_USER_RUNNER_PARENT } from "./supervisor.ts";
 import { killMarkedProcesses } from "./marked-processes.ts";
 import { existsSync, statSync, realpathSync, writeFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -129,6 +129,18 @@ export function withoutUnsupportedClaudeFlag(args: readonly string[], diagnostic
   return unsupportedClaudeFlag(args, diagnostic)?.args ?? null;
 }
 
+/** The dedicated uid gets only its runtime, system tools and the credentials meant for this one process. */
+export function shellChildEnv(base: NodeJS.ProcessEnv, bin: string, walkie: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {
+    PATH: [...new Set([dirname(bin), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])].join(delimiter),
+  };
+  if (base.LANG) env.LANG = base.LANG;
+  if (base.TERM) env.TERM = base.TERM;
+  for (const key of ["WALKIE_AGENT", "WALKIE_HOME", "WALKIE_SOCKET", "WALKIE_ORCHESTRATOR_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"])
+    if (walkie[key]) env[key] = walkie[key];
+  return env;
+}
+
 /** Whether this claude understands `--permission-prompts` (older versions exit on unknown options). */
 export async function supportsPermissionPrompts(bin: string, env: Record<string, string>, signal?: AbortSignal): Promise<boolean> {
   try {
@@ -209,7 +221,8 @@ export class ClaudeChild<S = ClaudeSignal> {
   constructor(
     bin: string, args: string[], cwd: string, env: Record<string, string>, private readonly h: ChildHandlers<S>,
     private readonly parse: (line: string) => S | null = parseClaudeLine as unknown as (line: string) => S | null,
-    lease?: { directory: string; expires: () => number; epoch?: number; hook?: boolean },
+    lease?: { directory: string; expires: () => number; epoch?: number; hook?: boolean;
+      osUser?: { name: string; home: string; runner: string; switch?: string[] } },
   ) {
     const file = lease ? join(lease.directory, `orchestrator-lease-${randomUUID()}.json`) : null;
     const run = lease ? `${lease.epoch ?? 0}.${randomUUID()}` : "";
@@ -217,16 +230,29 @@ export class ClaudeChild<S = ClaudeSignal> {
     let serial = 0;
     const renew = () => {
       if (!lease || !file) return;
-      writeFileSync(`${file}.tmp`, JSON.stringify({ expires: lease.expires(), renewed: Date.now(), serial: serial++, epoch: lease.epoch ?? 0, run }), { mode: 0o600 });
+      writeFileSync(`${file}.tmp`, JSON.stringify({ expires: lease.expires(), renewed: Date.now(), serial: serial++, epoch: lease.epoch ?? 0, run }), { mode: lease.osUser ? 0o644 : 0o600 });
       renameSync(`${file}.tmp`, file);
     };
     renew();
     try {
-      const hookCommand = file ? leaseHookCommand([...walkieArgv(), "--internal-orchestrator-hook", file]) : "";
+      const internal = lease?.osUser ? [lease.osUser.runner] : walkieArgv();
+      const hookCommand = file ? leaseHookCommand([...internal, "--internal-orchestrator-hook", file]) : "";
       const hook = file && lease?.hook ? JSON.stringify({ hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand, timeout: 15 }] }] } }) : null;
-      if (lease) mkdirSync(join(lease.directory, "talkie"), { recursive: true, mode: 0o700 });
-      this.proc = Bun.spawn(file ? [...walkieArgv(), "--internal-orchestrator-supervisor", file, String(process.pid), bin, ...args, ...(hook ? ["--settings", hook] : [])] : [bin, ...args],
-        { cwd: lease ? join(lease.directory, "talkie") : cwd, env: { ...env, ...(file ? { WALKIE_TALKIE_RUN: run } : {}) }, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true });
+      if (lease && !lease.osUser) mkdirSync(join(lease.directory, "talkie"), { recursive: true, mode: 0o700 });
+      const command = file ? [...internal, "--internal-orchestrator-supervisor", file,
+        lease?.osUser ? OS_USER_RUNNER_PARENT : String(process.pid), bin, ...args, ...(hook ? ["--settings", hook] : [])] : [bin, ...args];
+      const spawnEnv = { ...env, ...(file ? { WALKIE_TALKIE_RUN: run } : {}) };
+      const os = lease?.osUser;
+      this.proc = Bun.spawn(os ? os.switch ?? ["sudo", "-n", "-u", os.name, os.runner, "talkie-runner"] : command,
+        { cwd: os ? "/" : lease ? join(lease.directory, "talkie") : cwd,
+          env: os ? { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C" } : spawnEnv,
+          stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true });
+      if (os) {
+        const sink = this.proc.stdin as import("bun").FileSink;
+        sink.write(`${JSON.stringify({ argv: command, cwd: os.home, env: { ...spawnEnv, HOME: os.home,
+          USER: os.name, LOGNAME: os.name, CLAUDE_CONFIG_DIR: join(os.home, ".claude"), TMPDIR: "/tmp" } })}\n`);
+        sink.flush();
+      }
     } catch (err) {
       if (file) rmSync(file, { force: true });
       throw err;

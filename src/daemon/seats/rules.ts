@@ -1,7 +1,7 @@
 // Which seat requests a host acts on (PROTOCOL §11, SECURITY.md threat 13). Pure: no I/O.
 import type { Event } from "../../protocol/schemas.ts";
 import {
-  parseLauncher, seatOf, seatsChannel, type LauncherEntry, type SeatRun, type SeatRuntime, type SeatStop,
+  isSeatAgent, parseLauncher, seatOf, seatsChannel, type LauncherEntry, type SeatRun, type SeatRuntime, type SeatStop,
 } from "../../protocol/seats.ts";
 import { nodeMember, type ChannelRec, type Roster } from "../roster.ts";
 
@@ -57,10 +57,38 @@ export function channelFit(ch: ChannelRec | undefined, me: string, allowed: read
   return extra.length ? "channel_too_wide" : null;
 }
 
+/** A hostname scopes one admitted machine only; duplicates make the entry unusable. */
+function machineCount(r: Roster, handle: string, hostname: string): number {
+  let count = 0;
+  for (const n of r.nodes.values()) {
+    if (n.hostname !== hostname) continue;
+    const member = nodeMember(r, n.node_id);
+    if (member?.handle === handle && member.role !== "observer") count++;
+  }
+  return count;
+}
+
+/** Machine entries the host should warn about even before somebody tries to launch. */
+export function ambiguousLaunchers(r: Roster, policy: SeatsPolicy): string[] {
+  const entries = policy.launchers ?? [];
+  return [...new Set(entries.filter((e) => e.machine && machineCount(r, e.handle, e.machine) > 1)
+    .map((e) => `@${[e.handle, e.machine, e.agent].filter(Boolean).join("/")}`))];
+}
+
+function entryAllowed(r: Roster, entries: readonly LauncherEntry[], handle: string, hostname: string | undefined, agent: string | undefined): string | null {
+  let ambiguous = false;
+  for (const e of entries) {
+    if (e.handle !== handle || e.agent !== agent || (e.machine !== undefined && e.machine !== hostname)) continue;
+    if (e.machine === undefined || machineCount(r, handle, e.machine) === 1) return null;
+    ambiguous = true;
+  }
+  return ambiguous ? "launcher_machine_ambiguous" : "not_listed";
+}
+
 /**
  * The author may launch or stop here: signed by an admitted, non-observer machine of the author's own login, and
- * - a person (no `author.agent`): listed (`@h`, or `@h/<that machine>`), or, with no list, an owner right now;
- * - an agent: only when the host lists exactly `@h/<that machine>/<agent>` (never by default).
+ * - a person or their non-seat agent: listed (`@h`, or `@h/<that machine>`), or, with no list, an owner right now;
+ * - an agent named exactly by `@h/<that machine>/<agent>`; seat agents require this exact entry.
  */
 export function launcherAllowed(ev: Event, r: Roster, policy: SeatsPolicy): string | null {
   if (ev.author.node !== ev.origin) return "author_node_mismatch";
@@ -70,12 +98,18 @@ export function launcherAllowed(ev: Event, r: Roster, policy: SeatsPolicy): stri
   const hostname = r.nodes.get(ev.origin)?.hostname;
   const agent = ev.author.agent;
   if (agent !== undefined) {
-    const listed = policy.launchers?.some((e) => e.handle === member.handle && e.machine === hostname && e.agent === agent);
-    return listed ? null : "agent_not_allowed";
+    const exact = policy.launchers ? entryAllowed(r, policy.launchers.filter((e) => e.machine !== undefined), member.handle, hostname, agent) : "not_listed";
+    if (exact === null) return null;
+    if (isSeatAgent(agent)) return exact === "launcher_machine_ambiguous" ? exact : "agent_not_allowed";
+    if (policy.launchers) {
+      const covered = entryAllowed(r, policy.launchers, member.handle, hostname, undefined);
+      return covered === null ? null : exact === "launcher_machine_ambiguous" || covered === "launcher_machine_ambiguous" ? "launcher_machine_ambiguous" : "agent_not_allowed";
+    }
+    return member.role === "owner" ? null : "agent_not_allowed";
   }
   if (policy.launchers) {
-    const listed = policy.launchers.some((e) => e.agent === undefined && e.handle === member.handle && (e.machine === undefined || e.machine === hostname));
-    return listed ? null : "not_a_launcher";
+    const listed = entryAllowed(r, policy.launchers, member.handle, hostname, undefined);
+    return listed === "not_listed" ? "not_a_launcher" : listed;
   }
   return member.role === "owner" ? null : "not_a_launcher";
 }
@@ -146,4 +180,8 @@ export function decideStop(ev: Event, ctx: DecideCtx): StopDecision | null {
 export function parseLaunchers(list: readonly string[] | undefined): LauncherEntry[] | null {
   if (!list) return null;
   return list.map(parseLauncher).filter((e): e is LauncherEntry => e !== null);
+}
+
+export function launcherPolicyEmpty(list: readonly string[] | null | undefined): boolean {
+  return list != null && parseLaunchers(list)?.length === 0;
 }

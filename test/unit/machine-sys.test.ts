@@ -71,7 +71,7 @@ describe("sampler", () => {
     });
     expect(await b.tick()).toBe(true);
     expect(published[1]!.sys).toBeUndefined();
-    expect(published[1]!.mem).toEqual(MEM);
+    expect(published[1]!.mem).toEqual({ ...MEM, free: 8 * GiB });
   });
 });
 

@@ -1,8 +1,8 @@
 // "Add a machine" page (/join#<code>): an owner sent a teammate a link whose #fragment holds a one-time invite code
 // (and the team's release, "&v=v1.2.3"). Browsers never send the fragment to a server; this page reads it, removes
-// it from the address bar and history entry at once, and shows the install command to run on the new machine.
+// it from the address bar and history entry at once, and offers the macOS package plus a terminal fallback.
 // It makes no network request of any kind (the page's CSP is connect-src 'none'), stores nothing, and never puts
-// the code anywhere but the command on screen. The install URL comes from the page (data-install).
+// the code anywhere but the local deep link and the fallback command on screen. The install URL comes from the page.
 // States: ready, expired, invalid (not a code), missing (no fragment: opened without one, or reloaded after reading).
 (function (root) {
   "use strict";
@@ -64,10 +64,98 @@
   }
 
   function command(installUrl, code, tag) {
-    return "curl -fsSL " + installUrl + " | " + (tag ? "WALKIE_VERSION=" + tag + " " : "") + "sh -s -- --invite " + code;
+    return "curl -fsSL " + installUrl + " | " + (tag ? "WALKIE_MIN_VERSION=" + tag + " " : "") + "sh -s -- --invite " + code;
+  }
+
+  // ---- local seat consent ---------------------------------------------------------------------
+  // The signed package has no invite. The selected choice travels only through the local app handoff.
+
+  var SEAT_MAX_DEFAULT = 4;
+  var SEAT_MAX_MIN = 1;
+  var SEAT_MAX_MAX = 64; // the CLI's "seats allow --max" ceiling (protocol/seats.ts MAX_CONCURRENT_LIMIT)
+
+  /** A typed seat maximum, clamped to what the CLI's `seats allow --max` accepts; empty or non-numeric is the default. */
+  function clampSeatMax(raw) {
+    var s = String(raw === undefined || raw === null ? "" : raw).trim();
+    var n = Math.trunc(Number(s));
+    if (s === "" || !isFinite(n)) return SEAT_MAX_DEFAULT;
+    return Math.min(SEAT_MAX_MAX, Math.max(SEAT_MAX_MIN, n));
+  }
+
+  /**
+   * Wires the consent controls once, at start: choosing "yes" reveals the seat maximum, and an out-of-range or
+   * non-numeric maximum is clamped back on change (not on every keystroke, so the card's aria-live region stays
+   * quiet while typing).
+   */
+  function bindConsent(page) {
+    var choices = page.querySelectorAll("[data-consent-choice]");
+    var maxBlock = page.querySelector("[data-consent-max]");
+    var maxInput = page.querySelector("[data-consent-max-input]");
+    if (!choices.length || !maxBlock || !maxInput) return;
+    var sync = function () {
+      var yes = false;
+      for (var i = 0; i < choices.length; i++) {
+        if (choices[i].checked && choices[i].getAttribute("data-consent-choice") === "yes") yes = true;
+      }
+      maxBlock.hidden = !yes;
+    };
+    for (var i = 0; i < choices.length; i++) choices[i].addEventListener("change", sync);
+    maxInput.addEventListener("change", function () { maxInput.value = String(clampSeatMax(maxInput.value)); });
+  }
+
+  /** Back to the default "yes" (Alex 2026-09-28), seat maximum shown and reset: a previous link's answer never survives into this one. */
+  function resetConsent(page) {
+    var choices = page.querySelectorAll("[data-consent-choice]");
+    for (var i = 0; i < choices.length; i++) choices[i].checked = choices[i].getAttribute("data-consent-choice") === "yes";
+    var maxInput = page.querySelector("[data-consent-max-input]");
+    if (maxInput) maxInput.value = String(SEAT_MAX_DEFAULT);
+    var maxBlock = page.querySelector("[data-consent-max]");
+    if (maxBlock) maxBlock.hidden = false;
+  }
+
+  function handoff(code, yes, max, tag) {
+    if (!CODE_RE.test(code)) throw new Error("invalid invite");
+    return "wal" + "kie-join://join#" + code + "&seats=" + (yes ? "yes&max=" + clampSeatMax(max) : "no&max=0") + (tag && TAG_RE.test(tag) ? "&v=" + tag : "");
   }
 
   var FIELDS = ["handle", "expires", "command", "version"];
+  var pendingCode = null;
+  var pendingTag = null;
+  var downloadStarted = 0;
+
+  function bindInstall(page, win) {
+    var button = page.querySelector("[data-join-package]");
+    var open = page.querySelector("[data-join-open]");
+    if (!button || !open) return;
+    var available = page.getAttribute("data-package-available") === "true";
+    button.hidden = !available;
+    var instructions = page.querySelector("[data-package-instructions]");
+    if (instructions) instructions.hidden = !available;
+    var fallback = page.querySelector("[data-terminal-fallback]");
+    if (fallback && !available) fallback.open = true;
+    var openApp = function () {
+      if (!pendingCode) return;
+      var yes = page.querySelector('[data-consent-choice="yes"]');
+      var max = page.querySelector("[data-consent-max-input]");
+      win.location.assign(handoff(pendingCode, !!(yes && yes.checked), max && max.value, pendingTag));
+    };
+    button.addEventListener("click", function () {
+      if (!pendingCode || !available) return;
+      // The package URL is fixed; the bearer code is never appended to a request.
+      var link = page.querySelector("[data-package-url]");
+      if (link) link.click();
+      downloadStarted = Date.now();
+      open.hidden = false;
+    });
+    open.addEventListener("click", openApp);
+    win.addEventListener("focus", function () {
+      // Returning from the package installer is the browser's only local signal that the app may be ready.
+      if (downloadStarted && Date.now() - downloadStarted > 1000) {
+        downloadStarted = 0;
+        openApp();
+      }
+    });
+  }
 
   /**
    * Reads and strips the fragment, then shows the matching state; every field is cleared first, so nothing of a
@@ -87,20 +175,35 @@
     var parsed = parseFragment(hash);
     var info = parsed.code ? describe(parsed.code) : null;
     var state = parsed.error || (!info ? "invalid" : info.expiresAt <= env.now ? "expired" : "ready");
+    pendingCode = state === "ready" ? parsed.code : null;
+    pendingTag = state === "ready" ? parsed.tag : null;
+    downloadStarted = 0;
+    var open = page.querySelector("[data-join-open]");
+    if (open) open.hidden = true;
     var field = function (name, text) {
       var els = page.querySelectorAll('[data-field="' + name + '"]');
       for (var i = 0; i < els.length; i++) els[i].textContent = text;
     };
     for (var f = 0; f < FIELDS.length; f++) field(FIELDS[f], "");
     var consent = page.querySelectorAll("[data-team-agents]");
-    for (var k = 0; k < consent.length; k++) consent[k].hidden = !(state === "ready" && parsed.agents);
+    for (var k = 0; k < consent.length; k++) consent[k].hidden = state !== "ready";
+    resetConsent(page);
+    var yesChoice = page.querySelector('[data-consent-choice="yes"]');
+    var noChoice = page.querySelector('[data-consent-choice="no"]');
+    if (yesChoice) yesChoice.disabled = !!(info && info.role === "observer");
+    if (info && info.role === "observer" && noChoice && yesChoice) {
+      yesChoice.checked = false;
+      noChoice.checked = true;
+      var maxForObserver = page.querySelector("[data-consent-max]");
+      if (maxForObserver) maxForObserver.hidden = true;
+    }
     if (info) {
       field("handle", "@" + info.handle);
       field("expires", formatDate(info.expiresAt));
     }
     if (state === "ready") {
       field("command", command(page.getAttribute("data-install") || "", parsed.code, parsed.tag));
-      field("version", parsed.tag ? "Installs " + parsed.tag + ", the release your team runs." : "Installs the latest release.");
+      field("version", parsed.tag ? "Installs the newest compatible release, at least " + parsed.tag + "." : "Installs the default release.");
     }
     var states = page.querySelectorAll("[data-state]");
     for (var i = 0; i < states.length; i++) states[i].classList.toggle("is-on", states[i].getAttribute("data-state") === state);
@@ -122,13 +225,18 @@
    * between stripped entries) shows "missing", so no earlier link's command stays on screen.
    */
   function start(win, doc, clock) {
+    var page = doc.querySelector("[data-join]");
+    if (page) { bindConsent(page); bindInstall(page, win); }
     var again = function () { run({ window: win, document: doc, now: clock() }); };
     win.addEventListener("hashchange", function () { if (win.location.hash) again(); });
     win.addEventListener("popstate", again);
     again();
   }
 
-  var api = { parseFragment: parseFragment, describe: describe, command: command, run: run, start: start };
+  var api = {
+    parseFragment: parseFragment, describe: describe, command: command, handoff: handoff, run: run, start: start,
+    clampSeatMax: clampSeatMax, bindConsent: bindConsent, SEAT_MAX_DEFAULT: SEAT_MAX_DEFAULT, SEAT_MAX_MIN: SEAT_MAX_MIN, SEAT_MAX_MAX: SEAT_MAX_MAX,
+  };
   if (typeof module === "object" && module && module.exports) module.exports = api;
   else if (root && root.document) start(root, root.document, Date.now);
 })(typeof window !== "undefined" ? window : null);

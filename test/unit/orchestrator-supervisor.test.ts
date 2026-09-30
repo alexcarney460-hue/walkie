@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { supervisorParentValid, OS_USER_RUNNER_PARENT } from "../../src/daemon/orchestrator/supervisor.ts";
+
+test("dedicated uid supervisor accepts the runner parent only with an explicit sentinel", () => {
+  expect(supervisorParentValid(OS_USER_RUNNER_PARENT, 432)).toBe(true);
+  expect(supervisorParentValid(123, 432)).toBe(false);
+  expect(supervisorParentValid(432, 432)).toBe(true);
+});
 
 function alive(pid: number): boolean {
   try { process.kill(-pid, 0); return true; } catch { return false; }

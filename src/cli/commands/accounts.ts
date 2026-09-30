@@ -98,7 +98,7 @@ export async function accounts(ctx: Ctx): Promise<number> {
   if (sub && sub !== "list") {
     const r = await vaultCommand(ctx, sub);
     if (r !== null) return r;
-    throw new UsageError(`unknown accounts command "${sub}" (add, remove, policy, vault, pick, exec, shims, split, pool, personal, promote)`);
+    throw new UsageError(`unknown accounts command "${sub}" (add, remove, policy, vault, pick, exec, shims, split, pool, personal, promote, borrow, allow-proxy, trust-cli)`);
   }
   // RESET-CLOCK-1: every machine's accounts, windows and resets, and who uses what now (for an orchestrator).
   if (bool(ctx.args, "all")) return fleetCommand(ctx);

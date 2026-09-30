@@ -7,6 +7,7 @@ import type {
   MeView, MobileStatus, NodeView, OrchestratorAccess, OrchestratorView, OrchMessage, PairView, PendingJoin, PlanLimitDetails, PlanView, ProjectView, ProjectsPayload,
   ResetAttemptView, ResetResult, Role, RoomFileDetail, RoomFileView, TeamView, TimelineEntry,
   SeatMode, SeatRuntime, SeatsLocalView, SeatsView,
+  Schedule,
   ImportOptions, ImportPlan, ImportSelection, ImportStatus, JobView, SyncResult, SyncView,
 } from "./types.ts";
 import type { ActivationResult } from "../lib/plan.ts";
@@ -217,6 +218,12 @@ export const api = {
   pending: () => request<{ requests: PendingJoin[] }>("GET", "/v1/team/pending"),
   admit: (b: { node_id: string; approve: boolean }) => request<{ event?: Event }>("POST", "/v1/team/admit", b),
   orchestrator: () => request<OrchestratorView>("GET", "/v1/orchestrator"),
+  schedules: () => request<{ schedules: Schedule[]; status: string | null }>("GET", "/v1/orchestrator/schedules"),
+  scheduleNext: (cron: string) => request<{ times: number[] }>("GET", `/v1/orchestrator/schedules/next?cron=${encodeURIComponent(cron)}`),
+  scheduleAdd: (body: Pick<Schedule, "name" | "cron" | "task">) => request<{ schedule: Schedule }>("POST", "/v1/orchestrator/schedules", body),
+  scheduleEdit: (id: string, body: Partial<Pick<Schedule, "name" | "cron" | "task" | "enabled">>) => request<{ schedule: Schedule }>("PATCH", `/v1/orchestrator/schedules/${encodeURIComponent(id)}`, body),
+  scheduleRemove: (id: string) => request<{ removed: boolean }>("DELETE", `/v1/orchestrator/schedules/${encodeURIComponent(id)}`),
+  scheduleRunNow: (id: string) => request<{ run_id: string }>("POST", `/v1/orchestrator/schedules/${encodeURIComponent(id)}/run-now`, {}),
   /** This machine's local orchestrator conversation (ORCH-FIX-11). */
   orchestratorMessages: (limit = 1_000, since?: number) =>
     request<{ messages: OrchMessage[] }>("GET", `/v1/orchestrator/messages?limit=${limit}${since !== undefined ? `&since=${since}` : ""}`),

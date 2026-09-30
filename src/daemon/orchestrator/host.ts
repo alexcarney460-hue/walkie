@@ -1,4 +1,5 @@
-import { Leadership } from "./leadership.ts";
+import { Leadership, type ScheduleClaim } from "./leadership.ts";
+import type { ScheduleClaimResult } from "./schedule-claims.ts";
 import type { LeadGrant } from "./lease.ts";
 import type { PeerClient } from "../peer-client.ts";
 import { electLead } from "./lead.ts";
@@ -28,8 +29,14 @@ import { AutoPilot, defaultLogins, leadIfRunning, needsLoginText, peerLive, type
 import type { Logins } from "./logins.ts";
 import { FIRST_RUN_PROMPT, playbook } from "./playbook.ts";
 import { walkieArgv } from "../../hooks/install.ts";
-import { ClaudeChild, childEnv, claudeArgs, claudeBinaryIdentity, findClaude, supportsPermissionPrompts, unsupportedClaudeFlag, walkieMcpConfig } from "./process.ts";
+import { ClaudeChild, childEnv, shellChildEnv, claudeArgs, claudeBinaryIdentity, findClaude, supportsPermissionPrompts, unsupportedClaudeFlag, walkieMcpConfig } from "./process.ts";
+import { TalkieOsUser, type TalkieOsDeps } from "./os-user.ts";
+import { readClaudeToken, systemKeychain, type TokenResult } from "../../accounts/adapters/claude.ts";
+import { TALKIE_USER } from "../seats/talkie-user.ts";
 import { vmMayLead, setVmLeadEligible } from "./vm-lead.ts";
+import { Schedules } from "./schedules.ts";
+import type { CapacitySnapshot } from "./capacity-summary.ts";
+import type { CatchUp } from "../requests.ts";
 
 export interface OrchestratorOptions {
   /** Restart backoff after a crash: base · 2^n, capped (default 1 s → 60 s). */
@@ -58,6 +65,12 @@ export interface OrchestratorOptions {
   leadOfflineMs?: number;
   /** The model logins on this machine (tests); default detectLogins (logins.ts). */
   logins?: () => Promise<Logins>;
+  /** Test seam for the installed seat helper and uid switch. */
+  shellUser?: TalkieOsDeps;
+  /** Test seam for short-lived Claude credentials; production refreshes ten minutes before expiry. */
+  shellTokenMarginMs?: number;
+  /** Test seam: replaces the read of the Claude login token handed to the shell user (file or Keychain). */
+  readShellToken?: (signal: AbortSignal) => Promise<TokenResult>;
 }
 
 export interface StartRequest {
@@ -76,7 +89,7 @@ export interface StartRequest {
  * a message still queued then is refused, not run. The unix socket's has none (the OS user's own socket).
  */
 export interface MessageOrigin {
-  readonly via: "dashboard" | "cli";
+  readonly via: "dashboard" | "cli" | "schedule";
   readonly signal?: AbortSignal;
   /** The credential's absolute end (a dashboard session's deadline): checked again when the message runs (ORCH-FIX-12). */
   readonly expiresAt?: number;
@@ -117,6 +130,8 @@ interface Turn {
   /** Live text: raw (bounded by MAX_REPLY_BYTES), what was sent (redacted, whole lines), whether it stopped. */
   liveRaw: string; liveBytes: number; liveSent: string; liveHalted: boolean;
   interrupted: boolean; startedAt: number;
+  refreshing?: boolean;
+  refreshAccepted?: boolean;
   /** The message being answered (re-queued if its session could not be resumed). */
   item: Item;
 }
@@ -133,6 +148,10 @@ const MAX_RAPID_FAILURES = 5;
 
 export interface HostDeps {
   core: Core; log: Logger; client?: PeerClient;
+  catchUp?: CatchUp;
+  boardRefresh?: (canAct: () => boolean) => Promise<string>;
+  capacityTargets?: () => readonly string[];
+  capacitySnapshot?: () => CapacitySnapshot;
   /** The team's machines with their heartbeats (views.ts nodesView), for the lead election. */
   nodes?: () => NodeView[];
 }
@@ -165,6 +184,8 @@ export class OrchestratorHost {
   private attempt = 0;
   private lastError: string | undefined;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private shellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private shellTokenExpiresAt: number | null = null;
   /** The lifecycle operation in progress (serial). */
   private lifecycle: Promise<void> = Promise.resolve();
   private closed = false;
@@ -201,25 +222,76 @@ export class OrchestratorHost {
   /** A vault account's token for the child only (never logged, stored or shown). */
   private authEnv: Record<string, string> = {};
   private stopping = false;
+  /**
+   * Bumped only by a request to stop for good (Stop, daemon shutdown, a monitor failure, a give-up). An operation that
+   * captured it before it started drops itself when it changed, so a Stop that arrives while a Start is still queued,
+   * acquiring the lease or halting the old run is never erased by the Start's own fence reset.
+   */
+  private stopRequests = 0;
+  /** Invalidates asynchronous restart and settings-switch work after stop, give-up, or a newer attempt. */
+  private runGeneration = 0;
+  /** Only terminal lifecycle changes invalidate an attempt's right to use the shared shell uid. */
+  private finalGeneration = 0;
+  private probeController: AbortController | null = null;
+  /** Aborted (and dropped) by every final fence: waits on slow vault, keychain and privileged-helper work race it. */
+  private fenceController: AbortController | null = null;
   /** While active: re-checks that this machine still counts as its person (checkPlace). */
   private resumeTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly leadership: Leadership;
+  private readonly shellUser: TalkieOsUser;
   private requestingStart = false;
   private gateTimer: ReturnType<typeof setInterval> | null = null;
+  private monitorFault = false;
+  readonly schedules: Schedules;
+  private readonly scheduleReplies = new Map<string, { text: string; ok: boolean }>();
 
   constructor(private readonly deps: HostDeps, private readonly opts: OrchestratorOptions = {}) {
     this.core = deps.core;
     this.log = deps.log;
     this.statePath = join(this.core.paths.home, "orchestrator.json");
+    this.shellUser = new TalkieOsUser(this.core.paths.socket, (token) => this.acceptsToken(token), {
+      ...opts.shellUser, leaseExpires: () => this.leadership.valid ? this.leadership.expiresAt : 0,
+      cleanupFile: join(this.core.paths.home, "orchestrator-uid-cleanup.sqlite"),
+      monitorFailure: (reason) => this.monitorFailed(reason),
+    });
     this.leadership = new Leadership({ core: this.core, client: deps.client, renewMs: opts.autoCheckMs,
       preferred: () => this.preferredLead(), lost: () => this.leaseLost(),
       canRequest: () => vmMayLead(this.core, this.deps.nodes?.() ?? []) });
     this.core.orchestratorCanAct = () => this.leadership.valid;
+    this.schedules = new Schedules(this.core, {
+      valid: () => this.leadership.valid && !!this.state?.active && this.phase !== "stopped",
+      epoch: () => this.leadership.epoch,
+      leaseFailure: () => this.leadership.leaseFailure,
+      claim: (id, slot, run, runNow, targets) => this.leadership.claimSchedule(id, slot, run, runNow, targets),
+      prepare: (task, canAct) => "template" in task && task.template === "board-refresh" && deps.boardRefresh ? deps.boardRefresh(canAct) : Promise.resolve(""),
+      turn: (prompt) => this.say(prompt, undefined, { via: "schedule" }).id,
+      reply: (id) => { const reply = this.scheduleReplies.get(id) ?? null; if (reply) this.scheduleReplies.delete(id); return reply; },
+      interrupt: (id) => { const m = this.core.store.orchMessage(id); if (m) this.interrupt(m.thread); },
+      capacityTargets: deps.capacityTargets,
+      capacitySnapshot: deps.capacitySnapshot,
+    }, deps.client, deps.catchUp);
   }
 
-  rosterChanged(): void { this.checkPlace(); }
+  private monitorFailed(reason: string): void {
+    this.monitorFault = true;
+    this.lastError = reason;
+    this.requestStop();
+    void this.serial(async () => {
+      try { await this.stopNow(reason, 2_000); }
+      finally { this.lastError = reason; this.status("offline", reason, true); }
+    }).catch((err) => this.log.warn("orchestrator_monitor_cleanup_failed", { err: scrub(String(err)).slice(0, 200) }));
+  }
+
+  rosterChanged(): void {
+    this.checkPlace();
+    void this.schedules.ensureChannel().catch((err) => this.log.warn("schedule_channel_repair_failed", { err: String(err).slice(0, 200) }));
+  }
 
   grantLeadership(node: string): LeadGrant { return this.leadership.grant(node); }
+  holdsScheduleLease(node: string, epoch: number): boolean { return this.leadership.holds(node, epoch); }
+  claimSchedule(node: string, claim: ScheduleClaim): ScheduleClaimResult {
+    return this.leadership.claimFromPeer(node, claim);
+  }
 
   setLeadEligible(on: boolean): void { setVmLeadEligible(this.core, on); }
 
@@ -237,6 +309,9 @@ export class OrchestratorHost {
   }
 
   private leaseLost(): void {
+    this.fenceFinal();
+    this.leadership.stop();
+    this.schedules.abandon();
     this.childToken = null;
     this.child?.terminate();
     if (!this.closed && this.state) { this.state = { ...this.state, active: false }; this.save(); }
@@ -271,7 +346,11 @@ export class OrchestratorHost {
     // confirmed to be the group this host started (group-record.ts), before any new Claude starts.
     const stale = this.state?.groups ?? [];
     if (this.state && stale.length) { this.state = { ...this.state, groups: [] }; this.save(); }
+    const mark = this.stopRequests;
     this.lifecycle = this.lifecycle.then(async () => {
+      try { await this.shellUser.cleanupStale(); } catch (err) {
+        this.log.warn("orchestrator_stale_uid_cleanup_failed", { err: (err as Error).message });
+      }
       if (stale.length) {
         const ended = await endStaleGroups(stale);
         this.log.info("orchestrator_stale_groups", { recorded: stale.length, ended: ended.length });
@@ -280,11 +359,12 @@ export class OrchestratorHost {
       if (this.state.owner !== this.core.myHandle()) { this.state = { ...this.state, active: false }; this.save(); return; }
       if (this.gaveUp) { this.phase = "failed"; this.lastError = "WalkieTalkie kept failing before the daemon restarted"; return; }
       this.log.info("orchestrator_resumed", { started_at: this.state.started_at });
-      await this.boot();
+      try { await this.boot(mark); } catch (err) { await this.bootFailed(err); }
     }).catch((err) => this.log.warn("orchestrator_init_failed", { err: (err as Error).message }));
     if (this.opts.auto) {
       this.pilot = new AutoPilot(this.autoHost(), { ...(this.opts.autoCheckMs ? { everyMs: this.opts.autoCheckMs } : {}), ...(this.opts.leadOfflineMs ? { leadOfflineMs: this.opts.leadOfflineMs } : {}), ...(this.opts.logins ? { logins: this.opts.logins } : {}) });
       void this.lifecycle.then(() => this.pilot?.start());
+      this.schedules.start();
     }
   }
 
@@ -302,7 +382,8 @@ export class OrchestratorHost {
   start(req: StartRequest): Promise<void> {
     // pre.8 (Alex: "it should just run on its own"): on the machine that leads, a start by hand means "run
     // automatically"; manual mode is only a start on a machine that doesn't lead (`walkie talkie start --here`).
-    return this.serial(() => { this.handGen++; return this.startNow(req, this.pilot && this.selfLeads() ? "auto" : "manual", true); });
+    const mark = this.stopRequests;
+    return this.serial(() => { this.handGen++; return this.startNow(req, this.pilot && this.selfLeads() ? "auto" : "manual", true, mark); });
   }
 
   /** Whether this machine would lead if it ran (its stop and manual mode aside). */
@@ -316,8 +397,10 @@ export class OrchestratorHost {
    * here when this machine leads, else stands by; the next check (now) decides.
    */
   resumeAuto(): Promise<OrchestratorView["local"]> {
+    const mark = this.stopRequests;
     return this.serial(async () => {
       this.handGen++;
+      this.monitorFault = false;
       this.ensureState();
       const s = this.state;
       if (!s) throw new HttpError(409, "no_team", "not in a team yet");
@@ -331,23 +414,27 @@ export class OrchestratorHost {
         this.restarts = 0;
         this.attempt = 0;
         if (this.phase === "failed") this.phase = "stopped";
-        await this.autoStart();
+        await this.autoStart(mark);
       }
       else void Promise.resolve().then(() => this.pilot?.tick());
       return this.view();
     });
   }
 
-  private async startNow(req: StartRequest, mode: "auto" | "manual", byHand = false): Promise<void> {
+  private async startNow(req: StartRequest, mode: "auto" | "manual", byHand = false, mark = this.stopRequests): Promise<void> {
     // Only a start by hand clears a stop by hand: an auto start never does (Codex RC HIGH 1).
     if (!byHand && mode === "auto" && this.state?.stopped_by_hand) return;
     if (this.closed) throw new HttpError(503, "unavailable", "the daemon is shutting down");
+    if (this.stopRequests !== mark) return; // a Stop came in after this start was asked for: the Stop wins
     const owner = this.core.myHandle();
     if (!this.core.teamId || !owner) throw new HttpError(409, "no_team", "not in a team yet");
     if (this.core.me()?.role === "observer") throw new HttpError(403, "forbidden", "observers can't run an orchestrator");
     if (req.permission_mode && !PERMISSION_MODES.includes(req.permission_mode)) throw new HttpError(400, "invalid", "bad permission mode");
     if (req.access && !ORCHESTRATOR_ACCESS.includes(req.access)) throw new HttpError(400, "invalid", "bad access (platform or full)");
     if (req.model !== undefined && !validModel(req.model)) throw new HttpError(400, "invalid", BAD_MODEL);
+    if ((req.access === "full" || req.permission_mode === "bypassPermissions") && this.shellUser.pendingCleanup)
+      throw new HttpError(409, "talkie_cleanup_pending", "WalkieTalkie shell user cleanup pending; wait for verified uid cleanup");
+    if (req.access === "full" || req.permission_mode === "bypassPermissions") this.shellUser.assertInstalled();
     const claude = findClaude(req.claude, req.path ?? this.env.PATH);
     if (!claude) throw new HttpError(409, "claude_not_found", "the claude CLI was not found (install Claude Code and sign in, or pass --claude <path>)");
     const cwd = req.cwd ?? homedir();
@@ -359,7 +446,10 @@ export class OrchestratorHost {
         throw new HttpError(409, "leadership_unavailable", "WalkieTalkie needs an exclusive lease from the roster authority; another holder or an unreachable authority prevents this start");
       }
     } finally { this.requestingStart = false; }
-    await this.halt();
+    if (this.stopRequests !== mark) return; // the queued Stop releases the lease and stops whatever ran before
+    try { await untilAborted(this.halt(2_000), this.fenceSignal); } catch (err) { this.leadership.stop(); throw err; }
+    if (this.stopRequests !== mark) return;
+    if (byHand) this.monitorFault = false;
     const prev = this.state?.owner === owner ? this.state : null;
     this.state = {
       active: true, owner, started_at: Math.max(Date.now(), (prev?.started_at ?? 0) + 1), cwd,
@@ -378,19 +468,33 @@ export class OrchestratorHost {
     this.pendingNote = undefined;
     this.save();
     this.log.info("orchestrator_started", { model: req.model ?? null, cwd: homeRelative(cwd), permission_mode: this.state.permission_mode, access: this.state.access, mode });
-    await this.boot();
+    try { await this.boot(mark); } catch (err) {
+      // A Stop queued during preparation owns the bounded wait. Do not hold its turn behind this Start's cleanup.
+      if (this.stopRequests !== mark && err instanceof Error && err.message.includes("shell preparation cancelled")) return;
+      if (err instanceof HttpError && err.code === "talkie_user_owned") this.lastError = err.message;
+      if (err instanceof HttpError && err.code === "talkie_cleanup_failed")
+        this.lastError = `Run walkie talkie cleanup --repair. ${err.message}`.slice(0, 300);
+      if (this.stopRequests === mark) await this.stopNow("Shell user unavailable", 2_000);
+      throw err;
+    }
   }
 
   /** `walkie orchestrator stop` (or superseded): stops Claude and announces the orchestrator offline. */
   stop(reason = "Stopped"): Promise<void> {
-    return this.serial(() => this.stopNow(reason));
+    this.requestStop();
+    this.childToken = null;
+    this.child?.terminate();
+    return this.serial(() => this.stopNow(reason, 2_000));
   }
 
   /** A stop by hand (a person, or an agent under AGENT-ADMIN-1): sticky, the auto-start leaves it stopped. */
   stopByHand(): Promise<void> {
+    this.requestStop();
+    this.childToken = null;
+    this.child?.terminate();
     return this.serial(async () => {
       this.handGen++;
-      await this.stopNow("Stopped");
+      await this.stopNow("Stopped", 2_000);
       this.ensureState();
       const s = this.state;
       if (s) { const { mode: _m, gave_up: _g, ...rest } = s; this.state = { ...rest, stopped_by_hand: true, stop_by_person_v8: true }; this.save(); }
@@ -400,12 +504,11 @@ export class OrchestratorHost {
     });
   }
 
-  private async stopNow(reason: string): Promise<void> {
+  private async stopNow(reason: string, cleanupWaitMs?: number): Promise<void> {
     const wasActive = this.state?.active || this.phase !== "stopped";
     if (!wasActive) { this.leadership.stop(); return; }
     this.stopGate();
-    await this.halt();
-    this.leadership.stop();
+    try { await this.halt(cleanupWaitMs); } finally { this.leadership.stop(); }
     if (this.state) { this.state = { ...this.state, active: false }; this.save(); }
     this.status("offline", reason, true);
     this.log.info("orchestrator_stopped", { reason });
@@ -418,31 +521,54 @@ export class OrchestratorHost {
    */
   close(): Promise<void> {
     this.closed = true; // a start queued behind this one does nothing
+    this.requestStop();
     if (this.heartbeatTimer) { clearTimeout(this.heartbeatTimer); this.heartbeatTimer = null; }
     this.pilot?.stop();
+    this.schedules.stop();
     return this.serial(async () => {
       this.stopGate();
-      await this.halt();
-      this.leadership.stop();
+      try { await this.halt(2_000); } finally { this.leadership.stop(); }
       await Promise.all([...this.reaping]);
     });
   }
 
+  async finishRepairedCleanup(): Promise<boolean> { return this.shellUser.finishRepairedCleanup(); }
+
   /** Whether `token` is the live Claude child's secret (a write as agent `orchestrator` is this host's own). */
   acceptsToken(token: string | undefined): boolean {
-    if (!this.leadership.valid || this.childLeaseEpoch !== this.leadership.epoch) return false;
+    if (this.monitorFault || !this.leadership.valid || this.childLeaseEpoch !== this.leadership.epoch) return false;
     const mine = this.childToken;
     if (!token || !mine || !this.child?.alive || token.length !== mine.length) return false;
     return timingSafeEqual(Buffer.from(token), Buffer.from(mine));
   }
 
+  /** The live child can act for the turn it is answering, not for a later queued message. */
+  scheduledTurnActive(): boolean {
+    return this.turn?.item.origin.via === "schedule";
+  }
+
+  capacitySummaryForCurrentTurn(): { fingerprint: string; due: boolean; turn: string } | null {
+    if (!this.scheduledTurnActive() || !this.turn) return null;
+    const decision = this.schedules.capacitySummaryForTurn(this.turn.id);
+    return decision ? { ...decision, turn: this.turn.id } : null;
+  }
+
+  recordCapacitySummaryPost(turn: string, fingerprint: string, now: number): void {
+    this.schedules.recordCapacitySummaryPost(turn, fingerprint, now);
+  }
+
   view(): OrchestratorView["local"] {
     const s = this.state;
-    // A give-up outranks standby/needs-login (it will not start on its own); a person's stop clears it.
+    // Cleanup and a failed restart loop both outrank automatic standby/login states.
     const failed = this.gaveUp && !s?.stopped_by_hand && (this.phase === "stopped" || this.phase === "failed");
     const auto = !failed && this.autoState && this.phase === "stopped" ? this.autoState : null;
+    const pending = (() => {
+      try { return this.shellUser.pendingCleanup; }
+      catch { return { generation: "", attempts: 0,
+        diagnostic: "Cleanup state unavailable. Check the cleanup state file and its permissions, then run walkie talkie cleanup --repair" }; }
+    })();
     return {
-      running: this.running, state: failed ? "failed" : auto ? auto.kind : this.phase, restarts: this.restarts,
+      running: this.running, state: pending ? "cleanup_pending" : failed ? "failed" : auto ? auto.kind : this.phase, restarts: this.restarts,
       ...(this.pilot ? { auto: !s?.stopped_by_hand && !(s?.mode === "manual" && s.active) } : {}),
       ...(s?.stopped_by_hand ? { stopped_by_hand: true } : {}),
       ...((auto?.kind === "standby" ? auto.lead : this.running ? null : this.otherLead) ? { lead: (auto?.kind === "standby" ? auto.lead : this.otherLead) as string } : {}),
@@ -454,7 +580,10 @@ export class OrchestratorHost {
         cwd: homeRelative(s.cwd), permission_mode: s.permission_mode, access: s.access, started_at: s.started_at, claude: homeRelative(s.claude),
       } : {}),
       ...(this.childSession ? { session: this.childSession } : {}),
-      ...(this.lastError ? { last_error: this.lastError } : {}),
+      ...(pending ? { last_error: pending.attempts >= 12
+        ? `Cleanup keeps failing: run walkie talkie cleanup --repair. ${pending.diagnostic}`.slice(0, 240)
+        : `Cleanup pending: ${pending.diagnostic || "verifying dedicated uid removal"}`.slice(0, 240) }
+        : this.lastError ? { last_error: this.lastError } : {}),
       ...(this.turn ? { working_thread: this.turn.thread } : {}),
     };
   }
@@ -480,7 +609,7 @@ export class OrchestratorHost {
       if (this.turn) { this.pendingModel = next ?? DEFAULT_MODEL; this.pendingNote = note; return this.view(); }
       await this.switchModel(note);
       return this.view();
-    });
+    }).catch((err) => { this.restartAfterSettingsFailure(); throw err; });
   }
 
   /**
@@ -492,7 +621,19 @@ export class OrchestratorHost {
     return this.serial(async () => {
       const s = this.state;
       if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+      const generation = ++this.runGeneration;
+      const final = this.finalGeneration;
       const base = s.access === "full" ? "default" : s.permission_mode;
+      if (access === "full" || (access === "platform" && base === "bypassPermissions")) {
+        this.shellUser.assertInstalled();
+        await this.detectLogins();
+        if (!this.canLaunch(generation, final)) throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled");
+        await this.prepareAuth();
+        if (!this.canLaunch(generation, final)) throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled");
+        await this.prepareShellUser();
+        if (!this.canLaunch(generation, final)) { await this.cleanupCancelledShell(final); throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled"); }
+      }
+      if (!this.canLaunch(generation, final)) throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled");
       this.state = { ...s, access, permission_mode: effectiveMode(access, base) };
       this.save();
       this.log.info("orchestrator_access", { access, deferred: !!this.turn });
@@ -500,27 +641,57 @@ export class OrchestratorHost {
       if (this.turn) { this.pendingNote = note; return this.view(); }
       await this.switchModel(note);
       return this.view();
-    });
+    }).catch((err) => { this.restartAfterSettingsFailure(); throw err; });
   }
 
   /** Restarts Claude on its session with the current settings (idle only); the conversation gets `note`. */
   private async switchModel(note: string): Promise<void> {
+    const generation = ++this.runGeneration;
+    const final = this.finalGeneration;
+    const fence = this.fenceSignal;
     this.pendingModel = undefined;
     this.pendingNote = undefined;
     const s = this.state;
-    if (!s?.active || this.stopping || this.closed || this.turn) return;
+    if (!s || !this.canLaunch(generation, final) || this.turn) return;
     const session = this.childSession;
     const thread = session ? Object.entries(s.sessions).find(([, v]) => v === session)?.[0] : undefined;
     const old = this.child;
     this.child = null;
     this.phase = "restarting";
+    const droppingShell = s.access !== "full" && s.permission_mode !== "bypassPermissions";
+    const cleanup = droppingShell ? this.shellUser.destroy() : null;
     if (old) await old.close(1_000);
-    if (!this.state?.active || this.stopping || this.closed) return;
+    // A Stop does not wait for a slow helper: the obligation to remove the uid is already recorded by destroy.
+    if (cleanup) await untilAborted(cleanup, fence);
+    if (!this.canLaunch(generation, final)) return;
+    if (this.state?.access === "full" || this.state?.permission_mode === "bypassPermissions") {
+      await this.detectLogins();
+      if (!this.canLaunch(generation, final)) return;
+      await this.prepareAuth();
+      if (!this.canLaunch(generation, final)) return;
+      await this.prepareShellUser();
+      if (!this.canLaunch(generation, final)) { await this.cleanupCancelledShell(final); return; }
+    } else {
+      await this.probePermissionPrompts();
+      if (!this.canLaunch(generation, final)) return;
+    }
+    if (!this.canLaunch(generation, final)) return;
     this.spawn(thread && session ? session : randomUUID(), !!thread);
     if (!this.child) return; // a failed spawn restarts with backoff
     if (thread) this.keep({ id: `om_${randomUUID()}`, thread, role: "orchestrator", text: note, ts: Date.now() });
     this.status("idle", "Settings changed", true);
     this.pump();
+  }
+
+  /**
+   * A settings switch that failed after it closed Claude leaves nothing running: restart it. A request that was refused
+   * before anything was torn down (no login token, no seat helper, not running, waiting for the lease) leaves the run
+   * as it was, so it is not a failure and never counts toward the give-up.
+   */
+  private restartAfterSettingsFailure(): void {
+    if (!this.state?.active || this.stopping || this.closed || this.gaveUp) return;
+    if (this.child || this.phase !== "restarting" || this.restartTimer) return;
+    this.scheduleRestart();
   }
 
   // ---- the local conversation (ORCH-FIX-11) ------------------------------------------------------
@@ -568,12 +739,52 @@ export class OrchestratorHost {
 
   private get env(): NodeJS.ProcessEnv { return this.opts.env ?? process.env; }
 
-  private async boot(): Promise<void> {
+  private async bootFailed(err: unknown): Promise<void> {
+    this.lastError = scrub(err instanceof Error ? err.message : String(err)).slice(0, 300);
+    this.log.warn("orchestrator_boot_failed", { err: this.lastError });
+    if (err instanceof HttpError && err.code === "talkie_cleanup_pending" && this.state?.active && !this.closed) {
+      this.phase = "stopped";
+      this.status("offline", "Cleanup pending; verifying shell uid removal", true);
+      this.retryBootAfterCleanup();
+      return;
+    }
+    try { await this.stopNow(this.lastError, 2_000); }
+    catch (cleanupError) { this.log.warn("orchestrator_boot_cleanup_failed", { err: scrub(String(cleanupError)).slice(0, 300) }); }
+  }
+
+  private retryBootAfterCleanup(): void {
+    if (this.resumeTimer || this.closed || !this.state?.active) return;
+    this.resumeTimer = setTimeout(() => {
+      this.resumeTimer = null;
+      if (this.closed || !this.state?.active) return;
+      try {
+        if (this.shellUser.pendingCleanup) { this.retryBootAfterCleanup(); return; }
+      } catch (err) {
+        this.log.warn("orchestrator_uid_cleanup_state_unavailable", { err: scrub(String(err)).slice(0, 200) });
+        this.retryBootAfterCleanup();
+        return;
+      }
+      const mark = this.stopRequests;
+      void this.serial(async () => {
+        if (this.closed || !this.state?.active || this.stopRequests !== mark) return;
+        try {
+          await this.boot(mark);
+          if (this.child?.alive) this.lastError = undefined;
+        } catch (err) { await this.bootFailed(err); }
+      }).catch((err) => this.log.warn("orchestrator_resume_failed", { err: scrub(String(err)).slice(0, 300) }));
+    }, this.opts.autoCheckMs ?? 15_000);
+    this.resumeTimer.unref?.();
+  }
+
+  private async boot(mark = this.stopRequests): Promise<void> {
     const s = this.state;
     if (!s) return;
+    if (this.stopRequests !== mark) return; // stopping stays set: only a start nobody stopped clears it
     this.stopping = false;
+    const final = this.finalGeneration;
     this.startGate();
     this.phase = "starting";
+    const shell = s.access === "full" || s.permission_mode === "bypassPermissions";
     await this.probePermissionPrompts();
     await this.detectLogins(); // a vault-only login is found before the first spawn too (a daemon restart resumes here)
     await this.prepareAuth();
@@ -582,13 +793,21 @@ export class OrchestratorHost {
       if (!this.closed && this.state?.active && !this.resumeTimer) {
         this.resumeTimer = setTimeout(() => {
           this.resumeTimer = null;
-          void this.serial(async () => { if (!this.closed && this.state?.active) await this.boot(); });
+          const mark = this.stopRequests;
+          void this.serial(async () => { if (!this.closed && this.state?.active) {
+            try { await this.boot(mark); } catch (err) { await this.bootFailed(err); }
+          } }).catch((err) => this.log.warn("orchestrator_resume_failed", { err: scrub(String(err)).slice(0, 300) }));
         }, this.opts.autoCheckMs ?? 15_000);
         this.resumeTimer.unref?.();
       }
       return;
     }
     if (!this.state?.active || this.stopping || this.closed || this.phase !== "starting") return;
+    if (shell) await this.prepareShellUser();
+    if (final !== this.finalGeneration || !this.state?.active || this.stopping || this.closed || this.gaveUp || this.phase !== "starting") {
+      if (shell) await this.cleanupCancelledShell(final);
+      return;
+    }
     this.spawn(randomUUID(), false);
     this.status("idle", "Ready", true);
     this.pump();
@@ -611,8 +830,10 @@ export class OrchestratorHost {
     this.authEnv = {};
     const l = this.logins;
     if (l?.claude !== "vault" || !l.vaultAccount || !this.core.vault || this.env.CLAUDE_CODE_OAUTH_TOKEN) return;
+    const signal = this.fenceSignal;
     try {
-      this.authEnv = { CLAUDE_CODE_OAUTH_TOKEN: await this.core.vault.claudeToken(l.vaultAccount) };
+      const token = await untilAborted(this.core.vault.claudeToken(l.vaultAccount), signal);
+      if (token && !signal.aborted) this.authEnv = { CLAUDE_CODE_OAUTH_TOKEN: token };
     } catch (err) {
       this.log.warn("orchestrator_vault_login_failed", { err: scrub((err as Error).message).slice(0, 200) });
     }
@@ -621,13 +842,49 @@ export class OrchestratorHost {
   private async probePermissionPrompts(): Promise<void> {
     const s = this.state;
     if (!s) return;
+    if (s.access === "full" || s.permission_mode === "bypassPermissions") {
+      this.permissionPrompts = false;
+      this.probedBinary = null;
+      return;
+    }
     const identity = claudeBinaryIdentity(s.claude);
     if (identity && identity === this.probedBinary && this.permissionPrompts !== null) return;
-    const supported = await supportsPermissionPrompts(s.claude, childEnv(this.env, s.claude, s.path, {}));
+    const controller = new AbortController();
+    this.probeController = controller;
+    let supported: boolean;
+    try { supported = await supportsPermissionPrompts(s.claude, childEnv(this.env, s.claude, s.path, {}), controller.signal); }
+    finally { if (this.probeController === controller) this.probeController = null; }
+    if (controller.signal.aborted) return;
     if (identity === claudeBinaryIdentity(s.claude)) {
       this.probedBinary = identity;
       this.permissionPrompts = supported;
     }
+  }
+
+  private async prepareShellUser(): Promise<void> {
+    // A final fence (Stop, give-up, lease loss) ends this caller's token/helper wait. Aborting sudo does not
+    // cancel a root helper already running; its lock serializes later calls and qualified cleanup continues.
+    const signal = this.fenceSignal;
+    const cancelled = () => new HttpError(409, "orchestrator_superseded", "shell preparation cancelled");
+    this.shellUser.assertInstalled();
+    this.shellTokenExpiresAt = null;
+    if (this.env.CLAUDE_CODE_OAUTH_TOKEN) this.authEnv = { CLAUDE_CODE_OAUTH_TOKEN: this.env.CLAUDE_CODE_OAUTH_TOKEN };
+    if (!this.authEnv.CLAUDE_CODE_OAUTH_TOKEN && !this.env.CLAUDE_CODE_OAUTH_TOKEN) {
+      const dir = this.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+      const read = this.opts.readShellToken
+        ? this.opts.readShellToken(signal)
+        : readClaudeToken({ provider: "claude", dir, isDefault: !this.env.CLAUDE_CONFIG_DIR }, systemKeychain, undefined, 0, signal);
+      const token = await untilAborted(read, signal);
+      if (signal.aborted || token === undefined) throw cancelled();
+      const margin = this.opts.shellTokenMarginMs ?? 10 * 60_000;
+      if (typeof token !== "object" || !token.value || (token.expiresAt !== null && token.expiresAt <= Date.now() + margin)) {
+        throw new HttpError(409, "talkie_login_required", "WalkieTalkie's OS user needs a Claude login token; sign in to Claude Code or add a Claude account to Walkie");
+      }
+      this.authEnv = { CLAUDE_CODE_OAUTH_TOKEN: token.value };
+      this.shellTokenExpiresAt = token.expiresAt;
+    }
+    await this.shellUser.prepare(signal);
+    if (signal.aborted) throw cancelled();
   }
 
   // ---- auto-start (ORCH-2) -----------------------------------------------------------------------------
@@ -637,7 +894,7 @@ export class OrchestratorHost {
     return {
       core: this.core, log: this.log, env: () => this.env, nodes: () => this.deps.nodes?.() ?? [],
       manual: () => this.state?.mode === "manual" && !!this.state.active,
-      stoppedByHand: () => !!this.state?.stopped_by_hand,
+      stoppedByHand: () => !!this.state?.stopped_by_hand || this.monitorFault,
       setLogins: (l) => { this.logins = l; },
       setLead: (h) => { this.otherLead = h; },
       promote: (selfLeads, gen) => this.serial(async () => {
@@ -649,11 +906,11 @@ export class OrchestratorHost {
         this.log.info("orchestrator_manual_to_auto", { active: s.active });
       }),
       gen: () => this.handGen,
-      apply: (gen, d) => this.serial(() => this.applyAuto(d, gen)),
+      apply: (gen, d) => { const mark = this.stopRequests; return this.serial(() => this.applyAuto(d, gen, mark)); },
     };
   }
 
-  private async applyAuto(d: AutoDecision, gen?: number): Promise<void> {
+  private async applyAuto(d: AutoDecision, gen?: number, mark = this.stopRequests): Promise<void> {
     if (this.closed) return;
     // pre.8: a decision taken before a start, stop or resume by hand is stale (the next check decides again).
     if (gen !== undefined && gen !== this.handGen) return;
@@ -666,9 +923,14 @@ export class OrchestratorHost {
       // Five rapid failures stopped it: the periodic check never restarts it (that re-ran five attempts on every
       // check); only a person's `walkie talkie auto`/start/resume resets it.
       if (this.phase === "failed" || this.gaveUp) { this.autoState = null; return; }
+      // Only a shell-access start can create the dedicated uid. Keep its lease while cleanup is pending,
+      // without making unrelated platform or standby decisions depend on the cleanup store.
+      const saved = this.state?.owner === this.core.myHandle() ? this.state : null;
+      if (saved && (saved.access === "full" || saved.permission_mode === "bypassPermissions")
+        && this.shellUser.pendingCleanup) return;
       if (!(await this.leadership.acquire())) { if (this.state?.active) await this.autoPause(); return; }
       if (this.state?.active && this.phase !== "stopped") { this.autoState = null; return; }
-      await this.autoStart();
+      try { await this.autoStart(mark); } catch (err) { await this.bootFailed(err); }
       return;
     }
     const before = this.autoState;
@@ -684,11 +946,11 @@ export class OrchestratorHost {
   /** Started or stopped by hand: automatic decisions leave it alone. */
   private handHeld(): boolean {
     const s = this.state;
-    return !!s?.stopped_by_hand || (s?.mode === "manual" && s.active);
+    return this.monitorFault || !!s?.stopped_by_hand || (s?.mode === "manual" && s.active);
   }
 
   /** The lead starts on its own with its saved settings (default: platform access, the default model). */
-  private async autoStart(): Promise<void> {
+  private async autoStart(mark = this.stopRequests): Promise<void> {
     const prev = this.state?.owner === this.core.myHandle() ? this.state : null;
     const claude = (prev?.claude && existsSync(prev.claude) ? prev.claude : null) ?? findClaude(undefined, prev?.path ?? this.env.PATH);
     if (!claude) {
@@ -700,16 +962,17 @@ export class OrchestratorHost {
     await this.startNow({
       ...(prev?.model ? { model: prev.model } : {}), access: prev?.access ?? DEFAULT_ACCESS, cwd, claude,
       ...(prev && prev.access !== "full" ? { permission_mode: prev.permission_mode } : {}), ...(prev?.path ? { path: prev.path } : {}),
-    }, "auto");
+    }, "auto", false, mark);
     this.kickoff();
   }
 
   /** Stands down (standby, or no login): Claude stops; the settings and conversations stay. */
   private async autoPause(): Promise<void> {
     this.stopGate();
-    await this.halt();
-    this.leadership.stop();
+    let cleanupError: unknown;
+    try { await this.halt(2_000); } catch (err) { cleanupError = err; } finally { this.leadership.stop(); }
     if (this.state) { this.state = { ...this.state, active: false }; this.save(); }
+    if (cleanupError) throw cleanupError;
   }
 
   /** A state for a machine that never ran it (its standby status needs one). */
@@ -771,14 +1034,16 @@ export class OrchestratorHost {
   }
 
   /** Stops the child and every timer; the queue and any reply in progress are dropped. */
-  private async halt(): Promise<void> {
-    this.stopping = true;
+  private async halt(cleanupWaitMs?: number): Promise<void> {
+    this.fenceFinal();
     if (this.resumeTimer) clearTimeout(this.resumeTimer);
     this.resumeTimer = null;
     if (this.restartTimer) clearTimeout(this.restartTimer);
+    if (this.shellRefreshTimer) clearTimeout(this.shellRefreshTimer);
     if (this.statusTimer) clearTimeout(this.statusTimer);
     this.clearInterruptTimer();
     this.restartTimer = null;
+    this.shellRefreshTimer = null;
     this.statusTimer = null;
     for (const i of this.queue) this.setState(i.id, "dropped");
     this.queue = [];
@@ -788,14 +1053,66 @@ export class OrchestratorHost {
     this.child = null;
     this.childSession = null;
     this.phase = "stopped";
-    await child?.close(1_000);
+    const cleanup = this.shellUser.destroy();
+    const verified = cleanup.then(() => true, (err) => {
+      this.log.warn("orchestrator_uid_cleanup_pending", { err: scrub(String(err)).slice(0, 300) });
+      return true;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = cleanupWaitMs === undefined ? verified : Promise.race([
+      verified, new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), cleanupWaitMs); }),
+    ]);
+    try { await child?.close(1_000); } finally {
+      const complete = await waited;
+      if (timer) clearTimeout(timer);
+      if (!complete) this.log.info("orchestrator_uid_cleanup_pending", { reason: "helper still running" });
+    }
+  }
+
+  private canLaunch(generation: number, final: number): boolean {
+    return final === this.finalGeneration && generation === this.runGeneration && !this.stopping && !this.closed && !!this.state?.active
+      && !this.gaveUp && this.phase !== "failed";
+  }
+
+  /** A request to stop for good: the fence, and a mark that every start captured earlier can see. */
+  private requestStop(): void {
+    this.stopRequests++;
+    this.fenceFinal();
+  }
+
+  private fenceFinal(): void {
+    this.finalGeneration++;
+    this.stopping = true;
+    this.probeController?.abort();
+    const gone = this.fenceController;
+    this.fenceController = null;
+    gone?.abort();
+  }
+
+  /** Aborts at the next final fence (a signal taken before a fence stays aborted; one taken after starts fresh). */
+  private get fenceSignal(): AbortSignal {
+    this.fenceController ??= new AbortController();
+    return this.fenceController.signal;
+  }
+
+  private async cleanupCancelledShell(final: number): Promise<void> {
+    if (final !== this.finalGeneration || !this.state?.active || this.gaveUp || this.closed || this.stopping
+      || (this.state.access !== "full" && this.state.permission_mode !== "bypassPermissions")) {
+      await this.shellUser.destroy(this.stopping || this.closed ? AbortSignal.timeout(2_000) : undefined);
+    }
   }
 
   private spawn(session: string, resume: boolean): void {
     if (!this.leadership.valid) return;
     const s = this.state;
     if (!s) return;
-    const identity = claudeBinaryIdentity(s.claude);
+    if ((s.access === "full" || s.permission_mode === "bypassPermissions") && !this.shellUser.active) {
+      this.onSpawnFailed("WalkieTalkie's dedicated shell user is unavailable");
+      return;
+    }
+    const shell = this.shellUser.active;
+    const bin = shell ? this.shellUser.runtime : s.claude;
+    const identity = claudeBinaryIdentity(bin);
     if (identity !== this.spawnedBinary) {
       this.spawnedBinary = identity;
       this.disabledFlags = new Set();
@@ -808,7 +1125,8 @@ export class OrchestratorHost {
     let args = claudeArgs({
       session, resume, ...(s.model ? { model: s.model } : {}), permissionMode: effectiveMode(s.access, s.permission_mode),
       permissionPrompts: this.permissionPrompts === true, allowedTools: PLATFORM_TOOLS,
-      mcpConfig: walkieMcpConfig(walkieArgv(), this.core.paths.home, this.core.paths.socket),
+      mcpConfig: walkieMcpConfig(this.shellUser.active ? [this.shellUser.runner] : walkieArgv(),
+        this.core.paths.home, this.shellUser.active ? this.shellUser.socket : this.core.paths.socket),
       systemPrompt: playbook({ owner: s.owner, hostname: this.core.hostname, access: s.access }),
     });
     for (const flag of this.disabledFlags) {
@@ -818,10 +1136,12 @@ export class OrchestratorHost {
     // A fresh secret per Claude process: only this child (and what it runs) can write as `orchestrator`.
     this.childToken = randomBytes(32).toString("hex");
     this.childLeaseEpoch = this.leadership.epoch;
-    const env = childEnv(this.env, s.claude, s.path, {
-      WALKIE_AGENT: ORCHESTRATOR_AGENT, WALKIE_HOME: this.core.paths.home, WALKIE_SOCKET: this.core.paths.socket,
+    const projected = {
+      WALKIE_AGENT: ORCHESTRATOR_AGENT, WALKIE_HOME: this.core.paths.home, WALKIE_SOCKET: shell ? this.shellUser.socket : this.core.paths.socket,
       [ORCHESTRATOR_TOKEN_ENV]: this.childToken, ...this.authEnv,
-    });
+    };
+    const env = shell ? { ...shellChildEnv(this.env, bin, projected), ...(this.opts.shellUser?.userSwitch ? this.opts.shellUser.testEnv : {}) }
+      : childEnv(this.env, bin, s.path, projected);
     this.childSession = session;
     this.childFresh = !resume;
     this.childResumed = resume;
@@ -834,11 +1154,14 @@ export class OrchestratorHost {
     if (old) void old.close(1_000);
     let child: ClaudeChild;
     try {
-      child = new ClaudeChild(s.claude, args, s.cwd, env, {
+      child = new ClaudeChild(bin, args, s.cwd, env, {
         onSignal: (sig) => { if (this.child === child) this.onSignal(sig); },
         onExit: (code, err) => { if (this.child === child) this.onExit(code, err); },
-      }, undefined, { directory: this.core.paths.home, expires: () => this.leadership.valid ? this.leadership.expiresAt : 0,
-        epoch: this.childLeaseEpoch, hook: !this.disabledFlags.has("--settings") });
+      }, undefined, { directory: shell ? this.shellUser.leaseDirectory : this.core.paths.home,
+        expires: () => this.leadership.valid ? this.leadership.expiresAt : 0,
+        epoch: this.childLeaseEpoch, hook: !this.disabledFlags.has("--settings"),
+        ...(shell ? { osUser: { name: TALKIE_USER, home: this.shellUser.userHome, runner: this.shellUser.runner,
+          ...(this.opts.shellUser?.userSwitch ? { switch: this.opts.shellUser.userSwitch(TALKIE_USER, this.shellUser.runner) } : {}) } } : {}) });
     } catch (err) {
       this.child = null;
       this.onSpawnFailed((err as Error).message);
@@ -858,7 +1181,42 @@ export class OrchestratorHost {
       }
     });
     this.phase = this.turn ? "working" : "idle";
+    this.scheduleShellRefresh();
     this.log.info("orchestrator_claude_spawned", { pid: child.pid, resume, session });
+  }
+
+  private scheduleShellRefresh(): void {
+    if (this.shellRefreshTimer) clearTimeout(this.shellRefreshTimer);
+    this.shellRefreshTimer = null;
+    if (!this.shellUser.active || this.shellTokenExpiresAt === null) return;
+    const delay = Math.max(0, this.shellTokenExpiresAt - Date.now() - (this.opts.shellTokenMarginMs ?? 10 * 60_000));
+    this.shellRefreshTimer = setTimeout(() => {
+      this.shellRefreshTimer = null;
+      if (!this.state?.active || this.stopping || this.closed) return;
+      if (this.turn) { this.interruptForRefresh(); return; }
+      void this.serial(() => this.switchModel("_Claude login refreshed._")).catch((err) => {
+        this.log.warn("orchestrator_login_refresh_failed", { err: scrub(String(err)).slice(0, 200) });
+        this.scheduleRestart();
+      });
+    }, delay);
+    this.shellRefreshTimer.unref?.();
+  }
+
+  private interruptForRefresh(): void {
+    const t = this.turn;
+    const child = this.child;
+    if (!t || !child || t.refreshing) return;
+    t.refreshing = true;
+    child.write(interruptRequest(`refresh-${t.id}`));
+    this.status("working", "Refreshing Claude login…", true);
+    this.clearInterruptTimer();
+    // Stop the old process before its access-only token can expire, even if it ignores interrupt.
+    const remaining = (this.shellTokenExpiresAt ?? Date.now()) - Date.now();
+    this.interruptTimer = setTimeout(() => {
+      this.interruptTimer = null;
+      if (this.turn === t && this.child === child) void child.close(0);
+    }, Math.max(0, Math.min(this.interruptGrace, remaining - 100)));
+    this.interruptTimer.unref?.();
   }
 
   private onSpawnFailed(message: string): void {
@@ -886,6 +1244,7 @@ export class OrchestratorHost {
       this.phase = "failed";
       this.lastError = `this Claude is too old for WalkieTalkie: ${unknownFlag}; update Claude`;
       this.status("blocked", this.lastError, true);
+      void this.cleanupAfterGiveUp();
       return;
     }
     if (unsupported) {
@@ -905,7 +1264,7 @@ export class OrchestratorHost {
       const t = this.turn;
       this.turn = null;
       this.endLive(t);
-      if (resumeFailed && !t.texts.length && !t.tools.length) {
+      if (resumeFailed && !t.texts.length && !t.tools.length && !t.refreshing) {
         this.queue.unshift(t.item); // re-authorised when it runs
         this.setState(t.item.id, "queued"); // it didn't reach Claude after all
       }
@@ -920,12 +1279,15 @@ export class OrchestratorHost {
 
   private scheduleRestart(unsupportedRetry = false): void {
     if (this.stopping || !this.state?.active) return;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     if (!unsupportedRetry && this.attempt >= MAX_RAPID_FAILURES - 1) {
       this.attempt += 1;
       this.setGaveUp(true);
       this.phase = "failed";
       this.lastError = `WalkieTalkie keeps failing: ${this.lastError ?? "Claude exited without a diagnostic"}`;
       this.status("blocked", "WalkieTalkie keeps failing; check walkie talkie status", true);
+      void this.cleanupAfterGiveUp();
       return;
     }
     const delay = unsupportedRetry ? 0 : Math.min(this.restartMax, this.restartBase * 2 ** this.attempt);
@@ -933,20 +1295,65 @@ export class OrchestratorHost {
     this.restarts += 1;
     this.phase = "restarting";
     this.status("idle", unsupportedRetry ? "Retrying Claude with a supported option" : "Restarting Claude…", true);
-    this.restartTimer = setTimeout(async () => {
-      this.restartTimer = null;
-      if (this.stopping || !this.state?.active) return;
-      // The login may have changed (or been added to the vault) since the last spawn: refreshed before each retry.
-      await this.detectLogins();
-      await this.prepareAuth();
-      await this.probePermissionPrompts();
-      if (this.stopping || !this.state?.active || this.child) return;
-      const session = this.childSession;
-      const used = !!session && Object.values(this.state.sessions).includes(session);
-      this.spawn(used && session ? session : randomUUID(), used);
-      if (this.child) this.status("idle", used ? "Resumed session" : "Ready", true);
-      this.pump();
-    }, delay);
+    this.restartTimer = setTimeout(() => { this.restartTimer = null; void this.serial(async () => {
+      const generation = ++this.runGeneration;
+      const final = this.finalGeneration;
+      if (!this.canLaunch(generation, final)) return;
+      try {
+        // Reproject an access-only login on every restart; the previous one may have expired.
+        await this.detectLogins();
+        if (!this.canLaunch(generation, final)) return;
+        await this.prepareAuth();
+        if (!this.canLaunch(generation, final)) return;
+        await this.probePermissionPrompts();
+        if (!this.canLaunch(generation, final)) return;
+        if (this.state?.access === "full" || this.state?.permission_mode === "bypassPermissions") {
+          if (!this.canLaunch(generation, final)) return;
+          await this.prepareShellUser();
+          if (!this.canLaunch(generation, final)) { await this.cleanupCancelledShell(final); return; }
+        }
+        if (!this.canLaunch(generation, final)) return;
+        if (this.child) { this.phase = "idle"; this.pump(); return; }
+        const session = this.childSession;
+        const used = !!session && Object.values(this.state?.sessions ?? {}).includes(session);
+        this.spawn(used && session ? session : randomUUID(), used);
+        if (this.child) this.status("idle", used ? "Resumed session" : "Ready", true);
+        this.pump();
+      } catch (err) {
+        if (!this.canLaunch(generation, final)) return;
+        if (err instanceof HttpError && err.code === "talkie_login_required") {
+          this.lastError = err.message;
+          this.scheduleRestart();
+        } else await this.bootFailed(err);
+      }
+    }).catch((err) => this.log.warn("orchestrator_restart_failed", { err: scrub(String(err)).slice(0, 200) })); }, delay);
+  }
+
+  private async cleanupAfterGiveUp(): Promise<void> {
+    this.requestStop();
+    this.stopGate();
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.resumeTimer = null;
+    this.clearInterruptTimer();
+    if (this.shellRefreshTimer) clearTimeout(this.shellRefreshTimer);
+    this.shellRefreshTimer = null;
+    for (const item of this.queue ?? []) this.setState(item.id, "dropped");
+    this.queue = [];
+    if (this.turn) {
+      this.setState(this.turn.item.id, "dropped");
+      this.endLive(this.turn);
+      this.turn = null;
+    }
+    const child = this.child;
+    this.child = null;
+    this.childToken = null;
+    try { await child?.close(1_000); }
+    catch (err) { this.log.warn("orchestrator_give_up_child_close_failed", { err: scrub(String(err)).slice(0, 300) }); }
+    // The lead lease stays: a give-up waits for a person and must not hand WalkieTalkie to another machine (pre.9).
+    try { await this.shellUser.destroy(); }
+    catch (err) { this.log.warn("orchestrator_give_up_cleanup_failed", { err: scrub(String(err)).slice(0, 300) }); }
   }
 
   // ---- messages -----------------------------------------------------------------------------
@@ -978,7 +1385,7 @@ export class OrchestratorHost {
 
   /** Sends the next queued message once Claude is free, switching sessions when it belongs to another conversation. */
   private pump(): void {
-    if (!this.leadership.valid) return;
+    if (!this.leadership.valid || this.stopping || this.closed || this.gaveUp) return;
     const s = this.state;
     if (!s?.active || this.turn || this.phase === "restarting" || this.phase === "starting" || this.phase === "stopped" || this.phase === "failed") return;
     // Authorised again when its turn comes (ORCH-FIX-11, Codex r11 HIGH 3's local analogue): a message that waited past
@@ -1002,6 +1409,11 @@ export class OrchestratorHost {
       const child = this.child;
       this.child = null;
       if (child) void child.close(1_000);
+      if (s.access === "full" || s.permission_mode === "bypassPermissions") {
+        // The retry path re-reads the access-only login before it creates a fresh shell process.
+        this.scheduleRestart();
+        return;
+      }
       this.spawn(known ?? randomUUID(), !!known);
       if (!this.child) return;
     }
@@ -1083,6 +1495,7 @@ export class OrchestratorHost {
         this.finishTurn(sig);
         return;
       case "control":
+        if (this.turn?.refreshing && sig.requestId === `refresh-${this.turn.id}`) this.turn.refreshAccepted = sig.ok;
         return;
     }
   }
@@ -1092,13 +1505,29 @@ export class OrchestratorHost {
     if (!t) return;
     this.turn = null;
     this.clearInterruptTimer();
+    // After a give-up the reply is stored, but nothing here may make the run look healthy again or carry on.
+    const failed = this.phase === "failed" || this.gaveUp;
+    if (!failed && t.refreshing && t.refreshAccepted && !sig.ok && sig.subtype === "error_during_execution") {
+      this.endLive(t);
+      this.queue.unshift({ ...t.item, text: "Continue the answer you were giving before the Claude login was refreshed." });
+      this.setState(t.item.id, "queued");
+      this.phase = "restarting";
+      void this.serial(() => this.switchModel("_Claude login refreshed._")).catch((err) => {
+        this.log.warn("orchestrator_login_refresh_failed", { err: scrub(String(err)).slice(0, 200) });
+        this.scheduleRestart();
+      });
+      return;
+    }
+    if (t.refreshing && !this.pendingNote) this.pendingNote = "_Claude login refreshed._";
     let text = t.texts.join("\n\n").trim();
     if (!text && sig.text.trim()) text = sig.text.trim();
     if (t.interrupted || sig.subtype === "error_during_execution") text = stoppedText(text);
     else if (!sig.ok) text = `${text}\n\n_(Claude reported a problem: ${sig.subtype}${sig.text && !text.includes(sig.text) ? ` — ${sig.text.slice(0, 300)}` : ""})_`.trim();
-    if (sig.ok) this.attempt = 0;
+    if (sig.ok && !failed) this.attempt = 0;
     this.endLive(t);
     this.postReply(t.thread, text, t);
+    if (t.item.origin.via === "schedule") this.scheduleReplies.set(t.id, { text, ok: sig.ok && !t.interrupted });
+    if (failed) return;
     this.phase = this.child ? "idle" : this.phase;
     this.status("idle", t.interrupted ? "Stopped" : "Replied", true);
     // A model switch asked for during the reply happens now, before the next message (ORCH-2).
@@ -1106,7 +1535,10 @@ export class OrchestratorHost {
     const note = this.pendingNote;
     if (note) {
       this.phase = "restarting";
-      void this.serial(() => this.switchModel(note)).catch((err) => this.log.warn("orchestrator_model_switch_failed", { err: (err as Error).message }));
+      void this.serial(() => this.switchModel(note)).catch((err) => {
+        this.log.warn("orchestrator_model_switch_failed", { err: (err as Error).message });
+        this.restartAfterSettingsFailure();
+      });
       return;
     }
     this.pump();
@@ -1283,6 +1715,19 @@ function scrub(text: string): string {
   return redactSecrets(text).text;
 }
 
+/**
+ * `promise`'s result, or `undefined` the moment `signal` aborts (the promise is left to finish or fail on its own;
+ * its late outcome is ignored). For waits that must not outlive a Stop.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  if (signal.aborted) { promise.catch(() => undefined); return Promise.resolve(undefined); }
+  return new Promise<T | undefined>((resolve, reject) => {
+    const onAbort = () => resolve(undefined);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort)).catch(() => undefined);
+  });
+}
+
 /** One host per daemon (routes look it up by the daemon's Core). */
 const hosts = new WeakMap<Core, OrchestratorHost>();
 export function registerHost(core: Core, host: OrchestratorHost): void { hosts.set(core, host); }
@@ -1309,6 +1754,7 @@ export function buildTranscript(messages: readonly OrchMessage[], exclude: strin
   const turns: Array<{ role: "person" | "orchestrator"; text: string }> = [];
   for (const m of messages) {
     if (m.id === exclude) continue;
+    if (m.via === "private") continue;
     if (m.role === "person" && m.state !== "sent") continue;
     const text = m.text.trim();
     if (text) turns.push({ role: m.role, text });

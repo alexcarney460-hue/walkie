@@ -9,8 +9,9 @@ import type {
   AgentsPayload, AgentView, AskView, Event, MeView, NodeView, PlanLimitDetails, PlanView, StreamMessage, TeamView,
 } from "../protocol/schemas.ts";
 import type { IntegrationView, LinearIssueInfo } from "../integrations/types.ts";
-import { ORCHESTRATOR_AGENT, ORCHESTRATOR_TOKEN_ENV, ORCHESTRATOR_TOKEN_HEADER, type OrchMessage, type OrchestratorAccess, type OrchestratorView, type PermissionMode } from "../protocol/orchestrator.ts";
+import { ORCHESTRATOR_TOKEN_ENV, ORCHESTRATOR_TOKEN_HEADER, type OrchMessage, type OrchestratorAccess, type OrchestratorView, type PermissionMode } from "../protocol/orchestrator.ts";
 import type { AccountView } from "../protocol/accounts.ts";
+import type { MachineStats } from "../protocol/machine-stats.ts";
 import type { StatusProvenance } from "../protocol/status-projection.ts";
 import { matchesSearch } from "../protocol/agent-roster.ts";
 import { runtimeLabel } from "../cli/agent-detect.ts";
@@ -18,8 +19,10 @@ import type { RemoteRunRes } from "../protocol/admin.ts";
 import type { ConnectionView, InstallView, PoolLocalView, PrepareView, RunView, ServeView } from "../protocol/pool.ts";
 import type { MobileStatus, PairView } from "../daemon/mobile/manager.ts";
 import type { AddMachine } from "../protocol/add-machine.ts";
+import type { CreditBlock, LocalComputeState, LocalRentReq, Quotes, RentalView, RentResult } from "../protocol/compute.ts";
 import type { BoardView, CardDetail, CardView, ProjectsPayload, ProjectView, TimelineEntry } from "../protocol/projects/schema.ts";
 import type { RoomFileDetail, RoomFileView, TaskContext } from "../protocol/projects/room.ts";
+import type { Schedule } from "../protocol/talkie-schedule.ts";
 
 /** GET /v1/tasks: cards across projects, newest change first, with the projects they belong to. */
 export interface TasksPayload {
@@ -89,9 +92,9 @@ export class WalkieClient {
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };
     if (this.agent) h["X-Walkie-Agent"] = this.agent;
-    // The orchestrator host's own Claude (and only it: the secret is in its environment alone) writes as `orchestrator`.
+    // A child token follows every request, even if --agent names another agent. The daemon rejects that mismatch.
     const orch = process.env[ORCHESTRATOR_TOKEN_ENV];
-    if (this.agent === ORCHESTRATOR_AGENT && orch) h[ORCHESTRATOR_TOKEN_HEADER] = orch;
+    if (orch) h[ORCHESTRATOR_TOKEN_HEADER] = orch;
     if (this.underAgent) {
       h["X-Walkie-Under-Agent"] = "1";
       const rt = runtimeLabel(); // AGENT-ADMIN-1: names an unnamed agent's runtime in the audit trail
@@ -416,6 +419,17 @@ export class WalkieClient {
   mobileRevoke(id: string) { return this.request<{ revoked: true }>("DELETE", `/v1/mobile/devices/${encodeURIComponent(id)}`); }
   mobileRevokeAll() { return this.request<{ revoked: number }>("DELETE", "/v1/mobile/devices"); }
 
+  // ---- rental compute (RENT-2; prices only) ----
+  computeQuotes() { return this.request<Quotes>("GET", "/v1/compute/quotes", undefined, Math.max(this.timeoutMs, 25_000)); }
+  computeState() { return this.request<LocalComputeState>("GET", "/v1/compute/state", undefined, Math.max(this.timeoutMs, 25_000)); }
+  computeHandoverObject() { return this.request<{ objected: true }>('POST', '/v1/compute/handover/object', {}); }
+  /** Rents machines (any mix of tiers): what fits starts now, the rest queue. Minting one code per machine can take a while. */
+  computeRent(b: LocalRentReq) { return this.request<RentResult>("POST", "/v1/compute/rent", b, Math.max(this.timeoutMs, 90_000)); }
+  computeStop(b: { rental_id: string; account_id?: string } | { all: true; account_id?: string }) {
+    return this.request<{ stopped: number; rentals: RentalView[] }>("POST", "/v1/compute/stop", b, Math.max(this.timeoutMs, 45_000));
+  }
+  computeCredit(block: CreditBlock, account_id?: string) { return this.request<{ url: string }>("POST", "/v1/compute/credit", { block, ...(account_id ? { account_id } : {}) }, Math.max(this.timeoutMs, 25_000)); }
+
   // ---- remote seats (PROTOCOL §11) ----
   seats(seat?: string) { return this.request<SeatsView>("GET", `/v1/seats${seat ? `?seat=${encodeURIComponent(seat)}` : ""}`); }
   seatsConfig(body: {
@@ -455,6 +469,20 @@ export class WalkieClient {
 
   // ---- orchestrator (PROTOCOL §8) ----
   orchestrator() { return this.request<OrchestratorView>("GET", "/v1/orchestrator"); }
+  schedules() { return this.request<{ schedules: Schedule[] }>("GET", "/v1/orchestrator/schedules"); }
+  scheduleUnresolved(after?: string, limit = 100) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (after !== undefined) query.set("after", after);
+    return this.request<{ total: number; entries: Array<{ id: string; name: string; run: string;
+      local_id?: string; slot?: number | null; claim?: { term: number; seq: number; generation: number } }>;
+      next_cursor: string | null }>("GET", `/v1/orchestrator/schedules/unresolved?${query}`);
+  }
+  scheduleNext(cron: string) { return this.request<{ times: number[] }>("GET", `/v1/orchestrator/schedules/next?cron=${encodeURIComponent(cron)}`); }
+  scheduleAdd(body: Pick<Schedule, "name" | "cron" | "task">) { return this.request<{ schedule: Schedule }>("POST", "/v1/orchestrator/schedules", body); }
+  scheduleEdit(id: string, body: Partial<Pick<Schedule, "name" | "cron" | "task" | "enabled">>) { return this.request<{ schedule: Schedule }>("PATCH", `/v1/orchestrator/schedules/${encodeURIComponent(id)}`, body); }
+  scheduleRemove(id: string) { return this.request<{ removed: boolean; schedule?: Schedule }>("DELETE", `/v1/orchestrator/schedules/${encodeURIComponent(id)}`); }
+  scheduleRunNow(id: string) { return this.request<{ run_id: string }>("POST", `/v1/orchestrator/schedules/${encodeURIComponent(id)}/run-now`, {}); }
+  scheduleReset(id: string) { return this.request<{ schedule: Schedule }>("POST", `/v1/orchestrator/schedules/${encodeURIComponent(id)}/reset`, { confirm: id }); }
   /** ORCH-2: switches this machine's orchestrator to `model` (default, an alias or a full id), keeping the conversation. */
   orchestratorModel(model: string) { return this.request<OrchestratorView>("POST", "/v1/orchestrator/model", { model }, 60_000); }
   /** ORCH-2: platform (Walkie tools) or full access, keeping the conversation. */
@@ -467,6 +495,9 @@ export class WalkieClient {
   }
   orchestratorStop() {
     return this.request<OrchestratorView & { stopped: "local" | "none" }>("POST", "/v1/orchestrator/stop", {}, 30_000);
+  }
+  orchestratorCleanupRepaired() {
+    return this.request<{ stopped_monitor: boolean }>("POST", "/v1/orchestrator/cleanup-repaired", {}, 30_000);
   }
   /** Sends the person's message to this machine's orchestrator (ORCH-FIX-11: the conversation is local). */
   orchestratorSay(text: string, thread?: string) {
@@ -539,6 +570,7 @@ export interface AdminView {
 export interface AdminMachine {
   hostname: string; node_id: string; handle: string | null; self: boolean; online: boolean; can_admin: boolean; why?: string;
   agent_admin?: boolean; remote_admin?: boolean; last_result?: string; last_at?: number;
+  stats?: MachineStats;
 }
 export interface AdminMachines { machines: AdminMachine[]; role: string; handle: string }
 export type AdminRunOne = Partial<Omit<RemoteRunRes, "machine">> & {

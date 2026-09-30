@@ -2,15 +2,22 @@
 // running (the chat), standby (another machine leads), needs a model login (the one step to add one), or stopped by
 // hand (the manual Start, in Orchestrator.tsx).
 import { useEffect, useState } from "react";
-import { KeyRound, Loader, Play, RadioTower } from "lucide-react";
+import { ArrowUpRight, KeyRound, Loader, Play, RadioTower, TriangleAlert } from "lucide-react";
 import { api } from "../../api/client.ts";
 import { ErrorState } from "../../components/primitives.tsx";
+import { duration, useNow } from "../../lib/time.ts";
 import { lifecycleError } from "./lifecycle-error.ts";
-import type { OrchestratorView } from "../../api/types.ts";
+import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
+import { modelLabel } from "./model.ts";
+import type { OrchestratorAccess, OrchestratorView } from "../../api/types.ts";
 import { CopyCommand } from "../../components/primitives.tsx";
-import { StartOrchestrator } from "./Lifecycle.tsx";
 
 export type TalkieView = OrchestratorView["local"];
+
+export function cleanupDiagnostic(view: TalkieView): string {
+  return (view.last_error ?? "Verifying that the dedicated shell user has no processes.")
+    .replace(/\s+/g, " ").slice(0, 240);
+}
 
 /** The host's view, fetched now, whenever `refresh` changes (its status moved) and every 10 s. */
 export function useTalkieView(refresh: string): TalkieView | null {
@@ -41,6 +48,30 @@ export function notRunningKind(v: TalkieView | null): NotRunningKind {
   if (v?.state === "failed") return "failed";
   if (v?.auto) return "starting";
   return "manual";
+}
+
+/** The Start dialog's access labels (ORCH-2), for a compact status line that isn't the dialog itself. */
+export function accessLabel(access?: OrchestratorAccess): string {
+  return access === "full" ? "Full access" : "Walkie tools";
+}
+
+/**
+ * ORCH-STATUS-1: one line of this host's real WalkieTalkie state — running (model, access, uptime), standby (the
+ * lead), needing a model login, or stopped (by a person, or starting on its own) — for Mission Control's card and
+ * the WalkieTalkie page's header.
+ */
+export function talkieSummaryText(v: TalkieView | null, now: number): string {
+  if (!v) return "Not reporting";
+  if (v.state === "standby") return v.lead ? `Standby · leads on ${v.lead}` : "Standby · no machine can lead yet";
+  if (v.state === "needs_login") return "Needs a model login";
+  if (v.running) {
+    const bits = [modelLabel(v.model ?? v.model_setting), accessLabel(v.access)];
+    if (v.started_at) bits.push(`up ${duration(now - v.started_at)}`);
+    return bits.join(" · ");
+  }
+  if (v.stopped_by_hand) return "Stopped by you";
+  if (v.auto) return "Starting on its own";
+  return "Stopped";
 }
 
 /** Resume = back to automatic (POST /v1/orchestrator/auto). */
@@ -74,12 +105,13 @@ export function StoppedCard({ kind, view }: { kind: Exclude<NotRunningKind, "man
       </div>
     );
   }
+
   if (kind === "starting") {
     return (
       <div className="orch-card" role="status" aria-labelledby="orch-starting-title">
         <div className="orch-card-icon" aria-hidden="true"><Loader size={18} strokeWidth={1.75} /></div>
         <h2 id="orch-starting-title" className="orch-card-title">WalkieTalkie is starting</h2>
-        <p className="orch-card-body">It starts on its own on this machine; nothing to press.</p>
+        <p className="orch-card-body">{view?.last_error ?? "It starts on its own on this machine; nothing to press."}</p>
       </div>
     );
   }
@@ -94,6 +126,15 @@ export function StoppedCard({ kind, view }: { kind: Exclude<NotRunningKind, "man
 }
 
 export function TalkieStateCard({ view }: { view: TalkieView }) {
+  if (view.state === "cleanup_pending") {
+    return (
+      <div className="orch-card" role="status" aria-labelledby="orch-cleanup-title">
+        <div className="orch-card-icon" aria-hidden="true"><TriangleAlert size={18} strokeWidth={1.75} /></div>
+        <h2 id="orch-cleanup-title" className="orch-card-title">WalkieTalkie cleanup pending</h2>
+        <p className="orch-card-body">{cleanupDiagnostic(view)}</p>
+      </div>
+    );
+  }
   if (view.state === "standby") {
     return (
       <div className="orch-card" role="region" aria-labelledby="orch-standby-title">
@@ -116,4 +157,40 @@ export function TalkieStateCard({ view }: { view: TalkieView }) {
       <CopyCommand command="claude" />
     </div>
   );
+}
+
+/**
+ * ORCH-STATUS-1: Mission Control's compact card for this host's WalkieTalkie — its real state (running or why not),
+ * the lead machine, model, access and uptime — with the one control that matches it (Resume, Start, or Stop; none
+ * while standing by or starting, since nothing to press there either). Pure and prop-driven so it's testable without
+ * the fetch; `WalkieTalkieCard` below wires it to the live view.
+ */
+export function WalkieTalkieStatus({ view, now }: { view: TalkieView | null; now: number }) {
+  const running = view?.running === true && !standingDown(view);
+  const kind = notRunningKind(view);
+  return (
+    <section className="wt-card" aria-labelledby="wt-card-h" data-testid="walkietalkie-card">
+      <header className="wt-card-head">
+        <RadioTower size={14} strokeWidth={1.75} className="wt-icon" aria-hidden="true" />
+        <h2 id="wt-card-h" className="wt-card-title">WalkieTalkie</h2>
+        <span className={`wt-dot${running ? " is-on" : ""}`} aria-hidden="true" data-testid="walkietalkie-dot" />
+        <a className="wt-more" href="#/orchestrator">
+          Open <ArrowUpRight size={12} strokeWidth={1.75} aria-hidden="true" />
+        </a>
+      </header>
+      <p className="wt-card-meta" data-testid="walkietalkie-summary">{talkieSummaryText(view, now)}</p>
+      {running ? (
+        <div className="wt-card-controls"><StopOrchestrator /></div>
+      ) : standingDown(view) || kind === "starting" ? null : (
+        <div className="wt-card-controls">{kind === "stopped_by_you" ? <ResumeButton size="sm" /> : <StartOrchestrator size="sm" />}</div>
+      )}
+    </section>
+  );
+}
+
+/** The live wrapper Mission Control renders: this host's view, polled, fed into WalkieTalkieStatus. */
+export function WalkieTalkieCard() {
+  const now = useNow();
+  const view = useTalkieView("");
+  return <WalkieTalkieStatus view={view} now={now} />;
 }

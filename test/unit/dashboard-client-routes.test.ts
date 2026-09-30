@@ -10,6 +10,8 @@ test("every path in the web API sources accepts a dashboard session", () => {
     for (const line of source.split("\n")) {
       for (const match of line.matchAll(/(["`])(\/v1\/.*?)\1/g)) {
         const prefix = line.slice(0, match.index);
+        // A second path argument to parse(...) is a diagnostic label, not another request.
+        if (/\),\s*$/.test(prefix)) continue;
         const method = prefix.match(/"(GET|POST|DELETE|PUT|PATCH)",\s*$/)?.[1]
           ?? (prefix.includes("const path =") ? "POST" : "GET");
         const path = match[2]!.split(/\?|\$\{qs\(|\$\{all |\$\{v /)[0]!

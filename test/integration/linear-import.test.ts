@@ -96,6 +96,14 @@ beforeAll(async () => {
   await alex.client().init("acme", "alex");
   await alex.client().invite("bob@example.com", "bob", "member");
   expect((await bob.client().join(alex.peerAddr)).admitted).toBe(true);
+  // Each machine's daemon posts one "Ready:/Partial:" join status to #general as walkie-admin (WALK-50), bob's from
+  // its own node, so it replicates into alex's store asynchronously after the join. Let both land now, or the event
+  // counts the tests below take before and after a call would pick one up as if that call had written it.
+  await waitFor(async () => {
+    const got = await alex.client().events({ channel: "general", kinds: "msg.post", limit: 200 });
+    const texts = got.events.filter((e) => e.author.agent === "walkie-admin").map((e) => (e.body as { text: string }).text);
+    return texts.some((t) => t.includes("@alex's alex-mbp")) && texts.some((t) => t.includes("@bob's bobs-mbp"));
+  }, { what: "both join status posts in alex's #general" });
   const dir = mkdtempSync("/tmp/walkie-lk-");
   keyFile = join(dir, "linear.key");
   writeFileSync(keyFile, `${KEY}\n`, { mode: 0o600 });
@@ -113,10 +121,12 @@ let apiCh = "";
 
 describe("dry run", () => {
   test("an agent may plan: projects, columns, flags; nothing is written", async () => {
-    const before = alex.d.core.store.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events").get()?.n;
+    // Another node's join-status post may replicate during this read-only plan; only writes by this node count.
+    const own = () => alex.d.core.store.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM events WHERE origin = ?").get(alex.d.core.nodeId)?.n;
+    const before = own();
     const res = await agentOf(alex).linearImportPlan({ options: { stale_days: 60 }, key: KEY });
     plan = res.plan;
-    expect(alex.d.core.store.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events").get()?.n).toBe(before);
+    expect(own()).toBe(before);
     const names = plan.projects.map((p) => p.name);
     expect(names).toContain("Website relaunch");
     expect(names).toContain("Kestrel: no project");

@@ -69,7 +69,7 @@ export class Hub {
   private rev = 0;
   private snapshot: AgentsPayload | null = null;
 
-  constructor(private readonly heartbeatMs = 15_000, private readonly debounceMs = 250) {
+  constructor(heartbeatMs = 15_000, private readonly debounceMs = 250) {
     this.heartbeat = setInterval(() => this.broadcastRaw(": hb\n\n"), heartbeatMs);
   }
 

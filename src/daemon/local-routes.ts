@@ -1,7 +1,11 @@
 // Local API routes (PROTOCOL §5). Transport/auth checks live in local-api.ts.
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { canonicalJson } from "../protocol/canonical.ts";
+import { containsJoinCredential, containsJoinCredentialBytes, containsJoinCredentialValue, maskJoinCredentials } from "../protocol/join-credential.ts";
 import { ORCHESTRATOR_AGENT } from "../protocol/orchestrator.ts";
+import { SCHEDULE_CHANNEL } from "../protocol/talkie-schedule.ts";
+import { CLAIM_PREFIX } from "./orchestrator/schedule-claims.ts";
 import { SEATS_AGENT, isSeatAgent, seatsChannelNode } from "../protocol/seats.ts";
 import { hostFor } from "./orchestrator/host.ts";
 import { redactSecrets } from "../protocol/safety.ts";
@@ -10,7 +14,8 @@ import {
   StatusReq, DeliveriesReq, TransportKind, type BodyOf, type Event, type RosterRequestKind,
 } from "../protocol/schemas.ts";
 import type { TransportControl } from "./direct/link.ts";
-import { INVITE_PREFIX, createInvite, directLogin, inviteMintPos } from "./invite.ts";
+import { INVITE_PREFIX, directLogin } from "./invite.ts";
+import { mintInviteCode } from "./invite-mint.ts";
 import { addressedTo, getAskView, MAX_WAIT_S, parseAddress, waitForAsk } from "./asks.ts";
 import { MAX_BLOB_BYTES, readBlob, sha256Hex, writeBlob } from "./blobs.ts";
 import { ActivateReq, activateOnAuthority, alreadyActive, checkActivatable } from "../license/activate.ts";
@@ -21,7 +26,7 @@ import type { PeerClient } from "./peer-client.ts";
 import type { PeerApiStatus } from "./peer-link.ts";
 import { blobServable, shareChannels } from "./blob-auth.ts";
 import { admitJoin, checkAuthorityReachable, queuedView, submitRequest } from "./requests.ts";
-import { DEFAULT_PEER_PORT, activeNodes, endpointHex, memberByHandle, servesDirect, transportFields, type NodeRec, seatsChannelRule } from "./roster.ts";
+import { DEFAULT_PEER_PORT, activeNodes, endpointHex, memberByHandle, transportFields, type NodeRec, seatsChannelRule } from "./roster.ts";
 import type { PeerAddr } from "./transport.ts";
 import { saveConfigField } from "./config.ts";
 import { ADMIN_AGENT } from "./admin/audit.ts";
@@ -44,6 +49,8 @@ import type { MobileManager } from "./mobile/manager.ts";
 import type { ProjectsIndex } from "./projects/index.ts";
 
 export const LOCAL_BODY_MAX = 256 * 1024;
+/** The dedicated WalkieTalkie user's proxy forces this marker (os-user.ts in the integrated pre.10 line). */
+const TALKIE_SHELL_HEADER = "X-Walkie-Talkie-Shell";
 
 export interface RouteCtx {
   readonly core: Core; readonly sync: SyncManager; readonly client: PeerClient;
@@ -103,14 +110,20 @@ export function hasRoute(method: string, path: string): boolean {
 }
 
 export async function dispatch(c: RouteCtx): Promise<Response> {
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") refuseReservedAgent(c);
+  // A child token identifies the live orchestrator, regardless of a caller-supplied agent header.
+  // Reject mismatches before routing, including reads, so neither policy nor view filters can be spoofed.
+  const child = c.orchestratorToken !== undefined;
+  if (child && (!hostFor(c.core)?.acceptsToken(c.orchestratorToken) || (c.agent !== undefined && c.agent !== ORCHESTRATOR_AGENT)))
+    throw new HttpError(403, "forbidden", "the orchestrator token requires the orchestrator agent identity");
+  const effective = child ? { ...c, agent: ORCHESTRATOR_AGENT, underAgent: true } : c;
+  if (effective.req.method !== "GET" && effective.req.method !== "HEAD") refuseReservedAgent(effective);
   for (const r of routes) {
-    const m = r.re.exec(c.url.pathname);
+    const m = r.re.exec(effective.url.pathname);
     if (!m) continue;
-    if (r.method !== c.req.method) continue;
-    return r.h(c, m.slice(1).map((s) => decodeURIComponent(s)));
+    if (r.method !== effective.req.method) continue;
+    return r.h(effective, m.slice(1).map((s) => decodeURIComponent(s)));
   }
-  if (routes.some((r) => r.re.test(c.url.pathname))) throw new HttpError(405, "method_not_allowed", "method not allowed");
+  if (routes.some((r) => r.re.test(effective.url.pathname))) throw new HttpError(405, "method_not_allowed", "method not allowed");
   throw new HttpError(404, "not_found", "no such route");
 }
 
@@ -143,6 +156,17 @@ export function limitWrite(c: RouteCtx): void {
   if (!c.core.limiter.take(`write:${c.rateKey ?? c.agent ?? "human"}`, spec)) throw new HttpError(429, "rate_limited", "too many writes; slow down");
 }
 
+/** Defense in depth for agent-authored fields, including unnamed agent runtimes. */
+export function refuseAgentJoinContent(c: Pick<RouteCtx, "agent" | "underAgent">, value: unknown): void {
+  if ((c.agent || c.underAgent) && containsJoinCredentialValue(value))
+    throw new HttpError(403, "join_credential_private_reply_only", "agents cannot publish join credentials; the daemon delivers minted credentials privately");
+}
+
+export function refuseAgentJoinBytes(c: Pick<RouteCtx, "agent" | "underAgent">, bytes: Uint8Array): void {
+  if ((c.agent || c.underAgent) && containsJoinCredentialBytes(bytes))
+    throw new HttpError(403, "join_credential_private_reply_only", "agents cannot share join credentials; the daemon delivers minted credentials privately");
+}
+
 function redact(c: RouteCtx, text: string, raw?: boolean): { text: string; redactions: string[] } {
   if (raw || !c.core.config.redact) return { text, redactions: [] };
   return redactSecrets(text);
@@ -172,6 +196,22 @@ async function rosterWrite(c: RouteCtx, kind: RosterRequestKind, body: Record<st
   if (c.core.isAuthority() && kind !== "team.admit") return json({ event: c.core.emit(kind, body as never, { agent: c.agent }) });
   const res = await submitRequest(c.core, c.client, c.sync.requestCatchUp, kind, body);
   return "queued" in res ? json(res, 202) : json(res);
+}
+
+/** A local-only conversation item: only this machine's person can read the conversation API. */
+function privateJoinDelivery(c: RouteCtx, credential: string, handle: string, expires: number): Response {
+  const person = c.core.myHandle();
+  if (!person) throw new HttpError(403, "forbidden", "no local person can receive the join credential");
+  const id = `om_${randomUUID()}`;
+  const message = { id, thread: id, role: "orchestrator" as const, via: "private" as const, text: credential, ts: Date.now() };
+  c.core.store.putOrchMessage(message);
+  c.core.hub.publishLocal({ type: "orchestrator_message", message });
+  return json({ delivered: true, to: `@${person}`, handle, expires_at: expires,
+    message: `link delivered privately to @${person}, expires ${new Date(expires).toISOString()}, joins as @${handle}` });
+}
+
+function privateJoinCaller(c: RouteCtx): boolean {
+  return agentCaller(c) || c.req.headers.get(TALKIE_SHELL_HEADER) === "1";
 }
 
 /**
@@ -295,6 +335,9 @@ route("POST", "/v1/team/invite-code", async (c) => {
   const b = parseWith(InviteCodeReq, await readJson(c.req, LOCAL_BODY_MAX));
   adminGate(c, `minted an invite code for @${b.handle} (${b.role})`);
   const inv = await mintInvite(c, b.handle, b.role);
+  if (privateJoinCaller(c)) return privateJoinDelivery(c,
+    `Invite for @${b.handle} (${inv.role}), expires ${new Date(inv.expires_at).toISOString()}.\nCode: ${inv.code}\nInstall: curl -fsSL https://getwalkie.vercel.app/install.sh | sh -s -- --invite ${inv.code}`,
+    b.handle, inv.expires_at);
   return json({ code: inv.code, handle: b.handle, role: inv.role, expires_at: inv.expires_at, existing_member: inv.existing_member });
 });
 
@@ -306,26 +349,10 @@ route("POST", "/v1/team/invite-code", async (c) => {
  * marked X-Walkie-Under-Agent (the CLI in an agent runtime's environment).
  */
 
-/** Mints a Walkie Direct code for `handle` (PROTOCOL §4 "Direct"); a current member's code adds a machine, same role. */
+/** Mints a Walkie Direct code for `handle` through this request's transport (invite-mint.ts). */
 async function mintInvite(c: RouteCtx, handle: string, asked: Role): Promise<{ code: string; role: Role; expires_at: number; existing_member: boolean }> {
-  const authorityId = c.core.authority;
-  const authority = authorityId ? c.core.roster.nodes.get(authorityId) : undefined;
-  if (!authority || !servesDirect(authority)) {
-    const where = c.core.isAuthority() ? "run: walkie direct enable" : `on ${authority?.hostname ?? "the authority"} run: walkie direct enable`;
-    throw new HttpError(409, "direct_unavailable", `the team's roster authority doesn't run Walkie Direct yet, so an invite code couldn't reach it (${where}); Tailscale teammates: walkie invite <tailscale-login> --handle <name>`);
-  }
-  // A current member's invite adds a machine: their role stays what it is.
-  const holder = memberByHandle(c.core.roster, handle);
-  const current = holder && holder.role !== "removed" ? holder : undefined;
-  const role = current ? (current.role as Role) : asked;
   c.noTimeout();
-  const relay = c.core.isAuthority() && c.transport ? await c.transport.relayHint(3_000) : null;
-  const inv = createInvite(c.core.keys, {
-    team: c.core.teamId as string, authority: authority.pubkey, ...(relay ? { relay } : {}), handle, role,
-    now: c.core.clock(), pos: inviteMintPos(c.core.roster),
-  });
-  c.core.log.info("invite_created", { handle, role, invite: inv.id, expires_at: inv.expires_at });
-  return { code: inv.code, role, expires_at: inv.expires_at, existing_member: !!current };
+  return mintInviteCode(c.core, c.transport, handle, asked);
 }
 
 /**
@@ -345,6 +372,9 @@ route("POST", "/v1/team/add-machine", async (c) => {
   const tag = releaseTag(VERSION);
   // The pinned build's setup asks the consent question only when it hosts seats (src/cli/commands/team-agents.ts).
   const teamAgents = hasRoute("GET", "/v1/seats");
+  if (privateJoinCaller(c)) return privateJoinDelivery(c,
+    `Add a machine for @${b.handle} (${inv.role}), expires ${new Date(inv.expires_at).toISOString()}.\nLink: ${addMachineLink(inv.code, tag, teamAgents)}\nInstall: ${addMachineCommand(inv.code, tag)}`,
+    b.handle, inv.expires_at);
   return json({
     code: inv.code, handle: b.handle, role: inv.role, expires_at: inv.expires_at, existing_member: true,
     version: VERSION, team_agents: teamAgents, link: addMachineLink(inv.code, tag, teamAgents), command: addMachineCommand(inv.code, tag),
@@ -390,6 +420,21 @@ route("POST", "/v1/team/authority", async (c) => {
   if (!target) throw new HttpError(404, "not_found", `no admitted machine ${b.node}`);
   checkAuthorityReachable(c.core.roster, target.node_id);
   return rosterWrite(c, "team.authority", { node_id: target.node_id });
+});
+
+route("POST", "/v1/team/peer-sig-strict", async (c) => {
+  requireOwner(c);
+  const b = parseWith(z.object({ strict: z.boolean().optional() }).strict(), await readJson(c.req, LOCAL_BODY_MAX));
+  const strict = b.strict ?? true;
+  personOnly(c, strict ? "require signed peer requests team-wide" : "allow legacy unsigned peers team-wide");
+  const n = c.core.roster.nodes.get(c.core.nodeId);
+  if (!n || n.revoked) throw new HttpError(403, "forbidden", "this machine is not admitted");
+  if (c.core.roster.peer_sig_strict === strict) return json({ strict });
+  const result = await rosterWrite(c, "team.node", { node_id: n.node_id, login: n.login, hostname: n.hostname,
+    pubkey: n.pubkey, ip: n.ip, port: n.port, ...transportFields(n), peer_sig_strict: strict,
+    ...(n.peer_sig_v1 ? { peer_sig_v1: true } : {}) });
+  c.core.log.info("peer_sig_strict_owner_decision", { strict, node: c.core.nodeId });
+  return result;
 });
 
 /**
@@ -459,6 +504,7 @@ route("POST", "/v1/channels", async (c) => {
   requireTeam(c);
   // `requested_by` is the authority's to set (it says who asked); a caller never supplies it.
   const { requested_by: _by, ...b } = parseWith(ChannelReq, await readJson(c.req, LOCAL_BODY_MAX));
+  if (b.name === SCHEDULE_CHANNEL) throw new HttpError(409, "conflict", "#talkie-schedules is reserved for WalkieTalkie");
   // Project channels are made by `walkie projects create` and changed through project settings; a NEW `p-` name is
   // reserved. An existing `p-…` channel from before Projects (no project marker) stays an ordinary channel and is
   // managed here like any other (round-2 audit, Codex M7).
@@ -549,16 +595,32 @@ route("GET", /^\/v1\/events\/([^/]+)$/, (c, [id]) => {
 route("POST", "/v1/post", async (c) => {
   requireTeam(c);
   const b = parseWith(PostReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b.text);
+  const capacitySummary = c.agent === ORCHESTRATOR_AGENT && b.channel === "general"
+    ? hostFor(c.core)?.capacitySummaryForCurrentTurn?.() : null;
+  if (capacitySummary && !capacitySummary.due)
+    throw new HttpError(409, "capacity_summary_not_due", "no fleet summary is due for this scheduled turn");
+  if (b.channel === SCHEDULE_CHANNEL || b.text.startsWith("walkie-talkie-schedule:v1:") || b.text.startsWith(CLAIM_PREFIX))
+    throw new HttpError(403, "forbidden", "schedule and claim posts use the schedule manager");
   limitWrite(c);
   await ensureChannel(c, b.channel);
-  const { text, redactions } = redact(c, b.text, b.raw);
+  const protectedCode = !c.agent && !c.underAgent && containsJoinCredential(b.text) ? maskJoinCredentials(b.text) : null;
+  const redacted = redact(c, protectedCode?.masked ?? b.text, b.raw);
+  const { redactions } = redacted;
+  const text = protectedCode ? protectedCode.restore(redacted.text) : redacted.text;
   const mentions = mentionsIn(text);
   const body: BodyOf<"msg.post"> = {
     text, ...(b.thread ? { thread: b.thread } : {}), ...(mentions.length ? { mentions } : {}),
     ...(b.artifacts?.length ? { artifacts: b.artifacts } : {}),
   };
-  const event = c.core.emit("msg.post", body, { channel: b.channel, agent: c.agent });
-  return json({ event, redactions });
+  let event: Event;
+  if (capacitySummary) {
+    c.core.store.transaction(() => {
+      event = c.core.emit("msg.post", body, { channel: b.channel, agent: c.agent });
+      hostFor(c.core)?.recordCapacitySummaryPost(capacitySummary.turn, capacitySummary.fingerprint, Date.now());
+    }, { durable: true });
+  } else event = c.core.emit("msg.post", body, { channel: b.channel, agent: c.agent });
+  return json({ event: event!, redactions });
 });
 
 // ---- asks ---------------------------------------------------------------------------
@@ -566,6 +628,7 @@ route("POST", "/v1/post", async (c) => {
 route("POST", "/v1/ask", async (c) => {
   requireTeam(c);
   const b = parseWith(AskReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b.text);
   limitWrite(c);
   const target = parseAddress(b.to);
   if (!memberByHandle(c.core.roster, target.handle) || memberByHandle(c.core.roster, target.handle)?.role === "removed") {
@@ -633,6 +696,7 @@ route("POST", "/v1/deliveries", async (c) => {
 route("POST", "/v1/answer", async (c) => {
   requireTeam(c);
   const b = parseWith(AnswerReq, await readJson(c.req, LOCAL_BODY_MAX));
+  refuseAgentJoinContent(c, b.text);
   limitWrite(c);
   const view = getAskView(c.core, b.ask);
   const to = parseAddress((view.ask.body as { to: string }).to);
@@ -651,6 +715,7 @@ route("POST", "/v1/status", async (c) => {
   requireTeam(c);
   const raw = await readJson(c.req, LOCAL_BODY_MAX);
   const b = parseWith(StatusReq, raw);
+  refuseAgentJoinContent(c, { title: b.title, activity: b.activity });
   // Where its text came from (never signed): the projection at emit decides what may be shared (status-projection.ts).
   const provenance = parseProvenance((raw as { provenance?: unknown } | null)?.provenance);
   if (c.agent && c.agent !== b.agent) throw new HttpError(403, "forbidden", "status agent must match X-Walkie-Agent");
@@ -751,6 +816,8 @@ route("POST", "/v1/artifacts", async (c) => {
   if (mime.length > 100) throw new HttpError(400, "invalid", "X-Walkie-Mime too long");
   if (note && note.length > 2000) throw new HttpError(400, "invalid", "X-Walkie-Note too long");
   const bytes = await readBytes(c.req, MAX_BLOB_BYTES);
+  refuseAgentJoinContent(c, { name, note });
+  refuseAgentJoinBytes(c, bytes);
   if (bytes.byteLength === 0) throw new HttpError(400, "invalid", "empty artifact");
   await ensureChannel(c, channel);
   const hash = writeBlob(c.core.paths.blobs, bytes);

@@ -297,7 +297,7 @@ describe("display", () => {
       ],
     } as unknown as TeamView;
     const out = teamViewJson(team);
-    expect(out.nodes[0]!.stats).toEqual({ at: 9, temp_c: null, mem: { total: 16 * GiB, used: 10 * GiB, swap_used: GiB, pressure: null } });
+    expect(out.nodes[0]!.stats).toEqual({ at: 9, temp_c: null, mem: { total: 16 * GiB, used: 10 * GiB, free: 6 * GiB, swap_used: GiB, pressure: null } });
     expect("stats" in out.nodes[1]!).toBe(false);
     expect(JSON.stringify(out)).not.toContain("obey");
   });

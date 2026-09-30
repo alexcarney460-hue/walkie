@@ -10,6 +10,7 @@ import { handleToolCall } from "../../src/mcp/server.ts";
 import { isAllowedUsageUrl } from "../../src/accounts/http.ts";
 import { fakeFetch, makeFakeHome, TOKENS } from "../helpers/accounts.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { signedPeerFetch } from "../helpers/signed-peer-fetch.ts";
 
 const UID = 4343;
 
@@ -95,7 +96,7 @@ test("only the usage endpoints were requested (never a token/refresh URL)", () =
 test("no event kind was added; the vv answer carries the accounts field", async () => {
   const kinds = new Set((await kira.client().events({ limit: 500 })).events.map((e) => e.kind));
   expect([...kinds].some((k) => k.startsWith("account"))).toBe(false);
-  const res = await fetch(`http://127.0.0.1:${alex.peerPort}/peer/v1/vv`, { headers: { "X-Walkie-Team": alex.d.core.teamId ?? "", "X-Walkie-Node": kira.d.nodeId } });
+  const res = await signedPeerFetch(kira, alex, "/peer/v1/vv");
   const body = await res.text();
   expect(res.status).toBe(200);
   expect(body).toContain('"accounts"');

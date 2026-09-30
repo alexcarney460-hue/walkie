@@ -29,7 +29,7 @@ import { Hub } from "./sse.ts";
 import { Store } from "./store.ts";
 import { SyncManager, type SyncOptions } from "./sync.ts";
 import { VERSION } from "./version.ts";
-import { accountsView, agentsPayload, nodesView } from "./views.ts";
+import { accountsView, agentsPayload, agentsView, nodesView } from "./views.ts";
 import { TeamPoolState } from "./team-pool.ts";
 import { AgentArchive } from "./agent-archive.ts";
 import { AgentDiscovery, UNNAMED_MIN_AGE_MS, type DiscoveryOptions } from "./discovery.ts";
@@ -52,24 +52,34 @@ import { PeerCallError } from "./peer-client.ts";
 import type { PeerAddr } from "./transport.ts";
 import type { End } from "../pool/run/tunnel.ts";
 import { nodeMember } from "./roster.ts";
+import { recordPeerSignature } from "./peer-capabilities.ts";
 import "../accounts/routes.ts"; // registers /v1/accounts/reset and /v1/accounts/refresh
 import "./mobile/routes.ts"; // registers /v1/mobile (Walkie on your phone)
 import { MobileManager, type MobileOptions } from "./mobile/manager.ts";
 import { OrchestratorHost, registerHost, type OrchestratorOptions } from "./orchestrator/host.ts";
 import "./orchestrator/routes.ts"; // registers /v1/orchestrator
+import "./orchestrator/schedule-routes.ts";
 import "./projects/routes.ts"; // registers /v1/projects, /v1/tasks (WALKIE-PROJECTS-1)
 import "./projects/room-routes.ts"; // registers /v1/projects/:ch/room, /v1/tasks/:ref/context (DATA-ROOM-1)
 import "./admin/routes.ts"; // registers /v1/admin (AGENT-ADMIN-1: switches, audit, remote admin)
 import { postUpgradeNotice } from "./admin/audit.ts";
+import { JoinStatusReporter } from "./join-status.ts";
 import "./projects/steward-routes.ts"; // registers /v1/steward (FO-6 board steward)
-import { StewardLoop } from "./projects/steward-run.ts";
+import { StewardLoop, runSteward } from "./projects/steward-run.ts";
+import { visibleProjects } from "./projects/service.ts";
 import { ProjectsIndex } from "./projects/index.ts";
 import { RestrictedMembership } from "./projects/members.ts";
 import { authorityProjectQuota } from "./projects/service.ts";
 import { SeatsHost, registerSeats, type SeatsOptions } from "./seats/host.ts";
+import { seatHosts, seatsList } from "./seats/view.ts";
 import "./seats/routes.ts"; // registers /v1/seats
 import "./seats/repos-routes.ts"; // registers /v1/seats/repos (FO-2)
 import { startWatchdog, stopWatchdog, trackOp } from "./watchdog.ts";
+import "./compute/routes.ts"; // registers /v1/compute (RENT-2 rental compute)
+import { registerCompute } from "./compute/routes.ts";
+import { ComputeService, type ComputeOptions } from "./compute/service.ts";
+import { ComputeSite, computeBaseFromEnv } from "./compute/site.ts";
+import { RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION } from "../protocol/compute-release.ts";
 
 export interface DaemonOptions {
   home?: string;
@@ -125,6 +135,8 @@ export interface DaemonOptions {
   pool?: PoolOptions;
   /** Walkie on your phone (off until `walkie mobile pair`); tests point it at a local relay. */
   mobile?: MobileOptions;
+  /** RENT-2 rental compute: the site (tests inject base + fetch), poll timing, a release tag for dev builds. */
+  compute?: ComputeOptions;
 }
 
 export interface DaemonHandle {
@@ -254,7 +266,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const licenseService = new LicenseService({ ...(opts.env !== false ? { base: serviceBaseFromEnv() } : {}), ...opts.licenseService });
   const renewer = opts.licenseRenew === false ? null : new LicenseRenewer(core, log, { ...opts.licenseRenew, service: licenseService });
 
-  const client = new PeerClient({ team: () => core.teamId, nodeId: keys.nodeId, self: () => core.roster.nodes.get(keys.nodeId) });
+  const client = new PeerClient({ team: () => core.teamId, nodeId: keys.nodeId, keys, self: () => core.roster.nodes.get(keys.nodeId) });
   const sync = new SyncManager(core, client, opts.sync);
   const linkIdentity: Identity = { kind: identity.kind, whois: (ip, h) => identity.whois(ip, h), self: () => selfWithin(identity, IDENTITY_HANG_MS) };
   // Set below: a dual node keeps syncing over Walkie Direct while its tailnet listener is down.
@@ -281,12 +293,47 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const integrations = { manager, linear: new LinearService(core, manager), linearImport };
   // FO-6: the board steward; runs only when this machine's person turned `steward.auto` on (steward-run.ts).
   const steward = new StewardLoop({ core, idx: projects, sync, client, catchUp: sync.requestCatchUp, linear: integrations.linear, log });
-  const orchestrator = new OrchestratorHost({ core, log, client, nodes: () => nodesView(core, sync) }, opts.orchestrator);
+  const orchestrator = new OrchestratorHost({ core, log, client, catchUp: sync.requestCatchUp, nodes: () => nodesView(core, sync),
+    capacitySnapshot: () => {
+      const active = seatsList(core).filter((s) => ["running", "paused", "queued"].includes(s.state));
+      return {
+        machines: nodesView(core, sync).map((n) => ({ node: n.node_id, online: n.online })),
+        seats: seatHosts(core, sync).map((h) => ({ node: h.node, free: !h.online || !h.allows ? 0
+          : h.availability?.max === undefined ? null : Math.max(0, h.availability.max - active.filter((s) => s.host.node === h.node).length) })),
+        accounts: accountsView(core, sync).map((a) => ({ key: a.key, state: a.usage?.state ?? "unknown",
+          windows: (a.usage?.windows ?? []).map((w) => ({ kind: w.kind, scope: w.scope, used_pct: w.used_pct })) })),
+      };
+    },
+    capacityTargets: () => agentsView(core, sync).filter((a) => a.machine_online && !a.archived &&
+      a.effective_state !== "offline" && /orchestrator/i.test(`${a.agent} ${a.status.title ?? ""}`) &&
+      !(a.node === core.nodeId && a.agent === "orchestrator"))
+      .map((a) => `@${a.handle}/${a.hostname}/${a.agent}`),
+    boardRefresh: async (canAct) => {
+      const results: string[] = [];
+      for (const p of visibleProjects({ core, idx: projects }).filter((p) => p.state === "active")) {
+        if (!canAct()) throw new Error("WalkieTalkie lease expired");
+        try {
+          const r = await runSteward({ core, idx: projects, sync, client, catchUp: sync.requestCatchUp, linear: integrations.linear, log }, p.channel,
+            { dryRun: false, caller: "loop", canAct });
+          results.push(`${p.prefix}: ${r.applied.length} moves, ${r.plan.held.length} held, ${r.failed.length} failed`);
+        } catch (err) { results.push(`${p.prefix}: ${String(err).slice(0, 200)}`); }
+      }
+      return results.join("\n").slice(0, 8_000);
+    },
+  }, opts.orchestrator);
   registerHost(core, orchestrator);
   // Set once the accounts service starts (below); the reset routes answer 404 until then.
   let accountsRef: AccountsService | null = null;
   const seats = new SeatsHost({ core, client, catchUp: sync.requestCatchUp, log, accounts: () => accountsView(core, sync) }, opts.seats);
   registerSeats(core, seats);
+  // JOIN-STATUS-1: the one #general post after this machine is admitted (retried until the channel is synced).
+  const joinStatus = new JoinStatusReporter(core, log);
+  // Tests inject a local site; the shipped daemon never starts a rental poller in this version.
+  const compute = RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION || opts.compute?.site
+    ? new ComputeService({ core, client, catchUp: sync.requestCatchUp, log, transport: () => direct }, {
+      ...opts.compute, site: opts.compute?.site ?? new ComputeSite({ base: opts.env !== false ? computeBaseFromEnv() : undefined }),
+    }) : null;
+  if (compute) registerCompute(core, compute);
   // Paired phones' requests (through the encrypted relay link) run on the local API declared just below.
   const mobile = new MobileManager({
     core, log, home, serve: (req, url, credential) => local.serveAuthenticated(req, url, null, credential),
@@ -303,7 +350,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     core.onLocalEvent = (ev) => sync.push(ev);
     core.onRosterChange = () => {
       sync.rosterChanged(); direct.rosterChanged(); mobile.rosterChanged(); core.pool?.rosterChanged();
-      projects.rosterChanged(); restricted.rosterChanged(); orchestrator.rosterChanged();
+      projects.rosterChanged(); restricted.rosterChanged(); orchestrator.rosterChanged(); joinStatus.rosterChanged();
     };
     core.onPostChange = (ev, change) => projects.onPost(ev, change);
     projects.onDelta = (d) => hub.publishBoard(d);
@@ -396,6 +443,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   manager.start();
   renewer?.start();
   mobile.start();
+  compute?.start();
   // An upgrade (WALKIE-MISSION-SUB-1): Claude hooks an older version installed get this version's events (sub-agents).
   // Only a compiled install with the environment on: tests and runs from source never touch ~/.claude.
   if (opts.env !== false && isCompiledWalkie()) {
@@ -477,6 +525,11 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   (announce as { unref?: () => void }).unref?.();
   if (opts.writePid) writeFileSync(paths.pid, String(process.pid) + "\n", { mode: 0o600 });
   if (opts.adminNotice !== false) postUpgradeNotice(core);
+  // A restart between joining and posting (or the roster already being caught up at boot) needs one try here too:
+  // the rest are retried from core.onRosterChange above.
+  // An upgraded authority can attest possession of its own legacy founder key in the signed roster.
+  recordPeerSignature(core, core.nodeId);
+  joinStatus.rosterChanged();
   log.info("daemon_started", {
     version: VERSION, node: keys.nodeId, hostname, peer: link.port !== null ? `${core.ip}:${core.peerPort}` : null,
     local: local.tcpPort, socket: paths.socket, team: core.teamId, identity: identity.kind,
@@ -505,6 +558,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       steward.stop();
       restricted.stop();
       renewer?.stop();
+      compute?.stopPoller();
       discovery?.stop();
       archive.stop();
       stopHookPrune();

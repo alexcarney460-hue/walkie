@@ -36,7 +36,8 @@ describe("walkie_cli", () => {
   test("refuses accounts exec (also behind a leading flag), trust-cli and other credential/program commands, without running anything", async () => {
     for (const bad of [["accounts", "exec", "--provider", "claude", "--", "sh"], ["accounts", "--json", "exec", "--", "id"], ["accounts", "trust-cli"],
       ["claude"], ["dashboard"], ["mobile", "pair"], ["token", "rotate"], ["update"], ["daemon", "stop"], ["talkie", "say", "hi"],
-      ["integrations", "enable", "linear", "--key", "-"], ["integrations", "enable", "linear", "--key=abc"], ["post", "#general", "-"], []]) {
+      ["integrations", "enable", "linear", "--key", "-"], ["integrations", "enable", "linear", "--key=abc"], ["post", "#general", "-"],
+      ["seat", "run", "--agent", "helper"], ["post", "#general", "--agent=helper", "hello"], []]) {
       expect({ bad, refused: cliArgvProblem(bad) !== null }).toEqual({ bad, refused: true });
     }
     for (const ok of [["who", "--json"], ["projects", "list", "--all", "--json"], ["team", "add-machine", "alex", "--json"], ["talkie", "status"],

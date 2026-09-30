@@ -7,13 +7,19 @@
   "scripts": {
     "render": "python3 build.py",
     "typecheck": "tsc --noEmit -p .",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "bun test test"
   },
   "dependencies": {
-    "stripe": "^22.6.2"
+    "postgres": "^3.4.8",
+    "stripe": "^22.6.2",
+    "zod": "^3"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "typescript": "7.0.2"
+  },
+  "patchedDependencies": {
+    "postgres@3.4.8": "patches/postgres@3.4.8.patch"
   }
 }

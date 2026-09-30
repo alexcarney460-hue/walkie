@@ -122,7 +122,7 @@ describe("I'm using this computer (seats busy)", () => {
     // …and with it on (the default) it says so for its person, and resumes.
     await arvid.client("cc-1").seatsBusy({ max: 1 });
     await arvid.client("cc-1").seatsResume();
-    expect((await person(arvid).seats()).local.availability).toEqual({ state: "available" });
+    expect((await person(arvid).seats()).local.availability).toMatchObject({ state: "available", max: 3, running: 0 });
   }, 60_000);
 
   test("busy pauses the newest seats (process group stopped), queues a launch; resume continues both and starts it", async () => {
@@ -170,7 +170,7 @@ describe("I'm using this computer (seats busy)", () => {
     expect(stat(aPid).startsWith("T") && stat(bPid).startsWith("T")).toBe(true);
 
     const resumed = await person(arvid).seatsResume();
-    expect(resumed.local.availability).toEqual({ state: "available" });
+    expect(resumed.local.availability).toMatchObject({ state: "available", max: 3 });
     await waitFor(() => ticks(aPid) > ta && ticks(bPid) > tb, { what: "both ticking again" });
     // Their limits didn't run while paused: both finish their work (not "timeout"), and the queued seat ran too.
     expect((await ended(alex, a)).state).toBe("done");
@@ -239,7 +239,7 @@ describe("I'm using this computer (seats busy)", () => {
     await inState(alex, id, "queued");
     // The timer ends it: the queued seat starts and finishes; the host says it's available.
     expect((await ended(alex, id, 30_000)).state).toBe("done");
-    expect((await person(arvid).seats()).local.availability).toEqual({ state: "available" });
+    expect((await person(arvid).seats()).local.availability).toMatchObject({ state: "available", max: 3, running: 0 });
     await waitFor(async () => (await hostPost())?.state === "available", { what: "the available post" });
   }, 60_000);
 

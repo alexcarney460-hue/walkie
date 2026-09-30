@@ -4,6 +4,7 @@ export type {
   OrchestratorLive, PlanLimitDetails, PlanName, PlanView, Role, StreamMessage, TeamView,
 } from "../../../src/protocol/schemas.ts";
 export type { OrchMessage, OrchestratorAccess, OrchestratorView } from "../../../src/protocol/orchestrator.ts";
+export type { Schedule } from "../../../src/protocol/talkie-schedule.ts";
 export type { HostAvailability, SeatHostView, SeatMode, SeatRuntime, SeatView, SeatsLocalView, SeatsView } from "../../../src/protocol/seats.ts";
 export type { IntegrationView, LinearIssueInfo } from "../../../src/integrations/views.ts";
 export type {

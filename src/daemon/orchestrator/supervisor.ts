@@ -23,15 +23,22 @@ export function validChildLease(file: string, run: string, now = Date.now()): bo
   } catch { return false; }
 }
 
-export async function superviseChild(file: string, daemonPid: number, command: string[]): Promise<number> {
-  if (!file || !Number.isSafeInteger(daemonPid) || daemonPid <= 0 || !command.length) return 2;
+/** Only the dedicated uid runner may replace the direct daemon parent relation. Its stdin closes on daemon death. */
+export const OS_USER_RUNNER_PARENT = "os-user-runner";
+
+export function supervisorParentValid(expected: number | typeof OS_USER_RUNNER_PARENT, actual: number): boolean {
+  return expected === OS_USER_RUNNER_PARENT ? true : Number.isSafeInteger(expected) && expected > 0 && actual === expected;
+}
+
+export async function superviseChild(file: string, daemonPid: number | typeof OS_USER_RUNNER_PARENT, command: string[]): Promise<number> {
+  if (!file || (daemonPid !== OS_USER_RUNNER_PARENT && (!Number.isSafeInteger(daemonPid) || daemonPid <= 0)) || !command.length) return 2;
   let run = "";
   const ledger: ProcessLedger = new Map();
   const valid = (): boolean => {
     try {
       const lease = ChildLease.parse(JSON.parse(readFileSync(file, "utf8")));
       if (!run) run = lease.run; // a rewrite may advance serial and expiry, never the child identity
-      return process.ppid === daemonPid && validChildLease(file, run);
+      return supervisorParentValid(daemonPid, process.ppid) && validChildLease(file, run);
     } catch { return false; }
   };
   const kill = (): void => {

@@ -68,6 +68,15 @@ describe("walkie seats CLI", () => {
     expect(`${plan.out}${plan.err}`).toMatch(/walkie seats setup-user --apply|not applied: your home/);
     const list = await walkie(arvid, ["seats"]);
     expect(list.out).toContain("seats allowed as your own user");
+    expect(list.out).toContain("launchers the team's owners and their agents (person entries cover their agents)");
+  });
+
+  test("an explicit empty launcher policy displays nobody", async () => {
+    const { local } = await arvid.client().seatsConfig({ allow: true, same_user: true, launchers: [] });
+    expect(local.launcher_policy_empty).toBe(true);
+    const list = await walkie(arvid, ["seats"]);
+    expect(list.out).toContain("launchers nobody (person entries cover their agents)");
+    await arvid.client().seatsConfig({ allow: true, launchers: null });
   });
 
   test("seats allow/deny under an agent: refused while its person has agent admin off", async () => {
@@ -84,10 +93,14 @@ describe("walkie seats CLI", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("codex: hello codex");
     expect(r.out.trim().split("\n").pop()).toMatch(/^done/);
+    // The default mode (acceptEdits) can't run shell commands in a seat: said up front, with the exact fix.
+    expect(r.err).toContain("acceptEdits can't run shell commands in a seat");
+    expect(r.err).toContain("--permission-mode bypassPermissions");
     const agent = await walkie(alex, ["seat", "run", "--machine", "arvid-mac", "--wait", "--", "from", "an", "agent"], { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "abc-123" });
     expect(agent.code).toBe(1);
     // Marked as an agent's (agent-detect.ts) but unnamed: refused before any request is made; named, the host judges.
-    expect(agent.out + agent.err).toContain("a seat request from an agent must name it");
+    // The exact fix, not just that it's required (Alex: the whole seat-run failure surface should say this).
+    expect(agent.out + agent.err).toContain("a seat request from an agent must name it: set WALKIE_AGENT=‹name› in this agent's environment, or add --agent ‹name› to this walkie seat run command");
     const list = await walkie(alex, ["seats"]);
     expect(list.out).toContain("arvid-mac (@arvid) · seats allowed · online · you can launch");
   }, 60_000);

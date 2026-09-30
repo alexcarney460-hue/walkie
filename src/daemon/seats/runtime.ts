@@ -48,7 +48,7 @@ export function kimiSeatArgs(o: { prompt: string; model?: string }): string[] {
 }
 
 /** Why a Kimi seat that isn't launched full-access is refused. */
-export const KIMI_FULL_ACCESS_ONLY = "a Kimi seat runs its tools without asking (its prompt mode has no read-only or ask-first mode): launch it with permission_mode bypassPermissions, or use another runtime";
+export const KIMI_FULL_ACCESS_ONLY = "a Kimi seat runs its tools without asking (its prompt mode has no read-only or ask-first mode): add --permission-mode bypassPermissions to your walkie seat run command, or use --runtime claude or --runtime codex instead";
 
 /** Kimi's text output → seat text signals (one per non-empty line, terminal escapes removed). */
 export function kimiSeatLine(line: string): SeatSignal[] | null {

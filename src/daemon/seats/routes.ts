@@ -10,6 +10,7 @@ import {
   seatOf, seatsChannel, seatsChannelNode, type SeatRun, type SeatRuntime, type SeatsView,
 } from "../../protocol/seats.ts";
 import type { SeatsConfig } from "../config.ts";
+import type { Core } from "../core.ts";
 import { HttpError, json, parseWith, readBytes, readJson } from "../http.ts";
 import { MAX_BLOB_BYTES, readBlob, writeBlob } from "../blobs.ts";
 import { LOCAL_BODY_MAX, limitWrite, requireTeam, route, type RouteCtx } from "../local-routes.ts";
@@ -17,11 +18,19 @@ import { activeNodes, canSeeChannel } from "../roster.ts";
 import { seatsFor } from "./host.ts";
 import { KIMI_FULL_ACCESS_ONLY, seatEnvNameProblem } from "./runtime.ts";
 import { hostAvailability, seatHosts, seatsList } from "./view.ts";
+import { TALKIE_SHELL_HEADER } from "../orchestrator/os-user.ts";
+import { hostFor } from "../orchestrator/host.ts";
+import { ORCHESTRATOR_AGENT } from "../../protocol/orchestrator.ts";
 
 function host(c: RouteCtx) {
   const h = seatsFor(c.core);
   if (!h) throw new HttpError(503, "unavailable", "this daemon runs without seats");
   return h;
+}
+
+export function refuseScheduledSeatRun(core: Core, agent: string | undefined): void {
+  if (agent === ORCHESTRATOR_AGENT && hostFor(core)?.scheduledTurnActive())
+    throw new HttpError(403, "scheduled_turn_cannot_launch", "scheduled WalkieTalkie turns recommend seats to project orchestrators; they cannot launch seats");
 }
 
 function view(c: RouteCtx, only?: string): SeatsView {
@@ -173,14 +182,21 @@ function target(c: RouteCtx, machine: string): { node: string; hostname: string;
   const channel = seatsChannel(n.node_id);
   const ch = c.core.roster.channels.get(channel);
   const me = c.core.myHandle();
-  if (!ch) throw new HttpError(409, "seats_not_allowed", `${n.hostname} doesn't take seats (its person turns them on with: walkie seats allow)`);
-  if (!ch.members || !me || !ch.members.includes(me)) throw new HttpError(403, "forbidden", `you are not a launcher on ${n.hostname} (#${channel} doesn't include you)`);
+  if (!ch) throw new HttpError(409, "seats_not_allowed", `${n.hostname} doesn't take seats: its person runs \`walkie seats allow\` there to turn them on`);
+  if (!ch.members || !me || !ch.members.includes(me)) {
+    const person = `@${me}`;
+    const exact = c.agent ? `@${me}/${c.core.hostname}/${c.agent}` : null;
+    const hint = exact
+      ? `\`walkie seats allow --launchers ${person}\` there to cover you and your agents, or \`walkie seats allow --launchers ${exact}\` to allow only this agent`
+      : `\`walkie seats allow --launchers ${person}\` there to add you`;
+    throw new HttpError(403, "forbidden", `you aren't a launcher on ${n.hostname}: its person runs ${hint}`);
+  }
   return { node: n.node_id, hostname: n.hostname, channel };
 }
 
 /**
  * `walkie seat run`: a signed launch request in the host's seats channel. The host decides (rules.ts); an agent's
- * request carries its name and is refused unless the host allows that agent by name.
+ * request carries its name so the host can apply person coverage or an exact agent entry.
  */
 /**
  * A repo bundle for a seat request, stored on this machine only (no share: a seats channel carries seat requests
@@ -214,7 +230,13 @@ route("POST", "/v1/seats/run", async (c) => {
   requireTeam(c);
   const b = parseWith(RunReq, await readJson(c.req, LOCAL_BODY_MAX));
   limitWrite(c);
+  refuseScheduledSeatRun(c.core, c.agent);
   const t = target(c, b.machine);
+  const talkieShell = c.agent === "orchestrator" && c.req.headers.get(TALKIE_SHELL_HEADER) === "1";
+  if (talkieShell) {
+    const isolated = t.node === c.core.nodeId ? host(c).view().ephemeral : hostAvailability(c.core, t.node)?.ephemeral === true;
+    if (!isolated) throw new HttpError(409, "talkie_seat_isolation_required", "switch WalkieTalkie back to Walkie platform access to use same-user machines");
+  }
   if (b.bundle && !readBlob(c.core.paths.blobs, b.bundle)) {
     throw new HttpError(400, "invalid", "that repo bundle isn't on this machine (send it with POST /v1/seats/bundle, or walkie seat run --repo)");
   }
@@ -242,7 +264,7 @@ route("POST", "/v1/seats/run", async (c) => {
     const briefSrc = b.brief ?? b.prompt;
     if (!briefSrc) throw new HttpError(400, "invalid", "a v2 request needs a brief (brief, or prompt)");
     const parsed = SeatRunV2.safeParse({
-      op: "run", v: 2, runtime: b.runtime, ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
+      op: "run", v: 2, runtime: b.runtime, ...(talkieShell ? { shell_user: true as const } : {}), ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
       brief: storeBrief(c, briefSrc), ...(b.label ? { label: b.label } : {}), ...(b.workspace ? { workspace: b.workspace } : {}),
       ...(b.account ? { account: b.account } : {}), ...(b.result_file ? { result_file: b.result_file } : {}),
       timeout_s: b.timeout_s ?? DEFAULT_SEAT_TIMEOUT_S, max_concurrent: b.max_concurrent ?? DEFAULT_MAX_CONCURRENT,
@@ -253,7 +275,7 @@ route("POST", "/v1/seats/run", async (c) => {
   } else {
     if (!b.prompt) throw new HttpError(400, "invalid", "prompt is required");
     const run: SeatRun = {
-      op: "run", v: 1, runtime: b.runtime as (typeof SEAT_RUNTIMES_V1)[number], ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
+      op: "run", v: 1, runtime: b.runtime as (typeof SEAT_RUNTIMES_V1)[number], ...(talkieShell ? { shell_user: true as const } : {}), ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
       prompt: b.prompt, ...(b.bundle ? { bundle: b.bundle } : {}),
       timeout_s: b.timeout_s ?? DEFAULT_SEAT_TIMEOUT_S, max_concurrent: b.max_concurrent ?? DEFAULT_MAX_CONCURRENT,
     };
@@ -263,7 +285,9 @@ route("POST", "/v1/seats/run", async (c) => {
   const body = { text, seat } as unknown as BodyOf<"msg.post">;
   // An agent's request carries its name (hosts accept agents they name, never an unnamed one as its person: the CLI
   // under an agent's runtime marks its requests, add-machine's agent-detect.ts).
-  if (c.underAgent && !c.agent) throw new HttpError(403, "agent_unnamed", "a seat request from an agent must name it (WALKIE_AGENT=<name>, or --agent): the host allows agents only by name");
+  if (c.underAgent && !c.agent) {
+    throw new HttpError(403, "agent_unnamed", "a seat request from an agent must name it: set WALKIE_AGENT=<name> in this agent's environment, or add --agent <name> to this walkie seat run command (the host checks this agent against its launcher policy)");
+  }
   const event = c.core.emit("msg.post", body, { channel: t.channel, agent: c.agent });
   // Served to the host: we hold these bytes for this request (v2: the brief and the delta bundle).
   if (seat.v === 2) {
@@ -327,7 +351,9 @@ route("POST", "/v1/seats/stop", async (c) => {
     return json({ stopped: r.stopped ? "local" : "none", verified: r.verified, ...(r.why ? { why: r.why } : {}) });
   }
   // Like a launch: an agent's stop carries its name, never its person's (Codex r9 MEDIUM 1).
-  if (c.underAgent && !c.agent) throw new HttpError(403, "agent_unnamed", "a seat stop from an agent must name it (WALKIE_AGENT=<name>, or --agent): the host allows agents only by name");
+  if (c.underAgent && !c.agent) {
+    throw new HttpError(403, "agent_unnamed", "a seat stop from an agent must name it: set WALKIE_AGENT=<name> in this agent's environment, or add --agent <name> to this walkie seat stop command (the host checks this agent against its launcher policy)");
+  }
   limitWrite(c);
   const t = target(c, node);
   const event = c.core.emit("msg.post", {

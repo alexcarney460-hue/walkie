@@ -3,6 +3,7 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import type { OrchMessage } from "../protocol/orchestrator.ts";
 import type { Event, Stub } from "../protocol/schemas.ts";
 import { isBoardOp } from "../protocol/projects/schema.ts";
+import { indexedClaim } from "./orchestrator/schedule-claims.ts";
 
 const ROSTER_KIND_SQL = "('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')";
 
@@ -157,6 +158,28 @@ export const MIGRATIONS: readonly string[] = [
    CREATE INDEX IF NOT EXISTS events_visible_channel ON events(channel, ts, redacted, status) WHERE channel IS NOT NULL AND redacted = 0 AND status = 'ok';
    CREATE INDEX IF NOT EXISTS events_origin_ts ON events(origin, ts) WHERE ts IS NOT NULL;
    CREATE INDEX IF NOT EXISTS events_roster ON events(origin, seq) WHERE kind IN ${ROSTER_KIND_SQL};`,
+  // 14: local-only lookup for bounded schedule-claim seeding. No event or wire format changes.
+  `ALTER TABLE events ADD COLUMN claim_schedule TEXT;
+   ALTER TABLE events ADD COLUMN claim_at INTEGER;
+   ALTER TABLE events ADD COLUMN claim_term INTEGER;
+   ALTER TABLE events ADD COLUMN claim_after TEXT;
+   CREATE INDEX events_claim_latest ON events(claim_schedule, claim_term DESC, seq DESC)
+     WHERE claim_schedule IS NOT NULL AND redacted = 0 AND status = 'ok';`,
+  // 15: constant-cost schedule channel revision check for the schedule fold.
+  `INSERT OR REPLACE INTO meta(key, value) SELECT 'schedule_channel_count', CAST(COUNT(*) AS TEXT) FROM events
+     WHERE channel = 'talkie-schedules' AND kind = 'msg.post' AND redacted = 0 AND status = 'ok';
+   CREATE TRIGGER IF NOT EXISTS schedule_count_insert AFTER INSERT ON events
+     WHEN NEW.channel = 'talkie-schedules' AND NEW.kind = 'msg.post' AND NEW.redacted = 0 AND NEW.status = 'ok'
+     BEGIN UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'schedule_channel_count'; END;
+   CREATE TRIGGER IF NOT EXISTS schedule_count_delete AFTER DELETE ON events
+     WHEN OLD.channel = 'talkie-schedules' AND OLD.kind = 'msg.post' AND OLD.redacted = 0 AND OLD.status = 'ok'
+     BEGIN UPDATE meta SET value = CAST(CAST(value AS INTEGER) - 1 AS TEXT) WHERE key = 'schedule_channel_count'; END;
+   CREATE TRIGGER IF NOT EXISTS schedule_count_update_old AFTER UPDATE ON events
+     WHEN OLD.channel = 'talkie-schedules' AND OLD.kind = 'msg.post' AND OLD.redacted = 0 AND OLD.status = 'ok'
+     BEGIN UPDATE meta SET value = CAST(CAST(value AS INTEGER) - 1 AS TEXT) WHERE key = 'schedule_channel_count'; END;
+   CREATE TRIGGER IF NOT EXISTS schedule_count_update_new AFTER UPDATE ON events
+     WHEN NEW.channel = 'talkie-schedules' AND NEW.kind = 'msg.post' AND NEW.redacted = 0 AND NEW.status = 'ok'
+     BEGIN UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'schedule_channel_count'; END;`,
 ];
 
 /** Independently replayable migration 13, also used by the startup ledger. */
@@ -228,6 +251,9 @@ export interface EventFilter {
   roots?: boolean;
 }
 
+type ClaimTerm = { readonly authority: string; readonly after: string | null;
+  readonly floor: number; readonly ceiling: number | null };
+
 function threadOf(ev: Event): string | null {
   const b = ev.body as { thread?: unknown; ask?: unknown };
   if (ev.kind === "answer" && typeof b.ask === "string") return b.ask;
@@ -236,6 +262,10 @@ function threadOf(ev: Event): string | null {
 
 export class Store {
   readonly db: Database;
+  /** Claims wait until every pre-14 schedule post has been indexed. */
+  claimIndexReady = false;
+  claimIndexFailure: string | null = null;
+  private claimIndexTimer: ReturnType<typeof setTimeout> | null = null;
   /** This node's id: storing one of its own rows raises the persisted seq allocation (C3). */
   selfId: string | null = null;
   /** Open `transaction()` levels; external effects queued by `afterCommit` wait for the outermost. */
@@ -324,12 +354,55 @@ export class Store {
       this.db.transaction(() => { this.db.exec(MIGRATIONS[ORCH_MIGRATION] as string); })();
     }
     for (let i = current; i < MIGRATIONS.length; i++) {
+      if (i === 13) { this.migrateClaimIndex(); break; }
       this.db.transaction(() => {
         if (i === BOARDS_MIGRATION && has("board_projects")) this.rebuildLaneBoards();
         else if (i === 12) migrate13(this.db);
         else this.db.exec(MIGRATIONS[i] as string);
         this.db.query("INSERT INTO migrations(version, applied_at) VALUES (?, ?)").run(i + 1, Date.now());
       })();
+    }
+    if (current >= MIGRATIONS.length) this.claimIndexReady = true;
+  }
+
+  /** Create the derived index once; each later batch is a separate transaction. */
+  private migrateClaimIndex(): void {
+    const columns = new Set(this.db.query<{ name: string }, []>("PRAGMA table_info(events)").all().map((r) => r.name));
+    if (!columns.has("claim_schedule")) this.db.transaction(() => this.db.exec(MIGRATIONS[13] as string))();
+    this.migrateClaimIndexBatch();
+  }
+
+  private migrateClaimIndexBatch(): void {
+    try {
+      const more = this.db.transaction(() => {
+        const cursor = Number(this.getMeta("claim_index_cursor") ?? 0);
+        if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("invalid claim index migration cursor");
+        const rows = this.db.query<{ rowid: number; id: string; body: string | null;
+          channel: string | null; kind: string | null }, [number]>(
+          "SELECT rowid, id, body, channel, kind FROM events WHERE rowid > ? ORDER BY rowid LIMIT 500").all(cursor);
+        const write = this.db.query(`UPDATE events SET claim_schedule = ?, claim_at = ?, claim_term = ?, claim_after = ? WHERE id = ?`);
+        for (const row of rows) {
+          if (row.channel !== "talkie-schedules" || row.kind !== "msg.post") continue;
+          let text: unknown;
+          try { text = JSON.parse(row.body ?? "null")?.text; } catch { continue; }
+          const claim = indexedClaim(text);
+          if (claim) write.run(claim.schedule, claim.at, claim.term, claim.after, row.id);
+        }
+        if (rows.length < 500) {
+          this.db.query("DELETE FROM meta WHERE key = 'claim_index_cursor'").run();
+          this.db.query("INSERT INTO migrations(version, applied_at) VALUES (14, ?)").run(Date.now());
+          this.db.exec(MIGRATIONS[14] as string);
+          this.db.query("INSERT INTO migrations(version, applied_at) VALUES (15, ?)").run(Date.now());
+          return false;
+        }
+        this.setMeta("claim_index_cursor", String(rows.at(-1)!.rowid));
+        return true;
+      })();
+      if (!more) { this.claimIndexReady = true; return; }
+      this.claimIndexTimer = setTimeout(() => { this.claimIndexTimer = null; this.migrateClaimIndexBatch(); }, 0);
+    } catch (err) {
+      this.claimIndexFailure = err instanceof Error ? err.message : String(err);
+      this.claimIndexTimer = setTimeout(() => { this.claimIndexTimer = null; this.migrateClaimIndexBatch(); }, 1_000);
     }
   }
 
@@ -364,6 +437,8 @@ export class Store {
   }
 
   close(): void {
+    if (this.claimIndexTimer) clearTimeout(this.claimIndexTimer);
+    this.claimIndexTimer = null;
     try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* best effort on shutdown */ }
     this.db.close(false);
   }
@@ -396,15 +471,32 @@ export class Store {
   getMeta(key: string): string | null {
     return this.db.query<{ value: string }, [string]>("SELECT value FROM meta WHERE key = ?").get(key)?.value ?? null;
   }
+  listMeta(prefix: string): { key: string; value: string }[] {
+    return this.db.query<{ key: string; value: string }, [number, string]>(
+      "SELECT key, value FROM meta WHERE substr(key, 1, ?) = ?").all(prefix.length, prefix);
+  }
   setMeta(key: string, value: string): void {
     this.db.query("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
   deleteMeta(key: string): void { this.db.query("DELETE FROM meta WHERE key = ?").run(key); }
+  pruneScheduleRequests(before: number): void {
+    this.db.query(`DELETE FROM meta WHERE key LIKE 'schedule_request:%' AND json_valid(value)
+      AND json_extract(value, '$.at') < ?`).run(before);
+  }
 
   // ---- events ----
   getRow(id: string): EventRow | null {
     return this.db.query<EventRow, [string]>(
       `SELECT ${ROW_COLS} FROM events WHERE id = ?`).get(id);
+  }
+  /** A signed notice replicated from a different node, available to acknowledge on receipt. */
+  peerNotice(text: string, self: string): Event | null {
+    const row = this.db.query<{ json: string }, [string, string]>(
+      `SELECT json FROM events WHERE kind = 'msg.post' AND channel = 'general' AND status = 'ok'
+       AND redacted = 0 AND origin != ? AND json_extract(body, '$.text') = ?
+       ORDER BY received_at DESC LIMIT 1`).get(self, text);
+    if (!row) return null;
+    try { return JSON.parse(row.json) as Event; } catch { return null; }
   }
   countEvents(): number {
     return this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events").get()?.n ?? 0;
@@ -464,11 +556,15 @@ export class Store {
   }
 
   private insertFull(ev: Event, status: "ok" | "rejected", reason: string | null, fin: boolean): void {
+    const claim = ev.kind === "msg.post" && ev.channel === "talkie-schedules"
+      ? indexedClaim((ev.body as { text?: unknown }).text) : null;
     this.db.query(`INSERT INTO events(id, origin, seq, ts, kind, channel, thread, author_handle, author_agent, body, sig,
-      redacted, status, reason, json, received_at, bop, fin) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?)`).run(
+      redacted, status, reason, json, received_at, bop, fin, claim_schedule, claim_at, claim_term, claim_after)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`).run(
       ev.id, ev.origin, ev.seq, ev.ts, ev.kind, ev.channel ?? null, threadOf(ev), ev.author.handle,
       ev.author.agent ?? null, JSON.stringify(ev.body), ev.sig, status, reason, JSON.stringify(ev), Date.now(),
-      isBoardOp(ev) ? 1 : 0, fin ? 1 : 0);
+      isBoardOp(ev) ? 1 : 0, fin ? 1 : 0, claim?.schedule ?? null, claim?.at ?? null,
+      claim?.term ?? null, claim?.after ?? null);
   }
 
   /** A junk stub whose full copy is now valid in a channel this node can't see: an ordinary stub again. */
@@ -672,6 +768,14 @@ export class Store {
     return this.db.query<{ channel: string }, []>(
       "SELECT DISTINCT channel FROM events WHERE redacted = 1 AND (status = 'ok' OR (status = 'junk' AND reason = 'hidden_cap' AND json_extract(json, '$.kind') = 'msg.post')) AND channel IS NOT NULL").all().map((r) => r.channel);
   }
+  /** Only fillable rows in a signed authority term can hide schedule history. */
+  unfilledAuthorityOrigin(channel: string, terms: readonly { authority: string; floor: number; ceiling: number | null }[]): string | null {
+    const query = this.db.query("SELECT 1 FROM events WHERE channel = ? AND origin = ? AND redacted = 1 AND status = 'ok' AND seq > ? AND (? IS NULL OR seq < ?) LIMIT 1");
+    for (const term of terms) {
+      if (query.get(channel, term.authority, term.floor, term.ceiling, term.ceiling)) return term.authority;
+    }
+    return null;
+  }
   /**
    * Stubs in these channels that are due for a fill attempt from `peer` (PROTOCOL §3): never tried at
    * that peer first, then the least recently tried there, skipping those in that peer's backoff
@@ -704,6 +808,25 @@ export class Store {
     const kinds = f.kinds?.length ? [...new Set(f.kinds)] : [];
     if (scoped || kinds.length < 2) return this.queryEventsOnce(f, scoped);
     return kinds.flatMap((k) => this.queryEventsOnce({ ...f, kinds: [k] }, false)).sort(newestFirst).slice(0, f.limit);
+  }
+
+  /** The latest signed-order posts for one schedule; the first survives the age cutoff. */
+  scheduleClaimEvents(schedule: string, sinceAt: number, limit: number, terms: readonly ClaimTerm[]): EventRow[] {
+    if (!Number.isSafeInteger(sinceAt) || !Number.isSafeInteger(limit) || limit < 1 || limit > 50)
+      throw new RangeError("invalid schedule claim query bounds");
+    if (!terms.length) return [];
+    const validTerm = `EXISTS (SELECT 1 FROM json_each(?) AS t
+      WHERE CAST(t.key AS INTEGER) = e.claim_term
+        AND json_extract(t.value, '$.authority') = e.origin
+        AND e.claim_after IS json_extract(t.value, '$.after')
+        AND e.seq > json_extract(t.value, '$.floor')
+        AND (json_extract(t.value, '$.ceiling') IS NULL OR e.seq < json_extract(t.value, '$.ceiling')))`;
+    const base = `e.claim_schedule = ? AND e.redacted = 0 AND e.status = 'ok' AND ${validTerm}`;
+    const encoded = JSON.stringify(terms);
+    const rows = this.db.query<EventRow & { claim_at: number }, [string, string, number]>(
+      `SELECT ${ROW_COLS}, claim_at FROM events e WHERE ${base}
+       ORDER BY e.claim_term DESC, e.seq DESC LIMIT ?`).all(schedule, encoded, limit);
+    return rows.filter((row, index) => index === 0 || row.claim_at >= sinceAt);
   }
 
   private queryEventsOnce(f: EventFilter, scoped: boolean): EventRow[] {
@@ -741,6 +864,15 @@ export class Store {
       `SELECT channel, COUNT(*) AS n, MAX(ts) AS t FROM events WHERE channel IS NOT NULL AND redacted = 0
        AND status = 'ok' GROUP BY channel`).all()) out.set(r.channel, { count: r.n, last_ts: r.t });
     return out;
+  }
+  /** Accepted schedule records in one channel, including old records needed to reconstruct removed schedules. */
+  channelEventCount(channel: string): number {
+    if (channel === "talkie-schedules") {
+      const cached = this.getMeta("schedule_channel_count");
+      if (cached !== null) return Number(cached);
+    }
+    return this.db.query<{ n: number }, [string]>(
+      "SELECT COUNT(*) AS n FROM events WHERE channel = ? AND kind = 'msg.post' AND redacted = 0 AND status = 'ok'").get(channel)?.n ?? 0;
   }
 
   /** Drops the content of a stored event, leaving a stub (same id/seq): 'ok' = restricted, 'junk' = discarded. */
@@ -955,7 +1087,7 @@ const ORCH_STATES: ReadonlySet<string> = new Set(["queued", "sent", "refused", "
 function orchOf(r: OrchRow): OrchMessage {
   return {
     id: r.id, thread: r.thread, role: r.role === "orchestrator" ? "orchestrator" : "person", text: r.text, ts: r.ts,
-    ...(r.via === "dashboard" || r.via === "cli" ? { via: r.via } : {}),
+    ...(r.via === "dashboard" || r.via === "cli" || r.via === "schedule" || r.via === "private" ? { via: r.via } : {}),
     ...(r.state !== null && ORCH_STATES.has(r.state) ? { state: r.state as NonNullable<OrchMessage["state"]> } : {}),
     ...(r.tools ? { tools: JSON.parse(r.tools) as string[] } : {}),
     ...(r.reply_to ? { reply_to: r.reply_to } : {}),

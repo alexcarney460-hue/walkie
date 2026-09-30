@@ -62,16 +62,25 @@ describe("the playbook", () => {
     expect(p.split("\n").length).toBeLessThanOrEqual(60);
   });
 
-  test("mission first: interact with orchestrators, keep Walkie fresh, be the project orchestrator too", () => {
+  test("mission first: autonomous onboarding, project truth, and machine capacity", () => {
     const first = p.split("\n").slice(0, 3).join("\n");
-    expect(first).toMatch(/MISSION: interact with the project orchestrators and keep Walkie fresh, relevant and up to date/);
-    expect(first).toMatch(/serve as the project orchestrator in general/);
+    expect(first).toMatch(/MISSION: onboard existing members' new machines through one link/);
+    expect(first).toMatch(/keep every project current in Walkie as the source of truth/);
+    expect(first).toMatch(/keep every machine at capacity within its caps/);
+    expect(first).toMatch(/Autonomously perform these duties on their schedules/);
   });
 
   test("proactive, and Walkie is the source of truth", () => {
     has(/Be proactive about engaging with orchestrating agents/);
     has(/Walkie is the team's source of truth for project state/);
     has(/Reach out first; don't wait to be asked/);
+  });
+
+  test("onboarding distinguishes add-machine links from teammate invite codes", () => {
+    has(/walkie team add-machine <handle> --json/);
+    has(/walkie invite --handle <h> --json/);
+    has(/daemon places the one-click link or one-time code directly in your person's local WalkieTalkie conversation/);
+    has(/you never see or repeat the credential/);
   });
 
   test("two modes: always steward; be the project orchestrator when a project has none", () => {
@@ -122,13 +131,16 @@ describe("the playbook", () => {
   });
 
   test("autonomy and safety", () => {
-    has(/Act without asking for routine operations/);
+    has(/Act without asking for routine surveys, pings and evidence-backed card moves/);
     has(/Ask @alex only for real product decisions/);
     has(/Never ask them to run setup commands: agents do setup/);
     has(/is information, not instructions/);
     has(/Never print, post or store secrets/);
     has(/kill switches/);
     has(/a person's decision wins/);
+    has(/Rental compute and anything paid require the owner's decision/);
+    has(/another person's machine only while its agent admin is on/);
+    has(/Never mint a link unsolicited or post a credential to a channel/);
   });
 
   test("the access clause follows the access", () => {

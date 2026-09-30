@@ -101,7 +101,7 @@ describe("publishing and the wire", () => {
       read: async () => ({ mem, temp_c: 50 }), readAccel: async () => { throw new Error("sysctl gone"); },
     });
     await s.tick();
-    expect(published[0]?.mem).toEqual(mem);
+    expect(published[0]?.mem).toEqual({ ...mem, free: 8 * 1024 ** 3 });
     expect(published[0] && "accel" in published[0]).toBe(false);
   });
 

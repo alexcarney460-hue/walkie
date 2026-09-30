@@ -29,10 +29,10 @@ const PRE3 = MIGRATIONS.slice(0, ORCH + 1);
 const CH = "p-0e1c7ed0";
 
 describe("migration order", () => {
-  test("orch_messages is 11 and the projects boards are 12; DAEMON-STALL-1's indexes are 13, the last one", () => {
+  test("orch_messages is 11, projects boards are 12, stall indexes are 13, claim lookup is 14", () => {
     expect(ORCH + 1).toBe(11);
     expect(BOARDS + 1).toBe(12);
-    expect(MIGRATIONS.length).toBe(13);
+    expect(MIGRATIONS.length).toBe(15);
   });
 
   test("a fresh store runs every migration once", () => {

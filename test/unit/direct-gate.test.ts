@@ -206,3 +206,25 @@ describe("Direct /join", () => {
     expect(await code(res)).toBe("forbidden");
   });
 });
+
+describe("Direct invite preview", () => {
+  test("only a current owner-signed invite reveals the authority's team and inviter", async () => {
+    const w = world();
+    const stranger = tnode("stranger");
+    const invite = createInvite(w.alex.keys, { team: w.team, authority: w.alex.keys.pubkey,
+      handle: "riley", role: "member", now: now(), pos: w.core.roster.pos ?? 0 });
+    const good = await call(w.api, stranger, "/peer/v1/invite-preview", { method: "POST", body: { code: invite.code } });
+    expect(good.status).toBe(200);
+    expect(await good.json()).toMatchObject({ team_id: w.team, team_name: "acme", inviter_handle: "alex", spent: false });
+    const joined = await call(w.api, stranger, "/peer/v1/join", { method: "POST",
+      body: { pubkey: stranger.keys.pubkey, hostname: stranger.hostname, ip: "", invite: invite.code } });
+    expect(joined.status).toBe(200);
+    const spent = await call(w.api, stranger, "/peer/v1/invite-preview", { method: "POST", body: { code: invite.code } });
+    expect(await spent.json()).toMatchObject({ team_id: w.team, spent: true });
+    const forged = createInvite(stranger.keys, { team: w.team, authority: w.alex.keys.pubkey,
+      handle: "riley", role: "member", now: now(), pos: w.core.roster.pos ?? 0 });
+    const bad = await call(w.api, stranger, "/peer/v1/invite-preview", { method: "POST", body: { code: forged.code } });
+    expect(bad.status).toBe(403);
+    expect(await code(bad)).toBe("invite_issuer_not_owner");
+  });
+});

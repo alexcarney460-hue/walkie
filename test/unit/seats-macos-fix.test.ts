@@ -4,15 +4,21 @@
 // 1. macOS puts every local account in everyone (12), localaccounts (61) and the groups nesting them (_lpoperator 100,
 //    com.apple.sharepoint.group.1 701): judged by direct membership (mac-groups.ts), from this Mac's real dscl output
 //    (test/fixtures/seats-macos, read-only captures).
-// 2. crontab refuses a user in cron.deny (every seat user is), even for root: the spool is checked and a crontab there
-//    removed by root directly, verified (admin-sys.ts crontabRemoval).
+// 2. crontab refuses a user in cron.deny (every seat user is), even for root: root removes its spool entry directly.
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSeatUser, destroySeatUser, pendingSeatUsers } from "../../src/daemon/seats/admin.ts";
-import { crontabRemoval, realAdminSys, removeSpoolCrontab } from "../../src/daemon/seats/admin-sys.ts";
+import { realAdminSys, removeSpoolCrontab, psShowsNoProcesses } from "../../src/daemon/seats/admin-sys.ts";
 import { macImplicitGids, parseDsGroups, parseDsRecords, parseDsUser, type DsGroup } from "../../src/daemon/seats/mac-groups.ts";
 import { fakeSeatWorld } from "../helpers/fake-seat-users.ts";
+
+test("macOS ps exit 1 means empty only after account absence is verified", () => {
+  const empty = { code: 1, out: "", err: "" };
+  expect(psShowsNoProcesses(empty, true, () => true)).toBe(true);
+  expect(psShowsNoProcesses(empty, true, () => false)).toBe(false);
+  expect(psShowsNoProcesses({ ...empty, err: "permission denied" }, true, () => true)).toBe(false);
+});
 
 const FIX = join(import.meta.dir, "..", "fixtures", "seats-macos");
 const fixture = (f: string) => readFileSync(join(FIX, f), "utf8");
@@ -136,42 +142,34 @@ describe("macOS groups every local account is in are not extra (bug 1)", () => {
   });
 });
 
-describe("crontab refuses a cron-denied user even for root (bug 2)", () => {
-  const DENIED = "crontab: you (walkie-s1) are not allowed to use this program\n";
-
-  test("denied, and no crontab in the spool: nothing to remove", () => {
+describe("root removes a cron-denied user's spool entry directly (bug 2)", () => {
+  test("no crontab in the spool: nothing to remove", () => {
     const t = tmp();
     const tabs = join(t, "tabs");
     mkdirSync(tabs);
-    expect(crontabRemoval("walkie-s1", 1, DENIED, [tabs])).toBeNull();
+    expect(removeSpoolCrontab("walkie-s1", [tabs])).toBeNull();
   });
 
-  test("denied, and a crontab in the spool: root removes it, verified; the same directory through a link is fine", () => {
+  test("a crontab in the spool: root removes it, verified; the same directory through a link is fine", () => {
     const t = tmp();
     const tabs = join(t, "at", "tabs");
     mkdirSync(tabs, { recursive: true });
     symlinkSync(join(t, "at"), join(t, "cron")); // /usr/lib/cron -> /var/at, as on macOS
     writeFileSync(join(tabs, "walkie-s1"), "* * * * * /tmp/x\n");
     writeFileSync(join(tabs, "walkie-s10"), "keep\n");
-    expect(crontabRemoval("walkie-s1", 1, DENIED, [join(t, "cron", "tabs"), tabs])).toBeNull();
+    expect(removeSpoolCrontab("walkie-s1", [join(t, "cron", "tabs"), tabs])).toBeNull();
     expect(existsSync(join(tabs, "walkie-s1"))).toBe(false);
     expect(readFileSync(join(tabs, "walkie-s10"), "utf8")).toBe("keep\n");
   });
 
-  test("a spool entry that isn't a crontab, or a spool that can't be read, is reported with the failure", () => {
+  test("a spool entry that isn't a crontab, or a spool that can't be read, is reported", () => {
     const t = tmp();
     const tabs = join(t, "tabs");
     mkdirSync(join(tabs, "walkie-s1"), { recursive: true });
-    expect(crontabRemoval("walkie-s1", 1, DENIED, [tabs])).toMatch(/^crontab -u walkie-s1 -r failed \(1\): crontab: you \(walkie-s1\) are not allowed.*; .*walkie-s1 is a directory/);
+    expect(removeSpoolCrontab("walkie-s1", [tabs])).toContain("walkie-s1 is a directory");
     const file = join(t, "not-a-dir");
     writeFileSync(file, "");
     expect(removeSpoolCrontab("walkie-s1", [file])).toMatch(/can't be checked \(ENOTDIR\)/);
-  });
-
-  test("any other failure is reported as before; no crontab, or removed, is fine", () => {
-    expect(crontabRemoval("walkie-s1", 1, "crontab: tmp/tmp.1: Permission denied\n", [])).toBe("crontab -u walkie-s1 -r failed (1): crontab: tmp/tmp.1: Permission denied");
-    expect(crontabRemoval("walkie-s1", 1, "crontab: no crontab for walkie-s1\n", [])).toBeNull();
-    expect(crontabRemoval("walkie-s1", 0, "", [])).toBeNull();
   });
 });
 
@@ -189,7 +187,7 @@ describe("the teammate's machine: walkie-s1 left half-made, then the fixed helpe
       if (!exists) return null;
       const denied = (w.sys.readSchedulerFile(w.schedulerFiles.cron[1]) ?? "").split("\n").includes(name);
       const err = denied ? `crontab: you (${name}) are not allowed to use this program\n` : `crontab: no crontab for ${name}\n`;
-      return fixed ? crontabRemoval(name, 1, err, [tabs]) : `crontab -u ${name} -r failed (1): ${err.trim()}`;
+      return fixed ? removeSpoolCrontab(name, [tabs]) : `crontab -u ${name} -r failed (1): ${err.trim()}`;
     };
     if (fixed) w.sys.implicitGroups = (name, gids) => macImplicitGids({ ...SEAT, name, gid: w.users.get(name)?.gid ?? -1 }, gids, groupsWith());
     return { w, tabs };
@@ -201,7 +199,7 @@ describe("the teammate's machine: walkie-s1 left half-made, then the fixed helpe
     expect(r.ok).toBe(false);
     expect(r.why).toBe("walkie-s1 could not be made clean: walkie-s1 is in other groups (12, 61, 701, 100) (and undoing it left: schedules: crontab -u walkie-s1 -r failed (1): crontab: you (walkie-s1) are not allowed to use this program)");
     expect(w.users.has("walkie-s1")).toBe(true);
-    expect(pendingSeatUsers(w.sys)).toEqual({ ok: true, ids: [1] });
+    expect(pendingSeatUsers(w.sys)).toEqual({ ok: true, ids: [1], idleIds: [1] });
   });
 
   test("after the fix: the next destroy removes the left walkie-s1 (its crontab too), and walkie-s2 is made", async () => {
@@ -210,7 +208,7 @@ describe("the teammate's machine: walkie-s1 left half-made, then the fixed helpe
     // The same machine (users, ledger, deny files), now with the fixed helper.
     const { w, tabs } = { w: before.w, tabs: join(before.w.root, "tabs") };
     w.sys.implicitGroups = (name, gids) => macImplicitGids({ ...SEAT, name, gid: w.users.get(name)?.gid ?? -1 }, gids, groupsWith());
-    w.sys.removeSchedules = (name, _uid, exists) => (exists ? crontabRemoval(name, 1, `crontab: you (${name}) are not allowed to use this program\n`, [tabs]) : null);
+    w.sys.removeSchedules = (name, _uid, exists) => (exists ? removeSpoolCrontab(name, [tabs]) : null);
     writeFileSync(join(tabs, "walkie-s1"), "* * * * * /tmp/x\n"); // even had it managed to schedule something
     expect(await destroySeatUser(1, w.sys)).toMatchObject({ ok: true, name: "walkie-s1" });
     expect(w.users.has("walkie-s1")).toBe(false);

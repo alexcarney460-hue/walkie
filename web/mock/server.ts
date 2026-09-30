@@ -11,6 +11,8 @@
 //   WALKIE_MOCK_POOL=lan                  maren's office on one network (a big local group for local models;
 //                                         default: a scattered team, every machine on its own)
 //   WALKIE_MOCK_FLEET=busy               ~36 more working agents, one-shot churn on atlas, a flapping seat (LIVE-2)
+//   WALKIE_MOCK_COMPUTE=1                 a rented machine (rent-agent-7f3a) on the team for the "Rented" chip (RENT-2;
+//                                         /v1/compute/* is served either way)
 //   WALKIE_MOCK_PLAN=free|trial|team|business|grace   the team's plan (default trial); license keys
 //                                         "mock-team-<seats>" / "mock-business-<seats>" activate
 // Implements PROTOCOL.md §5 read endpoints + post/answer/admit/invite/channels/stream, and the
@@ -30,6 +32,8 @@ import { Simulation } from "./sim.ts";
 import { BusySim, seedBusy } from "./busy.ts";
 import { MockPool } from "./pool.ts";
 import { MockSeats } from "./seats.ts";
+import { MOCK_QUOTES, MockCompute } from "./compute.ts";
+import { CreditCheckoutReq, LocalRentReq, SiteStopReq } from "../../src/protocol/compute.ts";
 import { TURN_SEATS_OFF } from "../../src/protocol/seats.ts";
 import { sha256Hex } from "./world.ts";
 import { addMachineCommand, addMachineLink, releaseTag } from "../../src/protocol/add-machine.ts";
@@ -57,6 +61,7 @@ const busy = world.hasTeam && process.env.WALKIE_MOCK_FLEET === "busy" ? new Bus
 busy?.start();
 const pool = new MockPool(() => world.nodeViews());
 const seats = new MockSeats(() => world.nodeViews(), () => world.me().handle, () => pool.share.on);
+const compute = new MockCompute();
 const phones = [{ id: "3f9a1c2b7d4e", name: "iPhone", created_at: Date.now() - 3 * 86_400_000, last_seen: Date.now() - 12 * 60_000, expires_at: Date.now() + 87 * 86_400_000 }];
 if (world.hasTeam) sim.start();
 
@@ -152,6 +157,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (path === "/v1/license" && method === "GET") return json(world.planView());
   if (path === "/v1/agents") return json(world.agentsPayload(q));
   if (path === "/v1/accounts") return json({ accounts: world.accountViews(), pool: { policy: "company", at: Date.now() - 3_600_000, by: "maren" } });
+  if (path.startsWith("/v1/compute/")) return computeRoute(req, path, method);
   if (path === "/v1/pool" && method === "GET") return json(pool.view());
   if (path === "/v1/pool/share" && method === "POST") {
     const b = (await body(req)) as { on?: unknown; max_gb?: unknown } | undefined;
@@ -406,6 +412,34 @@ async function api(req: Request, url: URL): Promise<Response> {
     return json({ event });
   }
 
+  return fail(404, "not_found", `no route for ${method} ${path}`);
+}
+
+/** Rental compute (RENT-2), owners only like the daemon's routes. Prices only. */
+async function computeRoute(req: Request, path: string, method: string): Promise<Response> {
+  if (!isOwner()) return fail(403, "forbidden", "only owners rent machines");
+  if (path === "/v1/compute/quotes" && method === "GET") return json(MOCK_QUOTES);
+  if (path === "/v1/compute/state" && method === "GET") return json(compute.state());
+  if (method !== "POST") return fail(404, "not_found", `no route for ${method} ${path}`);
+  const b = await body(req);
+  if (path === "/v1/compute/rent") {
+    const p = LocalRentReq.safeParse(b);
+    if (!p.success) return fail(400, "invalid", p.error.issues[0]?.message ?? "invalid body");
+    const r = compute.rent(p.data.machines);
+    if ("error" in r) return json({ error: { code: r.error, message: "not enough credit for the first hour", needed_micros: r.needed_micros, balance_micros: compute.balance } }, 402);
+    return json(r);
+  }
+  if (path === "/v1/compute/stop") {
+    const p = SiteStopReq.safeParse(b);
+    if (!p.success) return fail(400, "invalid", "rental_id or all: true");
+    const r = compute.stop(p.data);
+    return r ? json(r) : fail(404, "not_found", "no such rental");
+  }
+  if (path === "/v1/compute/credit") {
+    const p = CreditCheckoutReq.safeParse(b);
+    if (!p.success) return fail(400, "invalid", "block: 50, 200 or 1000");
+    return json({ url: compute.creditUrl(p.data.block) });
+  }
   return fail(404, "not_found", `no route for ${method} ${path}`);
 }
 

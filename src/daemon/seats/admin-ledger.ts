@@ -19,6 +19,10 @@ import { chmodSync, lstatSync } from "node:fs";
 export type LedgerState = "reserved" | "making" | "created" | "destroying" | "destroyed" | "cancelled";
 /** A process's identity: its pid and its start time (`ps -o lstart=`). */
 export interface OpId { pid: number; start: string }
+export interface TalkieOwnerRecord { owner: number; state: string; generation: string | null; instance: string | null; op_pid: number | null; op_start: string | null; daemon_pid: number | null; daemon_start: string | null }
+export interface TalkieResidueRecord { owner: number; folder: string; paths: string[] }
+export interface HomeRetirement { uid: number; sourceDev: number; sourceIno: number; tombstone: string }
+export interface HomeRetirementStore { read(): HomeRetirement | null; prepare(record: HomeRetirement): void; op: OpId }
 
 export type Reservation = { ok: true } | { ok: false; high: number; why: string };
 export type Take =
@@ -52,6 +56,22 @@ export class Ledger {
       this.db.exec(`CREATE TABLE IF NOT EXISTS ids (n INTEGER PRIMARY KEY, state TEXT NOT NULL, at INTEGER NOT NULL,
         owner INTEGER NOT NULL DEFAULT -1, op_pid INTEGER, op_start TEXT)`);
       this.db.exec("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)");
+      this.db.exec("CREATE TABLE IF NOT EXISTS talkie_owner (uid INTEGER PRIMARY KEY, owner INTEGER NOT NULL, state TEXT NOT NULL)");
+      this.db.exec("CREATE TABLE IF NOT EXISTS talkie_residue_folders (uid INTEGER NOT NULL, folder TEXT NOT NULL, owner INTEGER NOT NULL, paths TEXT NOT NULL, PRIMARY KEY(uid, folder))");
+      this.db.exec("CREATE TABLE IF NOT EXISTS seat_residue (n INTEGER NOT NULL, owner INTEGER NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(n, kind, path))");
+      this.db.exec("CREATE TABLE IF NOT EXISTS seat_home_retirement (n INTEGER PRIMARY KEY, owner INTEGER NOT NULL, uid INTEGER NOT NULL, source_dev INTEGER NOT NULL, source_ino INTEGER NOT NULL, tombstone TEXT NOT NULL)");
+      const oldResidue = this.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'talkie_residue'").get();
+      if (oldResidue) {
+        this.db.exec("INSERT OR IGNORE INTO talkie_residue_folders (uid, folder, owner, paths) SELECT uid, folder, owner, paths FROM talkie_residue WHERE folder <> ''");
+        this.db.exec("DROP TABLE talkie_residue");
+      }
+      const talkieCols = new Set((this.db.query("PRAGMA table_info(talkie_owner)").all() as Array<{ name: string }>).map((c) => c.name));
+      if (!talkieCols.has("generation")) this.db.exec("ALTER TABLE talkie_owner ADD COLUMN generation TEXT");
+      if (!talkieCols.has("instance")) this.db.exec("ALTER TABLE talkie_owner ADD COLUMN instance TEXT");
+      if (!talkieCols.has("op_pid")) this.db.exec("ALTER TABLE talkie_owner ADD COLUMN op_pid INTEGER");
+      if (!talkieCols.has("op_start")) this.db.exec("ALTER TABLE talkie_owner ADD COLUMN op_start TEXT");
+      if (!talkieCols.has("daemon_pid")) this.db.exec("ALTER TABLE talkie_owner ADD COLUMN daemon_pid INTEGER");
+      if (!talkieCols.has("daemon_start")) this.db.exec("ALTER TABLE talkie_owner ADD COLUMN daemon_start TEXT");
       // A round-6 ledger (SEATS-FIX-6) had no owner or operation columns (Opus r8 LOW): added; its rows' owner is
       // unknown (-1), and the first person's helper that destroys or lists them takes them (a dev-only ledger).
       const cols = new Set((this.db.query("PRAGMA table_info(ids)").all() as Array<{ name: string }>).map((c) => c.name));
@@ -105,13 +125,18 @@ export class Ledger {
    * id whose create is gone is cancelled (nothing was made). Otherwise it is held by `op` in state `destroying`.
    */
   takeForDestroy(n: number, owner: number, op: OpId): Take {
+    const observed = this.row(n);
+    const observedHeld = !!observed && observed.op_pid !== null && observed.op_start !== null
+      && !(observed.op_pid === op.pid && observed.op_start === op.start);
+    const holderAlive = observedHeld ? this.alive({ pid: observed.op_pid as number, start: observed.op_start as string }) : false;
     return this.immediate((): Take => {
       const r = this.row(n);
       if (!r) return { ok: false, busy: false, why: "never made by this helper" };
       if (r.owner !== owner && r.owner !== -1) return { ok: false, busy: false, why: `not a seat user of this person's (uid ${owner})` };
       if (r.owner === -1) this.db.query("UPDATE ids SET owner = ? WHERE n = ?").run(owner, n); // a round-6 row: taken
       const held = r.op_pid !== null && r.op_start !== null && !(r.op_pid === op.pid && r.op_start === op.start);
-      if (held && this.alive({ pid: r.op_pid as number, start: r.op_start as string })) return { ok: false, busy: true, state: r.state };
+      if (held && (holderAlive || r.op_pid !== observed?.op_pid || r.op_start !== observed?.op_start || r.state !== observed?.state))
+        return { ok: false, busy: true, state: r.state };
       if (r.state === "reserved" || r.state === "cancelled") {
         this.db.query("UPDATE ids SET state = 'cancelled', at = ?, op_pid = NULL, op_start = NULL WHERE n = ?").run(Date.now(), n);
         return { ok: true, state: "cancelled", owner: r.owner };
@@ -124,7 +149,9 @@ export class Ledger {
   /** The operation ends: `state` recorded, the id released. */
   finish(n: number, op: OpId, state: LedgerState): void {
     this.immediate(() => {
-      this.db.query("UPDATE ids SET state = ?, at = ?, op_pid = NULL, op_start = NULL WHERE n = ? AND op_pid = ? AND op_start = ?").run(state, Date.now(), n, op.pid, op.start);
+      const result = this.db.query("UPDATE ids SET state = ?, at = ?, op_pid = NULL, op_start = NULL WHERE n = ? AND op_pid = ? AND op_start = ?")
+        .run(state, Date.now(), n, op.pid, op.start);
+      if (result.changes !== 1) throw new Error("the seat user operation no longer owns its id");
     });
   }
 
@@ -138,6 +165,142 @@ export class Ledger {
   state(n: number): LedgerState | null { return this.row(n)?.state ?? null; }
   high(): number { return this.highIn(); }
   used(): number[] { return (this.db.query("SELECT n FROM ids ORDER BY n").all() as Array<{ n: number }>).map((r) => r.n); }
+
+  /** Root-observed metadata for protected residue; only the operation destroying this id may write it. */
+  saveSeatResidue(n: number, owner: number, op: OpId, kind: "home" | "vault", path: string, bytes: number): void {
+    this.immediate(() => {
+      const row = this.row(n);
+      if (!row || row.state !== "destroying" || row.owner !== owner || row.op_pid !== op.pid || row.op_start !== op.start)
+        throw new Error("the seat residue has no active destroy claim");
+      if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error("invalid seat residue size");
+      this.db.query("INSERT INTO seat_residue (n, owner, kind, path, bytes) VALUES (?, ?, ?, ?, ?) ON CONFLICT(n, kind, path) DO UPDATE SET bytes = excluded.bytes")
+        .run(n, owner, kind, path, bytes);
+    });
+  }
+
+  /** Durable, immutable source identity recorded before any home rename. */
+  homeRetirementStore(n: number, owner: number, op: OpId): HomeRetirementStore {
+    const claim = () => {
+      const row = this.row(n);
+      if (!row || row.state !== "destroying" || row.owner !== owner || row.op_pid !== op.pid || row.op_start !== op.start)
+        throw new Error("the home retirement has no active destroy claim");
+    };
+    const read = (): HomeRetirement | null => {
+      claim();
+      const row = this.db.query("SELECT owner, uid, source_dev, source_ino, tombstone FROM seat_home_retirement WHERE n = ?")
+        .get(n) as (HomeRetirement & { owner: number; source_dev: number; source_ino: number }) | null;
+      if (!row) return null;
+      if (row.owner !== owner) throw new Error("the home retirement belongs to another owner");
+      return { uid: row.uid, sourceDev: row.source_dev, sourceIno: row.source_ino, tombstone: row.tombstone };
+    };
+    return { op, read, prepare: (record) => this.immediate(() => {
+      claim();
+      if (!Number.isSafeInteger(record.uid) || !Number.isSafeInteger(record.sourceDev) || !Number.isSafeInteger(record.sourceIno)
+        || record.sourceDev < 0 || record.sourceIno < 0 || !/^walkie-s[1-9]\d{0,4}-\d{6}-[0-9a-f]{32}$/.test(record.tombstone))
+        throw new Error("invalid home retirement provenance");
+      const prior = read();
+      if (prior) {
+        if (prior.uid !== record.uid || prior.sourceDev !== record.sourceDev || prior.sourceIno !== record.sourceIno
+          || prior.tombstone !== record.tombstone) throw new Error("the home retirement provenance changed");
+        return;
+      }
+      this.db.query("INSERT INTO seat_home_retirement (n, owner, uid, source_dev, source_ino, tombstone) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(n, owner, record.uid, record.sourceDev, record.sourceIno, record.tombstone);
+    }) };
+  }
+
+  seatResidueSummary(owner: number): { homes: number; vaults: number; knownBytes: number } {
+    const rows = this.db.query("SELECT kind, COUNT(*) AS count, COALESCE(SUM(bytes), 0) AS bytes FROM seat_residue WHERE owner = ? GROUP BY kind")
+      .all(owner) as Array<{ kind: string; count: number; bytes: number }>;
+    return { homes: rows.find((r) => r.kind === "home")?.count ?? 0,
+      vaults: rows.find((r) => r.kind === "vault")?.count ?? 0,
+      knownBytes: rows.reduce((sum, r) => sum + r.bytes, 0) };
+  }
+
+  /** Durable proof that this helper claimed the dedicated account before creating it. */
+  talkieOwner(uid: number): TalkieOwnerRecord | null {
+    return this.db.query("SELECT owner, state, generation, instance, op_pid, op_start, daemon_pid, daemon_start FROM talkie_owner WHERE uid = ?").get(uid) as TalkieOwnerRecord | null;
+  }
+  talkieResidues(uid: number): TalkieResidueRecord[] {
+    const rows = this.db.query("SELECT owner, folder, paths FROM talkie_residue_folders WHERE uid = ? ORDER BY folder")
+      .all(uid) as Array<{ owner: number; folder: string; paths: string }>;
+    return rows.map((row) => {
+      const paths: unknown = JSON.parse(row.paths);
+      if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) throw new Error("invalid dedicated-user residue record");
+      return { owner: row.owner, folder: row.folder, paths };
+    });
+  }
+  saveTalkieResidue(uid: number, owner: number, folder: string, paths: readonly string[]): void {
+    this.immediate(() => {
+      const record = this.talkieOwner(uid);
+      if (record?.owner !== owner || record.state !== "destroying") throw new Error("dedicated-user residue has no destroy claim");
+      if (!paths.length) this.db.query("DELETE FROM talkie_residue_folders WHERE uid = ? AND owner = ? AND folder = ?").run(uid, owner, folder);
+      else this.db.query("INSERT INTO talkie_residue_folders (uid, owner, folder, paths) VALUES (?, ?, ?, ?) ON CONFLICT(uid, folder) DO UPDATE SET owner = excluded.owner, paths = excluded.paths")
+        .run(uid, owner, folder, JSON.stringify(paths));
+    });
+  }
+  claimTalkie(uid: number, owner: number, generation: string, instance: string, op: OpId, daemon: OpId | null = null): boolean {
+    return this.immediate(() => {
+      if (this.talkieOwner(uid) !== null) return false;
+      this.db.query("INSERT INTO talkie_owner (uid, owner, state, generation, instance, op_pid, op_start, daemon_pid, daemon_start) VALUES (?, ?, 'making', ?, ?, ?, ?, ?, ?)")
+        .run(uid, owner, generation, instance, op.pid, op.start, daemon?.pid ?? null, daemon?.start ?? null);
+      return true;
+    });
+  }
+  markTalkieCreated(uid: number, owner: number, generation: string, op: OpId): void {
+    this.immediate(() => {
+      const result = this.db.query("UPDATE talkie_owner SET state = 'created' WHERE uid = ? AND owner = ? AND generation = ? AND state = 'making' AND op_pid = ? AND op_start = ?")
+        .run(uid, owner, generation, op.pid, op.start);
+      if (result.changes !== 1) throw new Error("the dedicated account ownership record changed");
+    });
+  }
+  takeTalkieForDestroy(uid: number, owner: number, generation: string | undefined, op: OpId):
+    { ok: true; state: string } | { ok: false; why: string } {
+    const observed = this.talkieOwner(uid);
+    const observedHeld = !!observed && observed.op_pid !== null && observed.op_start !== null
+      && (observed.op_pid !== op.pid || observed.op_start !== op.start);
+    const holderAlive = observedHeld ? this.alive({ pid: observed.op_pid as number, start: observed.op_start as string }) : false;
+    return this.immediate(() => {
+      const row = this.db.query("SELECT owner, state, generation, op_pid, op_start FROM talkie_owner WHERE uid = ?").get(uid) as
+        { owner: number; state: string; generation: string | null; op_pid: number | null; op_start: string | null } | null;
+      if (!row) return { ok: false, why: "no dedicated account ownership record" };
+      if (row.owner !== owner) return { ok: false, why: "the dedicated account belongs to another person" };
+      if (generation !== undefined && row.generation !== generation) return { ok: false, why: "the dedicated account belongs to another run" };
+      const held = row.op_pid !== null && row.op_start !== null && (row.op_pid !== op.pid || row.op_start !== op.start);
+      if (held && (holderAlive || row.op_pid !== observed?.op_pid || row.op_start !== observed?.op_start || row.state !== observed?.state))
+        return { ok: false, why: "another dedicated account operation is running" };
+      this.db.query("UPDATE talkie_owner SET state = 'destroying', op_pid = ?, op_start = ? WHERE uid = ?")
+        .run(op.pid, op.start, uid);
+      return { ok: true, state: row.state };
+    });
+  }
+  takeEmptyTalkieForRepair(uid: number, owner: number, generation: string | null, op: OpId):
+    { ok: true } | { ok: false; why: string } {
+    return this.immediate(() => {
+      const row = this.talkieOwner(uid);
+      if (!row) return { ok: false, why: "no dedicated account ownership record" };
+      if (row.owner !== owner) return { ok: false, why: "the dedicated account belongs to another person" };
+      if (row.generation !== generation) return { ok: false, why: "the dedicated account generation changed" };
+      if (row.op_pid !== null && row.op_start !== null && (row.op_pid !== op.pid || row.op_start !== op.start)
+        && this.alive({ pid: row.op_pid, start: row.op_start }))
+        return { ok: false, why: "another dedicated account operation is running" };
+      this.db.query("UPDATE talkie_owner SET op_pid = ?, op_start = ? WHERE uid = ?")
+        .run(op.pid, op.start, uid);
+      return { ok: true };
+    });
+  }
+  releaseTalkieOp(uid: number, op: OpId): void {
+    this.immediate(() => {
+      this.db.query("UPDATE talkie_owner SET op_pid = NULL, op_start = NULL WHERE uid = ? AND op_pid = ? AND op_start = ?")
+        .run(uid, op.pid, op.start);
+    });
+  }
+  releaseTalkie(uid: number, owner: number, op: OpId): void {
+    this.immediate(() => {
+      this.db.query("DELETE FROM talkie_owner WHERE uid = ? AND owner = ? AND op_pid = ? AND op_start = ?")
+        .run(uid, owner, op.pid, op.start);
+    });
+  }
 
   /** `owner`'s ids that may still have something of them (Codex r7 MEDIUM 3: the daemon reconciles against these). */
   pending(owner: number): number[] {

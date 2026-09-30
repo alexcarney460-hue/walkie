@@ -42,7 +42,7 @@ beforeAll(async () => {
   const personHome = join(c.root, "arvid-home");
   mkdirSync(join(personHome, ".claude"), { recursive: true });
   chmodSync(personHome, 0o700);
-  writeFileSync(join(personHome, ".claude", ".credentials.json"), '{"claudeAiOauth":{"accessToken":"at","refreshToken":"rt"}}', { mode: 0o600 });
+  writeFileSync(join(personHome, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   signInCodex(personHome);
   const walkieHome = join(c.root, "arvid");
   world = fakeSeatWorld(c.root, walkieHome);
@@ -81,10 +81,14 @@ describe("seats round 9", () => {
   }, 90_000);
 
   test("Codex r9 MEDIUM 1: an unnamed agent's remote stop is refused; a person's goes through", async () => {
-    const id = (await alex.client().seatRun({ machine: arvid.d.nodeId, runtime: "codex", prompt: "to stop" })).seat;
     const unnamed = new WalkieClient({ socket: alex.socket, underAgent: true, timeoutMs: 15_000 });
+    const runErr = await unnamed.seatRun({ machine: arvid.d.nodeId, runtime: "codex", prompt: "unnamed" })
+      .then(() => "ok", (err: { status?: number; code?: string; message: string }) => `${err.status}:${err.code}:${err.message}`);
+    expect(runErr).toBe("403:agent_unnamed:a seat request from an agent must name it: set WALKIE_AGENT=<name> in this agent's environment, or add --agent <name> to this walkie seat run command (the host checks this agent against its launcher policy)");
+    const id = (await alex.client().seatRun({ machine: arvid.d.nodeId, runtime: "codex", prompt: "to stop" })).seat;
     const r = await unnamed.seatStop(id).then(() => "ok", (err: { status?: number; code?: string; message: string }) => `${err.status}:${err.code}:${err.message}`);
-    expect(r).toMatch(/^403:agent_unnamed:a seat stop from an agent must name it/);
+    // The exact fix, not just that it's required (Alex: the whole seat-run failure surface should say this).
+    expect(r).toBe("403:agent_unnamed:a seat stop from an agent must name it: set WALKIE_AGENT=<name> in this agent's environment, or add --agent <name> to this walkie seat stop command (the host checks this agent against its launcher policy)");
     expect((await alex.client().seatStop(id)).stopped).toBe("requested");
     await ended(id);
   }, 60_000);
