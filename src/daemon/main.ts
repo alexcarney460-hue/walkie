@@ -74,7 +74,7 @@ import { SeatsHost, registerSeats, type SeatsOptions } from "./seats/host.ts";
 import { seatHosts, seatsList } from "./seats/view.ts";
 import "./seats/routes.ts"; // registers /v1/seats
 import "./seats/repos-routes.ts"; // registers /v1/seats/repos (FO-2)
-import { startWatchdog, stopWatchdog, trackOp } from "./watchdog.ts";
+import { startWatchdog, stopWatchdog, trackOp, type LoopWatchdog } from "./watchdog.ts";
 import "./compute/routes.ts"; // registers /v1/compute (RENT-2 rental compute)
 import { registerCompute } from "./compute/routes.ts";
 import { ComputeService, type ComputeOptions } from "./compute/service.ts";
@@ -267,7 +267,10 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const renewer = opts.licenseRenew === false ? null : new LicenseRenewer(core, log, { ...opts.licenseRenew, service: licenseService });
 
   const client = new PeerClient({ team: () => core.teamId, nodeId: keys.nodeId, keys, self: () => core.roster.nodes.get(keys.nodeId) });
-  const sync = new SyncManager(core, client, opts.sync);
+  let watchdog: LoopWatchdog | null = null;
+  const sync = new SyncManager(core, client, { ...opts.sync,
+    stallTotal: opts.sync?.stallTotal ?? (() => watchdog?.stallTotalMs() ?? 0),
+  });
   const linkIdentity: Identity = { kind: identity.kind, whois: (ip, h) => identity.whois(ip, h), self: () => selfWithin(identity, IDENTITY_HANG_MS) };
   // Set below: a dual node keeps syncing over Walkie Direct while its tailnet listener is down.
   let directUp = (): boolean => false;
@@ -342,6 +345,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     core, sync, client, token, webDir: opts.webDir ?? DEFAULT_WEB_DIR, integrations, licenseService, mobile,
     rotateToken: () => ({ token: writeNewToken(paths.token), path: paths.token }),
     tailscaleError: () => link.tailscaleError, peerApi: () => link.status(), transport: direct, projects,
+    localLag: () => watchdog?.recentLag() ?? null,
     accounts: () => accountsRef,
   });
 
@@ -513,7 +517,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   // Expires stale held events (unknown origins after 1 h, the rest after 24 h) and drains ready ones.
   const housekeeping = setInterval(() => trackOp("housekeeping", () => core.drainPending()), 5 * 60_000);
   // Names the operation behind any event-loop stall in the log (DAEMON-STALL-1).
-  const watchdog = startWatchdog(log);
+  watchdog = startWatchdog(log);
   // The plan-clock floor moves at least hourly (audit M4); this node's integration slots on the chain
   // follow its settings (F3: a legacy enable asks for its slot, a queued enable turns on when it arrives).
   core.noteTime();
@@ -545,7 +549,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       if (stopped) return;
       stopped = true;
       clearInterval(housekeeping);
-      stopWatchdog(watchdog);
+      if (watchdog) stopWatchdog(watchdog);
       clearInterval(planClock);
       clearInterval(announce);
       await orchestrator.close();

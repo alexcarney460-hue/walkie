@@ -199,7 +199,7 @@ export const api = {
    */
   agents: (p: { scope?: "live" | "archive" | "all"; node?: string; q?: string; states?: string; limit?: number; offset?: number } = {}) =>
     request<AgentsPayload>("GET", `/v1/agents${qs({ ...p })}`),
-  peers: () => request<{ nodes: NodeView[] }>("GET", "/v1/peers"),
+  peers: () => request<{ nodes: NodeView[]; local_lag?: { max_ms: number; at: number } | null }>("GET", "/v1/peers"),
   accounts: () => request<{ accounts: AccountView[]; pool?: AccountsPool }>("GET", "/v1/accounts"),
   /** The attempt the confirmation sheet confirms: minted and bound to the account by the daemon (or an earlier one). */
   prepareReset: (account: string) => request<{ attempt: ResetAttemptView }>("POST", "/v1/accounts/reset/prepare", { account }),

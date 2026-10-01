@@ -135,7 +135,7 @@ describe("macOS memory without the pressure OID", () => {
 
   test("the pressure sysctl failing (unknown OID, exit 1) keeps memory; pressure is derived from use", async () => {
     const r = await readDarwin({ run: runner(null), thermal });
-    expect(r.mem).toEqual({ total: 16 * GiB, used: 500000 * 16384, swap_used: 512 * 1024 ** 2, pressure: "normal" });
+    expect(r.mem).toEqual({ total: 16 * GiB, used: 500000 * 16384, swap_used: 512 * 1024 ** 2, swap_total: 2 * GiB, pressure: "normal" });
     expect(r.temp_c).toBe(55);
     expect(r.note).toBeUndefined();
   });
@@ -219,10 +219,10 @@ test("hwmon: temperature inputs are picked before the 64-entry cap (a chip with 
 const workerFrom = (code: string) => (): Worker => new Worker(URL.createObjectURL(new Blob([code], { type: "application/javascript" })));
 const CLOSES = `if (e.data && e.data.type === "close") { postMessage({ closed: true }); process.exit(0); }`;
 const ANSWERS = `self.onmessage = (e) => { ${CLOSES} postMessage({ id: e.data.id, sensors: [{ name: "PMU tdie1", c: 57 }], error: null }); };`;
-/** A read that spins 300 ms (past a 150 ms deadline); it handles "close" once the spin is over. */
-const HANGS = `self.onmessage = (e) => { ${CLOSES} const end = Date.now() + 300; while (Date.now() < end) {} };`;
+/** A read that waits 300 ms (past a 150 ms deadline); it handles "close" once the wait is over. */
+const HANGS = `self.onmessage = (e) => { ${CLOSES} Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300); };`;
 /** Answers its first read, then a read runs 150 ms (past a short deadline) and it closes cooperatively afterwards. */
-const SLOW_THEN_CLOSES = `let n = 0; self.onmessage = (e) => { ${CLOSES} if (n++ === 0) { postMessage({ id: e.data.id, sensors: [], error: null }); return; } const end = Date.now() + 150; while (Date.now() < end) {} };`;
+const SLOW_THEN_CLOSES = `let n = 0; self.onmessage = (e) => { ${CLOSES} if (n++ === 0) { postMessage({ id: e.data.id, sensors: [], error: null }); return; } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150); };`;
 const BROKEN = `throw new Error("cannot load");`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

@@ -132,7 +132,7 @@ describe("cheap agent census", () => {
     const d = w.disc({ intervalMs: 40, scanBudgetMs: 25 });
     const files = (d as unknown as { files: { read: () => null; readAsync: () => Promise<never> } }).files;
     let entered = 0;
-    files.read = () => { const until = performance.now() + 250; while (performance.now() < until) {} return null; };
+    files.read = () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250); return null; };
     files.readAsync = () => { entered++; return new Promise(() => {}); };
     const started = performance.now();
     let firedAt: number | null = null;

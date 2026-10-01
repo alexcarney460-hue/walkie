@@ -8,9 +8,20 @@ import { defaultHome, pathsFor } from "../../daemon/paths.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { planLine } from "./license.ts";
 import { c } from "../format.ts";
+import type { MachineStats } from "../../protocol/machine-stats.ts";
 
 type Level = "ok" | "warn" | "fail";
 interface Check { level: Level; name: string; detail: string }
+
+const MEMORY_WARNING = "this machine is low on memory and swapping; Walkie may stall: close idle apps or agents";
+
+export function memoryCheck(stats: MachineStats | null | undefined): Check | null {
+  const mem = stats?.mem;
+  if (!mem) return null;
+  const swapFull = mem.swap_total !== undefined && mem.swap_total > 0 && mem.swap_used / mem.swap_total > 0.8;
+  return swapFull || mem.pressure === "critical"
+    ? { level: "warn", name: "memory", detail: MEMORY_WARNING } : null;
+}
 
 const MARK: Record<Level, string> = { ok: c.green("✓"), warn: c.yellow("!"), fail: c.red("✗") };
 
@@ -61,6 +72,7 @@ interface Diag {
   peer_api?: { state: "up"; listen: string } | { state: "retrying"; reason: string; next_in_ms: number };
   /** v0.2: the transport, and Walkie Direct's endpoint while it runs. */
   transport?: "direct" | "tailscale" | null; direct?: { endpoint: string; relay: string | null } | null;
+  stats?: MachineStats | null;
 }
 
 /** "walkie direct: endpoint … · relay …" on a Direct node. */
@@ -96,6 +108,8 @@ async function daemonChecks(out: Check[]): Promise<void> {
   const direct = me.transport?.mode === "direct";
   if (!me.tailscale.ok && !direct) out.push({ level: "warn", name: "daemon tailscale", detail: me.tailscale.error ?? "identity unavailable" });
   const diag = await client.request<Diag>("GET", "/v1/diag");
+  const memory = memoryCheck(diag.stats);
+  if (memory) out.push(memory);
   out.push(direct ? directCheck(diag) : peerApiCheck(diag));
   if (!direct && me.transport?.transports?.includes("direct")) out.push(directCheck(diag)); // a dual machine: both
   if (!me.team) { out.push({ level: "warn", name: "team", detail: "none yet — walkie setup, walkie join <invite-code>, or walkie init <name> --handle <you>" }); return; }

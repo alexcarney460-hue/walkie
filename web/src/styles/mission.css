@@ -523,6 +523,7 @@ button.summary-stat:hover { background: var(--surface-2); }
 
 /* ---- live roster vs archive (WALKIE-MISSION-1) ---- */
 .mission-lede { margin: -4px 0 14px; color: var(--text-3); font-size: var(--fs-13); }
+.local-lag-banner { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--amber); border-radius: 10px; background: var(--amber-soft); color: var(--text); font-size: var(--fs-13); }
 .mission-lede a { color: var(--text-2); text-decoration: underline; text-underline-offset: 2px; }
 .mission-lede a:hover { color: var(--text); }
 .tab-link .seg-n { font-weight: 500; }

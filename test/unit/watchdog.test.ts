@@ -67,21 +67,36 @@ describe("LoopWatchdog", () => {
     expect(lines[0]?.fields).toEqual({ lag_ms: 2_000, op: "untracked", last_op: "POST /v1/status" });
   });
 
+  test("reports the largest recent local stall and expires it after a minute", () => {
+    let wall = 10_000;
+    const clock = { t: 1_000 };
+    const { log } = memLog();
+    const w = new LoopWatchdog(log, { now: () => clock.t, wallNow: () => wall });
+    w.start();
+    stops.push(() => w.stop());
+    clock.t += 20_250;
+    expect(w.stallTotalMs()).toBe(20_000);
+    expect(w.recentLag()).toEqual({ max_ms: 20_000, at: 10_000 });
+    wall += 60_000;
+    expect(w.recentLag()).toBeNull();
+  });
+
   test("track returns what the operation returns and rethrows what it throws", () => {
     const { w } = manual();
     expect(w.track("x", () => 7)).toBe(7);
     expect(() => w.track("y", () => { throw new Error("boom"); })).toThrow("boom");
   });
 
-  test("on the real clock: a loop blocked by a busy wait is caught and named through trackOp", async () => {
+  test("an injected late tick is caught and named through trackOp without CPU load", () => {
     const { log, lines } = memLog();
-    const w = startWatchdog(log, { stallMs: 150, intervalMs: 20 });
+    let now = 0;
+    const w = startWatchdog(log, { stallMs: 150, intervalMs: 20, now: () => now });
     stops.push(() => stopWatchdog(w));
-    await Bun.sleep(60);
-    trackOp("busy_wait", () => { const end = performance.now() + 300; while (performance.now() < end) { /* hold the loop */ } });
-    await Bun.sleep(60);
+    trackOp("slow_operation", () => { now += 300; });
+    now += 20;
+    w.check();
     const stall = lines.find((l) => l.msg === "event_loop_stall");
-    expect(stall?.fields).toMatchObject({ op: "busy_wait" });
+    expect(stall?.fields).toMatchObject({ op: "slow_operation" });
     expect(Number(stall?.fields?.lag_ms)).toBeGreaterThanOrEqual(150);
     stopWatchdog(w);
     // With no watchdog running, trackOp only runs the operation.

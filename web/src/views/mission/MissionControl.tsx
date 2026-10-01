@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive as ArchiveIcon, ArrowUpRight, ChevronRight, Laptop, Server } from "lucide-react";
 import type { AgentState, AgentView, ArchiveCount, NodeView, TeamView } from "../../api/types.ts";
 import { PageHeader } from "../../components/Shell.tsx";
@@ -21,6 +21,8 @@ import { AddComputeButton, AddComputeSheet } from "../compute/AddComputeSheet.ts
 import { RentedChip } from "../compute/RentedChip.tsx";
 import { projectCounts } from "../../lib/project-counts.ts";
 import { useProjects } from "../../state/projects.ts";
+import { api } from "../../api/client.ts";
+import { LocalLagBanner, type LocalLag } from "./LocalLagBanner.tsx";
 
 /** Mission Control shows working agents and those needing a person; the strip narrows it to one of those. */
 type StateFilter = "all" | "working" | "waiting" | "blocked";
@@ -234,11 +236,21 @@ export function MissionControl() {
   const counted = useMemo(() => defaultLiveAgents(shown, team, nodes), [shown, team, nodes]);
   const compute = useCompute(me?.role === "owner");
   const [renting, setRenting] = useState(false);
+  const [localLag, setLocalLag] = useState<LocalLag | null>(null);
+  const now = useNow();
+  useEffect(() => {
+    let active = true;
+    const refresh = () => { void api.peers().then((res) => { if (active) setLocalLag(res.local_lag ?? null); }).catch(() => {}); };
+    refresh();
+    const timer = setInterval(refresh, 5_000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
   const closeRenting = useCallback(() => setRenting(false), []);
   return (
     <div className="mission">
       <div className="mission-main">
         <PageHeader title="Mission Control" actions={me?.role === "owner" && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined} />
+        <LocalLagBanner lag={localLag} now={now} />
         {tab === "live" && <ProjectCountStrip shown={counted} />}
         <nav className="tabs" role="tablist" aria-label="Agents">
           <a role="tab" aria-selected={tab === "live"} href={hrefFor({ view: "mission" })} className={tab === "live" ? "tab-link is-on" : "tab-link"}>Live</a>

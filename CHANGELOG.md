@@ -5,6 +5,15 @@ workflow on push. Both refuse a tag without a matching `## vX.Y.Z` section here,
 release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as a GitHub prerelease by
 `scripts/release.sh` only — the workflow's push trigger excludes pre-release tags.
 
+## v0.2.0-pre.10.1
+
+Healthy machines no longer show as offline when Walkie on this machine stalls (for example while the machine is low on
+memory and swapping), and peer sync does less work per request on large teams.
+
+- Local daemon stalls no longer count as missed peer responses or heartbeats. Peers go offline after the usual window of healthy local time without a reply.
+- Mission Control warns when Walkie on this machine stalled for more than two seconds in the past minute, so machine states may be stale.
+- `walkie doctor` warns when this machine has critical memory pressure or has used more than 80% of its swap.
+
 ## v0.2.0-pre.10
 
 - **Join from an invitation link.** The macOS join app can install the matching Walkie CLI, join the team and set up

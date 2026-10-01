@@ -273,6 +273,7 @@ export class Store {
   private deferred: (() => void)[] = [];
   private readonly hooks: TxHook[] = [];
   private syncMode: "NORMAL" | "FULL" = "NORMAL";
+  private vvCache: Record<string, number> | null = null;
 
   constructor(path: string) {
     this.db = new Database(path, { create: true, strict: true });
@@ -316,6 +317,7 @@ export class Store {
     try {
       out = this.db.transaction(fn)();
     } catch (err) {
+      this.vvCache = null;
       this.deferred.length = mark;
       for (let i = this.hooks.length - 1; i >= 0; i--) (this.hooks[i] as TxHook).restore(snaps[i]);
       throw err;
@@ -512,6 +514,9 @@ export class Store {
         this.advanceVv(ev.origin, ev.seq);
         if (ev.origin === this.selfId) this.raiseSelfSeq(ev.seq);
       })();
+    } catch (err) {
+      this.vvCache = null;
+      throw err;
     } finally {
       if (durable) this.setSync("NORMAL");
     }
@@ -539,11 +544,16 @@ export class Store {
    * that failed for a reason no roster change can cure (or over the hidden cap): only its header is kept.
    */
   insertStub(stub: Stub, status: "ok" | "junk" = "ok", reason: string | null = null): void {
-    this.db.transaction(() => {
-      this.db.query(`INSERT INTO events(id, origin, seq, channel, redacted, status, reason, json, received_at)
-        VALUES (?,?,?,?,1,?,?,?,?)`).run(stub.id, stub.origin, stub.seq, stub.channel ?? null, status, reason, JSON.stringify(stub), Date.now());
-      this.advanceVv(stub.origin, stub.seq);
-    })();
+    try {
+      this.db.transaction(() => {
+        this.db.query(`INSERT INTO events(id, origin, seq, channel, redacted, status, reason, json, received_at)
+          VALUES (?,?,?,?,1,?,?,?,?)`).run(stub.id, stub.origin, stub.seq, stub.channel ?? null, status, reason, JSON.stringify(stub), Date.now());
+        this.advanceVv(stub.origin, stub.seq);
+      })();
+    } catch (err) {
+      this.vvCache = null;
+      throw err;
+    }
   }
 
   /** Replaces a stored stub with the real event (a member later receives the full copy). */
@@ -614,16 +624,21 @@ export class Store {
     const has = this.db.query<{ one: number }, [string, number]>("SELECT 1 AS one FROM events WHERE origin = ? AND seq = ?");
     while (has.get(origin, next + 1)) next++;
     this.db.query("INSERT INTO vv(origin, seq) VALUES (?, ?) ON CONFLICT(origin) DO UPDATE SET seq = excluded.seq").run(origin, next);
+    if (this.vvCache) this.vvCache[origin] = next;
   }
 
   setVv(origin: string, seq: number): void {
     this.db.query("INSERT INTO vv(origin, seq) VALUES (?, ?) ON CONFLICT(origin) DO UPDATE SET seq = excluded.seq").run(origin, seq);
+    if (this.vvCache) this.vvCache[origin] = seq;
   }
 
   vv(): Record<string, number> {
-    const out: Record<string, number> = {};
-    for (const r of this.db.query<{ origin: string; seq: number }, []>("SELECT origin, seq FROM vv").all()) out[r.origin] = r.seq;
-    return out;
+    if (!this.vvCache) {
+      const snapshot: Record<string, number> = {};
+      for (const r of this.db.query<{ origin: string; seq: number }, []>("SELECT origin, seq FROM vv").all()) snapshot[r.origin] = r.seq;
+      this.vvCache = snapshot;
+    }
+    return { ...this.vvCache };
   }
   vvOf(origin: string): number {
     return this.db.query<{ seq: number }, [string]>("SELECT seq FROM vv WHERE origin = ?").get(origin)?.seq ?? 0;

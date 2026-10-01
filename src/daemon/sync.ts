@@ -15,11 +15,16 @@ import { flushRequests } from "./requests.ts";
 import { activeNodes, canSeeChannel, isRestricted, nodeMember, pickTransport, type NodeRec } from "./roster.ts";
 import { trackOp } from "./watchdog.ts";
 
-export interface SyncOptions { intervalMs?: number; livenessMs?: number; pushTimeoutMs?: number }
+export interface SyncOptions {
+  intervalMs?: number; livenessMs?: number; pushTimeoutMs?: number;
+  /** Injectable clocks keep local stalls and elapsed liveness deterministic in tests. */
+  now?: () => number; stallTotal?: () => number;
+}
 
 export interface PeerState {
   lastSeen: number | null; rtt: number | null; lastSync: number | null; behind: number; skewMs?: number;
   error?: string; running: boolean; chain: Promise<void>; queued: number; failedAt: number | null;
+  lastSeenStall?: number;
   /** The peer's machine stats from its last `vv` answer (kept while it is offline; cleared when it stops sending them). */
   stats?: MachineStats;
   /** The peer's accounts from its last `vv` answer (kept while it is offline; cleared when it stops sending them). */
@@ -50,16 +55,20 @@ export class SyncManager {
    * Mixed teams: per peer this node syncs with, the nodes it reported online at its last `vv` (and when). A node
    * this machine shares no transport with is shown online while a reachable peer says it is.
    */
-  private readonly reported = new Map<string, { at: number; online: ReadonlySet<string> }>();
+  private readonly reported = new Map<string, { at: number; stall: number; online: ReadonlySet<string> }>();
   /** Verified proofs awaiting the authority; the signed envelopes also live in local store metadata. */
   private readonly pendingPeerProofs = new Map<string, PeerVvRelay>();
   private readonly peerProofRetry = new Map<string, { failures: number; nextAt: number }>();
   private peerProofFlush: Promise<void> | null = null;
+  private readonly now: () => number;
+  private readonly stallTotal: () => number;
 
   constructor(private readonly core: Core, private readonly client: PeerClient, opts: SyncOptions = {}) {
     this.intervalMs = opts.intervalMs ?? 15_000;
     this.livenessMs = opts.livenessMs ?? 45_000;
     this.pushTimeoutMs = opts.pushTimeoutMs ?? 2_000;
+    this.now = opts.now ?? Date.now;
+    this.stallTotal = opts.stallTotal ?? (() => 0);
     for (const { key, value } of core.store.listMeta("pending_peer_proof:")) {
       try {
         const parsed = PeerVvRelay.safeParse(JSON.parse(value));
@@ -112,14 +121,14 @@ export class SyncManager {
     rememberPeerCapabilities(this.core.store, nodeId, value);
   }
 
-  isOnline(nodeId: string, now = Date.now()): boolean {
+  isOnline(nodeId: string, now = this.now()): boolean {
     if (nodeId === this.core.nodeId) return true;
     if (this.reachedRecently(nodeId, now)) return true;
     // No shared transport: online while a peer that reaches it (and that we synced with just now) says so.
     const n = this.core.roster.nodes.get(nodeId);
     if (!n || this.reachable(n)) return false;
     for (const [peer, r] of this.reported) {
-      if (now - r.at < this.livenessMs && r.online.has(nodeId) && this.reachedRecently(peer, now)) return true;
+      if (this.healthyElapsed(r.at, r.stall, now) < this.livenessMs && r.online.has(nodeId) && this.reachedRecently(peer, now)) return true;
     }
     return false;
   }
@@ -129,16 +138,21 @@ export class SyncManager {
 
   private reachedRecently(nodeId: string, now: number): boolean {
     const s = this.peers.get(nodeId);
-    return !!s?.lastSeen && now - s.lastSeen < this.livenessMs;
+    return s?.lastSeen !== null && s?.lastSeen !== undefined
+      && this.healthyElapsed(s.lastSeen, s.lastSeenStall ?? 0, now) < this.livenessMs;
+  }
+
+  private healthyElapsed(at: number, stallAt: number, now: number): number {
+    return Math.max(0, now - at - Math.max(0, this.stallTotal() - stallAt));
   }
 
   /** Nodes this machine reached itself within the liveness window (served in `/peer/v1/vv` as `online`). */
-  reachedPeers(now = Date.now()): string[] {
+  reachedPeers(now = this.now()): string[] {
     return [...this.peers.keys()].filter((id) => this.reachedRecently(id, now)).slice(0, MAX_REPORTED_ONLINE);
   }
 
   /** Measured round trips (ms) to the peers reached within the liveness window, at most MAX_PEER_RTT (WALKIE-POOL-2). */
-  peerRtts(now = Date.now()): Record<string, number> {
+  peerRtts(now = this.now()): Record<string, number> {
     const out: Record<string, number> = {};
     for (const id of this.reachedPeers(now).slice(0, MAX_PEER_RTT)) {
       const rtt = this.peers.get(id)?.rtt;
@@ -262,18 +276,21 @@ export class SyncManager {
 
   private seen(nodeId: string): void {
     const s = this.stateOf(nodeId);
-    s.lastSeen = Date.now();
+    s.lastSeen = this.now();
+    s.lastSeenStall = this.stallTotal();
     s.error = undefined;
     s.failedAt = null;
     this.checkLiveness();
   }
 
-  private failed(nodeId: string, err: unknown): void {
+  private failed(nodeId: string, err: unknown, startedStall: number): void {
+    // A deadline that spanned this daemon's own stall says nothing about the peer.
+    if (this.stallTotal() > startedStall) return;
     const s = this.stateOf(nodeId);
     s.error = err instanceof Error ? err.message : String(err);
     // Only a transport failure marks the peer unreachable (pushes skipped until it answers again);
     // an HTTP error means it is up but refused, e.g. it hasn't finished joining yet.
-    s.failedAt = err instanceof PeerCallError && err.code === "unreachable" ? Date.now() : null;
+    s.failedAt = err instanceof PeerCallError && err.code === "unreachable" ? this.now() : null;
     this.checkLiveness();
   }
 
@@ -321,7 +338,7 @@ export class SyncManager {
   }
 
   private enqueuePushes(ev: Event, targets: NodeRec[], current: (nodeId: string) => NodeRec | undefined): void {
-    const now = Date.now();
+    const now = this.now();
     for (const n of targets) {
       const s = this.stateOf(n.node_id);
       // Known-offline peer: skip; anti-entropy delivers when it comes back.
@@ -329,6 +346,7 @@ export class SyncManager {
       if (s.queued >= MAX_QUEUED_PUSHES) continue;
       s.queued++;
       s.chain = s.chain.then(async () => {
+        const startedStall = this.stallTotal();
         try {
           // D8: recipient and full-vs-stub payload are decided at send time, not when queued.
           const target = this.stopped ? undefined : current(n.node_id);
@@ -341,7 +359,7 @@ export class SyncManager {
           await this.client.push(addr, [this.payloadFor(ev, target.node_id)], this.pushTimeoutMs);
           this.seen(n.node_id);
         } catch (err) {
-          this.failed(n.node_id, err);
+          this.failed(n.node_id, err, startedStall);
           this.core.log.debug("push_failed", { peer: n.node_id, err: (err as Error).message });
         } finally {
           s.queued--;
@@ -356,6 +374,7 @@ export class SyncManager {
     const s = this.stateOf(n.node_id);
     if (s.running || this.stopped) return;
     s.running = true;
+    const startedStall = this.stallTotal();
     try {
       const addr = this.client.addrOf(n);
       if (!addr) return; // no shared transport: its events come through the machines that serve both
@@ -382,7 +401,7 @@ export class SyncManager {
         s.accounts = peerVv.accounts;
         this.core.hub.accountsChanged();
       }
-      this.reported.set(n.node_id, { at: Date.now(), online: new Set(peerVv.online ?? []) });
+      this.reported.set(n.node_id, { at: this.now(), stall: this.stallTotal(), online: new Set(peerVv.online ?? []) });
       this.seen(n.node_id);
       await this.pullAll(addr, peerVv.vv, n.node_id);
       await this.fillStubs(addr, n.node_id).catch((err: Error) => this.core.log.warn("stub_fill_failed", { peer: n.node_id, err: err.message }));
@@ -390,7 +409,7 @@ export class SyncManager {
       s.lastSync = Date.now();
       this.core.hub.nodesChanged();
     } catch (err) {
-      this.failed(n.node_id, err);
+      this.failed(n.node_id, err, startedStall);
       if (!(err instanceof PeerCallError && err.code === "unreachable")) {
         this.core.log.warn("sync_failed", { peer: n.node_id, err: (err as Error).message });
       }

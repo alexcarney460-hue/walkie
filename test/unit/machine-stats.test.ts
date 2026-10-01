@@ -143,6 +143,11 @@ describe("change-threshold publishing", () => {
   const prev: MachineStats = { at: 1_000_000, mem: MEM16, temp_c: 60 };
   const at = (dt: number): number => prev.at + dt;
 
+  test("crossing 80% swap republishes even when the byte movement is below the usual threshold", () => {
+    const near: MachineStats = { ...prev, mem: { ...MEM16, swap_total: 10 * GiB, swap_used: 7.9 * GiB } };
+    expect(shouldPublish(near, { mem: { ...near.mem!, swap_used: 8.1 * GiB }, temp_c: 60 }, at(30_000))).toBe(true);
+  });
+
   test("small moves are not published; ≥ 5 % of memory, ≥ 2 °C, pressure and availability changes are", () => {
     expect(shouldPublish(null, { mem: null, temp_c: null }, 0)).toBe(true);
     expect(shouldPublish(prev, { mem: { ...MEM16, used: 10.7 * GiB }, temp_c: 61.9 }, at(30_000))).toBe(false);

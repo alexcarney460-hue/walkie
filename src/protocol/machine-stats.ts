@@ -28,6 +28,8 @@ export const MachineMem = z.object({
   /** Available physical memory; optional for older peers. */
   free: Bytes.optional().catch(undefined),
   swap_used: Bytes,
+  /** Installed swap capacity, when the OS reports it (used by walkie doctor). */
+  swap_total: Bytes.max(MAX_SWAP_RATIO * MAX_MEM_BYTES).optional().catch(undefined),
   pressure: MemPressure.nullable(),
 }).refine((m) => m.used <= m.total, { message: "used exceeds total" })
   .refine((m) => m.free === undefined || m.free <= m.total, { message: "free exceeds total" })

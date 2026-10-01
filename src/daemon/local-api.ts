@@ -53,6 +53,8 @@ export interface LocalApiDeps {
   tailscaleError?: () => string | undefined;
   /** The peer API's state for `/v1/diag` (src/daemon/peer-link.ts). */
   peerApi?: () => PeerApiStatus;
+  /** This daemon's own event-loop lag, distinct from another in-process test daemon. */
+  localLag?: () => { max_ms: number; at: number } | null;
   /** Which transport this daemon runs; Walkie Direct's endpoint (src/daemon/direct/link.ts). */
   transport?: TransportControl;
   integrations?: Integrations;
@@ -355,6 +357,7 @@ export class LocalApi {
       noTimeout: () => server?.timeout(req, 0),
       tailscaleError: this.d.tailscaleError?.(),
       ...(this.d.peerApi ? { peerApi: this.d.peerApi } : {}),
+      ...(this.d.localLag ? { localLag: this.d.localLag } : {}),
       ...(this.d.mobile ? { mobile: this.d.mobile } : {}),
       ...(this.d.projects ? { projects: this.d.projects } : {}),
       ...(this.d.transport ? { transport: this.d.transport } : {}),

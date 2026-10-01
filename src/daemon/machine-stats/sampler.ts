@@ -111,7 +111,8 @@ export function shouldPublish(
   const a = prev.mem, b = next.mem;
   if ((a === null) !== (b === null)) return true;
   if (a && b) {
-    if (a.total !== b.total || a.pressure !== b.pressure) return true;
+    if (a.total !== b.total || a.pressure !== b.pressure || a.swap_total !== b.swap_total) return true;
+    if (b.swap_total && (a.swap_used / b.swap_total > 0.8) !== (b.swap_used / b.swap_total > 0.8)) return true;
     const step = MEM_STEP * b.total;
     if (Math.abs(b.used - a.used) >= step || Math.abs(b.swap_used - a.swap_used) >= step) return true;
   }

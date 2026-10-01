@@ -29,7 +29,7 @@ REPO="${WALKIE_REPO:-alexcarney460-hue/walkie-releases}"
 BIN_DIR="${WALKIE_BIN_DIR:-$HOME/.local/bin}"
 # The release a plain `curl … | sh` installs. Bump this one line when a new release should be what new machines get;
 # site/build.py reads it for the landing page's footer, so the page and the installer can't drift apart.
-DEFAULT_VERSION="v0.2.0-pre.10"
+DEFAULT_VERSION="v0.2.0-pre.10.1"
 VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"
 if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -n "${WALKIE_BASE_URL:-}" ]; then VERSION="$WALKIE_MIN_VERSION"; fi
 # The Walkie release-signing public key (EC P-256). Not the license key. Rotated only by a new installer.

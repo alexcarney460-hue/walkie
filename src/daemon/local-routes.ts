@@ -66,6 +66,7 @@ export interface RouteCtx {
   readonly tailscaleError?: string;
   /** The peer API's state (up, or retrying and why) for `/v1/diag`. */
   readonly peerApi?: () => PeerApiStatus;
+  readonly localLag?: () => { max_ms: number; at: number } | null;
   /** When the request's credential ends (a dashboard session's absolute deadline): a stream closes then. */
   readonly credentialExpiresAt?: number;
   /**
@@ -556,7 +557,7 @@ route("POST", "/v1/license/refresh", async (c) => {
   return json({ ...res, plan: c.core.plan() });
 });
 
-route("GET", "/v1/peers", (c) => json({ nodes: nodesView(c.core, c.sync) }));
+route("GET", "/v1/peers", (c) => json({ nodes: nodesView(c.core, c.sync), local_lag: c.localLag?.() ?? null }));
 
 /** Diagnostics for `walkie doctor` (additive to PROTOCOL §5). */
 route("GET", "/v1/diag", (c) => json({
@@ -570,6 +571,7 @@ route("GET", "/v1/diag", (c) => json({
   pending: c.core.store.pendingCount(),
   conflicts: c.core.store.conflictOrigins(),
   sse_clients: c.core.hub.size,
+  stats: c.core.machineStats,
   now: Date.now(),
 }));
 

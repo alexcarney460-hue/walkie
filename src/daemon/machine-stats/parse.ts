@@ -40,13 +40,13 @@ export function darwinUsedBytes(vm: VmStat): number | null {
   return (app + wired + (p["Pages occupied by compressor"] ?? 0)) * vm.pageSize;
 }
 
-export interface DarwinSysctl { memsize: number | null; swapUsed: number | null; pressure: MemPressure | null }
+export interface DarwinSysctl { memsize: number | null; swapUsed: number | null; swapTotal: number | null; pressure: MemPressure | null }
 
 const UNIT: Record<string, number> = { B: 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
 
 /** `sysctl hw.memsize vm.swapusage kern.memorystatus_vm_pressure_level` (named lines, any order). */
 export function parseDarwinSysctl(text: string): DarwinSysctl {
-  const out: DarwinSysctl = { memsize: null, swapUsed: null, pressure: null };
+  const out: DarwinSysctl = { memsize: null, swapUsed: null, swapTotal: null, pressure: null };
   for (const line of text.split("\n")) {
     const i = line.indexOf(":");
     if (i < 0) continue;
@@ -54,6 +54,8 @@ export function parseDarwinSysctl(text: string): DarwinSysctl {
     const val = line.slice(i + 1).trim();
     if (key === "hw.memsize" && /^\d+$/.test(val)) out.memsize = Number(val);
     else if (key === "vm.swapusage") {
+      const total = /total = ([\d.]+)([BKMGT])/.exec(val);
+      if (total) out.swapTotal = Math.round(Number(total[1]) * (UNIT[total[2] as string] ?? 1));
       const m = /used = ([\d.]+)([BKMGT])/.exec(val);
       if (m) out.swapUsed = Math.round(Number(m[1]) * (UNIT[m[2] as string] ?? 1));
     } else if (key === "kern.memorystatus_vm_pressure_level") {
@@ -70,7 +72,9 @@ export function darwinMem(vmStatText: string, sysctlText: string): MachineMem | 
   const used = vm ? darwinUsedBytes(vm) : null;
   if (!sc.memsize || used === null) return null;
   const clamped = Math.min(used, sc.memsize);
-  return { total: sc.memsize, used: clamped, swap_used: sc.swapUsed ?? 0, pressure: sc.pressure ?? pressureFromUse(clamped, sc.memsize) };
+  return { total: sc.memsize, used: clamped, swap_used: sc.swapUsed ?? 0,
+    ...(sc.swapTotal === null ? {} : { swap_total: sc.swapTotal }),
+    pressure: sc.pressure ?? pressureFromUse(clamped, sc.memsize) };
 }
 
 export interface Sensor { name: string; c: number }
@@ -106,7 +110,8 @@ export function parseMeminfo(text: string): Omit<MachineMem, "pressure"> | null 
   if (!total) return null;
   const available = kb.MemAvailable ?? (kb.MemFree ?? 0) + (kb.Buffers ?? 0) + (kb.Cached ?? 0);
   const swap = Math.max(0, (kb.SwapTotal ?? 0) - (kb.SwapFree ?? 0));
-  return { total: total * 1024, used: Math.max(0, Math.min(total, total - available)) * 1024, swap_used: swap * 1024 };
+  return { total: total * 1024, used: Math.max(0, Math.min(total, total - available)) * 1024, swap_used: swap * 1024,
+    ...(kb.SwapTotal === undefined ? {} : { swap_total: kb.SwapTotal * 1024 }) };
 }
 
 /**

@@ -17,6 +17,8 @@ export interface WatchdogOptions {
   intervalMs?: number;
   /** A monotonic clock in ms (tests). */
   now?: () => number;
+  /** Wall clock for the health response (tests). */
+  wallNow?: () => number;
 }
 
 interface Slow { readonly op: string; readonly ms: number; readonly at: number }
@@ -31,11 +33,15 @@ export class LoopWatchdog {
   private readonly stallMs: number;
   private readonly intervalMs: number;
   private readonly now: () => number;
+  private readonly wallNow: () => number;
+  private totalLag = 0;
+  private recent: { at: number; lagMs: number }[] = [];
 
   constructor(private readonly log: Logger, opts: WatchdogOptions = {}) {
     this.stallMs = opts.stallMs ?? STALL_MS;
     this.intervalMs = opts.intervalMs ?? WATCH_INTERVAL_MS;
     this.now = opts.now ?? (() => performance.now());
+    this.wallNow = opts.wallNow ?? Date.now;
   }
 
   start(): void {
@@ -75,12 +81,15 @@ export class LoopWatchdog {
 
   /** One check (the interval's; tests call it directly): logs a stall when this tick is `stallMs` or more late. */
   check(): void {
+    if (!this.timer) return;
     const t = this.now();
     const lag = t - this.last - this.intervalMs;
     this.last = t;
     const s = this.slowest;
     this.slowest = null;
     if (lag < this.stallMs) return;
+    this.totalLag += lag;
+    this.recent = [...this.recent.filter((x) => this.wallNow() - x.at < 60_000), { at: this.wallNow(), lagMs: Math.round(lag) }];
     // An operation is blamed only when it held the loop for at least half the delay.
     const named = s !== null && s.ms * 2 >= lag ? s : null;
     this.log.warn("event_loop_stall", {
@@ -89,6 +98,20 @@ export class LoopWatchdog {
       ...(named ? { op_ms: Math.round(named.ms) } : {}),
       ...(this.lastOp !== null && this.lastOp !== named?.op ? { last_op: this.lastOp } : {}),
     });
+  }
+
+  /** Includes a late tick even when a sync callback runs before the watchdog timer after a stall. */
+  stallTotalMs(): number {
+    if (this.timer && this.now() - this.last - this.intervalMs >= this.stallMs) this.check();
+    return this.totalLag;
+  }
+
+  recentLag(now = this.wallNow()): { max_ms: number; at: number } | null {
+    this.stallTotalMs();
+    const recent = this.recent.filter((x) => now - x.at >= 0 && now - x.at < 60_000);
+    if (!recent.length) return null;
+    const max = recent.reduce((a, b) => b.lagMs >= a.lagMs ? b : a);
+    return { max_ms: max.lagMs, at: max.at };
   }
 }
 
