@@ -1,10 +1,13 @@
 // The seats CLI (`bun src/cli/main.ts …`) against two in-process daemons with a FAKE codex/claude on the host:
-// `walkie join … --allow-seats`, person-only opt-in, `walkie seat run --wait`, and an agent's run refused by the host.
+// `walkie join … --allow-seats` (the person's, or an agent's while agent admin is on), `walkie seat run --wait`, and an
+// agent's run refused by the host.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
+import { signInCodex } from "../helpers/fake-seat-users.ts";
+import { noKeychainSeats } from "../helpers/no-keychain.ts";
 
 const CLI = join(import.meta.dir, "../../src/cli/main.ts");
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
@@ -16,6 +19,7 @@ beforeAll(async () => {
   c = new Cluster();
   const home = join(c.root, "arvid-home");
   mkdirSync(home, { recursive: true });
+  signInCodex(home);
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
   arvid = await c.add({
     name: "arvid", login: "arvid@example.com", hostname: "arvid-mac",
@@ -34,26 +38,32 @@ async function walkie(node: TestNode, args: string[], env: Record<string, string
 }
 
 describe("walkie seats CLI", () => {
-  test("join --allow-seats under an agent is refused (before joining) only while agent admin is off; a person's terminal opts in", async () => {
+  test("join --allow-seats under an agent is refused before joining while agent admin is off; a person's explicit flag opts in", async () => {
     await arvid.client().adminSwitches({ agent_admin: false });
     const agent = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats"], { CLAUDECODE: "1" });
     expect(agent.code).toBe(1);
     expect(agent.err).toContain("agent_admin_off");
     expect((await arvid.client().me()).team).toBeFalsy();
     await arvid.client().adminSwitches({ agent_admin: true });
-    // Seats need their own OS user, or the person's explicit --same-user (Opus r2 LOW 3: said in the output too).
-    const refused = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats"]);
-    expect(refused.code).toBe(1);
-    expect(refused.err).toContain("walkie seats setup-user");
-    const r = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats", "--same-user"]);
+    const r = await walkie(arvid, ["join", alex.peerAddr, "--allow-seats"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("joined aka as @arvid");
     expect(r.out).toContain("seats allowed");
     expect(r.out).toContain("Seats run as YOUR OS user: a seat can reach your Walkie");
-    expect(r.out).toContain("walkie seats setup-user --apply");
-    const cfg = JSON.parse(readFileSync(join(arvid.home, "config.json"), "utf8")) as { seats?: { allow?: boolean } };
-    expect(cfg.seats?.allow).toBe(true);
+    expect(r.out).toContain("Private worker directories organize each run");
+    const cfg = JSON.parse(readFileSync(join(arvid.home, "config.json"), "utf8")) as { seats?: { allow?: boolean; mode?: string } };
+    expect(cfg.seats).toMatchObject({ allow: true, mode: "same_user" });
     await waitFor(async () => (await alex.client().seats()).hosts.find((h) => h.hostname === "arvid-mac" && h.allows && h.member), { what: "alex sees arvid-mac" });
+  }, 60_000);
+
+  test("join --allow-seats under an agent with agent admin on joins and turns seats on, audited as the agent", async () => {
+    const kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kira-mac", seats: noKeychainSeats(join(c.root, "kira-home")) });
+    await alex.client().invite("kira@example.com", "kira", "member");
+    const r = await walkie(kira, ["join", alex.peerAddr, "--allow-seats"], { CLAUDECODE: "1" });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("joined aka as @kira");
+    expect((await kira.client().seats()).local).toMatchObject({ allow: true, same_user: true });
+    expect(readFileSync(join(kira.home, "admin-audit.jsonl"), "utf8")).toMatch(/"actor":"@kira\/kira-mac\/claude-code \(unnamed\)","action":"allowed seats on this machine/);
   }, 60_000);
 
   test("seats setup-user prints its plan (for an agent too, AGENT-ADMIN-1); allow says who seats run as", async () => {

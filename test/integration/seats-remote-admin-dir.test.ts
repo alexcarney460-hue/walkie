@@ -26,6 +26,8 @@ beforeAll(async () => {
   await alex.client().init("aka", "alex");
   await alex.client().invite("kira@example.com", "kira", "member");
   expect((await kira.client().join(alex.peerAddr)).admitted).toBe(true);
+  // Its person consented locally first; remote admin may tune an already allowed seat, not grant same-user access.
+  await kira.client("").seatsConfig({ allow: true, same_user: true });
   await waitFor(() => alex.d.core.roster.nodes.size === 2 && kira.d.core.roster.nodes.size === 2, { what: "roster sync" });
 });
 afterAll(async () => { await c.close(); });
@@ -38,8 +40,15 @@ const refused = async (p: Promise<unknown>): Promise<WalkieError> => {
 const settings = () => seatsFor(kira.d.core)?.settings;
 
 describe("remote admin: seats allow --dir", () => {
+  test("remote admin cannot opt into inheriting personal provider configuration", async () => {
+    const before = settings();
+    const err = await refused(run(["seats", "allow", "--inherit-person-config"]));
+    expect(err.code).toBe("not_allowed_remotely");
+    expect(err.message).toContain("--inherit-person-config");
+    expect(settings()).toEqual(before);
+  });
   test("a leading ~ resolves against the target's own daemon user, and is stored literally (never a caller-side resolve)", async () => {
-    const r = await run(["seats", "allow", "--dir", "~/remote-seats", "--same-user", "--launchers", "@alex", "--runtimes", "codex"]);
+    const r = await run(["seats", "allow", "--dir", "~/remote-seats", "--launchers", "@alex", "--runtimes", "codex"]);
     expect(r.results[0]?.error).toBeUndefined();
     expect(r.results[0]?.exit).toBe(0);
     expect(settings()?.dir).toBe("~/remote-seats"); // never "/~/remote-seats"

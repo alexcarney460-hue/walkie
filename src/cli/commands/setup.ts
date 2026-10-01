@@ -6,6 +6,8 @@
 //   walkie setup --join 100.101.102.103           join a Tailscale team through a teammate's machine
 //   --no-service  --no-hooks  --bin-dir <dir>  --switching | --no-switching (account switching shims, ACCOUNTS-2)
 //   --allow-team-agents | --no-team-agents        the answer to "let your team start agents here?" (no terminal: no)
+//   --invite wk1… --company-machine --owner-ssh <packet>   the add-machine command: the packet (owner SSH) rides in the
+//                                                  one company consent; --owner-ssh is refused without --company-machine
 import { copyFileSync, chmodSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, join } from "node:path";
@@ -24,10 +26,27 @@ import { EXIT, type Ctx } from "../context.ts";
 import { c } from "../format.ts";
 import type { MeView } from "../../protocol/schemas.ts";
 import { inviteHint, transportFlag } from "./team.ts";
-import { checkRuntime, installSeatUsers, teamAgentsFlag, teamAgentsStep } from "./team-agents.ts";
+import { realRootBatch } from "../root-batch.ts";
+import { realSshStepDeps } from "../ssh-enroll.ts";
+import type { SshFinal } from "../ssh-ready.ts";
+import { checkRuntime, installSeatUsers, teamAgentsFlag, teamAgentsStep, type TeamAgentsOutcome } from "./team-agents.ts";
 import { RESTART_WAIT_MS, restartService, sameVersion, waitForDaemon as waitForVersion, type HealthProbe, type RestartDeps } from "./update.ts";
 
 const compiled = (): boolean => import.meta.dir.startsWith("/$bunfs") || basename(process.execPath).startsWith("walkie");
+const COMPANY_ENROLLMENT_INCOMPLETE = 4;
+
+export function companyConsentExit(ctx: Ctx, outcome: TeamAgentsOutcome): number | null {
+  if (!bool(ctx.args, "company-machine") || !["refused", "incomplete", "unsupported"].includes(outcome)) return null;
+  ctx.err(c.yellow("Company enrollment is incomplete. Resolve the issue above, then run walkie setup --invite <private-code> --company-machine (with --owner-ssh <packet> when the link has one) on this machine's terminal and type yes."));
+  return COMPANY_ENROLLMENT_INCOMPLETE;
+}
+
+/** Owner SSH was carried and did not become ready: everything else is set up, but the enrollment is not complete. */
+export function sshEnrollmentExit(ctx: Ctx, result: SshFinal | null): number | null {
+  if (result?.state !== "failed") return null;
+  ctx.err(c.yellow("Company enrollment is incomplete: owner SSH is not ready (see above). Everything else was set up. Fix it as described, then run walkie ssh status."));
+  return COMPANY_ENROLLMENT_INCOMPLETE;
+}
 
 function step(ctx: Ctx, n: number, text: string): void {
   ctx.out(`${c.bold(`${n}.`)} ${text}`);
@@ -176,7 +195,12 @@ async function switching(ctx: Ctx): Promise<void> {
 }
 
 export async function setup(ctx: Ctx): Promise<number> {
+  if (bool(ctx.args, "company-machine") && !str(ctx.args, "invite")) throw new UsageError("--company-machine requires a private --invite code");
+  if (str(ctx.args, "owner-ssh") !== undefined && !bool(ctx.args, "company-machine")) throw new UsageError("--owner-ssh is part of the company-machine consent: add --company-machine");
   teamAgentsFlag(ctx); // conflicting answers fail before anything changes
+  if (bool(ctx.args, "seat-users") && !bool(ctx.args, "allow-team-agents") && !bool(ctx.args, "allow-seats"))
+    throw new UsageError("--seat-users requires --allow-team-agents (or --allow-seats)");
+  if (bool(ctx.args, "seat-users") && bool(ctx.args, "same-user")) throw new UsageError("choose --same-user or --seat-users");
   const reexec = await ensureInstalled(ctx, process.argv.slice(3));
   if (reexec !== null) return reexec;
   const client = new WalkieClient({ underAgent: ctx.agentMarker() !== null });
@@ -192,9 +216,13 @@ export async function setup(ctx: Ctx): Promise<number> {
   await joinOrInit(ctx, client);
 
   let n = 3;
-  await teamAgentsStep(ctx, client, {
+  let ownerSsh: SshFinal | null = null;
+  const companyOutcome = await teamAgentsStep(ctx, client, {
     interactive: !!process.stdin.isTTY, ask: (q) => ask(q, ""), checkRuntime, installSeatUsers,
+    root: realRootBatch(defaultHome()), ssh: realSshStepDeps(client), onSsh: (result) => { ownerSsh = result; },
   }, () => step(ctx, n++, "Team agents on this machine"));
+  const consentExit = companyConsentExit(ctx, companyOutcome);
+  if (consentExit !== null) return consentExit;
 
   step(ctx, n++, "Agents");
   if (bool(ctx.args, "no-hooks")) {
@@ -211,5 +239,5 @@ export async function setup(ctx: Ctx): Promise<number> {
 
   step(ctx, n, "Dashboard");
   ctx.out(`   ${c.bold("walkie dashboard")} opens it · ${c.bold("walkie who")} shows everyone in the terminal`);
-  return EXIT.ok;
+  return sshEnrollmentExit(ctx, ownerSsh) ?? EXIT.ok;
 }

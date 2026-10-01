@@ -24,15 +24,21 @@ afterEach(() => { while (cleanups.length) (cleanups.pop() as () => void)(); });
 
 const ORCH = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE orch_messages"));
 const BOARDS = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE board_projects"));
+const HERMES = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE hermes_sessions"));
 /** pre.3's migration list: everything up to and including orch_messages. */
 const PRE3 = MIGRATIONS.slice(0, ORCH + 1);
 const CH = "p-0e1c7ed0";
 
 describe("migration order", () => {
-  test("orch_messages is 11, projects boards are 12, stall indexes are 13, claim lookup is 14", () => {
+  test("orch_messages is 11, projects boards are 12, stall indexes are 13, claim lookup is 14, the schedule count is 15, Hermes sessions are 16 to 18", () => {
     expect(ORCH + 1).toBe(11);
     expect(BOARDS + 1).toBe(12);
-    expect(MIGRATIONS.length).toBe(15);
+    expect(MIGRATIONS[13]).toContain("ADD COLUMN claim_schedule");
+    expect(MIGRATIONS[14]).toContain("schedule_channel_count");
+    expect(HERMES + 1).toBe(16);
+    expect(MIGRATIONS[HERMES + 1]).toContain("ADD COLUMN received_at");
+    expect(MIGRATIONS[HERMES + 2]).toContain("ADD COLUMN pid");
+    expect(MIGRATIONS.length).toBe(18);
   });
 
   test("a fresh store runs every migration once", () => {
@@ -43,7 +49,27 @@ describe("migration order", () => {
     const versions = store.db.query<{ version: number }, []>("SELECT version FROM migrations ORDER BY version").all().map((r) => r.version);
     expect(versions).toEqual(Array.from({ length: MIGRATIONS.length }, (_, i) => i + 1));
     const tables = new Set(store.db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
-    for (const t of ["orch_messages", "status_provenance", "board_projects", "board_cards", "board_hidden", "board_key_history"]) expect(tables.has(t)).toBe(true);
+    for (const t of ["orch_messages", "status_provenance", "board_projects", "board_cards", "board_hidden", "board_key_history", "hermes_sessions"]) expect(tables.has(t)).toBe(true);
+    // The migrations after the claim index (14, 15) run with it: a fresh store has the Hermes table with all of its columns, and is ready.
+    const columns = store.db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('hermes_sessions')").all().map((c) => c.name);
+    expect(columns).toEqual(expect.arrayContaining(["profile", "session", "at", "seq", "state", "fallback", "activity", "source", "received_at", "pid"]));
+    expect(store.claimIndexReady).toBe(true);
+  });
+
+  test("a store at pre.11's migration 15 (claim index built) gets the Hermes migrations 16 to 18 in order, and is ready", () => {
+    const dir = mkdtempSync("/tmp/walkie-pre11-");
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const path = join(dir, "walkie.db");
+    const first = new Store(path);
+    // Back to pre.11's ledger: the Hermes table and its three migrations are undone.
+    first.db.exec("DROP TABLE hermes_sessions; DELETE FROM migrations WHERE version > 15;");
+    first.close();
+    const store = new Store(path);
+    cleanups.push(() => store.close());
+    expect(store.db.query<{ version: number }, []>("SELECT version FROM migrations ORDER BY version").all().map((r) => r.version))
+      .toEqual(Array.from({ length: 18 }, (_, i) => i + 1));
+    expect(store.db.query("SELECT pid, received_at FROM hermes_sessions").all()).toEqual([]);
+    expect(store.claimIndexReady).toBe(true);
   });
 });
 

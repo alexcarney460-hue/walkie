@@ -1,8 +1,8 @@
 // AGENT-ADMIN-1: the audit trail of agent and remote administration. Every entry is appended to
 // <walkie home>/admin-audit.jsonl (0600, this machine only) and, when `post` is set, posted to the team's #general
 // as the reserved agent `walkie-admin`, mentioning the machine's person when `notify` names them.
-import { appendFileSync, chmodSync, closeSync, existsSync, openSync, readSync, renameSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, openSync, readSync, renameSync, statSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { redactSecrets } from "../../protocol/safety.ts";
 import type { Core } from "../core.ts";
 
@@ -61,6 +61,25 @@ export function appendAudit(core: Core, e: AuditEntry): void {
     core.log.warn("admin_audit_write_failed", { error: (err as Error).message });
   }
   core.log.info("admin_action", { actor: safe.actor, via: safe.via, machine: safe.machine, ...(safe.refused ? { refused: safe.refused } : {}) });
+}
+
+/** A fail-closed, fsynced entry for access that must not begin without a durable local record. */
+export function appendAuditStrict(core: Core, e: AuditEntry): void {
+  const path = auditPath(core.paths.home);
+  const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("audit path is not a regular file");
+    fchmodSync(fd, 0o600);
+    const line = Buffer.from(JSON.stringify({ ts: Date.now(), ...e, action: redactSecrets(e.action).text }) + "\n");
+    for (let at = 0; at < line.length;) {
+      const written = writeSync(fd, line, at, line.length - at);
+      if (written <= 0) throw new Error("audit write made no progress");
+      at += written;
+    }
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+  const dir = openSync(dirname(path), "r");
+  try { fsyncSync(dir); } finally { closeSync(dir); }
 }
 
 /**

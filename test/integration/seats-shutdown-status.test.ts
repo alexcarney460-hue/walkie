@@ -3,15 +3,19 @@ import { dirname, join } from "node:path";
 import { seatAgentName } from "../../src/protocol/seats.ts";
 import { seatsFor } from "../../src/daemon/seats/host.ts";
 import { Cluster, waitFor } from "../helpers/cluster.ts";
+import { signInCodex } from "../helpers/fake-seat-users.ts";
+import { noKeychainSeats } from "../helpers/no-keychain.ts";
 
 test("stopping a daemon with a running seat retires refreshes and late signals before closing its store", async () => {
   const cluster = new Cluster();
   try {
     const fixture = join(import.meta.dir, "../fixtures/fake-codex");
     const alex = await cluster.add({ name: "alex", login: "alex@example.com" });
-    const arvid = await cluster.add({ name: "arvid", login: "arvid@example.com", seats: {
+    const home = join(cluster.root, "arvid-home");
+    signInCodex(home); // the seat runs on its person's own Codex sign-in: this test's home has one
+    const arvid = await cluster.add({ name: "arvid", login: "arvid@example.com", seats: noKeychainSeats(home, {
       flushMs: 20, env: { PATH: `${fixture}:${dirname(process.execPath)}:/usr/bin:/bin` },
-    } });
+    }) });
     await alex.client().init("team", "alex");
     await alex.client().invite("arvid@example.com", "arvid", "member");
     expect((await arvid.client().join(alex.peerAddr)).admitted).toBe(true);

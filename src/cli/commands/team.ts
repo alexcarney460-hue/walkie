@@ -12,6 +12,7 @@ import { bool, channelArg, need, str, UsageError } from "../args.ts";
 import { agentFrom, EXIT, requirePerson, type Ctx } from "../context.ts";
 import { ago, c, pad, safeTerm } from "../format.ts";
 import { planLine } from "./license.ts";
+import { isInviteCode, INVITE_MAX_CHARS } from "../../daemon/invite.ts";
 import { isolationLines, loginLines } from "./seats.ts";
 import { allowTeamAgents, enableSeats } from "./seats-enable.ts";
 
@@ -78,16 +79,40 @@ export async function invite(ctx: Ctx): Promise<number> {
   return EXIT.ok;
 }
 
+/** Private Windows handoff: read one bounded invite from stdin, never from argv. */
+export async function inviteFromStdin(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > INVITE_MAX_CHARS + 2) throw new UsageError("invite on stdin is too long");
+      chunks.push(part.value);
+    }
+  } finally { reader.releaseLock(); }
+  const peer = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)).trim();
+  if (peer.length > INVITE_MAX_CHARS || !isInviteCode(peer)) throw new UsageError("stdin did not contain one Walkie invite code");
+  return peer;
+}
+
 export async function join(ctx: Ctx): Promise<number> {
-  const peer = need(ctx.args, 0, "invite code, or a teammate's Tailscale host / 100.x IP");
+  const fromStdin = bool(ctx.args, "invite-stdin");
+  if (fromStdin && ctx.args.pos.length) throw new UsageError("--invite-stdin cannot be combined with a command-line invite");
+  const peer = fromStdin ? await inviteFromStdin(Bun.stdin.stream()) : need(ctx.args, 0, "invite code, or a teammate's Tailscale host / 100.x IP");
   // --allow-team-agents (alias --allow-seats) is the one-step opt-in (walkie seats enable): the person's, or an agent of
-  // theirs applying the flag it was given (AGENT-ADMIN-1; audited once the machine is on the team).
+  // theirs applying the flag it was given (AGENT-ADMIN-1: refused while agent admin is off, audited while it is on).
   const allowSeatsToo = allowTeamAgents(ctx);
-  if (allowSeatsToo) ctx = adminCtx(ctx, "let the team start agents on this machine");
+  const seatUsers = bool(ctx.args, "seat-users");
+  if (seatUsers && !allowSeatsToo) throw new UsageError("--seat-users requires --allow-team-agents (or --allow-seats)");
+  if (seatUsers && bool(ctx.args, "same-user")) throw new UsageError("choose --same-user or --seat-users");
+  if (allowSeatsToo && ctx.agentMarker()) ctx = adminCtx(ctx, "let the team start agents on this machine");
   const res = await ctx.client().join(peer);
   if (res.admitted && !ctx.json) ctx.out(`${c.green("joined")} ${res.team?.name} as @${res.handle} (${res.role}) on ${res.node.hostname}`);
   const seatsView = res.admitted && allowSeatsToo
-    ? await enableSeats(ctx, { sameUser: bool(ctx.args, "same-user"), acceptReadableHome: bool(ctx.args, "accept-readable-home") })
+    ? await enableSeats(ctx, { sameUser: bool(ctx.args, "same-user"), seatUsers, acceptReadableHome: bool(ctx.args, "accept-readable-home") })
     : null;
   if (ctx.json) { ctx.out(JSON.stringify(seatsView ? { ...res, seats: seatsView } : res)); return res.admitted && (!allowSeatsToo || seatsView) ? EXIT.ok : EXIT.error; }
   if (res.admitted) {

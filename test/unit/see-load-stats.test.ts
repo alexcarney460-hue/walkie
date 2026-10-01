@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { CpuBusyTracker, hostSys, shouldPublish } from "../../src/daemon/machine-stats/sampler.ts";
 import { machineBusy, MachineStats } from "../../src/protocol/machine-stats.ts";
-import { ME, world } from "../helpers/discovery-world.ts";
+import { ME, status, world } from "../helpers/discovery-world.ts";
 import { machineCapacity } from "../../src/pool/capacity.ts";
 import { teamViewJson } from "../../src/cli/agent-output.ts";
 import type { TeamView } from "../../src/protocol/schemas.ts";
@@ -40,6 +40,16 @@ test("the cheap census publishes agent counts with the machine row", async () =>
   await w.disc({ scanBudgetMs: 1 }).tick();
   expect(w.core.publishedStats()?.agent_processes).toEqual([{ name: "claude-code", count: 1 }, { name: "codex", count: 1 }]);
   expect(MachineStats.parse(w.core.publishedStats()).agent_processes).toHaveLength(2);
+});
+
+test("a Hermes session is shown as an agent but is not in the published counts: a peer that does not know the name would drop the whole list", async () => {
+  const w = world(cleanups);
+  w.fx.procs.push({ pid: 201, ppid: 1, uid: ME, startedAt: w.clock.t - 60_000, command: "hermes --profile example-operator", cpuMs: 1 });
+  w.core.machineStats = { at: w.clock.t, mem: { total: 16, used: 12, swap_used: 0, pressure: "normal" }, temp_c: null };
+  await w.disc().tick();
+  expect(status(w.core, "hermes-example-operator")).toMatchObject({ runtime: "other", runtime_name: "hermes" });
+  expect(w.core.publishedStats()?.agent_processes).toEqual([{ name: "claude-code", count: 1 }]);
+  expect(MachineStats.parse(w.core.publishedStats()).agent_processes).toEqual([{ name: "claude-code", count: 1 }]);
 });
 
 test("CPU busy is a delta, and optional load fields survive the wire parser", () => {

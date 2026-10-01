@@ -49,7 +49,7 @@
         <section class="state" data-state="ready" aria-labelledby="j-ready">
           <span class="state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></span>
           <h1 id="j-ready">Add this machine to your team.</h1>
-          <p class="lead">A team owner made this link so this Mac can join as <b data-field="handle">you</b>.</p>
+          <p class="lead">A team owner made this link so this company machine can join as <b data-field="handle">you</b>.</p>
           <div class="facts">
             <span class="fact">Works once, only for <b data-field="handle">you</b></span>
             <span class="fact">Expires <b data-field="expires">&hellip;</b></span>
@@ -58,22 +58,33 @@
             <fieldset class="consent">
               <legend>Let your team run agents on this computer?</legend>
               <label class="consent-option"><input type="radio" name="agents-consent" data-consent-choice="no"> No</label>
-              <label class="consent-option"><input type="radio" name="agents-consent" data-consent-choice="yes" checked> Yes (default)</label>
+              <label class="consent-option"><input type="radio" name="agents-consent" data-consent-choice="yes"> Yes, allow company agents</label>
             </fieldset>
-            <div class="consent-max" data-consent-max>
+            <div class="consent-max" data-consent-max hidden>
               <label for="j-seat-max">Seat maximum</label>
               <input type="number" id="j-seat-max" data-consent-max-input inputmode="numeric" min="1" max="64" step="1" value="4">
             </div>
-            <p class="welcome-note">Each seat runs as a separate OS user with this machine&rsquo;s Claude login. A running seat can read this machine&rsquo;s short-lived Claude access token, never the refresh token; a dedicated seat token is used instead when one is set. Team owners can start up to this maximum. You can stop seats from {{name}} on this Mac, or any time with <code>{{cli}} seats deny</code>.</p>
+            <p class="welcome-note">Allow the verified owner to provision this <strong>company machine</strong> remotely. Named launchers may run agents as your macOS/Windows-WSL/Linux user. Owners can use {{name}}&rsquo;s allow-listed remote admin commands. Launched agents can run arbitrary code, read and change files and keys you can access, and use your {{name}} daemon as you. Owner-provided subscription logins may be leased for a run. {{name}} records who provisioned and launched.</p>
+            <p class="welcome-note">Owner and named launchers: verified in the Mac app or terminal before final consent; the invite alone does not carry their names. Proposed profile: developer-worker, with its version confirmed at final consent. Seat cap: <span data-field="seat-cap">0</span>. On Windows, enrollment may keep WSL running after sign-in and change power settings.</p>
+            <p class="welcome-note">You can stop seats with <code>{{cli}} seats deny</code>, stop remote setup with <code>{{cli}} admin remote off</code> and <code>{{cli}} agents admin off</code>, or leave the team.</p>
+            <p class="welcome-note" data-ssh-consent hidden>This link also asks that its owner, the owner&rsquo;s everyday agents and {{name}}Talkie may sign in to this computer over SSH as your user, through {{name}}, using a {{name}} SSH service that listens only on this computer and accepts only key logins. {{name}} records the caller, the source machine and the time and length of each session, never its content, and posts one summary to you. This is part of the same consent: it is shown in full in the {{name}} app or your terminal before you confirm, and you can end it with <code>{{cli}} ssh revoke</code>.</p>
+            <p class="welcome-note" data-ssh-damaged hidden>This link can&rsquo;t turn on owner SSH: its SSH authorization is damaged. Ask the owner for a new add-machine link. The rest of the enrollment works without SSH.</p>
           </div>
           <div class="welcome-actions">
-            <button class="btn" type="button" data-join-package {{package_hidden}}>Install {{name}} and join</button>
+            <button class="btn" type="button" data-join-package {{package_hidden}}>Download and run {{name}}</button>
             <button class="btn btn-ghost" type="button" data-join-open hidden>Open {{name}} to finish joining</button>
             <a data-package-url href="https://github.com/{{github_owner}}/{{cli}}-releases/releases/download/{{release_version}}/{{name}}.pkg" target="_blank" rel="noopener noreferrer" hidden aria-hidden="true" tabindex="-1">Download package</a>
           </div>
           <p class="welcome-note" data-package-instructions {{package_hidden}}>Open the downloaded package. When you return, this page opens {{name}} to finish joining. If it does not, select “Open {{name}} to finish joining.” macOS may ask you to approve the app. Keep this page open until {{name}} starts.</p>
+          <section data-windows-section hidden aria-label="Windows installer">
+            <h2>Windows / WSL</h2>
+            <p>PowerShell bootstrap pending signed release verification. The installer command will appear after that gate.</p>
+            <button type="button" data-windows-copy hidden>Copy installer</button>
+            <code data-field="windows-command" hidden></code>
+          </section>
           <details data-terminal-fallback {{fallback_open}}><summary>Use the terminal command instead</summary>
           <p class="welcome-note">This fallback puts the private invite code on your command line and may leave it in shell history or process listings.</p>
+          <p class="welcome-note" data-ssh-command-note hidden>The command also carries the owner&rsquo;s SSH authorization after <code>--owner-ssh</code>, with the same exposure. It works once, only for the machine this link admits.</p>
           <div class="install">
             <div class="install-shell">
               <div class="install-core">
@@ -88,7 +99,7 @@
           <p class="welcome-note" data-field="version"></p>
           <p class="welcome-note">The command verifies the release signature, installs, starts the background service and joins.</p>
           </details>
-          <p class="welcome-note"><strong>Keep this private.</strong> Anyone who runs this command before you do joins the team as one of your machines. Already have {{name}} on that machine? Run <code>{{cli}} join</code> with the code at the end of the command instead.</p>
+          <p class="welcome-note"><strong>Keep this private.</strong> Anyone who runs this command before you do joins the team as one of your machines. Already have {{name}} on that machine? Run <code>{{cli}} join</code> with the invite code that follows <code>--invite</code> instead: that joins the team without the company consent, so without owner SSH.</p>
         </section>
 
         <!-- a well-formed code past its expiry -->

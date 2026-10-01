@@ -180,6 +180,15 @@ export const MIGRATIONS: readonly string[] = [
    CREATE TRIGGER IF NOT EXISTS schedule_count_update_new AFTER UPDATE ON events
      WHEN NEW.channel = 'talkie-schedules' AND NEW.kind = 'msg.post' AND NEW.redacted = 0 AND NEW.status = 'ok'
      BEGIN UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'schedule_channel_count'; END;`,
+  // 16: Hermes hook observations are local daemon state. They are never replicated; only the derived agent status is signed.
+  `CREATE TABLE hermes_sessions(profile TEXT NOT NULL, session TEXT NOT NULL, at INTEGER NOT NULL,
+     seq INTEGER NOT NULL, state TEXT NOT NULL, fallback TEXT NOT NULL, activity TEXT, source TEXT,
+     PRIMARY KEY(profile, session));
+   CREATE INDEX hermes_sessions_profile_at ON hermes_sessions(profile, at DESC, seq DESC);`,
+  // 17: local receipt time protects hooks that arrive while a process census is still being examined.
+  `ALTER TABLE hermes_sessions ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0;`,
+  // 18: a hook-supplied process id lets the census retire one session without affecting its profile peers.
+  `ALTER TABLE hermes_sessions ADD COLUMN pid INTEGER;`,
 ];
 
 /** Independently replayable migration 13, also used by the startup ledger. */
@@ -196,6 +205,12 @@ export function migrate13(db: Database): void {
 /** Indexes (0-based) of the orch_messages (11) and projects boards (12) migrations: see migrate(). */
 const ORCH_MIGRATION = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE orch_messages"));
 const BOARDS_MIGRATION = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE board_projects"));
+/**
+ * Index of the first migration after the schedule-claim index (14 and 15). The index is built from the events in batches and
+ * records both numbers with its last batch (migrateClaimIndexBatch), so the migrations from here on (16, Hermes sessions) run in
+ * that same transaction: the ledger is never ahead of the index, and a migration after it is never skipped.
+ */
+const AFTER_CLAIM_INDEX = 15;
 
 
 /**
@@ -355,8 +370,9 @@ export class Store {
     if (current > ORCH_MIGRATION && !has("orch_messages")) {
       this.db.transaction(() => { this.db.exec(MIGRATIONS[ORCH_MIGRATION] as string); })();
     }
+    let claimIndexPending = false;
     for (let i = current; i < MIGRATIONS.length; i++) {
-      if (i === 13) { this.migrateClaimIndex(); break; }
+      if (i === 13) { this.migrateClaimIndex(); claimIndexPending = true; break; }
       this.db.transaction(() => {
         if (i === BOARDS_MIGRATION && has("board_projects")) this.rebuildLaneBoards();
         else if (i === 12) migrate13(this.db);
@@ -364,7 +380,8 @@ export class Store {
         this.db.query("INSERT INTO migrations(version, applied_at) VALUES (?, ?)").run(i + 1, Date.now());
       })();
     }
-    if (current >= MIGRATIONS.length) this.claimIndexReady = true;
+    // Ready once the claim index is: already built (every migration from 14 on runs above, in order) or built by its last batch.
+    if (!claimIndexPending) this.claimIndexReady = true;
   }
 
   /** Create the derived index once; each later batch is a separate transaction. */
@@ -395,6 +412,10 @@ export class Store {
           this.db.query("INSERT INTO migrations(version, applied_at) VALUES (14, ?)").run(Date.now());
           this.db.exec(MIGRATIONS[14] as string);
           this.db.query("INSERT INTO migrations(version, applied_at) VALUES (15, ?)").run(Date.now());
+          for (let i = AFTER_CLAIM_INDEX; i < MIGRATIONS.length; i++) {
+            this.db.exec(MIGRATIONS[i] as string);
+            this.db.query("INSERT INTO migrations(version, applied_at) VALUES (?, ?)").run(i + 1, Date.now());
+          }
           return false;
         }
         this.setMeta("claim_index_cursor", String(rows.at(-1)!.rowid));
@@ -973,6 +994,11 @@ export class Store {
   }
   agents(): AgentRow[] {
     return this.db.query<AgentRow, []>("SELECT * FROM agents_latest ORDER BY handle, node, agent").all();
+  }
+  /** One node's latest agent statuses whose names start with `prefix`: a range over the primary key (node, agent), no scan of the other agents. */
+  agentsWithPrefix(node: string, prefix: string): AgentRow[] {
+    const upper = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    return this.db.query<AgentRow, [string, string, string]>("SELECT * FROM agents_latest WHERE node = ? AND agent >= ? AND agent < ? ORDER BY agent").all(node, prefix, upper);
   }
   /** Deletes agents from the latest-status table (the Agent archive's cap and time limit); their events stay. */
   deleteAgents(keys: ReadonlyArray<{ node: string; agent: string }>): number {

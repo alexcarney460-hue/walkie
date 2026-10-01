@@ -68,7 +68,7 @@ describe("rent", () => {
       const rid = res.rentals[i]!.id;
       expect(p.tags).toMatchObject({ [TAG_MANAGED]: "1", [TAG_RENTAL]: rid, "walkie:team": TEAM, "walkie:account": id });
       expect(res.code_index[rid]).toBe(i);
-      expect(p.user_data).toContain(`--invite ${req.codes[i]} --allow-team-agents`);
+      expect(p.user_data).toContain(`--invite ${req.codes[i]} --allow-team-agents --seat-users`);
       expect(p.user_data).toContain("WALKIE_VERSION=v0.2.0-pre.7");
     }
     // CPU: first minute, 750000/60 = 12500 each; GPU: 5-minute minimum, 1520000*5/60 = 126666.67 → 126667

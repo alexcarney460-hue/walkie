@@ -14,6 +14,7 @@ import { addrLabel } from "./transport.ts";
 import { flushRequests } from "./requests.ts";
 import { activeNodes, canSeeChannel, isRestricted, nodeMember, pickTransport, type NodeRec } from "./roster.ts";
 import { trackOp } from "./watchdog.ts";
+import { SSH_REVOCATION_CAP } from "./ssh/team-revocation.ts";
 
 export interface SyncOptions {
   intervalMs?: number; livenessMs?: number; pushTimeoutMs?: number;
@@ -25,6 +26,7 @@ export interface PeerState {
   lastSeen: number | null; rtt: number | null; lastSync: number | null; behind: number; skewMs?: number;
   error?: string; running: boolean; chain: Promise<void>; queued: number; failedAt: number | null;
   lastSeenStall?: number;
+  sshRevocationCap?: boolean;
   /** The peer's machine stats from its last `vv` answer (kept while it is offline; cleared when it stops sending them). */
   stats?: MachineStats;
   /** The peer's accounts from its last `vv` answer (kept while it is offline; cleared when it stops sending them). */
@@ -112,6 +114,26 @@ export class SyncManager {
   }
 
   peerState(nodeId: string): PeerState | undefined { return this.peers.get(nodeId); }
+
+  /**
+   * The owner SSH startup gate: this process must hold the roster authority's view of the team log.
+   * A target that is not the authority needs a successful pull of the authority's full vector since this start,
+   * and nothing else counts: another peer may lack receipts the authority holds, and the authority being
+   * unreachable keeps SSH closed. The authority's own replayed log holds the receipts it stored itself, so no
+   * one sits above it; it still waits for every peer it can reach, because a receipt it could not write locally
+   * survives only on peers.
+   */
+  sshTeamConfirmed(): boolean {
+    const syncedSinceStart = (id: string): boolean => {
+      const state = this.peers.get(id);
+      return !!state?.lastSync && state.lastSync >= this.core.startedAt && state.behind === 0 && state.sshRevocationCap === true;
+    };
+    const authority = this.core.authority;
+    if (!authority) return false;
+    if (authority !== this.core.nodeId) return syncedSinceStart(authority);
+    const peers = this.peerNodes();
+    return peers.length > 0 && peers.every((peer) => syncedSinceStart(peer.node_id));
+  }
 
   peerCapabilities(nodeId: string): PeerCapabilities | undefined {
     return peerCapabilities(this.core.store, nodeId);
@@ -381,6 +403,7 @@ export class SyncManager {
       const t0 = performance.now();
       const w0 = Date.now();
       const peerVv = await this.client.vv(addr, n.pubkey);
+      s.sshRevocationCap = (peerVv.capabilities?.caps ?? peerVv.stats?.sys?.caps ?? []).includes(SSH_REVOCATION_CAP);
       s.rtt = Math.round(performance.now() - t0);
       if (typeof peerVv.ts === "number") s.skewMs = Math.round(peerVv.ts - (w0 + Date.now()) / 2);
       s.stats = peerVv.stats;

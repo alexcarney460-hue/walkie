@@ -11,6 +11,7 @@ import { associate } from "../../../../src/protocol/projects/assoc.ts";
 import { useProjects } from "../../state/projects.ts";
 import { agentDisplayName, ORCHESTRATOR_AGENT } from "../../../../src/protocol/orchestrator.ts";
 import { modelLabel } from "../orchestrator/model.ts";
+import { isCloudAgent } from "../../../../src/protocol/guest-cloud.ts";
 
 /** The project (and card) this agent works on, from its status (WALKIE-PROJECTS-1). */
 function ProjectChip({ agent }: { agent: AgentView }) {
@@ -29,6 +30,7 @@ function ProjectChip({ agent }: { agent: AgentView }) {
 function AgentCardImpl({ agent, account, onOpen }: { agent: AgentView; account?: AccountView; onOpen: (id: string) => void }) {
   const now = useNow();
   const s = agent.status;
+  const hermesViewOnly = s.runtime === "other" && s.runtime_name === "hermes";
   const state = agent.effective_state;
   const running = s.started_at ? duration(now - s.started_at) : null;
   // How long the current line has been true ("Running a command · 8m"), ticking: a long command visibly alive. An older
@@ -47,12 +49,13 @@ function AgentCardImpl({ agent, account, onOpen }: { agent: AgentView; account?:
       <span className="agent-card-top">
         <span className="agent-name mono truncate">{agentDisplayName(agent.agent)}</span>
         <RuntimeBadge runtime={s.runtime} runtime_name={s.runtime_name} launch={s.launch} />
+        {isCloudAgent(agent) && <span className="chip" title={s.title === "Walkie access revoked" ? "Owner revoked this guest's Walkie access" : "Activity is reported by the guest agent"}>{s.title === "Walkie access revoked" ? "owner action" : "self-report"}</span>}
         {agent.agent === ORCHESTRATOR_AGENT && s.model && <span className="agent-model mono truncate" data-testid="orchestrator-model" title={s.model}>{modelLabel(s.model)}</span>}
         {account && <AccountChip account={account} now={now} />}
         <span className="agent-card-spacer" />
         <StatePill state={state} />
       </span>
-      <span className="agent-title">{s.title ?? (s.parent ? subagentLabel(s.subagent_type) : <span className="muted">No status title</span>)}</span>
+      <span className="agent-title">{s.title ?? (s.parent ? subagentLabel(s.subagent_type) : <span className="muted">{hermesViewOnly ? "View only" : "No status title"}</span>)}</span>
       {s.parent && <span className="agent-parent mono truncate muted">sub-agent of {s.parent}</span>}
       {subs && (
         <span className="agent-subs" data-testid={`subagents-${agent.agent}`}>
@@ -73,7 +76,7 @@ function AgentCardImpl({ agent, account, onOpen }: { agent: AgentView; account?:
         </span>
       )}
       <span className="agent-foot">
-        <span className="agent-activity mono truncate" title={s.activity}>{s.activity ?? "No activity yet"}</span>
+        <span className="agent-activity mono truncate" title={s.activity}>{s.activity ?? (hermesViewOnly ? "State observed" : "No activity yet")}</span>
         <span className="agent-foot-time tnum" title={`For ${elapsed(now - lineSince)} (${STATE_LABEL[state]} for ${elapsed(now - stateSince)}; last update ${ago(agent.updated_at, now)} ago)`} data-testid="time-in-state">
           <span aria-hidden="true">· </span>for {elapsed(now - lineSince)}
         </span>

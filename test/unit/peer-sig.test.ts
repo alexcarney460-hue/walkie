@@ -85,6 +85,7 @@ describe("Tailscale peer request signature", () => {
     expect(peerSigTier("POST", "/peer/v1/roster-request")).toBe("C");
     expect(peerSigTier("POST", "/peer/v1/peer-proof")).toBe("A");
     expect(peerSigTier("POST", "/peer/v1/join")).toBe("C");
+    expect(peerSigTier("POST", "/peer/v1/ssh/revocation")).toBe("A"); // ENROLL-SSH: a signed receipt, and a signed request
     expect(peerSigTier("POST", `/peer/v1/pool/tunnel/${"a".repeat(32)}`)).toBe("A");
     expect(peerSigTier("DELETE", `/peer/v1/pool/serve-tunnel/${"a".repeat(32)}`)).toBe("A");
     for (const path of ["schedule-claim", "schedule-defaults", "schedule-manage", "schedule-progress"]) {

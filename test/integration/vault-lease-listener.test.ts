@@ -28,6 +28,17 @@ test("the loopback listener is refused (403), even with the durable token", asyn
   expect(await res.text()).toContain("only served on the unix socket");
 });
 
+test("the readiness probe is unix-only and returns no credential", async () => {
+  const port = alex.d.localPort as number;
+  const res = await fetch(`http://127.0.0.1:${port}/v1/vault/probe`, {
+    method: "POST", headers: { Authorization: `Bearer ${alex.d.token}`, Host: `127.0.0.1:${port}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ...BODY, provider: "claude" }),
+  });
+  expect(res.status).toBe(403);
+  const err = await alex.client().vaultProbe({ ...BODY, provider: "claude" }).then(() => null, (e: unknown) => e as WalkieError);
+  expect(err?.code).toBe("not_found");
+});
+
 test("the unix socket reaches the route (an unknown owner machine is 404, not the listener's 403)", async () => {
   const err = await alex.client().vaultLease(BODY).then(() => null, (e: unknown) => e as WalkieError);
   expect(err).toBeInstanceOf(WalkieError);

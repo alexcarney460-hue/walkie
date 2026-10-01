@@ -1,5 +1,6 @@
 // Node core: the roster authority chain, the accept pipeline (PROTOCOL §2/§3) and local event
 // emission. Transport-free so every surface shares one path.
+import { homedir } from "node:os";
 import { cleanSubagentType, MAX_SUBAGENTS_PER_PARENT } from "../protocol/subagents.ts";
 import { isLiveSubagentRow, liveSubagents } from "./views.ts";
 import { canonicalJson } from "../protocol/canonical.ts";
@@ -36,6 +37,7 @@ import {
 } from "./roster.ts";
 import type { Hub } from "./sse.ts";
 import { StatusCoalescer } from "./status-coalesce.ts";
+import { RecentDeliveries } from "./hook-dedupe.ts";
 import { SharePolicyFile } from "../agent/share-policy.ts";
 import { ACTIVITY_PHRASES, parseProvenance, projectStatus, type StatusProvenance } from "../protocol/status-projection.ts";
 import { SEATS_AGENT, isSeatAgent, seatBlobRefs, seatOf } from "../protocol/seats.ts";
@@ -114,6 +116,7 @@ const STUB_RETRY_MAX_MS = 60 * 60_000;
 
 export interface CoreDeps {
   readonly paths: Paths; readonly config: Config; readonly log: Logger; readonly keys: NodeKeys;
+  readonly sshUserHome?: string;
   readonly store: Store; readonly identity: Identity; readonly hub: Hub; readonly limits?: RateLimits;
   readonly hostname: string; readonly ip: string; readonly login: string | null; readonly peerPort: number;
   /** Tests only: a verifier for a throwaway vendor key. Production always uses the embedded key. */
@@ -154,6 +157,7 @@ function depOf(ev: Event, reason: string): string {
 
 export class Core {
   readonly paths: Paths; readonly config: Config; readonly log: Logger; readonly keys: NodeKeys;
+  readonly sshUserHome: string;
   readonly store: Store; readonly identity: Identity; readonly hub: Hub;
   readonly limits: RateLimits; readonly limiter = new RateLimiter();
   private readonly boardFinalCap: number;
@@ -184,6 +188,11 @@ export class Core {
    * signed, shown only on this machine's own dashboard when the sharing policy keeps them from the team.
    */
   readonly localSubagents = new Map<string, { title?: string; type?: string }>();
+  /**
+   * The hook deliveries this node applied lately (src/daemon/hook-dedupe.ts): a status whose delivery identity was seen
+   * is a repeat of one hook event and is dropped. Kept here, never signed; bounded in size and in age.
+   */
+  readonly hookDeliveries = new RecentDeliveries();
   readonly hostname: string;
   /** Where the peer API listens ("" while it is down) and the Tailscale login; both follow Tailscale (peer-link.ts). */
   ip: string; login: string | null;
@@ -259,6 +268,8 @@ export class Core {
   onPostChange: ((ev: Event, change: "accepted" | "hidden") => void) | null = null;
   /** Node ids this node reached itself lately (served as `online` in `/peer/v1/vv`, mixed teams). */
   reachedPeers: (() => string[]) | null = null;
+  /** Owner SSH remains closed until this process has reconciled the team's revocations. */
+  sshTeamConfirmed: () => boolean = () => false;
   /** Fetches a share's bytes from the node that uploaded them, gaining provenance (mixed teams: peer-api.ts fetchThrough). */
   fetchBlob: ((nodeId: string, hash: string, channel: string) => Promise<boolean>) | null = null;
   /** ACCOUNTS-2: this machine's vault (read-only here) for hand-outs, and the owner's "vault_sharing" setting. */
@@ -277,6 +288,7 @@ export class Core {
 
   constructor(d: CoreDeps) {
     this.paths = d.paths; this.config = d.config; this.log = d.log; this.keys = d.keys; this.store = d.store;
+    this.sshUserHome = d.sshUserHome ?? homedir();
     this.identity = d.identity; this.hub = d.hub; this.limits = d.limits ?? DEFAULT_LIMITS;
     this.hostname = d.hostname; this.ip = d.ip; this.login = d.login; this.peerPort = d.peerPort;
     this.licenseVerifier = d.licenseVerifier ?? verifyLicense;
@@ -1056,6 +1068,15 @@ export class Core {
   sharePolicy() {
     this.sharePolicyFile ??= new SharePolicyFile(this.paths.config);
     return this.sharePolicyFile.get();
+  }
+
+  /**
+   * The Hermes profiles whose status may carry activity text, read from config.json when it changes (src/agent/share-policy.ts):
+   * none unless the file lists them, so a missing, unreadable or invalid file shows none. The Hermes route and discovery use it.
+   */
+  hermesActivityProfiles(): readonly string[] {
+    this.sharePolicyFile ??= new SharePolicyFile(this.paths.config);
+    return this.sharePolicyFile.hermesActivityProfiles();
   }
 
   /** Remembers an agent's working directory locally (discovery matches unnamed sessions by it); bounded. */

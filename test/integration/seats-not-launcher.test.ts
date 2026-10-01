@@ -3,7 +3,9 @@
 // locally, before any request reaches the host. Alex: this refusal should say the exact fix and whose machine's
 // person runs it, like the ones the host itself posts back (seats.test.ts).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { noKeychainSeats } from "../helpers/no-keychain.ts";
 
 let c: Cluster;
 let alex: TestNode;
@@ -13,7 +15,7 @@ let kira: TestNode;
 beforeAll(async () => {
   c = new Cluster();
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
-  arvid = await c.add({ name: "arvid", login: "arvid@example.com", hostname: "arvid-mac", seats: { flushMs: 100 } });
+  arvid = await c.add({ name: "arvid", login: "arvid@example.com", hostname: "arvid-mac", seats: noKeychainSeats(join(c.root, "arvid-home"), { flushMs: 100 }) });
   kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kira-mbp" });
   await alex.client().init("aka", "alex");
   await alex.client().invite("arvid@example.com", "arvid", "member");

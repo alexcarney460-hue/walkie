@@ -1,4 +1,5 @@
 import type { AgentState, AgentView, AskBody, AskView, Event, MemberView, Runtime } from "../api/types.ts";
+import { cloudAddress, isCloudAgent } from "../../../src/protocol/guest-cloud.ts";
 
 export const RUNTIME_LABEL: Record<Runtime, string> = {
   "claude-code": "Claude Code",
@@ -71,8 +72,8 @@ export function firstName(members: MemberView[] | undefined, handle: string): st
   return displayName(members, handle).split(" ")[0] ?? handle;
 }
 
-export function agentAddress(a: Pick<AgentView, "handle" | "hostname" | "agent">): string {
-  return `@${a.handle}/${a.hostname}/${a.agent}`;
+export function agentAddress(a: Pick<AgentView, "handle" | "hostname" | "agent" | "status">): string {
+  return isCloudAgent(a) ? cloudAddress(a) : `@${a.handle}/${a.hostname}/${a.agent}`;
 }
 
 /** Hostname for an author node id, if known. */

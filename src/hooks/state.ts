@@ -18,6 +18,8 @@ export function isDeliberate(src: string | undefined): boolean {
 }
 
 export interface HookState {
+  /** Grok's latest turn id; delayed stop reports for older turns must not idle this session. */
+  grok_turn_id?: string;
   title?: string;
   title_src?: TitleSource;
   task?: string;

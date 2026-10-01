@@ -15,7 +15,8 @@ export const ACTIVITY_PHRASES: ReadonlySet<string> = new Set([
   "Running a command", "Editing files", "Reading files", "Searching", "Fetching a web page", "Waiting on a subagent",
   "Planning", "Using a tool", "Edit files", "Waiting on a command's output", "Waiting",
   // the seats host's own status (src/daemon/seats/host.ts)
-  ...Object.values({ off: "Seats off", allowed: "Seats allowed", running: "Seats running", busy: "Busy: its person is using it" }),
+  ...Object.values({ off: "Seats off", allowed: "Seats allowed", running: "Seats running", busy: "Busy: its person is using it",
+    enrollmentMigration: "Seats blocked: enrollment migration", enrollmentUnreadable: "Seats blocked: enrollment state unreadable" }),
   "Seat running", "Seat paused", "Seat finished",
   // discovery (src/daemon/discovery.ts)
   "Idle (no activity seen in the last minute)", "Working (seen from the process)", "Working (details pending)", "Process exited",

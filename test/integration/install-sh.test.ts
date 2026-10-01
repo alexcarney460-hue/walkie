@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { assetName } from "../../src/cli/commands/update.ts";
 import { RELEASE_PUBLIC_KEY_PEM, signRelease } from "../../src/release/sign.ts";
 
@@ -18,12 +18,14 @@ const pubPem = publicKey.export({ format: "pem", type: "spki" }) as string;
 
 const asset = assetName();
 const fakeBinary = (v: string) => `#!/bin/sh\ncase "$1" in version) echo "walkie ${v}" ;; setup) echo "setup ran: $*" ;; esac\n`;
+/** Records the arguments it was given in $HOME/setup-args instead of echoing them, so a test can see what the installer printed itself. */
+const recordingBinary = (v: string) => `#!/bin/sh\ncase "$1" in version) echo "walkie ${v}" ;; setup) shift; for a in "$@"; do printf '%s\\n' "$a" >> "$HOME/setup-args"; done ;; esac\n`;
 const sha256 = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
 
 interface Release { binary: string; sums: string; sig: Uint8Array | null }
-function release(opts: { version?: string; binaryVersion?: string; tamperSums?: boolean; noSig?: boolean; noVersionLine?: boolean } = {}): Release {
+function release(opts: { version?: string; binaryVersion?: string; tamperSums?: boolean; noSig?: boolean; noVersionLine?: boolean; record?: boolean } = {}): Release {
   const version = opts.version ?? "v0.1.0";
-  const binary = fakeBinary(opts.binaryVersion ?? version.replace(/^v/, ""));
+  const binary = (opts.record ? recordingBinary : fakeBinary)(opts.binaryVersion ?? version.replace(/^v/, ""));
   const sums = `${opts.noVersionLine ? "" : `version ${version}\n`}${sha256(binary)}  ${asset}\n`;
   const sig = signRelease(new TextEncoder().encode(sums), keyPem);
   return { binary, sums: opts.tamperSums ? sums.replace(/^version v0\.1\.0/, "version v9.9.9") : sums, sig: opts.noSig ? null : sig };
@@ -54,14 +56,14 @@ beforeAll(() => {
 });
 afterAll(() => { server?.stop(true); if (root) rmSync(root, { recursive: true, force: true }); });
 
-async function install(extraEnv: Record<string, string> = {}, opts: { existing?: string } = {}): Promise<{ code: number; out: string; err: string; bin: string }> {
+async function install(extraEnv: Record<string, string> = {}, opts: { existing?: string; args?: string[] } = {}): Promise<{ code: number; out: string; err: string; bin: string }> {
   const home = mkdtempSync(join(root, "home-"));
   const bin = join(home, "bin", "walkie");
   mkdirSync(join(home, "bin"), { recursive: true });
   // A machine that already has walkie <existing> installed.
   if (opts.existing) { writeFileSync(bin, fakeBinary(opts.existing), { mode: 0o755 }); chmodSync(bin, 0o755); }
   const env = { HOME: home, PATH: SYSTEM_PATH, WALKIE_BASE_URL: `http://127.0.0.1:${server!.port}`, WALKIE_BIN_DIR: join(home, "bin"), ...extraEnv };
-  const args = ["/usr/bin/env", "-i", ...Object.entries(env).map(([k, v]) => `${k}=${v}`), "/bin/sh", script];
+  const args = ["/usr/bin/env", "-i", ...Object.entries(env).map(([k, v]) => `${k}=${v}`), "/bin/sh", script, ...(opts.args ?? [])];
   const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out, err, bin };
@@ -78,6 +80,31 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
     expect(existsSync(r.bin)).toBe(true);
     expect((readFileSync(r.bin).length)).toBe(current.binary.length);
     chmodSync(r.bin, 0o755);
+  });
+
+  test("company fallback names the same-user risk, revocation and command-line exposure before setup", async () => {
+    current = release();
+    const r = await install({}, { args: ["--invite", "wk1fixture", "--company-machine"] });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Same-user seats let named launchers run code as you");
+    expect(r.out).toContain("walkie seats deny");
+    expect(r.out).toContain("walkie admin remote off and walkie agents admin off");
+    expect(r.out).toContain("invite passed as --invite appears on the command line");
+    expect(r.out).toContain("setup ran: setup --invite wk1fixture --company-machine");
+  });
+
+  test("an owner SSH authorization reaches setup untouched, is warned about with the invite, and is never printed by the installer", async () => {
+    current = release({ record: true });
+    const packet = "eyJ0ZWFtX2lkIjoiMDEyMzQ1Njc4OWFiY2RlZiJ9" + "A".repeat(60);
+    const r = await install({}, { args: ["--invite", "wk1fixture", "--company-machine", "--owner-ssh", packet] });
+    expect([r.code, r.err]).toEqual([0, ""]);
+    const home = dirname(dirname(r.bin));
+    expect(readFileSync(join(home, "setup-args"), "utf8").split("\n").filter(Boolean)).toEqual(["--invite", "wk1fixture", "--company-machine", "--owner-ssh", packet]);
+    expect(r.out).not.toContain(packet);
+    expect(r.err).not.toContain(packet);
+    expect(r.out).toContain("an invite passed as --invite appears on the command line");
+    expect(r.out).toContain("an owner SSH authorization passed as --owner-ssh");
+    expect(r.out).toContain("setup never prints it");
   });
 
   test("desktop install-only verifies and installs without running setup", async () => {

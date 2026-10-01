@@ -1,12 +1,33 @@
 # Install and join a team
 
-Requirements: macOS or Linux. That's all for **Walkie Direct** (the default since v0.2): machines connect
+Requirements: macOS or Linux. Windows enrollment uses the WSL Ubuntu bootstrap described below. That's all for **Walkie Direct** (the default since v0.2): machines connect
 peer-to-peer over QUIC, punching through NATs and falling back to an encrypted relay, and find each other by their
 keys. Outbound UDP helps (direct paths); with only HTTPS out, traffic goes through the relay.
 
 A team can use **Tailscale** instead: [Tailscale](https://tailscale.com) signed in, and every teammate's machine
 reachable on your tailnet (teammates on other tailnets share their machine with you). A team uses one or the other;
 existing v0.1 teams stay on Tailscale.
+
+### Windows company machines (WSL Ubuntu)
+
+The planned join page offers one **Copy installer** action: it saves a private, short-lived handoff in the current
+user's Downloads folder and copies a fixed PowerShell command. The person pastes that command in PowerShell, reads
+one consent summary, types `ALLOW`, approves one same-account UAC elevation and, if WSL must be enabled, confirms a
+restart. The command verifies a signed release manifest and both downloaded scripts before execution. It installs
+Walkie in Ubuntu, joins with the invite on stdin, selects same-user seats, and configures systemd, linger, the WSL VM
+idle timeout and a Windows logon keep-alive task. AC sleep is changed to never only when the person consented to that
+effect. `walkie seats doctor` in Ubuntu reports the persistence settings; actual Ready still depends on owner
+provisioning, subscription leases and a successful smoke seat. The join-page handoff contract is in
+`scripts/windows/README.md`. **A fresh Windows/WSL run remains unverified and is required before release.**
+
+The bootstrap refreshes only Ubuntu archive and security sources before installing its four system packages. It uses
+Ubuntu's archive keyring and adds no persistent APT source. `apt-cache policy` requires an official candidate from the
+refreshed isolated metadata and blocks an extra source reported in existing local metadata, even at negative priority.
+A source absent from local metadata is still excluded from the isolated installation. The person can explicitly type
+`ALLOW-EXTRA-APT-SOURCES` after the warning to use configured sources instead. Installed versions go in the local
+receipt. The accepted policy uses current Ubuntu archive versions at enrollment time, with no exact pins in the signed
+release, so Ubuntu security updates remain available. Exact versions can disappear when the archive drops superseded
+builds.
 
 ## 1. Put `walkie` on the machine
 
@@ -107,6 +128,7 @@ has to be re-created (`walkie init`).
 ```bash
 walkie hooks install claude     # Claude Code: status hooks + MCP tools (restart sessions afterwards)
 walkie hooks install codex      # Codex: notify hook + MCP tools
+walkie hooks install hermes --profiles default,name   # Hermes: status hooks in the profiles you name (view only)
 ```
 
 Sessions that were already running when you installed the hooks don't load them until they restart, and headless
@@ -128,6 +150,12 @@ directory paths unless you opt in, in `~/.walkie/config.json` (the daemon picks 
 - `"share_activity": true`: the text of tool calls and notifications (commands, file names, search patterns, URLs),
   redacted for secrets. Off: a fixed phrase such as "Running a command", "Editing files" or "Needs your permission".
 - `"share_paths": true`: the working directory (home-relative). Off: repo name and branch only.
+- `"hermes_activity_profiles": ["name", …]`: the Hermes profiles whose status may carry activity text (a fixed phrase such as
+  "Thinking", or the tool's name with `share_activity`). Off: **every Hermes profile shows its state only** (working, idle,
+  offline) and never an activity line, whatever `share_activity` says and whatever the profile is called. List the profiles
+  with `walkie hooks install hermes --profiles <hooked> --activity name[,name]`; `--activity ""` clears the list, and an
+  install without `--activity` leaves it alone. The command is gated and audited like any hooks change. A missing or invalid
+  value (a name Walkie cannot carry, more than 64 names, anything but a list) lists no profile.
 
 Titles your agents set with `walkie_set_status`, and titles you type with `walkie status "…"`, are always shared;
 prompt text is not. (The tool tells agents so: describe the kind of work, never paste prompt text, customer names,
@@ -171,6 +199,7 @@ Without it, messages still reach an agent at its next tool call, or when its tur
 | Prompt sharing | `share_prompts: true` in config (default off); `WALKIE_SHARE_PROMPTS=0` forces off | Status titles from prompts |
 | Activity sharing | `share_activity: true` in config (default off) | Commands, file names and queries in activity lines instead of fixed phrases |
 | Path sharing | `share_paths: true` in config (default off) | The working directory in agent statuses |
+| Hermes activity | `hermes_activity_profiles: ["name"]` in config (default none); `walkie hooks install hermes --profiles … --activity name[,name]` | Activity text for the listed Hermes profiles; every other Hermes profile shows its state only |
 | Machine stats | `machine_stats: false` in config (`machine_stats_interval_s`, default 30) | Stop sharing this machine's memory and temperature with the team (shown on the dashboard and in `walkie who`) |
 | Accounts | `accounts: false` in config | Stop recording which Claude / Codex / Kimi / Grok accounts this machine's sessions use, reading their usage left and sharing it with the team (Accounts page, `walkie accounts`); watch-only, no token is stored or moved |
 
@@ -336,19 +365,53 @@ WALKIE_MOBILE_APP_URL=http://localhost:<port>/m` points a source-run daemon at a
 
 A **seat** is a Claude Code or Codex agent that a teammate starts on your machine through Walkie
 ([PROTOCOL.md](PROTOCOL.md#11-remote-seats)). It is remote code execution by design, so it is off until you turn it
-on, and each seat should run as an OS user of its own: a seat running as **your** user can reach your Walkie daemon
-(and act as you on the team) and every file you can.
+on. On a company machine, `walkie seats enable` (also the consented join flow) defaults to seats running as **your**
+OS user. Launchers can read and change your files and keys, reach your Walkie daemon, and use any login your user can.
+`walkie seats doctor` reports the selected mode. The private `~/.walkie-workers/<seat-id>/` roots (Claude config,
+Codex home when a safe login copy is available, and temp files) organize runs; they are not a security boundary.
+Each root starts with Walkie's worker template: Claude and Codex status hooks and a short worker instruction file.
+Your personal Claude `settings.json` and `CLAUDE.md`, Codex `config.toml`, and personal hooks are not inherited by default.
+This also applies to existing same-user machines after an upgrade. To opt in to your personal provider configuration,
+run `walkie seats allow --inherit-person-config --yes` locally; then seats use the selected provider homes and their
+settings. The roots are removed after a run and recovered from saved seat state after a daemon crash. A login that cannot be
+projected safely keeps its **selected worker** provider home. A default login that cannot be projected is refused with
+the sign-in or opt-in step needed; it is never silently run with personal settings. Walkie never removes your own `~/.claude`, `~/.codex`, or named
+vault login to clean a worker root.
+
+Login order for same-user runs: a named v2 account wins (Claude token or an existing local/leased Codex home);
+otherwise a dedicated `walkie seats token set` Claude token wins over the seat environment's Claude token. With no
+token, Walkie copies a usable, access-only Claude credentials file (including a readable Keychain projection when
+available) into that run's root. Codex without a named account gets an access-only copy of the selected
+`CODEX_HOME/auth.json` or `~/.codex/auth.json`. With `--inherit-person-config` consent, a Codex home without a
+usable auth file is accepted only when `codex login status` succeeds for the selected home; the run retains that
+home so its keyring login can work. These fallback
+paths can store transcripts in the person's provider home. The Claude and Codex v2 file paths, denial, and crash
+cleanup were exercised with fakes; a real provider login and OCJ-LOGIN projection are not verified by those tests.
+
+For company mode, run `walkie seats enable --yes` after the person's consent; no sudo or seat-user helper is needed.
+`walkie seats enable --seat-users` explicitly opts into a fresh OS user per seat, with one setup sudo prompt on macOS
+or Linux. `walkie seats setup-user --apply` remains the separate hardening path. Existing machines in seat-user mode
+stay in that mode when `seats enable` is repeated. Before changing one, run the read-only
+`walkie seats migration-preflight` (`--json` is available): it lists live seats, queued launches, quarantined users,
+and helper status. Let seats finish or stop them, run `walkie seats deny`, reconcile held users, then explicitly run
+`walkie seats migrate --same-user` at the machine's own terminal and type the confirmation. Plain
+`seats allow --same-user`, the config API, agents, and remote admin cannot bypass this migration. Keep the helper installed until cleanup is verified;
+do not delete seat users, homes, or `/private/var/folders` by hand.
 
 Seats and compute sharing (`walkie pool share on`, split runs) can't be on together on one machine: the shared model
 server listens where any user of the machine, a seat user included, can reach it. Walkie refuses the second one and
 says which to turn off (`walkie pool share off` / `walkie pool stop` before seats; `walkie seats deny` before sharing).
 
+**Opt-in seat-user hardening** (the following steps apply only when you choose `--seat-users`):
+
 1. Close your home to other users (seat users included): `chmod 700 ~` (check: `stat -f %Lp ~` prints `700`).
    Setup refuses an open home unless you pass `--accept-readable-home`, and then seat users can read what it shows.
-   **The short way:** `walkie seats enable` does steps 2–4 in one go (it asks for your password through sudo once),
+   **The short way:** `walkie seats enable --seat-users` does steps 2–4 in one go (it asks for your password through sudo once),
    and prints what it did and whether the machine is ready (`walkie seats doctor` checks it again any time). Joining
    with `--allow-team-agents` (`… | sh -s -- --invite wk1… --allow-team-agents`, or `walkie join … --allow-team-agents`)
-   runs it too; `walkie setup` asks after you join someone else's team. On a Mac whose Claude login is only in the
+   selects company same-user mode on a new machine; add `--seat-users` to the installer, `walkie join` or `walkie setup`
+   to select seat-user hardening during the same consent. `walkie setup` asks after
+   you join someone else's team. On a Mac whose Claude login is only in the
    Keychain: `claude setup-token | walkie seats enable --yes --claude-token-stdin`.
 2. Let Walkie give every seat a fresh OS user of its own, made for it and destroyed after it, never reused (asks for
    your password through sudo; macOS or Linux):
@@ -373,8 +436,8 @@ says which to turn off (`walkie pool share off` / `walkie pool stop` before seat
    token: `claude setup-token`, then `walkie seats token set < token.txt` (recommended anyway; `walkie seats token
    clear` goes back). Codex seats run on this machine's own Codex sign-in (`~/.codex/auth.json`, from `codex login`),
    handed to each run the same way.
-4. Turn seats on: `walkie seats allow` (or `walkie join <peer> --allow-seats`). Without seat users this is refused;
-   `walkie seats allow --same-user` runs them as you anyway, with a warning, when you accept that. A configuration
+4. Turn seats on: `walkie seats allow` retains the configured mode. `walkie seats enable --same-user` selects company
+   mode explicitly after the migration preflight and deny. A configuration
    from before seat users (`seats: {allow: true}`) runs nothing until you do one or the other; `walkie seats` says so.
 
 **Check it on a real Mac once** (the tests fake the OS under the helper; this proves the real one). The helper by hand,
@@ -496,6 +559,26 @@ default sudoers allows (`root ALL=(ALL) ALL`); if yours doesn't, destroys fail a
 Turn seats off (and stop every running seat) with `walkie seats deny`; `walkie seats busy` pauses them while you
 use the machine.
 
+## Owner SSH for company enrollment
+
+An owner may include a signed SSH authorization in a machine's one-use enrollment link (the add-machine link carries it after `&ssh=`, the install command after `--owner-ssh`). It rides in the person's one consent, which names the owner, the owner's everyday agents and WalkieTalkie as possible SSH callers, says what the door is (**a Walkie SSH service that listens only on this machine and accepts only key logins**, the same words on macOS, Linux and Windows with WSL; the service reads the person's own `~/.ssh/authorized_keys`, so any key already authorized for that account works on loopback, not only the owner's, which is why it says key logins), and is recorded in the same request as that consent. Walkie never asks the person to turn on Remote Login: macOS's Remote Login answers on the whole network, with password and PAM login for everyone on it, which is not the door the consent describes, so Walkie neither uses, opens nor changes it.
+
+Before the consent question and before any administrator step, the terminal and the macOS app ask the machine's own daemon to **check** the authorization without spending it (`POST /v1/provision/check`: its signature and expiry against the owner's roster key, the team, the owner, the person, the invite that admitted this machine, and that it is not already used). The terminal and the macOS app also check it against the invite, and the join page and the Windows bootstrap check its form. A damaged, expired or foreign one is dropped or refused then, in plain words, and no administrator step runs for it. A refusal tells the truth about what to do: a link the owner must replace says to ask for a new add-machine link; **a machine that already joined with another link is told that the owner must remove it from the team and add it again** (a new link can never work there); and a failure on this machine (an `authorized_keys` that cannot be written, a record that cannot be read, a root marker that is not what Walkie installed) names the problem and says to fix it and run the same command again, because the one-use authorization is spent only once nothing before the key can still fail, so **the same link still works**. Exactly what each path does:
+
+- **Terminal, Linux and macOS** (`curl … | sh -s -- --invite … --company-machine --owner-ssh …`, or `walkie setup` with the same flags): setup checks the authorization, asks the one company question with the SSH disclosure in it, runs ONE administrator step (sudo asks for the machine's password once), and posts the single grant. That one `sudo walkie provision root-marker install <home> [ssh-linux|ssh-macos]` installs the root-owned enrollment marker and, when the link carries owner SSH and Walkie's SSH service does not answer yet, the service: on **macOS** a launchd system daemon, `dev.walkie.sshd`, and on **Linux and WSL** a loopback-only `walkie-sshd` systemd unit (`scripts/enroll-ssh-linux.sh`, embedded in the binary). A machine that needs neither runs no sudo, and a service that already answers is left alone. **On Linux and WSL, the enrollment does not use an SSH server that is not Walkie's, already answering on 127.0.0.1:22 (a stock sshd): owner SSH stays off on that machine in this release.** Setup finds this out before the question and says "This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent below leaves SSH out."; the consent it then shows, and the grant it records, have no SSH in them, no SSH service is installed, and nothing reports SSH ready. It looks again right after your typed yes, before the administrator step and the grant, because a server can start while you read the question: one found then is said so ("The consent recorded leaves SSH out, though the one shown above included it."), the grant is recorded without SSH and nothing is installed or reported ready. The administrator step skips the SSH install only when the server that answers is Walkie's, so a server that appears even later makes the install script refuse the taken port 22 before anything is recorded. The same check runs for `walkie provision grant --owner-ssh`, in WSL for the Windows enrollment's grant, and in `walkie ssh enable`. A server counts as Walkie's only when systemd, asked as you, says its `walkie-sshd` unit is loaded from `/etc/systemd/system/walkie-sshd.service` and active (the CLI never looks for that file itself). The daemon's own routes do not judge what answers on port 22; these enrollment checks do. If the SSH half of that step fails, setup stops before anything is recorded and prints the exact command that repeats just that step (and says to run the same command again); the one-use authorization is not spent. The seats-only question, the `--allow-team-agents` flag and an agent never authorize SSH. The command line, and so shell history and process listings, carries the authorization as it carries the invite.
+- **Browser join page**: reads `&ssh=` from the link, strips the whole fragment from the address bar and history as before, keeps the authorization in memory, and puts it only into the terminal command it shows and the local app link it opens (only when seats are allowed). It never goes into a URL query, storage or a log.
+- **macOS app**: takes the authorization from its deep link, shows the consent text with the SSH disclosure and says that one administrator password will be asked once. After the join it asks its own daemon to check the authorization (a Mac that already joined is told at the consent window, which then leaves SSH out), then runs **one** system administrator prompt for what is missing: the app-bundled walkie's `provision root-marker install <home>` plus `ssh-macos` when the authorization is usable, and then records the grant in the one request. The authorization is held in memory only: it never goes through the prompt, an argument, a log, the consent receipt or the window, and the app's Keychain copy of the pending link holds a marker instead (after a restart the app says the link's SSH was left out; open the original link again). A daemon refusal shows the daemon's own message. The app then reports what `walkie ssh status` says. **No fresh-Mac run has verified the administrator prompt or the macOS service yet.**
+- **Windows with WSL**: the bootstrap's private handoff may carry the authorization (`ownerSsh`, `scripts/windows/README.md`). Its one consent describes SSH, and inside its one elevation it installs the marker and the loopback-only SSH service as WSL root (no sudo), records the consent with the authorization, and reports `walkie ssh status`. If that Ubuntu already runs an SSH server that is not Walkie's, the install script refuses the taken port (the WSL root step exits 5, and the enrollment continues: the consent is still recorded) and the WSL step that records the consent leaves the authorization out: what is recorded has no SSH in it, although PowerShell's consent, shown before the WSL half can look inside the Ubuntu, named it. The WSL step says why in plain words on its own standard error, and the installer's closing summary prints that sentence ("Owner SSH was left out of the consent recorded: This machine already runs its own SSH server; …") instead of the status's "ask the owner for a new add-machine link", which would meet the same server; nothing reports SSH ready. The join page does not offer the Windows installer yet, so only a handoff written by hand or by a later page carries it. **No Windows run has verified this path, and the closing summary's PowerShell is untested: no PowerShell was available (the change is read against `scripts/windows/bootstrap.ps1` and pinned by a static test).**
+- **`walkie provision grant --owner-ssh <packet>`**: the manual route, with the person's own typed consent, the same check first and the same one administrator step.
+
+**The macOS service.** `dev.walkie.sshd` is `/Library/LaunchDaemons/dev.walkie.sshd.plist`, which runs `/usr/sbin/sshd -D -f '/Library/Application Support/Walkie/ssh/sshd_config'`. That config listens on `127.0.0.1` and `::1` only, on **port 22022** (not 22, which is Remote Login's), and allows public-key login only (`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `UsePAM no`, `PermitRootLogin no`) for the one person who enrolled (`AllowUsers`), reading that person's own `~/.ssh/authorized_keys`, where the tagged owner key goes. Its host key and pid file live in that same root-owned, mode 0700 directory. The files are staged and checked (`sshd -t`, `plutil -lint`) before they are renamed into place; a reinstall keeps the host key and replaces only Walkie's own files; it never touches `com.openssh.sshd`, `/etc/ssh` or Remote Login, and it refuses to take over a service installed for another person on the same Mac. `walkie ssh enable` installs or repairs it on an enrolled machine (after the person types yes; one sudo), on Linux and WSL as well. **`walkie provision unenroll` removes the service and its files in the same administrator step that removes the root marker, and says so; revoking the grant leaves the service, which holds no key then.** A service installed for another person is left in place, and so is one whose configuration cannot be read to say whose it is (a link, a directory, unreadable, or no `AllowUsers` line): un-enroll then says why and prints the commands to remove it by hand.
+
+The authorization names the invite that admits the machine, so it works for that machine only: a machine that already joined cannot take the authorization from a later link (the owner removes it and adds it again with a fresh link), and the check says so before anything is asked or installed. If the grant is still refused after the administrator step (a failure on this machine, such as an `authorized_keys` that cannot be written), the service stays installed with no owner key, which opens nothing, and the same command run again after the fix finds it answering and reuses it.
+
+SSH counts as **ready** only when `walkie ssh status` (or `walkie doctor`) shows Walkie's SSH service answering an SSH banner on 127.0.0.1 (macOS: port 22022; Linux and WSL: port 22), the owner's key installed and the tunnel open; on macOS Remote Login is never consulted. The status read is fully asynchronous. After every daemon start the machine must sync with the team's roster authority before SSH opens; a machine that cannot (the authority is offline, or it shares no Walkie Direct or Tailscale transport with it) stays at `ssh_team_waiting`, which setup, the app and the bootstrap report as a failed enrollment after a minute, with the reason and what fixes it. A service that never answers is a failed enrollment too, with `walkie ssh enable` as the fix (Linux and WSL name `walkie-sshd` only when its unit exists on the machine).
+
+The owner uses `walkie ssh <machine>` or `walkie ssh config <machine>` through Walkie Direct. `walkie ssh revoke` removes Walkie's recorded key line; `walkie admin remote off` or enrollment grant revocation closes live tunnels. The target records an open before bridging and a close with duration and byte counts, then posts one content-free session summary to the machine person's `#general` feed. In `admin-audit.jsonl`, `actor` is `@<owner>/<source node ID>` from the authenticated Direct key and roster. The open action and session summary say `opened from <node> (owner <x>); reported caller: agent <y> (reported by <node>)`. The caller and optional claim are supplied by the source node for audit only; the target never uses them to grant access. The source bridge compares the socket peer's process start time before looking up ancestry and names an agent only from the OS-reported executable. Missing or ambiguous process information becomes `unverified caller`. Another process with the source OS user's access can impersonate an agent label.
+
 ## Remove
 
 ```bash
@@ -504,4 +587,4 @@ walkie daemon uninstall
 rm -rf ~/.walkie ~/.local/bin/walkie
 ```
 
-Hook installers back up your settings first, to `settings.json.bak-walkie-<ts>` and `config.toml.bak-walkie-<ts>`.
+Hook installers back up your settings first, to `settings.json.bak-walkie-<ts>` and `config.toml.bak-walkie-<ts>`. Claude's `settings.json` (`walkie hooks install claude`, and `grok`, whose shared hooks live there) is written atomically: the new content goes into a temp file beside it and is renamed over it, so a failure leaves the old file whole; its mode, its indentation and a dotfiles symlink are kept (a file with other hard links is written in place); it is backed up only when the install really changes it, and that backup is removed again if the write then fails; and a read-only file is refused before anything is made.

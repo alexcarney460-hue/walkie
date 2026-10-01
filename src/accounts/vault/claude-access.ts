@@ -4,10 +4,10 @@ import type { AccessToken } from "../types.ts";
 export const CLAUDE_ACCESS_MIN_LEFT_MS = 10 * 60_000;
 
 /** A minimal Claude Code credential file for one seat, with no refresh capability. */
-export function claudeSeatAccess(token: AccessToken, now: number): string | null {
+export function claudeSeatAccess(token: AccessToken, now: number, minLeftMs = CLAUDE_ACCESS_MIN_LEFT_MS): string | null {
   if (!token.value || token.value.length > 8192) return null;
   if (!token.scopes?.includes("user:inference")) return null;
-  if (token.expiresAt === null || !Number.isFinite(token.expiresAt) || token.expiresAt < now + CLAUDE_ACCESS_MIN_LEFT_MS) return null;
+  if (token.expiresAt === null || !Number.isFinite(token.expiresAt) || token.expiresAt < now + minLeftMs) return null;
   return JSON.stringify({ claudeAiOauth: {
     accessToken: token.value,
     expiresAt: token.expiresAt,

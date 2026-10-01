@@ -122,7 +122,7 @@ export function peerSigTier(method: string, path: string): PeerSigTier {
   if (method === "POST" && path === "/peer/v1/join") return "C";
   if ((method === "GET" && path === "/peer/v1/hello") || (method === "POST" && path === "/peer/v1/roster-request")) return "C";
   if (method === "POST" && ["/peer/v1/admin/run", "/peer/v1/vault/lease", "/peer/v1/vault/usage",
-    "/peer/v1/pool/stage", "/peer/v1/pool/serve"].includes(path)) return "A";
+    "/peer/v1/pool/stage", "/peer/v1/pool/serve", "/peer/v1/ssh/revocation"].includes(path)) return "A";
   if (/^\/peer\/v1\/pool\/(tunnel|serve-tunnel)\/[0-9a-f]{32}$/.test(path)) return "A";
   if (["/peer/v1/orchestrator/schedule-claim", "/peer/v1/orchestrator/schedule-defaults",
     "/peer/v1/orchestrator/schedule-manage", "/peer/v1/orchestrator/schedule-progress"].includes(path)) return "A";

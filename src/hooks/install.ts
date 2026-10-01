@@ -1,7 +1,9 @@
 // `walkie hooks install|uninstall claude|codex [--dry-run]`
 // Idempotent: our entries are recognised by the "walkie-managed" marker in the
 // command string, so re-running replaces them and never duplicates.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// `walkie hooks install claude` needs the claude CLI only to register the MCP server: without it the hooks are still
+// written and the MCP step is left for when Claude Code is installed (a machine with only Grok has none).
+import { accessSync, chmodSync, chownSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -80,7 +82,119 @@ export function installedClaudeCommand(settings: Settings): string | null {
   return null;
 }
 
-export interface InstallResult { changed: string[]; commands: string[] }
+export interface InstallResult {
+  changed: string[];
+  /** The commands that ran (in a dry run: would run). */
+  commands: string[];
+  /** A step that was skipped, with the command that does it later. */
+  note?: string;
+}
+
+/** Where Claude Code reads its settings, and Grok too (its Claude-compatibility scan, compat.claude.hooks). */
+export function claudeSettingsPath(): string {
+  return join(homedir(), ".claude", "settings.json");
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * The Claude settings file as an object ({} when there is none). A file that is not a JSON object, or whose hooks are
+ * not an object of lists of entries, is refused here, before anything is written.
+ */
+export function readClaudeSettings(path: string): Settings {
+  if (!existsSync(path)) return {};
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(path, "utf8")); } catch { throw new Error(`${path} is not valid JSON; no changes made`); }
+  if (!isRecord(value)) throw new Error(`${path} is not a JSON object; no changes made`);
+  const hooks = value.hooks;
+  if (hooks !== undefined && (!isRecord(hooks) || Object.values(hooks).some((entries) =>
+    !Array.isArray(entries) || entries.some((e) => !isRecord(e) || (e.hooks !== undefined && (!Array.isArray(e.hooks) || e.hooks.some((h) => !isRecord(h)))))))) {
+    throw new Error(`"hooks" in ${path} is not an object of lists of hook entries; no changes made`);
+  }
+  return value as Settings;
+}
+
+/** The file's indentation (two / four spaces, a tab), so a write changes only what it adds. */
+export function detectIndent(text: string): string | number {
+  const m = /^[{[][ \t]*\r?\n([ \t]+)\S/.exec(text);
+  if (!m?.[1]) return 2;
+  return m[1].startsWith("\t") ? "\t" : m[1].length;
+}
+
+/** What the one write of the Claude settings file asks of the file system, injectable so a failure at each step can be tested. */
+export interface SettingsIo {
+  /** Replaces `to` with `from`, which sits in the same directory: atomic. */
+  rename(from: string, to: string): void;
+  /** Writes `body` into the existing file `path` itself, keeping its inode: only for a file that has other hard links. */
+  writeInPlace(path: string, body: string): void;
+}
+const realSettingsIo: SettingsIo = { rename: renameSync, writeInPlace: (path, body) => writeFileSync(path, body) };
+
+/** Whether the file's content already is `settings`, as data (key order, indentation and a missing final newline do not count). */
+function holdsExactly(text: string, settings: Settings): boolean {
+  try { return Bun.deepEquals(JSON.parse(text) as unknown, settings); } catch { return false; }
+}
+
+/**
+ * The one write of the Claude settings file, used by `walkie hooks install claude|grok`. Atomic: the new content is written
+ * beside the file under a staging name, with the file's own mode (0600 for a new one) and owner, and renamed over it in the same
+ * directory, so a reader never sees half a file and a failure leaves the old one whole. A symlinked settings.json (dotfiles)
+ * has its real file replaced and stays a link; a file with other hard links is written in place instead (a rename would cut
+ * the others off). The file's indentation and final newline are kept. A file that already holds exactly these settings is not
+ * written and not backed up; a read-only one is refused before anything is made; otherwise the old one is kept first as
+ * `.bak-walkie-<ms>`, and that backup is removed again if the write then fails, so a failed install leaves nothing stray.
+ */
+export function writeClaudeSettings(path: string, settings: Settings, io: SettingsIo = realSettingsIo): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const target = existsSync(path) ? realpathSync(path) : path;
+  const old = existsSync(target) ? statSync(target) : null;
+  const text = old ? readFileSync(target, "utf8") : null;
+  if (text !== null && holdsExactly(text, settings)) return;
+  // A file its person made read-only stays as it is: a rename would replace it whatever its mode, so the check comes first, and
+  // before any backup (the old writer made one per attempt and then failed with a bare EACCES).
+  if (old) { try { accessSync(target, constants.W_OK); } catch { throw new Error(`${path} is not writable; no changes made`); } }
+  const body = JSON.stringify(settings, null, text === null ? 2 : detectIndent(text)) + (text === null || text.endsWith("\n") ? "\n" : "");
+  const mode = old ? old.mode & 0o7777 : 0o600;
+  const staged = join(dirname(target), `.${basename(target)}.walkie-${process.pid}-${Date.now()}.tmp`);
+  let backup: string | null = null;
+  try {
+    if (text !== null) backup = makeBackup(target, path);
+    if (old && old.nlink > 1) { io.writeInPlace(target, body); return; }
+    writeFileSync(staged, body, { mode, flag: "wx" });
+    chmodSync(staged, mode); // the umask narrowed the create mode: the file's own, exactly
+    if (old && (old.uid !== process.getuid?.() || old.gid !== process.getgid?.())) chownSync(staged, old.uid, old.gid);
+    io.rename(staged, target);
+  } catch (error) {
+    rmSync(staged, { force: true });
+    const restored = old && old.nlink > 1 && text !== null ? restoreInPlace(target, text) : null;
+    if (backup && restored === null) rmSync(backup, { force: true });
+    const why = (error as Error).message;
+    throw new Error(`could not write ${path}: ${why}; ${restored ?? (text === null ? "nothing was written" : "the file is as it was")}`);
+  }
+}
+
+/** Copies `from` to a backup beside `path` that does not exist yet: `<path>.bak-walkie-<ms>`, with a counter when two land in one millisecond. Returns where. */
+function makeBackup(from: string, path: string): string {
+  const stem = `${path}.bak-walkie-${Date.now()}`;
+  for (let n = 0; ; n++) {
+    const name = n === 0 ? stem : `${stem}-${n}`;
+    try { copyFileSync(from, name, constants.COPYFILE_EXCL); return name; }
+    catch (error) {
+      const taken = (error as NodeJS.ErrnoException).code === "EEXIST";
+      if (taken && n < 99) continue;
+      if (!taken) rmSync(name, { force: true }); // a copy that failed part-way leaves its own partial file, never someone else's
+      throw error;
+    }
+  }
+}
+
+/** Puts a hard-linked file's old content back after a failed in-place write. Null: done. Otherwise what went wrong, and where the old content is. */
+function restoreInPlace(target: string, text: string): string | null {
+  try { writeFileSync(target, text); return null; }
+  catch (error) { return `restoring it failed too (${(error as Error).message}); its old content is in the .bak-walkie copy beside it`; }
+}
 
 async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
   try {
@@ -92,26 +206,34 @@ async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {
   }
 }
 
-export async function installClaude(opts: { dryRun: boolean; uninstall: boolean; settingsPath?: string }): Promise<InstallResult> {
-  const path = opts.settingsPath ?? join(homedir(), ".claude", "settings.json");
+export async function installClaude(opts: { dryRun: boolean; uninstall: boolean; settingsPath?: string; claudeFound?: boolean }): Promise<InstallResult> {
+  const path = opts.settingsPath ?? claudeSettingsPath();
   const cmd = walkieCommand();
-  const current: Settings = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-  const next = withClaudeHooks(current, cmd, !opts.uninstall);
-  const commands = opts.uninstall
-    ? ["claude mcp remove --scope user walkie"]
-    : [`claude mcp add --scope user walkie -- ${cmd} mcp`];
-  if (opts.dryRun) return { changed: [`${path} (would write)`], commands };
-  mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path)) copyFileSync(path, `${path}.bak-walkie-${Date.now()}`);
-  writeFileSync(path, JSON.stringify(next, null, 2) + "\n");
-  if (opts.uninstall) {
-    await run(["claude", "mcp", "remove", "--scope", "user", "walkie"]);
-  } else {
-    await run(["claude", "mcp", "remove", "--scope", "user", "walkie"]); // replace any stale path
-    const r = await run(["claude", "mcp", "add", "--scope", "user", "walkie", "--", ...walkieArgv(), "mcp"]);
-    if (!r.ok) throw new Error(`claude mcp add failed: ${r.out}`);
+  const next = withClaudeHooks(readClaudeSettings(path), cmd, !opts.uninstall);
+  const mcp = opts.uninstall ? "claude mcp remove --scope user walkie" : `claude mcp add --scope user walkie -- ${cmd} mcp`;
+  // The MCP step needs the claude CLI; the hooks do not. Without the CLI they are still written, and the step is left
+  // for when Claude Code is installed.
+  const found = opts.claudeFound ?? Bun.which("claude") !== null;
+  const commands = found ? [mcp] : [];
+  const skipped = found ? {} : { note: mcpSkippedNote(opts.uninstall, mcp) };
+  if (opts.dryRun) return { changed: [`${path} (would write)`], commands, ...skipped };
+  writeClaudeSettings(path, next);
+  if (found) {
+    if (opts.uninstall) {
+      await run(["claude", "mcp", "remove", "--scope", "user", "walkie"]);
+    } else {
+      await run(["claude", "mcp", "remove", "--scope", "user", "walkie"]); // replace any stale path
+      const r = await run(["claude", "mcp", "add", "--scope", "user", "walkie", "--", ...walkieArgv(), "mcp"]);
+      if (!r.ok) throw new Error(`claude mcp add failed: ${r.out}`);
+    }
   }
-  return { changed: [path], commands };
+  return { changed: [path], commands, ...skipped };
+}
+
+function mcpSkippedNote(uninstall: boolean, mcp: string): string {
+  return uninstall
+    ? `claude is not on PATH, so the MCP step is skipped. If Claude Code lists Walkie as an MCP server, remove it with: ${mcp}`
+    : `claude is not on PATH, so the MCP step is skipped. Once Claude Code is installed, run: ${mcp}`;
 }
 
 const CODEX_BEGIN = "# >>> walkie (walkie-managed) >>>";

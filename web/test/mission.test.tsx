@@ -23,15 +23,16 @@ afterAll(() => {
 
 let mod: {
   MissionControl: () => ReactNode; ArchiveView: (p: { machine?: string }) => ReactNode;
+  AgentDrawer: (p: { id: string }) => ReactNode;
   archiveEntries: (live: AgentView[], archived: AgentView[], now: number) => AgentView[];
   StaticStore: (p: { state: State; children: ReactNode }) => ReactNode; initialState: State;
 };
 beforeAll(async () => {
-  const [mc, ar, st, rd] = await Promise.all([
+  const [mc, ar, st, rd, drawer] = await Promise.all([
     import("../src/views/mission/MissionControl.tsx"), import("../src/views/mission/Archive.tsx"),
-    import("../src/state/store.tsx"), import("../src/state/reducer.ts"),
+    import("../src/state/store.tsx"), import("../src/state/reducer.ts"), import("../src/components/AgentDrawer.tsx"),
   ]);
-  mod = { MissionControl: mc.MissionControl, ArchiveView: ar.ArchiveView, archiveEntries: ar.archiveEntries, StaticStore: st.StaticStore, initialState: rd.initialState };
+  mod = { MissionControl: mc.MissionControl, ArchiveView: ar.ArchiveView, AgentDrawer: drawer.AgentDrawer, archiveEntries: ar.archiveEntries, StaticStore: st.StaticStore, initialState: rd.initialState };
 });
 
 const NOW = Date.now();
@@ -151,4 +152,18 @@ test("discovered runtimes have headless labels, elapsed time, project and machin
   expect(out).toMatch(/session \d+m/); // elapsed session time (exact minutes depend on the shared-process clock)
   expect(out).toContain("project");
   expect(out).toContain("Models: ollama");
+});
+
+test("Hermes status is visible without an ask or control affordance", () => {
+  go("#/mission");
+  const base = agent("atlas", "hermes-example-billing", "working", 0.1, undefined);
+  const hermes = { ...base, status: { agent: base.agent, runtime: "other" as const, runtime_name: "hermes", state: "working" as const } };
+  const s = state({ agents: [hermes] });
+  const card = render(s, <mod.MissionControl />);
+  const drawer = render(s, <mod.AgentDrawer id={hermes.id} />);
+  expect(card).toContain("Hermes");
+  expect(card).toContain("View only");
+  expect(drawer).toContain("Unavailable — view only");
+  expect(drawer).not.toContain("Ask this agent");
+  expect(drawer).not.toContain("walkie ask");
 });

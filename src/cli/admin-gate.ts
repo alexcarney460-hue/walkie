@@ -44,24 +44,54 @@ export async function requireAdmin(ctx: Ctx, what: string, confirm: string): Pro
 }
 
 /**
- * A CLI-only admin step (it changes this machine without a daemon request): refused while agent admin is off, and
- * recorded (the daemon's audit route; its local log directly when the daemon is down). A person: nothing to do.
+ * One audit line of a CLI-only admin step: to the daemon (which logs it, and posts it to the team unless `refused` says the step
+ * was refused or failed, which is logged on this machine only), or to the local log directly when the daemon is down.
  */
-export async function auditLocal(ctx: Ctx, action: string): Promise<void> {
-  if (adminCaller(ctx).kind === "person") return;
-  if (!agentAdminOn()) refuseOff(action);
+async function sendAudit(ctx: Ctx, action: string, refused?: string): Promise<void> {
   try {
-    await ctx.client({ underAgent: true }).adminAudit(action);
+    await ctx.client({ underAgent: true }).adminAudit(action, refused);
   } catch (err) {
     if (err instanceof WalkieError && err.code === "agent_admin_off") throw err;
     // The daemon is down (setup, a broken install): the local log still has it; the team post waits for nothing.
     const actor = `${agentFrom(ctx.args) ?? runtimeLabel() ?? "agent"} (daemon unreachable)`;
     try {
       const p = join(defaultHome(), "admin-audit.jsonl");
-      appendFileSync(p, JSON.stringify({ ts: Date.now(), actor, action, machine: "", via: "local" }) + "\n", { mode: 0o600 });
+      appendFileSync(p, JSON.stringify({ ts: Date.now(), actor, action, machine: "", via: "local", ...(refused ? { refused } : {}) }) + "\n", { mode: 0o600 });
       chmodSync(p, 0o600);
     } catch { /* no Walkie home yet: nothing to append to */ }
   }
+}
+
+/**
+ * A CLI-only admin step (it changes this machine without a daemon request): refused while agent admin is off, and
+ * recorded (the daemon's audit route; its local log directly when the daemon is down). A person: nothing to do. The line is
+ * written NOW, before the step runs: for a step whose outcome the line should state, use gateLocal and recordLocal instead.
+ */
+export async function auditLocal(ctx: Ctx, action: string): Promise<void> {
+  if (adminCaller(ctx).kind === "person") return;
+  if (!agentAdminOn()) refuseOff(action);
+  await sendAudit(ctx, action);
+}
+
+/**
+ * The gate of a CLI-only admin step whose audit line is written AFTER it ran (recordLocal), so a step that did not finish is
+ * never audited as done. An agent while agent admin is off is refused (`what` names what it may not do) and the refusal is
+ * audited as refused (`action` is the line); a person passes. Nothing is recorded as done.
+ */
+export async function gateLocal(ctx: Ctx, what: string, action: string): Promise<void> {
+  if (adminCaller(ctx).kind === "person" || agentAdminOn()) return;
+  // The daemon answers a switched-off agent with agent_admin_off after logging the refusal itself: that answer is expected here.
+  try { await sendAudit(ctx, action, "agent_admin_off"); } catch (err) { if (!(err instanceof WalkieError && err.code === "agent_admin_off")) throw err; }
+  refuseOff(what);
+}
+
+/**
+ * The line of a CLI-only admin step, written after the step ended: as done (no `refused`), or as refused or failed (`refused` says
+ * why; logged on this machine only, never posted). A person: nothing to do. It never fails the step that already ran.
+ */
+export async function recordLocal(ctx: Ctx, action: string, refused?: string): Promise<void> {
+  if (adminCaller(ctx).kind === "person") return;
+  try { await sendAudit(ctx, action, refused); } catch { /* the switch was turned off while the step ran: the daemon logged that refusal; the step is done */ }
 }
 
 /**

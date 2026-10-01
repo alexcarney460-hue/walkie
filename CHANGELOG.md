@@ -5,6 +5,32 @@ workflow on push. Both refuse a tag without a matching `## vX.Y.Z` section here,
 release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as a GitHub prerelease by
 `scripts/release.sh` only — the workflow's push trigger excludes pre-release tags.
 
+## v0.2.0-pre.11
+
+**Company machines**
+- Add a company machine with one link and one consent. The machine's person agrees once (in the terminal, the Mac app or the Windows/WSL installer), provisioning takes a single administrator step, and team agents then run as that person's own OS user, each in a fresh worker folder of its own. Owners can lend their Claude and Codex accounts to enrolled seats. Machines that used separate seat users can switch with `walkie seats migrate --same-user`.
+- Mac and Linux joins include terminal and desktop consent. Windows joins have a PowerShell and WSL bootstrap with signed release artifacts.
+
+**Owner SSH**
+- Owners can sign in over SSH to a machine they enrolled, through Walkie Direct, as that machine's person: `walkie ssh <machine>`, or `walkie ssh config <machine>` for ssh, scp and editors. The owner's everyday agents and WalkieTalkie can open sessions too. Every session is recorded (who, from which machine, when, for how long, never the contents) and summarised to the person in #general.
+- The person agrees once, in the enrollment's consent, which names the owner, their everyday agents and WalkieTalkie. The door is Walkie's own SSH service: it listens only on the machine and accepts only key logins (it reads the person's own `authorized_keys`, so any key already authorized for that account works on loopback). Walkie never asks anyone to turn on macOS Remote Login: on macOS the enrollment's one administrator step installs `dev.walkie.sshd` on 127.0.0.1 and ::1 port 22022, and on Linux a loopback-only systemd unit.
+- On Linux and WSL, enrollment never uses an SSH server that is not Walkie's already answering on port 22: the enrollment flows look before the consent question and again after the typed yes, and owner SSH stays off on that machine in this release (on Windows the installer says so in its closing summary, with the WSL step's own reason, not a request for a new add-machine link). The daemon's own routes (the grant, `GET /v1/ssh/status`, the tunnel) do not judge what answers on port 22; these enrollment checks do.
+- A damaged, expired or wrong link says so and leaves SSH out. The machine checks the authorization before any administrator step without using it up, and a failure on the machine names the problem so the same command can be run again with the same link.
+- `walkie ssh revoke`, `walkie admin remote off`, revoking the grant or leaving the team closes access. The team's roster authority holds each revocation as a signed receipt, and SSH stays closed after every start until the machine has synced with it, so update the roster authority first.
+
+**Agents**
+- Walkie shows Hermes sessions on Mission Control, view only. `walkie hooks install hermes --profiles default,name` adds Hermes' shell hooks to the profiles you name. Every Hermes profile shows its state only, never an activity line, unless it is listed in `hermes_activity_profiles` in `config.json`: `--activity name[,name]` on that command sets the list and `--activity ""` clears it.
+- Grok: each Grok event reaches Walkie through exactly one hook path, and `walkie hooks install grok` also sets up the hooks Grok reads from Claude's settings, so a machine with Grok but no Claude Code reports whole sessions. Grok can run in a seat on the host person's subscription.
+- A guest gateway lets Dots and outside agents report into Walkie with scoped access and owner controls.
+- Agents with agent admin on can again turn team agents on (`walkie seats enable`, `walkie seats allow`, and `--allow-team-agents` in `walkie setup` and `walkie join`), audited as the agent. The company-machine consent and `walkie seats migrate --same-user` stay with the machine's person.
+
+**Windows**
+- A Windows desktop app (preview) opens the dashboard of the Walkie running in WSL. Before it sends a login link, the dashboard's listener must prove it is that Walkie with a one-use challenge.
+
+**Fixes**
+- `walkie hooks install claude` and `grok` write Claude's `settings.json` atomically, keep its formatting, and back it up only when it changes; `walkie hooks install claude` also works when the `claude` command is not installed.
+- An agent's `walkie hooks install` and `uninstall` are audited after they run, as what happened.
+
 ## v0.2.0-pre.10.1
 
 Healthy machines no longer show as offline when Walkie on this machine stalls (for example while the machine is low on

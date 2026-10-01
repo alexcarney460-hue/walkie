@@ -1,6 +1,8 @@
 // config.json with defaults; env overrides WALKIE_PEER_PORT, WALKIE_LOCAL_PORT, WALKIE_PEER_HOST.
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { z } from "zod";
+import { HermesActivityProfiles } from "../protocol/hermes-activity.ts";
 import { SEAT_RUNTIMES_V1, SeatRepoId } from "../protocol/seats.ts";
 
 /**
@@ -11,6 +13,8 @@ import { SEAT_RUNTIMES_V1, SeatRepoId } from "../protocol/seats.ts";
  */
 export const SeatsConfig = z.object({
   allow: z.boolean().default(false),
+  /** Explicit company seat mode. Legacy configs without it retain their ephemeral/same_user meaning. */
+  mode: z.enum(["same_user", "seat_users"]).optional(),
   launchers: z.array(z.string().min(1).max(140)).max(50).optional(),
   max: z.number().int().min(1).max(64).optional(),
   /** Claude/Codex only (a released pre.5 daemon must still read this file after a rollback: FO-2). */
@@ -20,6 +24,8 @@ export const SeatsConfig = z.object({
    * --runtimes claude,codex,kimi`). Kept out of `runtimes` so an older daemon still parses the file.
    */
   kimi: z.boolean().optional(),
+  /** Grok is v2-only and same-user; keep it outside the v1 runtimes list for old config readers. */
+  grok: z.boolean().optional(),
   dir: z.string().min(1).max(1_000).optional(),
   /** Extra environment variable names a seat gets, on top of the allowlist (src/daemon/seats/runtime.ts). */
   env: z.array(z.string().min(1).max(64)).max(50).optional(),
@@ -41,6 +47,8 @@ export const SeatsConfig = z.object({
   runtime_dir: z.string().min(2).max(1_000).regex(/^\//).optional(),
   /** The person accepted that seats run as the daemon's own user (`walkie seats allow --same-user`). */
   same_user: z.boolean().optional(),
+  /** Explicit opt-in: same-user seats use this person's provider settings, CLAUDE.md and hooks. Default is a Walkie worker template. */
+  inherit_person_config: z.boolean().optional(),
   /** The person accepted that seat users can read their home (`--accept-readable-home`). */
   accept_readable_home: z.boolean().optional(),
 });
@@ -93,6 +101,12 @@ export const ConfigSchema = z.object({
   share_activity: z.boolean().default(false),
   /** The working directory in agent statuses (share-policy.ts). Off: repo name and branch only. */
   share_paths: z.boolean().default(false),
+  /**
+   * The Hermes profiles whose status may carry activity text (src/protocol/hermes-activity.ts; `walkie hooks install hermes
+   * --activity name[,name]`). Every other Hermes profile shows its state only. A malformed value counts as [] rather than keeping the
+   * daemon from starting or showing anything. A daemon from before this key ignores it (this object does not reject unknown keys).
+   */
+  hermes_activity_profiles: HermesActivityProfiles.catch([]).default([]),
   /** Report this machine's memory and temperature to the team (src/daemon/machine-stats/); false turns it off. */
   machine_stats: z.boolean().default(true),
   /** Seconds between machine-stats samples. */
@@ -150,6 +164,11 @@ export const ConfigSchema = z.object({
    * (`walkie admin remote off`); absent = on. Only this machine's person turns it back on.
    */
   remote_admin: z.boolean().default(true),
+  /** Optional loopback-only HTTP MCP gateway; a trusted outbound tunnel proxy supplies signed assertions. */
+  guest_gateway: z.object({
+    port: z.number().int().min(1).max(65535),
+    assertion_key_file: z.string().regex(/^\//).max(1_000),
+  }).strict().optional(),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
@@ -202,6 +221,26 @@ export function saveFleetConfig(path: string, fleet: FleetConfig): void {
   }
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify({ ...raw, fleet }, null, 2) + "\n", { mode: 0o600 });
+  renameSync(tmp, path);
+}
+
+/**
+ * Writes `hermes_activity_profiles` into config.json (`walkie hooks install hermes --activity`), keeping every other key exactly as
+ * the file has it and creating the file, and the Walkie home, when there are none. A file that is not a JSON object is refused and left
+ * alone. Atomic (temp file + rename), 0600. Invalid names are refused before anything is written.
+ */
+export function saveHermesActivityProfiles(path: string, profiles: readonly string[]): void {
+  const list = HermesActivityProfiles.parse([...new Set(profiles)]);
+  let raw: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error(`${path} is not a JSON object, so the activity profiles were not saved`);
+    raw = parsed as Record<string, unknown>;
+  } else {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  }
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify({ ...raw, hermes_activity_profiles: list }, null, 2) + "\n", { mode: 0o600 });
   renameSync(tmp, path);
 }
 

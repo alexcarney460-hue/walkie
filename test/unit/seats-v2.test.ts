@@ -19,6 +19,9 @@ import {
 } from "../../src/daemon/seats/v2.ts";
 import { MAX_FILTERS, gitToFile, seatOutcome } from "../../src/daemon/seats/git.ts";
 import { planSeatAccount, seatCredentials } from "../../src/daemon/seats/account.ts";
+import { bindWorkerAccount, probeWorkerLeases, requiredWorkerAccount, superviseWorkerAccount, workerAccountChecks } from "../../src/daemon/seats/enrollment-account.ts";
+import { doctorLines } from "../../src/cli/commands/seats-enable.ts";
+import type { Grant } from "../../src/daemon/provision/grant.ts";
 import { decideRun, type DecideCtx } from "../../src/daemon/seats/rules.ts";
 import type { AccountView } from "../../src/protocol/accounts.ts";
 import type { VaultEntry } from "../../src/accounts/vault/vault.ts";
@@ -36,6 +39,39 @@ function tmp(prefix = "walkie-v2-"): string {
 }
 
 const HASH = "b".repeat(64);
+test("company enrollment binds each seat to its named owner subscription without a personal-login fallback", () => {
+  const grant = { expires_at: Date.now() + 60_000, worker_accounts: { claude: `alex:${"a".repeat(24)}`, codex: `alex:${"b".repeat(24)}` } } as Grant;
+  expect(requiredWorkerAccount(grant, v2Body({ runtime: "claude", account: grant.worker_accounts?.claude }))).toBeNull();
+  expect(requiredWorkerAccount(grant, v2Body({ runtime: "claude", account: grant.worker_accounts?.claude }), Date.now(), false))
+    .toContain("root enrollment marker");
+  const bound = bindWorkerAccount(grant, v2Body({ runtime: "claude" }));
+  expect(bound).toMatchObject({ runtime: "claude", account: grant.worker_accounts?.claude });
+  expect(requiredWorkerAccount(grant, bound)).toBeNull();
+  expect(requiredWorkerAccount({ ...grant, worker_accounts: {} }, v2Body({ runtime: "claude" }))).toContain("waiting for owner account");
+  expect(requiredWorkerAccount(grant, v2Body({ runtime: "codex", account: grant.worker_accounts?.claude }))).toContain("provisioned owner account");
+  expect(requiredWorkerAccount({ ...grant, revoked_at: Date.now() }, v2Body({ runtime: "claude", account: grant.worker_accounts?.claude }))).toContain("revoked");
+  expect(requiredWorkerAccount({ ...grant, expires_at: Date.now() - 1 }, v2Body({ runtime: "claude", account: grant.worker_accounts?.claude }))).toContain("expired");
+});
+test("an expired owner lease is refused before a worker home can receive credentials", async () => {
+  let homes = 0;
+  const plan = { kind: "peer" as const, id: "b".repeat(24), owner: "alex", node: "owner-node", provider: "codex" as const };
+  await expect(seatCredentials(plan, "arvid", false, {
+    claudeToken: async () => "unused", lease: async () => ({ grant: "a".repeat(16), codex_auth: "fake", expires_at: Date.now() - 1 }),
+    leaseHome: () => { homes++; return "/tmp/unused"; }, accessOnlyCodex: () => null,
+  })).rejects.toThrow("expired");
+  expect(homes).toBe(0);
+});
+test("a revoked or expired account check stops its running seat once", async () => {
+  let available = true;
+  let stops = 0;
+  const cancel = superviseWorkerAccount({ allowed: () => available, stop: async () => { stops++; }, everyMs: 5 });
+  await Bun.sleep(15);
+  expect(stops).toBe(0);
+  available = false;
+  await Bun.sleep(25);
+  expect(stops).toBe(1);
+  cancel();
+});
 const DELTA = "c".repeat(64);
 const v2Body = (over: Partial<SeatRunV2T> = {}): SeatRunV2T => ({
   op: "run", v: 2, runtime: "kimi", brief: HASH, label: "sp-210", workspace: { repo: "app", ref: "a".repeat(40), mode: "branch", bundle: DELTA },
@@ -278,6 +314,34 @@ function view(owner: string, machines: AccountView["machines"], provider: Accoun
   return { key: `${owner}:${ID}`, id: ID, provider, label: "Claude account", plan: null, owners: [owner], claimed_by: [], machines, usage: null, usage_host: null, last_seen: 1 };
 }
 const machine = (over: Partial<AccountView["machines"][number]>) => ({ node_id: "1111111111111111", hostname: "alex-mbp", handle: "alex", online: true, self: false, agents: [], usage: null, ...over });
+test("doctor waits for both owner vault entries and their borrower policy", () => {
+  const key = `alex:${ID}`;
+  const grant = { expires_at: Date.now() + 60_000, worker_accounts: { claude: key, codex: key } } as Grant;
+  const base = { me: "arvid", owner: "alex", role: "member", team: "per-account" as const };
+  expect(workerAccountChecks(grant, { ...base, accounts: [] }).map((c) => c.ok)).toEqual([false, false]);
+  const claude = view("alex", [machine({ vault: { policy: "shared", share_with: ["arvid"] } })]);
+  const codex = view("alex", [machine({ vault: { policy: "shared", share_with: ["arvid"] } })], "codex");
+  expect(workerAccountChecks(grant, { ...base, accounts: [claude, codex] }).map((c) => c.ok)).toEqual([true, true]);
+  expect(workerAccountChecks(grant, { ...base, accounts: [view("alex", [machine({ vault: { policy: "local", share_with: [] } })]), codex] })[0]?.ok).toBe(false);
+});
+test("an enrolled machine refuses a seat when its grant disappears", () => {
+  expect(requiredWorkerAccount(null, { runtime: "claude" } as Parameters<typeof requiredWorkerAccount>[1], Date.now(), true)).toContain("grant is missing");
+});
+test("doctor reports Ready only after both non-consuming probes pass", async () => {
+  const checks = [
+    { ok: true, what: "owner Claude account", lease: { account: ID, node: "owner", provider: "claude" as const } },
+    { ok: true, what: "owner Codex account", lease: { account: ID, node: "owner", provider: "codex" as const } },
+  ];
+  const passed = await probeWorkerLeases(checks, async () => ({ ready: true }));
+  expect(passed.map((c) => c.ok)).toEqual([true, true]);
+  const revoked = await probeWorkerLeases(checks, async ({ provider }) => {
+    if (provider === "codex") throw new Error("revoked");
+    return { ready: true };
+  });
+  expect(revoked.map((c) => c.ok)).toEqual([true, false]);
+  expect(doctorLines([{ ok: true, what: "owner Claude account: lease eligible" }, { ok: true, what: "owner Codex account: lease eligible" },
+    { ok: false, what: "Claude Code isn't installed" }]).at(-1)).toContain("Not ready");
+});
 
 describe("a v2 seat's account, checked against the host's vault policy", () => {
   test("an account this host may not use is refused account_not_usable", () => {

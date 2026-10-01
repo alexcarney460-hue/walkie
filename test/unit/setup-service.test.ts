@@ -7,11 +7,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WalkieClient } from "../../src/client/index.ts";
-import { ensureService } from "../../src/cli/commands/setup.ts";
+import { companyConsentExit, ensureService } from "../../src/cli/commands/setup.ts";
 import type { HealthProbe } from "../../src/cli/commands/update.ts";
 import type { Ctx } from "../../src/cli/context.ts";
 import type { ServicePlan } from "../../src/daemon/service.ts";
 import { VERSION } from "../../src/daemon/version.ts";
+import { fakeDaemon } from "../helpers/fake-daemon.ts";
 
 function scripted(answers: Array<{ ok: boolean; version: string } | Error>): HealthProbe & { calls: number } {
   const probe = Object.assign(async () => {
@@ -92,5 +93,46 @@ describe("ensureService", () => {
     expect(ok).toBe(false);
     expect(ctx.errs.join("\n")).toContain("could not restart the service: false exited 1");
     expect(ctx.outs.join("\n")).not.toContain("restarted");
+  });
+});
+
+describe("company enrollment setup exit", () => {
+  test("the actual nonterminal setup process exits 4 before later steps", async () => {
+    const daemon = fakeDaemon({
+      "GET /v1/me": { team: { id: "team", name: "Team" }, handle: "kira", role: "member", tailscale: { ok: false } },
+      "GET /v1/seats": { local: { allow: false }, hosts: [], seats: [] },
+    });
+    try {
+      const child = Bun.spawn([process.execPath, "src/cli/main.ts", "setup", "--no-service", "--no-hooks",
+        "--no-switching", "--company-machine", "--invite", "wk1fixture"], {
+        cwd: process.cwd(), stdin: "ignore", stdout: "pipe", stderr: "pipe",
+        env: { ...process.env, WALKIE_SOCKET: daemon.socket, WALKIE_HOME: dir },
+      });
+      const [out, err, code] = await Promise.all([
+        new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+      ]);
+      expect(code).toBe(4);
+      expect(out).toContain("type yes at this machine's terminal");
+      expect(err).toContain("walkie setup --invite <private-code> --company-machine");
+      expect(out).not.toContain("Account switching (optional)");
+      expect(daemon.requests.every((r) => r.method === "GET")).toBe(true);
+    } finally { daemon.stop(); }
+  });
+
+  test("refused and incomplete consent return a distinct status and an actionable retry", () => {
+    for (const outcome of ["refused", "incomplete"] as const) {
+      const ctx = { ...capture(), args: { pos: [], flags: new Map([["company-machine", true]]) } as Ctx["args"] };
+      expect(companyConsentExit(ctx, outcome)).toBe(4);
+      expect(ctx.errs.join("\n")).toContain("walkie setup --invite <private-code> --company-machine");
+      expect(ctx.errs.join("\n")).toContain("type yes");
+    }
+  });
+
+  test("allowed and explicitly declined company seats do not fail ordinary setup", () => {
+    for (const outcome of ["allowed", "declined"] as const) {
+      const ctx = { ...capture(), args: { pos: [], flags: new Map([["company-machine", true]]) } as Ctx["args"] };
+      expect(companyConsentExit(ctx, outcome)).toBeNull();
+      expect(ctx.errs).toEqual([]);
+    }
   });
 });

@@ -16,8 +16,8 @@ export const SEATS_AGENT = "seats";
 /** A running seat's agent name (`seat-<short id>`): its WALKIE_AGENT, so its own Walkie calls are an agent's. */
 export const SEAT_AGENT_PREFIX = "seat-";
 
-/** Every runtime a host may allow. Kimi runs only in a v2 request (FO-2: a v1 body keeps claude|codex). */
-export const SEAT_RUNTIMES = ["claude", "codex", "kimi"] as const;
+/** Every runtime a host may allow. Kimi and Grok run only in v2; v1 keeps claude|codex. */
+export const SEAT_RUNTIMES = ["claude", "codex", "kimi", "grok"] as const;
 export type SeatRuntime = (typeof SEAT_RUNTIMES)[number];
 /** The runtimes of a v1 request (what released pre.5 hosts parse). */
 export const SEAT_RUNTIMES_V1 = ["claude", "codex"] as const;
@@ -441,6 +441,8 @@ export interface SeatsLocalView {
   ephemeral: boolean;
   /** The person accepted that seats run as their own user (`--same-user`): a seat can then act as them. */
   same_user: boolean;
+  /** Root enrollment marker, read by this machine's daemon. */
+  enrolled?: boolean;
   /** The person accepted that seat users can read their home (`--accept-readable-home`). */
   readable_home: boolean;
   /**
@@ -448,8 +450,12 @@ export interface SeatsLocalView {
    * credentials), `dedicated` = a token set for seats only (`walkie seats token set`).
    */
   claude_login: "dedicated" | "machine" | "unavailable";
+  /** The known file or cached Keychain access-only copy will not cover a default-length seat. */
+  claude_projection_near_expiry?: boolean;
   /** Codex's: `machine` (its own sign-in: as seat users, its auth.json handed to each run), or `unavailable`. */
   codex_login?: "machine" | "unavailable";
+  /** The launch refusal when the default Codex login cannot be projected into a worker root. */
+  codex_login_reason?: string;
   /** Seat users whose destroy could not be verified: something of them may remain (listed until it is). */
   quarantined?: string[];
   /** Root helper's retained macOS residue, measured from entry metadata (opaque contents may be larger). */
@@ -464,6 +470,8 @@ export interface SeatsLocalView {
   cleanup_helper_unfinished_since?: number;
   /** Two or more busy replies show that an earlier root helper still holds the cleanup lock. */
   cleanup_helper_busy_since?: number;
+  /** Credential roots retained after a crash until their process state can be reviewed. */
+  pending_worker_roots?: Array<{ id: string; age_s: number; reason: string }>;
   /**
    * Seats are allowed in config.json but do not run, and why (e.g. no seat users and no --same-user, a seat user
    * that is root or an administrator, a readable home): with the command that fixes it.

@@ -26,6 +26,13 @@ export const IMPORT_WRITE_LIMIT: BucketSpec = { capacity: 10_000, perSecond: 10_
 /** A session's sub-agents together: 6 statuses at once, 3/s sustained (each one's own 2/s bucket applies too). */
 export const SUBAGENT_STATUS_LIMIT: BucketSpec = { capacity: 6, perSecond: 3 };
 
+/**
+ * Admission of NEW Hermes sessions per profile: it preserves a same-session hook burst while bounding a faulty hook that
+ * mints sessions. Updates of known sessions take no token; they are bounded by the status coalescer and the row caps
+ * (hermes-status.ts), not by this bucket.
+ */
+export const HERMES_HOOK_LIMIT: BucketSpec = { capacity: 64, perSecond: 8 };
+
 export const DEFAULT_LIMITS: RateLimits = {
   agentWrite: { capacity: 20, perSecond: 20 / 60 },
   humanWrite: { capacity: 60, perSecond: 1 },

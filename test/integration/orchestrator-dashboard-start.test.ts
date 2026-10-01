@@ -71,6 +71,8 @@ beforeAll(async () => {
   // The daemon's OWN PATH has the fake claude first (and bun, its interpreter): the dashboard sends no path, so this is
   // where start finds it.
   const orchestrator = {
+    // A Claude login without looking for one: the real check asks this machine's Keychain (tests never touch it).
+    logins: async () => ({ found: ["claude" as const], claude: "env" as const }),
     autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50,
     env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state,
       FAKE_CLAUDE_LOG: join(c.root, "fake-launches.jsonl"), CLAUDE_CODE_OAUTH_TOKEN: "fake-test-token" },

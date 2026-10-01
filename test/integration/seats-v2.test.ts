@@ -5,12 +5,19 @@
 // exact commit returning verdict.json; a delta bundle with missing prerequisites refused; the result file returned on
 // a stop; a symlinked result file refused; an account the host may not use refused `account_not_usable`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { WalkieClient } from "../../src/client/index.ts";
 import { TERMINAL_STATES, seatAgentName, seatsChannel, type SeatView } from "../../src/protocol/seats.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
+import { FAKE_CODEX_AUTH, signInCodex } from "../helpers/fake-seat-users.ts";
+import { createWorkerRoot, recordWorkerProcess } from "../../src/daemon/seats/worker-root.ts";
+import { seatsFor } from "../../src/daemon/seats/host.ts";
+import { doctorChecks } from "../../src/daemon/seats/doctor.ts";
+import { doctorLines } from "../../src/cli/commands/seats-enable.ts";
+import { consentText } from "../../src/daemon/provision/consent.ts";
+import { PROFILES } from "../../src/daemon/provision/profiles.ts";
 
 const CLI = join(import.meta.dir, "../../src/cli/main.ts");
 
@@ -23,8 +30,16 @@ let arvid: TestNode;
 let log: string;
 let clone: string;
 let sha0: string;
+let personHome: string;
+let claudeLog: string;
+let codexLog: string;
 
 function person(n: TestNode): WalkieClient { return n.client(""); }
+function workerRootsForSeat(id: string): string[] {
+  const parent = join(personHome, ".walkie-workers");
+  if (!existsSync(parent)) return [];
+  return readdirSync(parent).filter((name) => name.startsWith(`seat-${id.replace(":", "-")}-`)).map((name) => join(parent, name));
+}
 const seatOn = async (id: string): Promise<SeatView | undefined> => (await alex.client().seats(id)).seats[0];
 const ended = (id: string, timeoutMs = 30_000) =>
   waitFor(async () => { const s = await seatOn(id); return s && TERMINAL_STATES.has(s.state) ? s : null; }, { timeoutMs, what: `seat ${id} to end` });
@@ -47,7 +62,12 @@ let bin: string;
 beforeAll(async () => {
   c = new Cluster();
   const home = join(c.root, "arvid-home");
-  mkdirSync(home, { recursive: true });
+  personHome = home;
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "machine-claude-access", refreshToken: "machine-claude-refresh", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  signInCodex(home);
+  claudeLog = join(c.root, "same-user-claude.jsonl");
+  codexLog = join(c.root, "same-user-codex.jsonl");
   log = join(c.root, "kimi.jsonl");
   bin = join(c.root, "seat-bin");
   mkdirSync(bin);
@@ -67,7 +87,7 @@ beforeAll(async () => {
     seats: {
       flushMs: 100, launchesPerMinute: 100,
       env: {
-        PATH: `${bin}:${BUN_DIR}:/usr/bin:/bin`, HOME: home, FAKE_KIMI_LOG: log,
+        PATH: `${bin}:${BUN_DIR}:/usr/bin:/bin`, HOME: home, FAKE_KIMI_LOG: log, FAKE_CLAUDE_LOG: claudeLog, FAKE_CODEX_LOG: codexLog,
         OPENAI_API_KEY: "sk-never", KIMI_API_KEY: "never", MOONSHOT_API_KEY: "never", GEMINI_API_KEY: "never", GITHUB_TOKEN: "x",
       },
     },
@@ -77,7 +97,7 @@ beforeAll(async () => {
   await alex.client().init("aka", "alex");
   await alex.client().invite("arvid@example.com", "arvid", "member");
   expect((await arvid.client().join(alex.peerAddr)).admitted).toBe(true);
-  const { local } = await person(arvid).seatsConfig({ allow: true, same_user: true, env: ["FAKE_KIMI_LOG"] });
+  const { local } = await person(arvid).seatsConfig({ allow: true, same_user: true, env: ["FAKE_KIMI_LOG", "FAKE_CLAUDE_LOG", "FAKE_CODEX_LOG"] });
   expect(local.runtimes).toEqual(["claude", "codex"]); // Kimi is opt-in (FO-2 r1 MEDIUM 7)
   await waitFor(() => alex.d.sync.peerState(arvid.d.nodeId)?.stats?.sys?.caps?.includes("seats_v2") ?? null, { what: "arvid's seats_v2 capability" });
   await waitFor(async () => (await alex.client().seats()).hosts.find((h) => h.node === arvid.d.nodeId && h.allows && h.member), { what: "arvid-mac takes seats" });
@@ -87,6 +107,86 @@ beforeAll(async () => {
 afterAll(async () => { await c.close(); });
 
 describe("v2 seats", () => {
+  test("doctor gives the launch refusal when default Codex auth cannot be projected", async () => {
+    const auth = join(personHome, ".codex", "auth.json");
+    const saved = readFileSync(auth, "utf8");
+    rmSync(auth);
+    try {
+      expect((await person(arvid).seats()).local.codex_login).toBe("machine"); // a status read serves the last check, it never looks again
+      const { local } = await person(arvid).seatsDoctor(); // the doctor does
+      expect(local.codex_login).toBe("unavailable");
+      const checks = doctorChecks(local, { team: "aka", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: "fake", codex: "fake" } });
+      expect(checks.find((check) => check.what.startsWith("Codex seats:"))).toMatchObject({ ok: false });
+      expect(checks.find((check) => check.what.startsWith("Codex seats:"))?.what).toContain("default Codex login cannot be projected");
+      expect(doctorLines(checks).at(-1)).toContain("Not ready");
+      const run = await person(alex).seatRun({ machine: "arvid-mac", runtime: "codex", brief: "missing-codex-auth" });
+      expect((await ended(run.seat)).reason).toContain("default Codex login cannot be projected");
+    } finally {
+      writeFileSync(auth, saved, { mode: 0o600 });
+    }
+  }, 60_000);
+
+  test("empty selected CODEX_HOME is not Ready and launch gives the same refusal", async () => {
+    const selected = join(personHome, "empty-codex-home");
+    mkdirSync(selected);
+    const envFile = join(arvid.d.core.paths.home, "seat-env");
+    const saved = readFileSync(envFile, "utf8");
+    writeFileSync(envFile, `${saved}export CODEX_HOME=${selected}\n`);
+    try {
+      const { local } = await person(arvid).seatsDoctor();
+      expect(local.codex_login).toBe("unavailable");
+      const checks = doctorChecks(local, { team: "aka", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: "fake", codex: "fake" } });
+      expect(doctorLines(checks).at(-1)).toContain("Not ready");
+      const reason = local.codex_login_reason;
+      expect(reason).toContain("selected Codex login");
+      const run = await person(alex).seatRun({ machine: "arvid-mac", runtime: "codex", brief: "empty-selected-codex" });
+      expect((await ended(run.seat)).reason).toContain(reason!);
+    } finally {
+      writeFileSync(envFile, saved);
+    }
+  }, 60_000);
+
+  test("same-user Claude and Codex v2 seats use private run roots with access-only file logins", async () => {
+    const claude = await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", brief: "check-home" });
+    expect((await ended(claude.seat)).state).toBe("done");
+    const checks = readFileSync(claudeLog, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    const ch = checks.find((line) => line.walkie_agent === seatAgentName(claude.seat));
+    expect(ch?.claude_config).toMatch(new RegExp(`/seat-${claude.seat.replace(":", "-")}-[0-9a-f]{32}/claude$`));
+    expect(ch).toMatchObject({ access_file: true, refresh_file: false, credential_mode: 0o600 });
+    expect(workerRootsForSeat(claude.seat)).toEqual([]);
+
+    const codex = await person(alex).seatRun({ machine: "arvid-mac", runtime: "codex", brief: "codex-auth" });
+    expect((await ended(codex.seat)).state).toBe("done");
+    const auths = readFileSync(codexLog, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    const auth = auths.find((line) => line.codex_auth);
+    expect(auth?.codex_auth).toEqual({ text: FAKE_CODEX_AUTH, mode: "600" });
+    expect(auth?.codex_home).toMatch(new RegExp(`/seat-${codex.seat.replace(":", "-")}-[0-9a-f]{32}/codex$`));
+    expect(auths.find((line) => line.walkie_agent === seatAgentName(codex.seat))?.temp_dir).toBe(join(dirname(auth?.codex_home as string), "tmp"));
+    expect(workerRootsForSeat(codex.seat)).toEqual([]);
+    expect(statSync(join(personHome, ".codex", "auth.json")).isFile()).toBe(true);
+  }, 60_000);
+
+  test("a same-user Claude seat redacts its projected access token from output", async () => {
+    const run = await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "echo-token" });
+    const seat = await ended(run.seat);
+    expect(seat.state).toBe("done");
+    const output = seat.output.map((line) => line.text).join("\n");
+    expect(output).toContain("[REDACTED]");
+    expect(output).not.toContain("machine-claude-access");
+  }, 30_000);
+
+  test("denying a running same-user v2 seat stops it and removes its worker root", async () => {
+    const res = await person(alex).seatRun({ machine: "arvid-mac", runtime: "codex", brief: "slow" });
+    const root = await waitFor(async () => (await seatOn(res.seat))?.state === "running" && workerRootsForSeat(res.seat)[0] || null, { what: "same-user seat and worker root" });
+    try {
+      await person(arvid).seatsConfig({ allow: false });
+      expect((await ended(res.seat)).state).toBe("stopped");
+      expect(existsSync(root)).toBe(false);
+    } finally {
+      await person(arvid).seatsConfig({ allow: true, mode: "same_user" });
+    }
+  }, 60_000);
+
   test("the seat card title is the brief's first line when prompts are shared", async () => {
     const cfg = join(arvid.home, "config.json");
     const original = readFileSync(cfg, "utf8");
@@ -242,6 +342,7 @@ describe("v2 seats", () => {
     const other = await v2("never runs either", { account: `alex:${"b".repeat(24)}` });
     expect((await ended(other.seat)).reason).toMatch(/^account_not_usable: /);
     expect(launches().some((l) => String(l.task).startsWith("never runs"))).toBe(false);
+    expect(workerRootsForSeat(res.seat)).toEqual([]);
   }, 30_000);
 
   // ---- r1 MEDIUM 4: the brief never outlives its seat, however it ends -------------------------------------------
@@ -306,11 +407,99 @@ describe("v2 seats", () => {
     writeFileSync(join(clone, ".git", "info", "exclude"), `${exclude()}${MARK}`);
     const state = join(arvid.home, "seats.json");
     const saved = JSON.parse(readFileSync(state, "utf8")) as { running: unknown[] };
-    const record = { id: res.seat, dir: join(c.root, "gone"), task: { cwd: lane("shutdown-1"), file: "TASK.md", exclude: join(realpathSync(clone), ".git", "info", "exclude") } };
+    const abandoned = createWorkerRoot(personHome, res.seat);
+    const record = { id: res.seat, root: abandoned.key, dir: join(c.root, "gone"), task: { cwd: lane("shutdown-1"), file: "TASK.md", exclude: join(realpathSync(clone), ".git", "info", "exclude") } };
+    writeFileSync(join(abandoned.temp, "left-by-crash"), "discard");
     writeFileSync(state, JSON.stringify({ ...saved, running: [record] }));
     await arvid.start();
     expect(existsSync(join(lane("shutdown-1"), "TASK.md"))).toBe(false);
     expect(exclude()).not.toContain(MARK);
+    await waitFor(() => !existsSync(abandoned.root) || null, { what: "crashed worker root removed" });
+  }, 60_000);
+
+  test("pending crash cleanup survives restart and waits for saved PID absence; orphan roots sweep", async () => {
+    await arvid.stop();
+    const heldId = "aaaaaaaaaaaaaaaa:7";
+    const orphanId = "aaaaaaaaaaaaaaaa:8";
+    const held = createWorkerRoot(personHome, heldId);
+    const orphan = createWorkerRoot(personHome, orphanId);
+    const unrelated = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    try {
+      const path = join(arvid.home, "seats.json");
+      const saved = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      writeFileSync(path, JSON.stringify({ ...saved, running: [], pending_roots: [{ id: held.key, pid: unrelated.pid }] }));
+      await arvid.start();
+      expect(existsSync(held.root)).toBe(true);
+      expect(existsSync(orphan.root)).toBe(false);
+      expect(readFileSync(path, "utf8")).toContain(heldId);
+      unrelated.kill("SIGKILL");
+      await unrelated.exited;
+      const host = seatsFor(arvid.d.core) as unknown as { retryPendingRoots: () => void };
+      host.retryPendingRoots();
+      expect(existsSync(held.root)).toBe(false);
+      expect(readFileSync(path, "utf8")).not.toContain(heldId);
+    } finally {
+      unrelated.kill("SIGKILL");
+      if (!arvid.daemon) await arvid.start();
+    }
+  }, 60_000);
+
+  test("an unreadable state keeps a surviving child's worker root until its recorded PID is absent", async () => {
+    await arvid.stop();
+    const heldId = "bbbbbbbbbbbbbbbb:9";
+    const unknownId = "bbbbbbbbbbbbbbbb:10";
+    const held = createWorkerRoot(personHome, heldId);
+    const unknown = createWorkerRoot(personHome, unknownId);
+    const child = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    try {
+      recordWorkerProcess(personHome, held.key, child.pid, null);
+      writeFileSync(join(arvid.home, "seats.json"), "{unreadable");
+      await arvid.start();
+      expect(existsSync(held.root)).toBe(true);
+      expect(existsSync(unknown.root)).toBe(true);
+      child.kill("SIGKILL");
+      await child.exited;
+      const host = seatsFor(arvid.d.core) as unknown as { retryPendingRoots: () => void };
+      host.retryPendingRoots();
+      expect(existsSync(held.root)).toBe(false);
+      expect(existsSync(unknown.root)).toBe(true); // no recorded process identity: leave for review
+      const local = (await person(arvid).seats()).local;
+      expect(local.pending_worker_roots?.find((root) => root.id === unknown.key)).toMatchObject({ reason: "process identity unknown", age_s: expect.any(Number) });
+      const checks = doctorChecks(local, { team: "aka", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: "fake", codex: "fake" } });
+      expect(checks.map((check) => check.what).join(" ")).toContain("pending worker root");
+      await expect(arvid.client("fixture-agent").seatsCleanupRoot(unknown.key)).rejects.toThrow(/agents can't clean up/);
+      const open = openSync(join(unknown.codex, "AGENTS.md"), "r");
+      try { await expect(person(arvid).seatsCleanupRoot(unknown.key)).rejects.toThrow(/process of this seat may still be running/); }
+      finally { closeSync(open); }
+      await expect(person(arvid).seatsCleanupRoot(unknown.key)).rejects.toThrow(/process of this seat may still be running/);
+      expect(existsSync(unknown.root)).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+      if (!arvid.daemon) await arvid.start();
+    }
+  }, 60_000);
+
+  test("a worker process marker fills a saved seat record that lacks its PID", async () => {
+    await arvid.stop();
+    const id = "cccccccccccccccc:11";
+    const root = createWorkerRoot(personHome, id);
+    const child = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    try {
+      recordWorkerProcess(personHome, root.key, child.pid, null);
+      const path = join(arvid.home, "seats.json");
+      const saved = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      writeFileSync(path, JSON.stringify({ ...saved, running: [{ id, root: root.key, dir: root.root }] }));
+      await arvid.start();
+      expect(existsSync(root.root)).toBe(true);
+      child.kill("SIGKILL");
+      await child.exited;
+      const host = seatsFor(arvid.d.core) as unknown as { retryPendingRoots: () => void };
+      host.retryPendingRoots();
+      expect(existsSync(root.root)).toBe(false);
+    } finally {
+      child.kill("SIGKILL");
+      if (!arvid.daemon) await arvid.start();
+    }
   }, 60_000);
 
   test("pre.8: `walkie seats allow --dir '~/workspace/app'` (a quoted tilde) is stored as ~/workspace/app, not ~/~/…", async () => {
@@ -323,5 +512,37 @@ describe("v2 seats", () => {
     const shown = (JSON.parse(r.out) as { local: { dir: string } }).local.dir;
     expect(shown).not.toContain("~/~");
     expect(shown.endsWith("arvid-home/workspace/app")).toBe(true);
+  }, 30_000);
+
+  test("enrolled company seats wait for the named owner subscription and never use the recipient login", async () => {
+    const profiles = [{ id: "developer-worker" as const, version: PROFILES["developer-worker"].version }];
+    const launchers = ["@alex"];
+    const worker_accounts = { claude: `alex:${"a".repeat(24)}`, codex: `alex:${"b".repeat(24)}` };
+    await person(arvid).provisionGrant({ owner_node: alex.d.nodeId, launchers, seat_cap: 3, profiles,
+      worker_accounts, company_mode: true, consent_version: 1,
+      consent_text: consentText("alex", launchers, 3, profiles, worker_accounts), consented: true,
+      confirmation: { surface: "desktop", typed_phrase: "yes" } });
+    const before = readFileSync(claudeLog, "utf8");
+    const requested = await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", brief: "owner subscription only" });
+    const result = await ended(requested.seat);
+    expect(result.state).toBe("refused");
+    expect(result.reason).toContain("account_not_usable");
+    expect(readFileSync(claudeLog, "utf8")).toBe(before);
+    const doctor = await runAsPerson([process.execPath, CLI, "seats", "doctor"],
+      { PATH: `${bin}:${BUN_DIR}:/usr/bin:/bin`, HOME: personHome, WALKIE_HOME: arvid.home, WALKIE_SOCKET: arvid.socket, NO_COLOR: "1" });
+    expect(doctor.out).toContain("waiting for owner account");
+    expect(doctor.out).not.toContain("Ready: the team can start");
+    expect(doctor.out).not.toContain("codex login");
+    unlinkSync(join(arvid.home, "provision-grant.json"));
+    const missing = await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", brief: "grant deleted must refuse" });
+    const refused = await ended(missing.seat);
+    expect(refused.state).toBe("refused");
+    expect(refused.reason).toContain("enrollment grant is missing");
+    const after = await runAsPerson([process.execPath, CLI, "seats", "doctor"],
+      { PATH: `${bin}:${BUN_DIR}:/usr/bin:/bin`, HOME: personHome, WALKIE_HOME: arvid.home, WALKIE_SOCKET: arvid.socket, NO_COLOR: "1" });
+    expect(after.out).toContain("enrollment grant is missing");
+    expect(after.out).toContain("renew the grant through local consent");
+    expect(after.out).not.toContain("Ready: the team can start");
+    expect(readFileSync(claudeLog, "utf8")).toBe(before);
   }, 30_000);
 });

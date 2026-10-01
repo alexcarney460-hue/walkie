@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import type { Core } from "../core.ts";
 
-export interface RemoteRun { readonly actor: string; readonly notify: string | null }
+export interface RemoteRun { readonly actor: string; readonly notify: string | null; readonly callerNode?: string; readonly callerHandle?: string }
 
 const runs = new WeakMap<Core, Map<string, RemoteRun>>();
 

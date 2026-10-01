@@ -9,15 +9,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInvite } from "../../src/daemon/invite.ts";
 import { generateKeys } from "../../src/daemon/keys.ts";
+import { encodeOwnerSshGrant, mintOwnerSshGrant } from "../../src/daemon/ssh/grant.ts";
 import { addMachineCommand, addMachineLink, INSTALL_URL } from "../../src/protocol/add-machine.ts";
 /** The release the site installs (scripts/install.sh DEFAULT_VERSION), which build.py links the package to. */
 const INSTALLER_VERSION = readFileSync(join(import.meta.dir, "../../scripts/install.sh"), "utf8").match(/DEFAULT_VERSION="(v[^"]+)"/)![1];
 
 interface JoinApi {
-  handoff(code: string, yes: boolean, max: number, tag?: string | null): string;
-  parseFragment(hash: string): { code?: string; tag?: string | null; agents?: boolean; error?: string };
+  handoff(code: string, yes: boolean, max: number, tag?: string | null, ssh?: string | null): string;
+  parseFragment(hash: string): { code?: string; tag?: string | null; agents?: boolean; ssh?: string; sshDamaged?: boolean; error?: string };
   describe(code: string): { handle: string; role: string; expiresAt: number } | null;
-  command(installUrl: string, code: string, tag: string | null): string;
+  command(installUrl: string, code: string, tag: string | null, ssh?: string | null): string;
   run(env: { window: FakeWindow; document: FakeDocument; now: number }): string | null;
   start(win: FakeWindow, doc: FakeDocument, clock: () => number): void;
   clampSeatMax(raw: unknown): number;
@@ -78,19 +79,23 @@ interface FakeWindow {
 
 function world(hash: string) {
   const f = (name: string) => new El({ "data-field": name });
-  const fields = ["handle", "expires", "command", "version"];
+  const fields = ["handle", "expires", "command", "version", "seat-cap"];
   const choiceNo = new El({ type: "radio", "data-consent-choice": "no" });
-  const choiceYes = new El({ type: "radio", "data-consent-choice": "yes", checked: "true" });
+  const choiceYes = new El({ type: "radio", "data-consent-choice": "yes" });
   const maxInput = new El({ type: "number", "data-consent-max-input": "", value: "4" });
   const maxBlock = new El({ "data-consent-max": "" }, [maxInput]);
   maxBlock.hidden = false;
-  const consent = new El({ "data-team-agents": "" }, [choiceNo, choiceYes, maxBlock]);
+  const sshConsent = new El({ "data-ssh-consent": "" });
+  const sshNote = new El({ "data-ssh-command-note": "" });
+  const sshDamaged = new El({ "data-ssh-damaged": "" });
+  for (const e of [sshConsent, sshNote, sshDamaged]) e.hidden = true;
+  const consent = new El({ "data-team-agents": "" }, [choiceNo, choiceYes, maxBlock, sshConsent, sshDamaged]);
   const button = new El({ "data-join-package": "" });
   const open = new El({ "data-join-open": "" });
   const packageLink = new El({ "data-package-url": "" });
   const fallback = new El({ "data-terminal-fallback": "" });
   consent.hidden = true;
-  const states = ["loading", "ready", "expired", "invalid", "missing"].map((s) => new El({ "data-state": s }, s === "ready" ? [...fields.map(f), consent, button, open, packageLink, fallback] : s === "expired" ? [f("handle"), f("expires")] : []));
+  const states = ["loading", "ready", "expired", "invalid", "missing"].map((s) => new El({ "data-state": s }, s === "ready" ? [...fields.map(f), consent, button, open, packageLink, fallback, sshNote] : s === "expired" ? [f("handle"), f("expires")] : []));
   const main = new El({ "data-join": "", "data-cli": "walkie", "data-install": INSTALL_URL, "data-package-available": "true" }, states);
   const doc = new El({}, [main]);
   const win: FakeWindow = {
@@ -110,7 +115,7 @@ function world(hash: string) {
     win.entries.push(`/join${next}`);
     for (const fn of win.listeners.hashchange ?? []) fn();
   };
-  return { win, doc, on, field, consent, choiceNo, choiceYes, maxBlock, maxInput, button, open, packageLink, fallback, navigate };
+  return { win, doc, on, field, consent, choiceNo, choiceYes, maxBlock, maxInput, button, open, packageLink, fallback, navigate, sshConsent, sshNote, sshDamaged, main };
 }
 
 // ---- fragment + code --------------------------------------------------------------------------------------------------
@@ -165,6 +170,9 @@ test("the package download has no invite; opening the app uses only the local sc
   const w = world(`#${code}`);
   page.start(w.win, w.doc, () => NOW);
   w.button.click();
+  expect(w.packageLink.clicks).toBe(0);
+  w.choiceYes.checked = true;
+  w.button.click();
   expect(w.packageLink.clicks).toBe(1);
   expect(w.win.assigned).toEqual([]);
   w.choiceYes.checked = false;
@@ -193,7 +201,7 @@ describe("the page", () => {
     expect(w.win.replaced).toEqual(["/join"]); // no fragment in the address bar or this history entry
     expect(w.win.location.hash).toBe("");
     expect(w.on()).toEqual(["ready"]);
-    expect(w.field("command")).toEqual([`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${code}`]);
+    expect(w.field("command")).toEqual([`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${code} --company-machine`]);
     expect(w.field("handle")).toEqual(["@arvid", "@arvid"]); // the ready and expired sections both name them
     expect(w.field("version")[0]).toContain("v0.2.0-pre.2");
     expect(w.field("expires")[0]).not.toBe("");
@@ -202,7 +210,7 @@ describe("the page", () => {
     const code = mint();
     const w = world(`#${code}`);
     expect(page.run({ window: w.win, document: w.doc, now: NOW })).toBe("ready");
-    expect(w.field("command")[0]).toBe(`curl -fsSL ${INSTALL_URL} | sh -s -- --invite ${code}`);
+    expect(w.field("command")[0]).toBe(`curl -fsSL ${INSTALL_URL} | sh -s -- --invite ${code} --company-machine`);
   });
   test("expired: says who it was for and when it stopped; the code is never shown", () => {
     const code = mint("arvid", NOW - 8 * 86_400_000);
@@ -250,7 +258,7 @@ describe("more than one link in the same tab (audit r1 MEDIUM)", () => {
     expect(w.on()).toEqual(["expired"]);
     w.navigate(`#${good}&v=v0.2.0-pre.2`);
     expect(w.on()).toEqual(["ready"]);
-    expect(w.field("command")[0]).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${good}`);
+    expect(w.field("command")[0]).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${good} --company-machine`);
     expect(w.win.entries).toEqual(["/join", "/join"]);
     for (const fn of w.win.listeners.popstate ?? []) fn(); // back: the entry has no fragment any more
     expect(w.on()).toEqual(["missing"]);
@@ -295,19 +303,30 @@ describe("the local consent step", () => {
     const html = readFileSync(join(SITE, "join.html"), "utf8");
     expect(html).toMatch(/<div data-team-agents>/);
   });
-  test("the markup has a real No/Yes consent control, Yes checked by default, and the seat maximum shown", () => {
+  test("the markup has an unchecked No/Yes consent control and the seat maximum", () => {
     const html = readFileSync(join(SITE, "join.html"), "utf8");
     expect(html).toMatch(/<legend>Let your team run agents on this computer\?<\/legend>/);
     expect(html).toMatch(/<input type="radio" name="agents-consent" data-consent-choice="no">/);
-    expect(html).toMatch(/<input type="radio" name="agents-consent" data-consent-choice="yes" checked>/);
-    expect(html).toMatch(/<div class="consent-max" data-consent-max>/);
+    expect(html).toMatch(/<input type="radio" name="agents-consent" data-consent-choice="yes">/);
+    expect(html).not.toMatch(/data-consent-choice="yes" checked/);
+    expect(html).toMatch(/<div class="consent-max" data-consent-max hidden>/);
     expect(html).toMatch(/<label for="j-seat-max">Seat maximum<\/label>/);
     expect(html).toMatch(/<input type="number" id="j-seat-max" data-consent-max-input[^>]* value="4">/);
   });
   test("the markup explains what a seat is and names all three stop switches in plain text", () => {
     const html = readFileSync(join(SITE, "join.html"), "utf8");
-    expect(html).toContain("Each seat runs as a separate OS user");
-    expect(html).toContain("You can stop seats from Walkie on this Mac");
+    expect(html).toContain("run agents as your macOS/Windows-WSL/Linux user");
+    expect(html).toContain("walkie admin remote off");
+    expect(html).toContain("walkie agents admin off");
+    expect(html).toContain("walkie seats deny");
+  });
+  test("Windows bootstrap and Mac package stay hidden until their release gates exist", () => {
+    const html = readFileSync(join(SITE, "join.html"), "utf8");
+    expect(html).toContain('data-package-available="false"');
+    expect(html).toContain('data-join-package hidden');
+    expect(html).toContain('data-windows-section hidden');
+    expect(html).toContain('data-windows-copy hidden');
+    expect(html).toContain("PowerShell bootstrap pending signed release verification");
   });
 });
 
@@ -332,22 +351,23 @@ describe("the consent control itself (OCJ-A)", () => {
     expect(page.clampSeatMax(undefined)).toBe(4);
   });
 
-  test("a fresh 'ready' link starts at Yes (the default), with the seat maximum shown and reset to 4", () => {
+  test("a fresh 'ready' link starts with no choice and a hidden seat maximum", () => {
     const code = mint();
     const w = world(`#${code}&a=1`);
     page.run({ window: w.win, document: w.doc, now: NOW });
-    expect(w.choiceYes.checked).toBe(true);
+    expect(w.choiceYes.checked).toBe(false);
     expect(w.choiceNo.checked).toBe(false);
-    expect(w.maxBlock.hidden).toBe(false);
+    expect(w.maxBlock.hidden).toBe(true);
     expect(w.maxInput.value).toBe("4");
+    expect(w.field("seat-cap")).toEqual(["0"]);
   });
 
-  test("an observer invite pre-fills No and cannot pre-fill seats", () => {
+  test("an observer invite cannot select seats and still requires an explicit choice", () => {
     const w = world(`#${mint("kira", NOW, "observer")}`);
     page.run({ window: w.win, document: w.doc, now: NOW });
     expect(w.choiceYes.checked).toBe(false);
     expect(w.choiceYes.disabled).toBe(true);
-    expect(w.choiceNo.checked).toBe(true);
+    expect(w.choiceNo.checked).toBe(false);
     expect(w.maxBlock.hidden).toBe(true);
   });
 
@@ -355,7 +375,7 @@ describe("the consent control itself (OCJ-A)", () => {
     const code = mint();
     const w = world(`#${code}&a=1`);
     page.start(w.win, w.doc, () => NOW);
-    expect(w.maxBlock.hidden).toBe(false);
+    expect(w.maxBlock.hidden).toBe(true);
     w.choiceNo.checked = true;
     w.choiceYes.checked = false;
     w.choiceNo.fire("change");
@@ -364,6 +384,7 @@ describe("the consent control itself (OCJ-A)", () => {
     w.choiceNo.checked = false;
     w.choiceYes.fire("change");
     expect(w.maxBlock.hidden).toBe(false);
+    expect(w.field("seat-cap")).toEqual(["4"]);
     w.choiceNo.checked = true;
     w.choiceYes.checked = false;
     w.choiceNo.fire("change");
@@ -374,15 +395,18 @@ describe("the consent control itself (OCJ-A)", () => {
     const code = mint();
     const w = world(`#${code}&a=1`);
     page.start(w.win, w.doc, () => NOW);
+    w.choiceYes.checked = true;
+    w.choiceYes.fire("change");
     w.maxInput.value = "999";
     w.maxInput.fire("change");
     expect(w.maxInput.value).toBe("64");
+    expect(w.field("seat-cap")).toEqual(["64"]);
     w.maxInput.value = "abc";
     w.maxInput.fire("change");
     expect(w.maxInput.value).toBe("4");
   });
 
-  test("a No answer and a custom maximum don't survive a new link (reset to the Yes default with the rest of the fields)", () => {
+  test("a No answer and a custom maximum don't survive a new link", () => {
     const code1 = mint("arvid");
     const code2 = mint("kira");
     const w = world(`#${code1}&a=1`);
@@ -395,9 +419,9 @@ describe("the consent control itself (OCJ-A)", () => {
     w.choiceNo.fire("change");
     expect(w.maxBlock.hidden).toBe(true);
     w.navigate(`#${code2}&a=1`);
-    expect(w.choiceYes.checked).toBe(true);
+    expect(w.choiceYes.checked).toBe(false);
     expect(w.choiceNo.checked).toBe(false);
-    expect(w.maxBlock.hidden).toBe(false);
+    expect(w.maxBlock.hidden).toBe(true);
     expect(w.maxInput.value).toBe("4");
   });
 
@@ -412,6 +436,135 @@ describe("the consent control itself (OCJ-A)", () => {
     w.maxInput.fire("change");
     expect(w.field("command")).toEqual(before);
     expect(w.field("command")[0]).toBe(addMachineCommand(code, "v0.2.0-pre.2"));
+  });
+});
+
+// ---- the owner's SSH authorization ---------------------------------------------------------------------------------------
+
+describe("the owner's SSH authorization (WALK-67 lane 8)", () => {
+  const sshKey = (() => {
+    const name = Buffer.from("ssh-ed25519");
+    const a = Buffer.alloc(4); a.writeUInt32BE(name.length);
+    const b = Buffer.alloc(4); b.writeUInt32BE(32);
+    return `ssh-ed25519 ${Buffer.concat([a, name, b, Buffer.alloc(32, 7)]).toString("base64")}`;
+  })();
+  const invite = createInvite(keys, { team: "0123456789abcdef", authority: keys.pubkey, handle: "arvid", role: "member", now: NOW - 3_600_000, pos: 7 });
+  const code = invite.code;
+  const packet = encodeOwnerSshGrant(mintOwnerSshGrant(keys, { team_id: "0123456789abcdef", owner_handle: "alex", recipient: "arvid", invite_id: invite.id, public_key: sshKey, expires_at: invite.expires_at }));
+  /** Everything visible on the page except the install command, which is where the packet is allowed to appear. */
+  const visibleText = (w: ReturnType<typeof world>) => JSON.stringify(["handle", "expires", "version", "seat-cap"].map((n) => w.field(n)));
+
+  test("the daemon's own add-machine link parses, with the packet, byte for byte", () => {
+    const link = new URL(`${addMachineLink(code, "v0.2.0-pre.11", true)}&ssh=${packet}`);
+    expect(page.parseFragment(link.hash)).toEqual({ code, tag: "v0.2.0-pre.11", agents: true, ssh: packet });
+    expect(page.parseFragment(`#${code}&ssh=${packet}`)).toEqual({ code, tag: null, agents: false, ssh: packet });
+    expect(page.parseFragment(`#${code}`)).toEqual({ code, tag: null, agents: false }); // nothing added when there is none
+  });
+  test("a malformed, oversized, empty or repeated packet is dropped and flagged, never carried", () => {
+    for (const bad of ["ssh=", "ssh=not%20base64!", `ssh=${"A".repeat(1201)}`, "ssh=a=b", `ssh=${packet}&ssh=${packet}`, `ssh=${packet}&ssh=x!`, `ssh=a%2Bb`]) {
+      const parsed = page.parseFragment(`#${code}&${bad}`);
+      expect([bad.slice(0, 14), parsed.ssh, parsed.sshDamaged]).toEqual([bad.slice(0, 14), undefined, true]);
+      expect(parsed.code).toBe(code); // the invite itself is still good
+    }
+    expect(page.parseFragment(`#${code}&ssh=${"A".repeat(1200)}`).ssh).toBe("A".repeat(1200)); // the bound is 1200
+  });
+  test("the command is the daemon's command with --owner-ssh, byte for byte; a bad packet adds nothing", () => {
+    for (const tag of ["v0.2.0-pre.11", null]) {
+      expect(page.command(INSTALL_URL, code, tag, packet)).toBe(`${addMachineCommand(code, tag)} --owner-ssh ${packet}`);
+      expect(page.command(INSTALL_URL, code, tag)).toBe(addMachineCommand(code, tag));
+    }
+    expect(page.command(INSTALL_URL, code, null, "bad packet; rm -rf /")).toBe(addMachineCommand(code, null));
+  });
+  test("the local handoff carries the packet only when seats are allowed, only as a fragment field, never a query", () => {
+    const yes = page.handoff(code, true, 7, "v0.2.0-pre.11", packet);
+    expect(yes).toBe(`walkie-join://join#${code}&seats=yes&max=7&v=v0.2.0-pre.11&ssh=${packet}`);
+    expect(page.handoff(code, true, 7, null, packet)).toBe(`walkie-join://join#${code}&seats=yes&max=7&ssh=${packet}`);
+    expect(page.handoff(code, false, 7, "v0.2.0-pre.11", packet)).toBe(`walkie-join://join#${code}&seats=no&max=0&v=v0.2.0-pre.11`);
+    expect(page.handoff(code, true, 7, "v0.2.0-pre.11", "bad!")).toBe(`walkie-join://join#${code}&seats=yes&max=7&v=v0.2.0-pre.11`);
+    const url = new URL(yes);
+    expect(url.search).toBe("");
+    expect(url.pathname).toBe("");
+    expect(url.hash).toContain(packet);
+  });
+  test("the page strips the fragment first, describes the SSH request in the consent, and shows the packet only in the command", () => {
+    const w = world(`#${code}&v=v0.2.0-pre.11&a=1&ssh=${packet}`);
+    expect(page.run({ window: w.win, document: w.doc, now: NOW })).toBe("ready");
+    expect(w.win.replaced).toEqual(["/join"]); // path and search only: the packet is in no URL
+    expect(w.win.location.hash).toBe("");
+    expect(w.win.entries).toEqual(["/join"]); // no history entry keeps it
+    expect(w.field("command")).toEqual([`${addMachineCommand(code, "v0.2.0-pre.11")} --owner-ssh ${packet}`]);
+    expect([w.sshConsent.hidden, w.sshNote.hidden, w.sshDamaged.hidden]).toEqual([false, false, true]);
+    expect(visibleText(w)).not.toContain(packet);
+    expect(w.win.assigned).toEqual([]); // nothing is opened until the person chooses
+  });
+  test("opening the app after Yes hands the packet to the local app only; No does not", () => {
+    const w = world(`#${code}&ssh=${packet}`);
+    page.start(w.win, w.doc, () => NOW);
+    w.choiceYes.checked = true;
+    w.button.click();
+    w.open.click();
+    expect(w.win.assigned).toEqual([`walkie-join://join#${code}&seats=yes&max=4&ssh=${packet}`]);
+    const no = world(`#${code}&ssh=${packet}`);
+    page.start(no.win, no.doc, () => NOW);
+    no.choiceNo.checked = true;
+    no.open.click();
+    expect(no.win.assigned).toEqual([`walkie-join://join#${code}&seats=no&max=0`]);
+    expect(new URL(w.win.assigned[0]!).search).toBe("");
+  });
+  test("a damaged packet: said plainly, left out of the command and the handoff, the invite still works", () => {
+    const w = world(`#${code}&ssh=damaged!`);
+    page.start(w.win, w.doc, () => NOW); // start() reads the link once; a second run would find the fragment already stripped
+    expect(w.on()).toEqual(["ready"]);
+    expect([w.sshConsent.hidden, w.sshNote.hidden, w.sshDamaged.hidden]).toEqual([true, true, false]);
+    expect(w.field("command")).toEqual([addMachineCommand(code, null)]);
+    expect(w.field("command")[0]).not.toContain("--owner-ssh");
+    w.choiceYes.checked = true;
+    w.open.click();
+    expect(w.win.assigned).toEqual([`walkie-join://join#${code}&seats=yes&max=4`]);
+  });
+  test("a link without a packet shows no SSH text at all", () => {
+    const w = world(`#${code}&v=v0.2.0-pre.11`);
+    page.run({ window: w.win, document: w.doc, now: NOW });
+    expect([w.sshConsent.hidden, w.sshNote.hidden, w.sshDamaged.hidden]).toEqual([true, true, true]);
+    expect(w.field("command")).toEqual([addMachineCommand(code, "v0.2.0-pre.11")]);
+  });
+  test("the next link in the same tab never inherits the last link's packet (memory only, reset every run)", () => {
+    const other = mint("kira", NOW - 3_600_000);
+    const w = world(`#${code}&ssh=${packet}`);
+    page.start(w.win, w.doc, () => NOW);
+    expect(w.field("command")[0]).toContain("--owner-ssh");
+    w.navigate(`#${other}`);
+    expect(w.field("command")).toEqual([addMachineCommand(other, null)]);
+    expect([w.sshConsent.hidden, w.sshNote.hidden, w.sshDamaged.hidden]).toEqual([true, true, true]);
+    w.choiceYes.checked = true;
+    w.open.click();
+    expect(w.win.assigned).toEqual([`walkie-join://join#${other}&seats=yes&max=4`]);
+    expect(w.win.entries).toEqual(["/join", "/join"]); // neither entry keeps a fragment
+    // And an expired link shows no command and keeps nothing.
+    const old = mint("kira", NOW - 8 * 86_400_000);
+    w.navigate(`#${old}&ssh=${packet}`);
+    expect(w.on()).toEqual(["expired"]);
+    expect(w.field("command")).toEqual([""]);
+    w.open.click();
+    expect(w.win.assigned).toHaveLength(1); // nothing new was opened for the expired link
+  });
+  test("the markup describes it, hides it until the script shows it, and names the revoke command in plain text", () => {
+    const html = readFileSync(join(SITE, "join.html"), "utf8");
+    expect(html).toMatch(/<p class="welcome-note" data-ssh-consent hidden>/);
+    expect(html).toMatch(/<p class="welcome-note" data-ssh-damaged hidden>/);
+    expect(html).toMatch(/<p class="welcome-note" data-ssh-command-note hidden>/);
+    expect(html).toContain("may sign in to this computer over SSH as your user, through Walkie");
+    // What is true on all three platforms: Walkie's own service, this machine only, key logins only (any key authorized for the person's account works on loopback); Remote Login never asked for.
+    expect(html).toContain("using a Walkie SSH service that listens only on this computer and accepts only key logins");
+    expect(html).not.toMatch(/Remote Login/i);
+    expect(html).toContain("<code>walkie ssh revoke</code>");
+    expect(html).toContain("--owner-ssh");
+    expect(html).toContain("Ask the owner for a new add-machine link");
+  });
+  test("join.js keeps the packet in no storage, URL query, log or timer", () => {
+    const js = readFileSync(join(SITE, "assets", "join.js"), "utf8");
+    for (const api of ["console.", "localStorage", "sessionStorage", "document.cookie", "setTimeout", "location.href", "?ssh", "search ="]) expect(js.includes(api)).toBe(false);
+    expect(js).toContain("var pendingSsh = null; // memory only");
   });
 });
 
@@ -435,7 +588,7 @@ describe("the code never leaves the page", () => {
     ]);
     expect(html).toContain('<meta name="referrer" content="no-referrer">');
     expect(html).toContain('data-install="https://getwalkie.vercel.app/install.sh"');
-    expect(html).toContain('Install Walkie and join');
+    expect(html).toContain('Download and run Walkie');
     expect(html).toContain('data-join-package');
     expect(html).toContain('target="_blank" rel="noopener noreferrer"');
     expect(html).toContain("puts the private invite code on your command line");

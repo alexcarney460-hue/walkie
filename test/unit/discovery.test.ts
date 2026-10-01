@@ -105,6 +105,53 @@ describe("process parsing", () => {
 });
 
 describe("agent discovery", () => {
+  test("Grok child session id matches its hook card without a second process card", async () => {
+    const { core, fx, disc, repo } = setup();
+    fx.procs.push(proc(700, 1, "grok -p --prompt-file /fixture/task"), proc(701, 700, "node /fixture/mcp", ME, T0 + 2_000));
+    fx.env.set(701, { GROK_SESSION_ID: "abc123-4567" });
+    fx.cwds.set(700, repo);
+    const hook = core.statuses.submit("grok-abc123", { agent: "grok-abc123", state: "working", runtime: "other", runtime_name: "grok", activity: "Thinking" });
+    await disc.tick();
+    expect((await disc.scan()).map((a) => a.agent)).toEqual(["grok-abc123"]);
+    expect(status(core, "grok-abc123")?._id).toBe(hook?.id);
+    expect(status(core, "grok-pid700")).toBeNull();
+  });
+  test("an unnamed Grok process adopts its hook card after the unnamed grace", async () => {
+    const { core, fx, disc, repo } = setup();
+    fx.procs.push(proc(702, 1, "grok -p --prompt-file /fixture/task"));
+    fx.cwds.set(702, repo);
+    core.noteLocalCwd("grok-abc123", repo); // the local status route records the unsent absolute cwd
+    core.statuses.submit("grok-abc123", { agent: "grok-abc123", state: "working", runtime: "other", runtime_name: "grok", cwd: repo, activity: "Thinking" });
+    await disc.tick();
+    expect(status(core, "grok-pid702")).toBeNull();
+    expect(status(core, "grok-abc123")?.state).toBe("working");
+  });
+  test("a Grok hook card is swept after process exit, but stays while an unnamed Grok runs", async () => {
+    const { core, fx, disc, clock } = setup();
+    fx.procs = [proc(1, 0, "/sbin/launchd", 0), proc(704, 1, "grok -p --prompt-file /fixture/task")];
+    core.statuses.submit("grok-abc123", { agent: "grok-abc123", state: "working", runtime: "other", runtime_name: "grok", activity: "Thinking" });
+    core.statuses.submit("hermes-abc123", { agent: "hermes-abc123", state: "idle", runtime: "other", runtime_name: "hermes", activity: "Waiting" });
+    clock.t += SWEEP_GRACE_MS + 1;
+    await disc.tick();
+    expect(status(core, "grok-abc123")?.state).toBe("working");
+    fx.procs = [proc(1, 0, "/sbin/launchd", 0)];
+    await disc.tick();
+    expect(status(core, "grok-abc123")).toMatchObject({ state: "offline", activity: EXITED_ACTIVITY });
+    expect(status(core, "hermes-abc123")?.state).toBe("idle");
+  });
+  test("a Hermes profile exits without an activity line: state only is the default", async () => {
+    const { core, fx, disc, clock } = setup();
+    fx.procs.push(proc(700, 1, "hermes --profile example-billing"));
+    await disc.tick();
+    expect(status(core, "hermes-example-billing")).toMatchObject({ state: "idle", runtime_name: "hermes" });
+    fx.procs = [proc(1, 0, "/sbin/launchd", 0)];
+    clock.t += 15_000;
+    await disc.tick();
+    expect(status(core, "hermes-example-billing")).toEqual(expect.objectContaining({
+      agent: "hermes-example-billing", state: "offline", runtime: "other", runtime_name: "hermes",
+    }));
+    expect(status(core, "hermes-example-billing")?.activity).toBeUndefined();
+  });
   test("a Claude Code session is named cc-<first 6 of its session id>, from what its hooks would see", async () => {
     const { core, fx, disc, repo } = setup();
     claudeSession(fx, repo);
@@ -117,7 +164,7 @@ describe("agent discovery", () => {
     // Only the naming variables were asked for, and only of the session's children; of the session process itself
     // only its login directory (ACCOUNTS-1; where its transcript is, WALKIE-MISSION-1), whether it is a seat, and, since
     // ACCOUNTS-2 (merged in pre.4), the wrapper's account id and pid (ids, never a secret).
-    const naming = ["WALKIE_AGENT", "CLAUDE_CODE_SESSION_ID", "KIMI_SESSION_ID"];
+    const naming = ["WALKIE_AGENT", "CLAUDE_CODE_SESSION_ID", "KIMI_SESSION_ID", "GROK_SESSION_ID"];
     const login = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "WALKIE_ACCOUNT", "WALKIE_SWITCH_PID", "WALKIE_AGENT"];
     expect(fx.envAsked.every((a) => (a.pids.every((p) => p === 101) && a.names.every((n) => naming.includes(n)))
       || (a.pids.every((p) => p === 100) && a.names.every((n) => login.includes(n))))).toBe(true);

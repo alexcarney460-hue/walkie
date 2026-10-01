@@ -7,12 +7,14 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Cluster, waitFor } from "../helpers/cluster.ts";
+import { signInCodex } from "../helpers/fake-seat-users.ts";
 
 const logFile = process.argv[2] ?? "";
 const paused = process.argv[3] === "paused";
 const c = new Cluster();
 const home = join(c.root, "arvid-home");
 mkdirSync(home, { recursive: true });
+signInCodex(home);
 const alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
 const arvid = await c.add({
   name: "arvid", login: "arvid@example.com", hostname: "arvid-mac",

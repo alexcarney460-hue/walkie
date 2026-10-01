@@ -42,7 +42,8 @@ import { RESERVED_AGENTS } from "./local-routes.ts";
 import { FLEET_AGENT, STEWARD_AGENT } from "../protocol/projects/steward-core.ts";
 import type { Logger } from "./logger.ts";
 import { SystemProcessProvider, type ProcessProvider, type ProcRow } from "./procs.ts";
-import { classifyAgent, modelServers, RELAUNCHING, runtimeName, wireRuntime, type AgentKind, type AgentRuntime, type Launch } from "./agent-procs.ts";
+import { classifyAgent, hermesProcessOf, hermesProfileOf, modelServers, RELAUNCHING, runtimeName, wireRuntime, type AgentKind, type AgentRuntime, type Launch } from "./agent-procs.ts";
+import { hermesProfileLive, hermesProfileStatus, noteHermesCensus, offlineExitedHermesSessions, purgeEndedHermesSessions, shownCard, type HermesProcess } from "./hermes-status.ts";
 import { assignKimiSessions, ScanBudget, type KimiProc } from "./kimi-sessions.ts";
 import { observedAt } from "./views.ts";
 import { trackOp } from "./watchdog.ts";
@@ -117,6 +118,12 @@ function daemonOwnsAgent(agent: string): boolean {
   return agent === "orchestrator" || agent.startsWith("orchestrator.")
     || agent === STEWARD_AGENT || agent === FLEET_AGENT || RESERVED_AGENTS.has(agent);
 }
+/**
+ * The runtimes the machine's published process counts can name (MachineStats.agent_processes: its wire enum, one entry each).
+ * Hermes is not on it: a peer that does not know a name drops the whole list, so a machine with a Hermes session would show
+ * no counts at all to every older peer. Hermes sessions are agents, but they are not counted there.
+ */
+type CountedRuntime = Exclude<AgentRuntime, "hermes">;
 const ACCOUNT_RUNTIMES: ReadonlySet<AgentRuntime> = new Set(["claude-code", "codex", "kimi", "grok"]);
 /** A discovered session of a runtime whose login the accounts service knows. */
 export type AccountSession = DiscoveredAgent & { runtime: "claude-code" | "codex" | "kimi" | "grok" };
@@ -134,6 +141,8 @@ export interface DiscoveryOptions {
   now?: () => number;
   /** What statuses may carry beyond the state (src/agent/share-policy.ts), or a getter re-read every scan; default: nothing. */
   share?: SharePolicy | (() => SharePolicy);
+  /** The Hermes profiles whose status may carry activity text (src/protocol/hermes-activity.ts), or a getter re-read every scan; default: none. */
+  hermesActivity?: readonly string[] | (() => readonly string[]);
   /** Walkie's home: the hooks' per-agent state, which says whether a cached title was set explicitly (default ~/.walkie). */
   home?: string;
   /** Claude's config directory for sessions that don't set CLAUDE_CONFIG_DIR (default: ~/.claude). */
@@ -183,7 +192,7 @@ export interface DiscoveredAgent {
   account?: string;
 }
 
-const SESSION_VARS = ["WALKIE_AGENT", "CLAUDE_CODE_SESSION_ID", "KIMI_SESSION_ID"] as const;
+const SESSION_VARS = ["WALKIE_AGENT", "CLAUDE_CODE_SESSION_ID", "KIMI_SESSION_ID", "GROK_SESSION_ID"] as const;
 /** Read from a Kimi process itself: where its sessions live (a seat may run with its own KIMI_CODE_HOME). */
 const KIMI_VARS = ["KIMI_CODE_HOME", "WALKIE_AGENT"] as const;
 /** Read from the session process itself (not its children): which login directory it uses. */
@@ -279,10 +288,14 @@ export class AgentDiscovery {
   private readonly unnamedMinAgeMs: number;
   /** Runtimes with an unnamed session this scan held back as too young (a card it may adopt is not swept meanwhile). */
   private youngUnnamed = new Set<string>();
+  private hermesCensus: { processes: readonly HermesProcess[]; capturedAt: number } = { processes: [], capturedAt: 0 };
   private readonly now: () => number;
   /** The collection policy: re-read every scan (the daemon's config may change while it runs, Codex r3 #8). */
   private share: SharePolicy;
   private readonly sharePolicy: () => SharePolicy;
+  /** The Hermes profiles allowed to show activity text, as of the last scan: every other Hermes card shows its state only. */
+  private hermesActivity: readonly string[];
+  private readonly hermesActivityProfiles: () => readonly string[];
   private readonly home: string;
   private readonly claudeDir: string;
   private readonly nonAgentDirs: readonly string[];
@@ -322,7 +335,7 @@ export class AgentDiscovery {
   private owned: Map<string, Owned> | null = null;
   /** Local model servers seen in the last scan (AGENT-SEE-1): machine load, published with the machine's stats. */
   private models: { name: string; count: number }[] = [];
-  private agentCounts: { name: AgentRuntime; count: number }[] = [];
+  private agentCounts: { name: CountedRuntime; count: number }[] = [];
   private ownedDirty = false;
   /** Every scan's result, for the accounts service (which login each session uses). */
   onScan: ((found: readonly AccountSession[]) => void) | null = null;
@@ -336,6 +349,9 @@ export class AgentDiscovery {
     const given = opts.share ?? SHARE_NOTHING;
     this.sharePolicy = typeof given === "function" ? given : () => given;
     this.share = this.sharePolicy();
+    const hermesGiven = opts.hermesActivity ?? [];
+    this.hermesActivityProfiles = typeof hermesGiven === "function" ? hermesGiven : () => hermesGiven;
+    this.hermesActivity = this.hermesActivityProfiles();
     this.home = opts.home ?? walkieHome();
     this.claudeDir = opts.claudeConfigDir ?? (process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"));
     this.nonAgentDirs = opts.nonAgentDirs ?? [join(homedir(), ".claude-mem")];
@@ -435,7 +451,7 @@ export class AgentDiscovery {
     this.truncated = new Set();
     this.unselected = 0;
     const kept = new Map<number, AgentRuntime>();
-    this.agentCounts = [...byRt].map(([name, list]) => ({ name, count: list.length }));
+    this.agentCounts = [...byRt].flatMap(([name, list]) => name === "hermes" ? [] : [{ name, count: list.length }]);
     for (const [rt, list] of byRt) {
       if (list.length > this.maxPerRuntime) { this.truncated.add(wireRuntime(rt)); this.unselected += list.length - this.maxPerRuntime; }
       // Over the cap, the least recently examined go first (never examined: first of all, newest first), so the whole
@@ -450,6 +466,7 @@ export class AgentDiscovery {
   /** One scan; null when the process list could not be read (then nothing may change: Codex 5). */
   /** Picks up a changed collection policy: session-file caches (their activity lines) and cached titles start over. */
   private refreshPolicy(): void {
+    this.hermesActivity = this.hermesActivityProfiles();
     const next = this.sharePolicy();
     if (next.prompts === this.share.prompts && next.activity === this.share.activity) { this.share = next; return; }
     this.share = next;
@@ -483,6 +500,7 @@ export class AgentDiscovery {
     // lookup and the examinations all come out of it. Once the census exists, finish the bounded
     // current batch and publish its cards even when enrichment exceeds the soft budget.
     const deadline = Date.now() + this.scanBudgetMs;
+    const capturedAt = this.now();
     const all = await readWithin(this.provider.list(), null, PROCESS_LIST_TIMEOUT_MS).catch(() => null);
     if (!active()) return null;
     if (!all || !all.length) return null; // `ps` itself is always running: an empty list is a failed one
@@ -490,6 +508,12 @@ export class AgentDiscovery {
     // Local model servers are machine load, whoever runs them (ollama has its own user on Linux): names and counts only.
     this.models = modelServers(all.map((p) => p.command));
     const mine = all.filter((p) => p.uid === this.uid);
+    // Hermes sessions and the processes that host hooked turns (gateway runs, `cron run|tick`, dashboard and serve backends) are
+    // what hooked rows are matched against; only the sessions are agents (below).
+    this.hermesCensus = { processes: mine.flatMap((p) => {
+      const kind = hermesProcessOf(p.command, p.tty);
+      return kind ? [{ pid: p.pid, profile: kind.profile, ...(p.startedAt == null ? {} : { startedAt: p.startedAt }) }] : [];
+    }), capturedAt };
     this.codexHost = mine.some((p) => isCodexHost(p.command));
     this.minePids = new Set(mine.map((p) => p.pid));
     const candidates = this.candidatesOf(mine);
@@ -558,7 +582,7 @@ export class AgentDiscovery {
       if (entry.cwdAbs && this.nonAgentCwd(entry.cwdAbs)) { entry.excluded = true; out.delete(key); return; }
       const login = loginDirOf(rt, loginEnv.get(p.pid));
       const newestKid = [...(children.get(p.pid) ?? [])].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0) || b.pid - a.pid)
-        .map((k) => env.get(k.pid)).find((e) => e && (e.CLAUDE_CODE_SESSION_ID || e.KIMI_SESSION_ID || e.WALKIE_AGENT));
+        .map((k) => env.get(k.pid)).find((e) => e && (e.CLAUDE_CODE_SESSION_ID || e.KIMI_SESSION_ID || e.GROK_SESSION_ID || e.WALKIE_AGENT));
       const session = await this.sessionOf(p, rt, newestKid, entry, login, deadline, active);
       if (!active()) return;
       const agentEnv: NodeJS.ProcessEnv = {
@@ -567,8 +591,11 @@ export class AgentDiscovery {
         ...(session && rt === "claude-code" ? { CLAUDE_CODE_SESSION_ID: session } : {}),
         ...(session && rt === "codex" ? { CODEX_THREAD_ID: session } : {}),
         ...(session && rt === "kimi" ? { KIMI_SESSION_ID: session } : {}),
+        ...(session && rt === "grok" ? { GROK_SESSION_ID: session } : {}),
       };
-      const agent = resolveAgentName(agentEnv) ?? pidName(rt, p.pid);
+      const hermesProfile = rt === "hermes" ? hermesProfileOf(p.command) : null;
+      const agent = rt === "hermes" ? (hermesProfile ? `hermes-${hermesProfile}` : pidName(rt, p.pid))
+        : resolveAgentName(agentEnv) ?? pidName(rt, p.pid);
       // A seat running as this user (`--same-user`) is published by its host daemon, never as a discovered session
       // (Opus seats r9 LOW): its WALKIE_AGENT, or the runtime's own, names a seat.
       // The daemon's own names (board steward, fleet desk) are never a discovered session (fix round 2, Opus LOW).
@@ -798,7 +825,8 @@ export class AgentDiscovery {
       return valid(kid?.CLAUDE_CODE_SESSION_ID);
     }
     if (rt === "kimi") return valid(kid?.KIMI_SESSION_ID) ?? entry.thread;
-    if (rt === "grok" || rt === "gemini" || rt === "opencode") return undefined;
+    if (rt === "grok") return valid(kid?.GROK_SESSION_ID);
+    if (rt === "gemini" || rt === "opencode" || rt === "hermes") return undefined;
     if (!entry.thread || !entry.file) {
       if (entry.fileRetryAt !== undefined && this.now() < entry.fileRetryAt) return entry.thread;
       const files = await readWithin(this.provider.openFiles(p.pid), [] as string[]).catch(() => [] as string[]);
@@ -960,14 +988,53 @@ export class AgentDiscovery {
     for (const [name, keys] of this.live) {
       if (next.has(name)) continue;
       if ([...keys].some((k) => this.runningKeys.has(k) && ![...next.values()].some((v) => v.has(k)))) { next.set(name, keys); this.keepAlive(name, now); }
+      // A card whose own process is gone stays while a hooked working session of its profile is still live under the
+      // census rule that retires rows (hermes-status.ts): a hook after this scan began, or, until ten minutes pass since
+      // the last hook, a Hermes process that names the profile or names none.
+      else if (name.startsWith("hermes-") && hermesProfileLive(core.store, name.slice(7), this.hermesCensus.processes,
+        this.hermesCensus.capturedAt)) { next.set(name, keys); this.keepAlive(name, now); }
       else this.markOffline(name, true);
     }
     this.live = next;
+    try {
+      // The sweep ends what the census says is over: ended rows past their ten minutes that no live process could own (a session
+      // at its prompt hooks no more, and only the census knows it is still there), and working rows whose process is gone. The
+      // ended rows go first, so that a row retired by this sweep stays one scan more: the marker that its session ended, which
+      // a stale duplicate hook cannot overwrite. A profile that lost a working session or an ended row shows what its remaining
+      // rows say (idle while a session has not ended), offline only when none is left: the computation a hook gets. Once both have
+      // run the sweep says so (noteHermesCensus): while it keeps doing that, a hook ends no row by age; where it does not, one does.
+      const { processes, capturedAt } = this.hermesCensus;
+      const purged = purgeEndedHermesSessions(core.store, processes, capturedAt);
+      const retired = offlineExitedHermesSessions(core.store, processes, capturedAt);
+      noteHermesCensus(core.store, capturedAt);
+      for (const profile of new Set([...retired, ...purged])) {
+        const card = shownCard(hermesProfileStatus(core.store, profile), this.hermesActivity);
+        core.statuses.submit(card.body.agent, card.body, card.provenance);
+      }
+      this.scrubHermesActivity();
+    } catch (err) {
+      this.log.warn("hermes_session_sweep_failed", { err: (err as Error).message });
+    }
     // Complete only when every session was examined and named: then "not in it" means not running.
     const complete = !this.unexamined.size && !this.truncated.size && !found.some((a) => a.agent === pidName(a.runtime, a.pid));
     this.runningNames = complete ? new Set(next.keys()) : null;
     this.sweep(found, now);
     this.saveOwned();
+  }
+
+  /**
+   * A Hermes card of this machine that shows an activity line for a profile outside the allow list (the profile was taken off it, or
+   * the setting turned invalid) is posted again with its state only: state only means no line, whatever the card showed before.
+   */
+  private scrubHermesActivity(): void {
+    const core = this.core;
+    for (const row of core.store.agentsWithPrefix(core.nodeId, "hermes-")) {
+      if (this.hermesActivity.includes(row.agent.slice("hermes-".length))) continue;
+      let body: Status;
+      try { body = JSON.parse(row.body) as Status; } catch { continue; }
+      if (body.runtime !== "other" || body.runtime_name !== "hermes" || body.activity === undefined) continue;
+      core.statuses.submit(row.agent, { agent: row.agent, state: body.state, runtime: "other", runtime_name: "hermes" }, {});
+    }
   }
 
   /**
@@ -1105,6 +1172,7 @@ export class AgentDiscovery {
 
   /** A status of discovery's own for a running session (what may be shared of it is decided at emit). */
   private ownBody(a: DiscoveredAgent, prev: Status | null, state: "working" | "idle"): Status {
+    if (a.runtime === "hermes") return { agent: a.agent, state, runtime: "other", runtime_name: "hermes" };
     const act = a.activity;
     const title = act?.title || prev?.title;
     // A key a person or an agent set deliberately stays, before any derived one (Codex r4 #9).
@@ -1126,6 +1194,11 @@ export class AgentDiscovery {
 
   /** Another source's status with discovery's state: its fields are kept (and projected again at emit). */
   private theirs(prev: Status, a: DiscoveredAgent, state: "working" | "idle"): Status {
+    if (a.runtime === "hermes") {
+      const profile = a.agent.startsWith("hermes-") ? a.agent.slice(7) : "";
+      return (a.agent === pidName("hermes", a.pid) || !this.hermesActivity.includes(profile)) ? { agent: a.agent, state, runtime: "other", runtime_name: "hermes" }
+        : { ...prev, state };
+    }
     const act = a.activity;
     return {
       ...prev, state,
@@ -1144,7 +1217,10 @@ export class AgentDiscovery {
     const row = this.core.store.agent(this.core.nodeId, name);
     const prev = row ? (JSON.parse(row.body) as Status) : null;
     if (!prev || prev.state === "offline") return false;
-    this.post(name, { ...prev, state: "offline", activity: EXITED_ACTIVITY });
+    const privateHermes = prev.runtime === "other" && prev.runtime_name === "hermes" && name.startsWith("hermes-")
+      && !this.hermesActivity.includes(name.slice(7));
+    this.post(name, privateHermes ? { agent: name, state: "offline", runtime: "other", runtime_name: "hermes" }
+      : { ...prev, state: "offline", activity: EXITED_ACTIVITY });
     this.log.info(exited ? "agent_exited" : "agent_swept", { agent: name });
     return true;
   }
@@ -1188,7 +1264,7 @@ export class AgentDiscovery {
   /**
    * This machine's agents whose session isn't running: offline. Discovery's own at once; a hook's or MCP's once it
    * is SWEEP_GRACE_MS old (a session discovery can't name yet keeps its status), and only for runtimes discovery
-   * sees (never `cli` / `other`, e.g. `walkie status` or a custom agent) or an MCP server's fallback name whose parent
+   * sees (plus hook-reported Grok under `other`; never generic `cli` / `other`) or an MCP server's fallback name whose parent
    * process is gone, or whose parent is a session discovery reports under its own name (a duplicate card). Not for a
    * runtime with an unnamed session running or more sessions than it reports. Statuses older than IDLE_ARCHIVE_MS
    * are left alone: they are in the archive already (or stale), and a new offline status would make a long-dead
@@ -1224,7 +1300,8 @@ export class AgentDiscovery {
           if (this.minePids.has(parent) && (session === undefined || session === row.agent)) continue;
         } else {
           const rt = prev.runtime ?? "other";
-          if (!SWEEP_RUNTIMES.has(rt) || unnamed.has(rt) || this.truncated.has(rt)) continue;
+          const sweepable = SWEEP_RUNTIMES.has(rt) || (rt === "other" && prev.runtime_name === "grok");
+          if (!sweepable || unnamed.has(rt) || this.truncated.has(rt)) continue;
           if (rt === "codex" && this.codexHost) continue; // the Codex app's sessions aren't processes of their own
         }
       }

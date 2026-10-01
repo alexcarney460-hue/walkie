@@ -232,7 +232,7 @@ describe("SEATS-FIX-5: ephemeral seat users", () => {
       const cache = host() as unknown as { cachedClaudeAccess: { expiresAt: number } };
       cache.cachedClaudeAccess.expiresAt = Date.now() + 60_000;
       keychainCredentials = JSON.stringify({ claudeAiOauth: { accessToken: "new-access-token", refreshToken: "private-refresh", expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } });
-      expect((await person(arvid).seats()).local.claude_login).toBe("unavailable");
+      for (let i = 0; i < 5; i++) expect((await person(arvid).seats()).local.claude_login).toBe("unavailable");
       expect(keychainReads).toBe(readsAfterSuccess); // dashboard polling never re-reads a near-expiry Keychain token
       expect((await ended(await launch("check-home refreshed", "claude"))).state).toBe("done");
       expect(keychainReads).toBe(readsAfterSuccess + 1);

@@ -1,13 +1,14 @@
-// Local API for remote seats (PROTOCOL §11): GET /v1/seats, POST /v1/seats/config|run|stop, GET|POST /v1/seats/busy,
+// Local API for remote seats (PROTOCOL §11): GET /v1/seats, POST /v1/seats/config|doctor|run|stop, GET|POST /v1/seats/busy,
 // POST /v1/seats/resume.
-import { adminGate } from "../admin/gate.ts";
+import { admit, adminGate, personOnly } from "../admin/gate.ts";
+import { runFor } from "../admin/runs.ts";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { BlobHash, EventId, type BodyOf, type Event } from "../../protocol/schemas.ts";
 import {
   DEFAULT_MAX_CONCURRENT, DEFAULT_SEAT_TIMEOUT_S, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, MAX_SEAT_PROMPT, MAX_SEAT_TIMEOUT_S, MIN_SEAT_TIMEOUT_S,
   MAX_SEAT_BRIEF, SEATS_V2_CAP, SEAT_MODES, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SeatAccountKey, SeatLabel, SeatModel, SeatResultFile, SeatRunV2, SeatWorkspace, parseLauncher, runText, runTextV2,
-  seatOf, seatsChannel, seatsChannelNode, type SeatRun, type SeatRuntime, type SeatsView,
+  seatOf, seatsChannel, seatsChannelNode, type SeatHostView, type SeatRun, type SeatRuntime, type SeatsView,
 } from "../../protocol/seats.ts";
 import type { SeatsConfig } from "../config.ts";
 import type { Core } from "../core.ts";
@@ -21,6 +22,7 @@ import { hostAvailability, seatHosts, seatsList } from "./view.ts";
 import { TALKIE_SHELL_HEADER } from "../orchestrator/os-user.ts";
 import { hostFor } from "../orchestrator/host.ts";
 import { ORCHESTRATOR_AGENT } from "../../protocol/orchestrator.ts";
+import { SEATS_PHRASES } from "../../protocol/status-projection.ts";
 
 function host(c: RouteCtx) {
   const h = seatsFor(c.core);
@@ -37,18 +39,41 @@ function view(c: RouteCtx, only?: string): SeatsView {
   return { local: host(c).view(), hosts: c.core.teamId ? seatHosts(c.core, c.sync) : [], seats: c.core.teamId ? seatsList(c.core, only) : [] };
 }
 
+// A status read serves what the last check found (logins included) and touches no credential store and no command: the
+// Seats view polls it every 2 s (SEATS-FIX-5). The checking calls are the doctor below, config, token and a launch.
 route("GET", "/v1/seats", (c) => {
   const only = c.url.searchParams.get("seat") ?? undefined;
   if (only !== undefined && !EventId.safeParse(only).success) throw new HttpError(400, "invalid", "seat must be an event id");
   return json(view(c, only));
 });
 
+/**
+ * `walkie seats doctor`: checks this machine's Claude and Codex sign-ins now, as a launch would find them (the Keychain
+ * and `codex login status` included), and answers with what it found. Whatever the seats' state: a machine asks it
+ * before turning them on.
+ */
+route("POST", "/v1/seats/doctor", async (c) => {
+  limitWrite(c);
+  await host(c).refreshLogin();
+  return json({ local: host(c).view() });
+});
+
+route("POST", "/v1/seats/cleanup-root", async (c) => {
+  personOnly(c, "clean up a pending worker root");
+  if (c.via !== "cli") throw new HttpError(403, "person_only", "worker root cleanup requires the person at this machine's terminal");
+  const b = parseWith(z.object({ id: z.string().regex(/^[0-9a-f]{16}:[1-9][0-9]*(?:@[0-9a-f]{32})?$/) }).strict(), await readJson(c.req, LOCAL_BODY_MAX));
+  limitWrite(c);
+  host(c).cleanupPendingRoot(b.id);
+  return json({ local: host(c).view() });
+});
+
 const ConfigReq = z.object({
   allow: z.boolean(),
+  mode: z.enum(["same_user", "seat_users"]).optional(),
   /** null = back to the default (the team's owners at the time of each request). */
   launchers: z.array(z.string().min(1).max(140)).max(50).nullable().optional(),
   max: z.number().int().min(1).max(MAX_CONCURRENT_LIMIT).nullable().optional(),
-  runtimes: z.array(z.enum(SEAT_RUNTIMES)).min(1).max(3).nullable().optional(),
+  runtimes: z.array(z.enum(SEAT_RUNTIMES)).min(1).max(4).nullable().optional(),
   dir: z.string().min(1).max(1_000).nullable().optional(),
   env: z.array(z.string().min(1).max(64)).max(50).nullable().optional(),
   /** Every seat as a fresh OS user made for it and destroyed after it (walkie seats setup-user). */
@@ -58,6 +83,9 @@ const ConfigReq = z.object({
   runtime_dir: z.string().min(2).max(1_000).nullable().optional(),
   /** Seats may run as the daemon's own user: they can then act as this machine's person (SECURITY threat 13). */
   same_user: z.boolean().optional(),
+  inherit_person_config: z.boolean().optional(),
+  /** An explicit local person migration transaction, consumed by this request only. */
+  migration_confirm: z.literal("migrate same-user seats").optional(),
   /** Seat users may read the person's home (it is open to other users): accepted knowingly. */
   accept_readable_home: z.boolean().optional(),
 }).strict();
@@ -65,7 +93,7 @@ const ConfigReq = z.object({
 /** The audit line of a seats config change ("allowed seats: same-user, max 12, launchers @alex"). */
 function seatsAction(b: z.infer<typeof ConfigReq>): string {
   const parts = [
-    b.same_user ? "same-user" : null, b.ephemeral ? "a fresh OS user per seat" : null, b.max ? `max ${b.max}` : null,
+    b.mode ?? (b.same_user ? "same-user" : b.ephemeral ? "a fresh OS user per seat" : null), b.max ? `max ${b.max}` : null,
     b.launchers?.length ? `launchers ${b.launchers.join(",")}` : b.launchers === null ? "launchers: the owners" : null,
     b.runtimes?.length ? `runtimes ${b.runtimes.join(",")}` : null, b.dir ? `dir ${b.dir}` : null, b.env?.length ? `env ${b.env.join(",")}` : null,
   ].filter(Boolean);
@@ -78,7 +106,34 @@ function seatsAction(b: z.infer<typeof ConfigReq>): string {
  */
 route("POST", "/v1/seats/config", async (c) => {
   const b = parseWith(ConfigReq, await readJson(c.req, LOCAL_BODY_MAX));
-  adminGate(c, seatsAction(b));
+  // AGENT-ADMIN-1: an agent of the person's passes here while agent admin is on (audited) and is refused while it is off.
+  // What stays the person's alone, whatever the flags: inheriting personal provider config, migrating seat users, and
+  // (below) a remote run turning same-user seats on. The audit line of a change that goes ahead is written once its
+  // checks have passed; a request they refuse is audited as refused, never as allowed.
+  const admission = admit(c, seatsAction(b));
+  let change: { h: ReturnType<typeof host>; next: SeatsConfig };
+  try { change = checkSeatsConfig(c, b); }
+  catch (err) {
+    admission.refuse(err instanceof HttpError ? err.code : "invalid");
+    throw err;
+  }
+  admission.record();
+  // The host decides whether seats may run as configured (isolation.ts): seat users that are safe (not root, not
+  // this user, not administrators, their own groups), a home they can't read, or the person's explicit --same-user.
+  c.noTimeout();
+  return json({ local: await change.h.configure(change.next, b.migration_confirm === "migrate same-user seats") });
+});
+
+/** What a config request would leave: its refusals are thrown here, before the host is asked to change anything. */
+function checkSeatsConfig(c: RouteCtx, b: z.infer<typeof ConfigReq>): { h: ReturnType<typeof host>; next: SeatsConfig } {
+  if (b.inherit_person_config) {
+    personOnly(c, "inherit personal provider configuration in worker seats");
+    if (c.via !== "cli") throw new HttpError(403, "person_only", "provider configuration inheritance requires the person at this machine's terminal");
+  }
+  if (b.migration_confirm) {
+    personOnly(c, "migrate seat users to same-user mode");
+    if (c.via !== "cli") throw new HttpError(403, "person_only", "seat migration requires the person at this machine's terminal");
+  }
   // The dashboard turns seats on or off (as seat users, or as the person); who may launch, runtimes, directories,
   // the runner, the helper and the rest stay with the CLI (Opus r10 LOW).
   const fields = Object.keys(b).filter((k) => (b as Record<string, unknown>)[k] !== undefined);
@@ -100,37 +155,50 @@ route("POST", "/v1/seats/config", async (c) => {
   if (b.admin && !isAbsolute(b.admin)) throw new HttpError(400, "invalid", "admin must be an absolute path");
   const h = host(c);
   const prev = h.settings;
+  if (b.mode === "same_user" && b.ephemeral === true || b.mode === "seat_users" && b.same_user === true) {
+    throw new HttpError(400, "invalid", "seat mode and legacy flags conflict");
+  }
   const pick = <K extends keyof SeatsConfig>(k: K, v: SeatsConfig[K] | null | undefined): Partial<SeatsConfig> => {
     if (v === undefined) return prev[k] !== undefined ? { [k]: prev[k] } : {};
     return v === null ? {} : { [k]: v };
   };
-  const next: SeatsConfig = {
+  const baseConfig: SeatsConfig = {
     allow: b.allow,
+    ...pick("mode", b.mode),
     // null (back to the owners) must stay null: `?.map` would turn it into undefined, "keep", and a named agent
     // would stay allowed after the reset (Codex HIGH 1).
     ...pick("launchers", b.launchers === null ? null : b.launchers?.map((l) => l.trim())),
     ...pick("max", b.max),
-    // Kimi goes to its own key (config.json stays readable by an older daemon after a rollback: FO-2).
+    // v2-only runtimes go to separate keys; old daemons can still read the v1 runtimes list.
     ...runtimesPick(b.runtimes, prev),
     ...pick("dir", b.dir),
     ...pick("env", b.env === null ? null : b.env ? [...new Set(b.env)] : undefined),
     ...pick("ephemeral", b.ephemeral), ...pick("admin", b.admin), ...pick("runner", b.runner), ...pick("runtime_dir", b.runtime_dir), ...pick("same_user", b.same_user),
-    ...pick("accept_readable_home", b.accept_readable_home),
+    ...pick("accept_readable_home", b.accept_readable_home), ...pick("inherit_person_config", b.inherit_person_config),
     ...pick("env_file", undefined), // config.json only: never set through the API
   };
-  // The host decides whether seats may run as configured (isolation.ts): seat users that are safe (not root, not
-  // this user, not administrators, their own groups), a home they can't read, or the person's explicit --same-user.
-  c.noTimeout();
-  return json({ local: await h.configure(next) });
-});
+  const requestedMode = b.mode ?? (b.same_user === true || b.ephemeral === false ? "same_user" : b.ephemeral === true ? "seat_users" : undefined)
+    ?? (b.allow && !prev.mode && !prev.ephemeral && !prev.same_user ? "same_user" : undefined);
+  const next: SeatsConfig = requestedMode
+    ? { ...baseConfig, mode: requestedMode, same_user: requestedMode === "same_user", ephemeral: requestedMode === "seat_users" }
+    : baseConfig;
+  // A remote admin run (an owner's agent on another machine, over /peer/v1/admin/run) may tune seats that are already on
+  // but never turns same-user seats on for this machine: that grant is its person's, here (or their own agent's, above).
+  // Read from the config the request would leave, not from what it asked for: `seats allow` after the person's `seats
+  // deny` asks for no mode, and the config still says same-user.
+  if (!prev.allow && next.allow && (next.mode === "same_user" || next.same_user === true) && runFor(c.core, c.req.headers.get("x-walkie-admin-token"))) {
+    throw new HttpError(403, "person_only", "remote admin can't turn on same-user seats for this machine: its person turns them on here");
+  }
+  return { h, next };
+}
 
-/** `runtimes` as config.json keeps it: Claude/Codex in `runtimes`, Kimi as `kimi` (a Kimi-only list is refused). */
+/** Keep v2-only runtimes out of config's v1 `runtimes` list for old readers. */
 function runtimesPick(list: SeatRuntime[] | null | undefined, prev: SeatsConfig): Partial<SeatsConfig> {
-  if (list === undefined) return { ...(prev.runtimes ? { runtimes: prev.runtimes } : {}), ...(prev.kimi !== undefined ? { kimi: prev.kimi } : {}) };
+  if (list === undefined) return { ...(prev.runtimes ? { runtimes: prev.runtimes } : {}), ...(prev.kimi !== undefined ? { kimi: prev.kimi } : {}), ...(prev.grok !== undefined ? { grok: prev.grok } : {}) };
   if (list === null) return {};
-  const v1 = [...new Set(list.filter((r): r is "claude" | "codex" => r !== "kimi"))];
-  if (!v1.length) throw new HttpError(400, "invalid", "list claude or codex too: a Kimi-only machine isn't supported yet (leaving --runtimes out allows Claude and Codex, not Kimi)");
-  return { runtimes: v1, kimi: list.includes("kimi") };
+  const v1 = [...new Set(list.filter((r): r is "claude" | "codex" => r === "claude" || r === "codex"))];
+  if (!v1.length) throw new HttpError(400, "invalid", "list claude or codex too: a v2-only machine isn't supported yet (leaving --runtimes out allows Claude and Codex)");
+  return { runtimes: v1, kimi: list.includes("kimi"), grok: list.includes("grok") };
 }
 
 const TokenReq = z.object({ token: z.string().regex(/^[A-Za-z0-9._~+/=-]{20,4096}$/, "not a token").nullable() }).strict();
@@ -175,6 +243,14 @@ function storeBrief(c: RouteCtx, text: string): string {
   return hash;
 }
 
+/** Why a host's advertised status says its seats are blocked (a startup enrollment migration or an unreadable enrollment state), or null. */
+function enrollmentBlockReason(h: SeatHostView | undefined): string | null {
+  if (!h || h.allows) return null;
+  if (h.activity === SEATS_PHRASES.enrollmentMigration) return "enrollment migration requires local elevation: run walkie provision migrate-enrollment";
+  if (h.activity === SEATS_PHRASES.enrollmentUnreadable) return "enrollment state is unreadable: seats refuse to start";
+  return null;
+}
+
 /** The admitted machine a launcher names (node id or hostname) and its seats channel, which I must be in. */
 function target(c: RouteCtx, machine: string): { node: string; hostname: string; channel: string } {
   const n = activeNodes(c.core.roster).find((x) => x.node_id === machine || x.hostname === machine);
@@ -182,7 +258,11 @@ function target(c: RouteCtx, machine: string): { node: string; hostname: string;
   const channel = seatsChannel(n.node_id);
   const ch = c.core.roster.channels.get(channel);
   const me = c.core.myHandle();
-  if (!ch) throw new HttpError(409, "seats_not_allowed", `${n.hostname} doesn't take seats: its person runs \`walkie seats allow\` there to turn them on`);
+  // A host that advertises an enrollment block refuses here, naming it, channel or not: one blocked from its start never
+  // made a seats channel, and `walkie seats allow` there would change nothing. One whose seats are merely off (or were just
+  // turned on, before its status reaches this machine) still gets the request and answers it itself.
+  const blocked = enrollmentBlockReason(seatHosts(c.core, c.sync).find((h) => h.node === n.node_id));
+  if (!ch) throw new HttpError(409, "seats_not_allowed", `${n.hostname} doesn't take seats: ${blocked ?? "its person runs `walkie seats allow` there to turn them on"}`);
   if (!ch.members || !me || !ch.members.includes(me)) {
     const person = `@${me}`;
     const exact = c.agent ? `@${me}/${c.core.hostname}/${c.agent}` : null;
@@ -191,6 +271,7 @@ function target(c: RouteCtx, machine: string): { node: string; hostname: string;
       : `\`walkie seats allow --launchers ${person}\` there to add you`;
     throw new HttpError(403, "forbidden", `you aren't a launcher on ${n.hostname}: its person runs ${hint}`);
   }
+  if (blocked) throw new HttpError(409, "seats_not_allowed", `${n.hostname} doesn't take seats: ${blocked}`);
   return { node: n.node_id, hostname: n.hostname, channel };
 }
 
@@ -240,7 +321,7 @@ route("POST", "/v1/seats/run", async (c) => {
   if (b.bundle && !readBlob(c.core.paths.blobs, b.bundle)) {
     throw new HttpError(400, "invalid", "that repo bundle isn't on this machine (send it with POST /v1/seats/bundle, or walkie seat run --repo)");
   }
-  const v2 = b.v === 2 || b.runtime === "kimi" || b.brief !== undefined || b.label !== undefined || b.workspace !== undefined || b.account !== undefined || b.result_file !== undefined;
+  const v2 = b.v === 2 || b.runtime === "kimi" || b.runtime === "grok" || b.brief !== undefined || b.label !== undefined || b.workspace !== undefined || b.account !== undefined || b.result_file !== undefined;
   let seat: SeatRun | SeatRunV2;
   let text: string;
   // Never to a host whose daemon says it can't (a released pre.5 one ignores a v2 body): refused here instead.
@@ -261,6 +342,7 @@ route("POST", "/v1/seats/run", async (c) => {
       throw new HttpError(400, "invalid", "that workspace delta bundle isn't on this machine (send it with POST /v1/seats/bundle)");
     }
     if (b.runtime === "kimi" && b.permission_mode !== "bypassPermissions") throw new HttpError(400, "invalid", KIMI_FULL_ACCESS_ONLY);
+    if (b.runtime === "grok" && b.account) throw new HttpError(400, "invalid", "Grok seats use only the host user's subscription login, not a vault account");
     const briefSrc = b.brief ?? b.prompt;
     if (!briefSrc) throw new HttpError(400, "invalid", "a v2 request needs a brief (brief, or prompt)");
     const parsed = SeatRunV2.safeParse({

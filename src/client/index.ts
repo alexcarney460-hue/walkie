@@ -13,9 +13,14 @@ import { ORCHESTRATOR_TOKEN_ENV, ORCHESTRATOR_TOKEN_HEADER, type OrchMessage, ty
 import type { AccountView } from "../protocol/accounts.ts";
 import type { MachineStats } from "../protocol/machine-stats.ts";
 import type { StatusProvenance } from "../protocol/status-projection.ts";
+import type { HookDelivery } from "../protocol/hook-delivery.ts";
+import type { HermesStatus } from "../daemon/hermes-status.ts";
 import { matchesSearch } from "../protocol/agent-roster.ts";
 import { runtimeLabel } from "../cli/agent-detect.ts";
-import type { RemoteRunRes } from "../protocol/admin.ts";
+import { MAX_REMOTE_TIMEOUT_S, type RemoteRunRes } from "../protocol/admin.ts";
+import type { Grant } from "../daemon/provision/grant.ts";
+import type { ApplyResult, Journal } from "../daemon/provision/runner.ts";
+import type { ProfileId } from "../daemon/provision/profiles.ts";
 import type { ConnectionView, InstallView, PoolLocalView, PrepareView, RunView, ServeView } from "../protocol/pool.ts";
 import type { MobileStatus, PairView } from "../daemon/mobile/manager.ts";
 import type { AddMachine } from "../protocol/add-machine.ts";
@@ -160,11 +165,26 @@ export class WalkieClient {
   adminSwitches(b: { agent_admin?: boolean; remote_admin?: boolean }) {
     return this.request<{ agent_admin: boolean; remote_admin: boolean }>("POST", "/v1/admin/switches", b);
   }
-  adminAudit(action: string) { return this.request<{ recorded: boolean }>("POST", "/v1/admin/audit", { action }); }
+  /** One audit line of the CLI's own admin steps; `refused` (a reason) marks one that was refused or failed: logged here only, never posted. */
+  adminAudit(action: string, refused?: string) { return this.request<{ recorded: boolean }>("POST", "/v1/admin/audit", { action, ...(refused ? { refused } : {}) }); }
   adminMachines() { return this.request<AdminMachines>("GET", "/v1/admin/machines"); }
   adminRun(b: { machines: string; argv: string[]; timeout_s?: number }) {
-    return this.request<AdminRunResult>("POST", "/v1/admin/run", b, ((b.timeout_s ?? 300) + 30) * 1000);
+    const timeout = b.timeout_s ?? (b.argv[0] === "provision" && b.argv[1] === "apply" ? MAX_REMOTE_TIMEOUT_S : 300);
+    return this.request<AdminRunResult>("POST", "/v1/admin/run", b, (timeout + 30) * 1000);
   }
+  /** Only the local person's post-join consent flow writes this grant. */
+  provisionGrant(b: Pick<Grant, "owner_node" | "launchers" | "seat_cap" | "profiles" | "company_mode" | "consent_version" | "consent_text"> & { worker_accounts?: Grant["worker_accounts"]; owner_ssh?: Grant["owner_ssh"]; consented: true; confirmation: { surface: "cli" | "desktop" | "windows"; typed_phrase: "yes" } }) {
+    return this.request<Grant>("POST", "/v1/provision/grant", b);
+  }
+  /** Before the consent and any administrator step: would this daemon accept the packet (nothing is spent), and what is already in place? */
+  provisionCheck(b: { owner_ssh?: Grant["owner_ssh"] }) {
+    return this.request<{ root_marker: boolean; ssh_server: boolean; owner_ssh: "none" | "usable" | "recorded" }>("POST", "/v1/provision/check", b);
+  }
+  provisionStatus(profile: ProfileId) { return this.request<Journal>("GET", `/v1/provision?profile=${encodeURIComponent(profile)}`); }
+  provisionApply(profile: ProfileId) { return this.request<ApplyResult>("POST", "/v1/provision/apply", { profile }, MAX_REMOTE_TIMEOUT_S * 1000); }
+  provisionRevoke() { return this.request<{ revoked_at: number }>("POST", "/v1/provision/revoke", {}); }
+  provisionUnenroll() { return this.request<{ unenrolled: true }>("POST", "/v1/provision/unenroll", {}); }
+  provisionReset(profile: ProfileId) { return this.request<{ reset: true; archived: boolean }>("POST", "/v1/provision/reset", { profile }); }
   license() { return this.request<PlanView>("GET", "/v1/license"); }
   /**
    * Owner: an activation code (exchanged online on the authority, so it may take a while) or a license key for
@@ -226,9 +246,16 @@ export class WalkieClient {
   /**
    * Reports a status. `provenance` says where its title / task / activity text came from (status-projection.ts): the
    * daemon shares that text only as the sharing policy allows; without it the text counts as unknown and is dropped.
+   * `delivery` says which hook event this report is, so the daemon applies one event once if it arrives twice
+   * (`duplicate: true` in the reply: it was a repeat and changed nothing).
    */
-  status(body: Record<string, unknown>, provenance?: StatusProvenance) {
-    return this.request<{ event: Event | null }>("POST", "/v1/status", provenance ? { ...body, provenance } : body, Math.min(this.timeoutMs, 3_000));
+  status(body: Record<string, unknown>, provenance?: StatusProvenance, delivery?: HookDelivery) {
+    return this.request<{ event: Event | null; duplicate?: true }>("POST", "/v1/status",
+      { ...body, ...(provenance ? { provenance } : {}), ...(delivery ? { delivery } : {}) }, Math.min(this.timeoutMs, 3_000));
+  }
+  /** A Hermes hook observation; the daemon orders and combines sessions before publishing status. */
+  hermesStatus(body: HermesStatus) {
+    return this.request<{ event: Event | null }>("POST", "/v1/hermes/status", body, Math.min(this.timeoutMs, 3_000));
   }
   /** Atomically claim delivery of these events to this agent; returns the ids this caller won. */
   claimDeliveries(ids: string[]) { return this.request<{ claimed: string[] }>("POST", "/v1/deliveries", { ids }); }
@@ -432,9 +459,13 @@ export class WalkieClient {
 
   // ---- remote seats (PROTOCOL §11) ----
   seats(seat?: string) { return this.request<SeatsView>("GET", `/v1/seats${seat ? `?seat=${encodeURIComponent(seat)}` : ""}`); }
+  seatsCleanupRoot(id: string) { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/cleanup-root", { id }); }
+  /** `walkie seats doctor`: checks this machine's Claude and Codex sign-ins now (`seats()` serves the last check's answer). */
+  seatsDoctor() { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/doctor", {}, 45_000); }
   seatsConfig(body: {
-    allow: boolean; launchers?: string[] | null; max?: number | null; runtimes?: SeatRuntime[] | null; dir?: string | null; env?: string[] | null;
+    allow: boolean; mode?: "same_user" | "seat_users"; launchers?: string[] | null; max?: number | null; runtimes?: SeatRuntime[] | null; dir?: string | null; env?: string[] | null;
     ephemeral?: boolean | null; admin?: string | null; runner?: string | null; runtime_dir?: string | null; same_user?: boolean; accept_readable_home?: boolean;
+    inherit_person_config?: boolean; migration_confirm?: "migrate same-user seats";
   }) {
     return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/config", body, 60_000);
   }
@@ -519,6 +550,9 @@ export class WalkieClient {
   /** A hand-out: Claude → `token` (a setup-token); Codex → `codex_auth` (an access-only auth.json, COMPANY POOL). */
   vaultLease(body: { account: string; node: string; agent?: string; provider?: "claude" | "codex" }) {
     return this.request<{ token?: string; codex_auth?: string; expires_at?: number | null; owner: string; grant: string; gen: string }>("POST", "/v1/vault/lease", body, 15_000);
+  }
+  vaultProbe(body: { account: string; node: string; provider: "claude" | "codex" }) {
+    return this.request<{ ready: true }>("POST", "/v1/vault/probe", body, 15_000);
   }
 
   async share(bytes: Uint8Array, meta: { name: string; mime: string; note?: string; channel?: string; thread?: string }) {

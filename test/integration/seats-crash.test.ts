@@ -5,6 +5,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Cluster, TestNode, waitFor } from "../helpers/cluster.ts";
+import { noKeychainSeats } from "../helpers/no-keychain.ts";
 
 const FIXTURE = join(import.meta.dir, "..", "fixtures", "seats-crash-host.ts");
 const cleanup: Array<() => void | Promise<void>> = [];
@@ -51,7 +52,7 @@ test("after a kill -9 of the host daemon, its next start kills every survivor of
 
   // arvid's daemon starts again on the same home.
   const c = new Cluster();
-  const node = new TestNode(c, { name: "arvid", login: "arvid@example.com", hostname: "arvid-mac" }, info.arvidHome, 0);
+  const node = new TestNode(c, { name: "arvid", login: "arvid@example.com", hostname: "arvid-mac", seats: noKeychainSeats(join(info.root, "arvid-home")) }, info.arvidHome, 0);
   await node.start();
   cleanup.push(async () => { await node.stop(); await c.close(); });
   await waitFor(() => !alive(grandchild), { what: "the leftover group member killed", timeoutMs: 5_000 });
@@ -89,7 +90,7 @@ test("a host daemon killed while a seat is paused (busy): the next start kills t
   expect(saved.running.map((r) => r.pid)).toEqual([leader]);
 
   const c = new Cluster();
-  const node = new TestNode(c, { name: "arvid", login: "arvid@example.com", hostname: "arvid-mac" }, info.arvidHome, 0);
+  const node = new TestNode(c, { name: "arvid", login: "arvid@example.com", hostname: "arvid-mac", seats: noKeychainSeats(join(info.root, "arvid-home")) }, info.arvidHome, 0);
   await node.start();
   cleanup.push(async () => { await node.stop(); await c.close(); });
   await waitFor(() => !alive(leader) && !alive(grandchild), { what: "the stopped group killed", timeoutMs: 5_000 });

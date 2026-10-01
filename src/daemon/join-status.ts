@@ -67,6 +67,7 @@ export interface JoinStatusFacts {
   machine: string;
   version: string;
   seats: { running: number; max: number };
+  disabled_reason?: string;
   claude: RuntimeReadiness;
   codex: RuntimeReadiness;
   health: HealthFact;
@@ -76,6 +77,7 @@ export interface JoinStatusFacts {
 export function joinStatusText(f: JoinStatusFacts): string {
   const base = `@${f.handle}'s ${f.machine}, Walkie ${f.version}, seats ${f.seats.running}/${f.seats.max}`;
   const problems: string[] = [];
+  if (f.disabled_reason) problems.push(`seats unavailable: ${f.disabled_reason}`);
   if (!f.health.ok) problems.push(f.health.why ?? "a local health check failed");
   if (!f.claude.ready) problems.push(f.claude.why ?? "Claude Code not ready");
   if (!f.codex.ready) problems.push(f.codex.why ?? "Codex not ready");
@@ -104,6 +106,7 @@ function gatherFacts(core: Core): JoinStatusFacts | null {
   const { claude, codex } = runtimeReadiness(local, facts);
   return {
     handle, machine: core.hostname, version: VERSION, seats: { running: local.running, max: local.max },
+    ...(local.disabled_reason ? { disabled_reason: local.disabled_reason } : {}),
     claude, codex, health: basicHealth(core.paths),
   };
 }

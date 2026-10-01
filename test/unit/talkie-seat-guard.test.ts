@@ -32,13 +32,15 @@ test("the seat run route rejects a scheduled request and accepts the same intera
       members: new Map([["alex@example.com", { handle: "alex", role: "owner" }]]),
       channels: new Map([[seatsChannel(node), { members: ["alex"] }]]) },
     limits: { agentWrite: {} }, limiter: { take: () => true },
+    // A machine that takes seats has a live `seats` status; the route refuses one whose seats are off.
+    store: { agents: () => [{ node, agent: "seats", ts: Date.now(), body: JSON.stringify({ agent: "seats", state: "idle", runtime: "other", title: "Seats" }) }] },
     emit: () => { launches++; return { id: `${node}:${launches}` }; } } as unknown as Core;
   registerHost(core, { acceptsToken: () => true, scheduledTurnActive: () => scheduled } as unknown as OrchestratorHost);
   const request = (agent = "orchestrator") => {
     const req = new Request("http://localhost/v1/seats/run", { method: "POST",
       body: JSON.stringify({ machine: node, runtime: "codex", prompt: "approved card" }) });
     return dispatch({ core, req, url: new URL(req.url), agent, orchestratorToken: "valid",
-      via: "cli", noTimeout: () => {} } as unknown as RouteCtx);
+      via: "cli", noTimeout: () => {}, sync: { isOnline: () => true } } as unknown as RouteCtx);
   };
   await expect(request()).rejects.toMatchObject({ status: 403, code: "scheduled_turn_cannot_launch" });
   await expect(request("helper")).rejects.toMatchObject({ status: 403, code: "forbidden" });

@@ -24,7 +24,7 @@
 // Neither is a boundary against a hostile agent running as the same OS user (it can clean its environment, or call
 // the socket directly): see SECURITY.md "Known limits". They keep honest agents from acting as the person.
 import { remoteRunToken } from "../client/remote-run.ts";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { basename } from "node:path";
 
 type Env = Record<string, string | undefined>;
@@ -171,7 +171,27 @@ function scriptPath(argv: readonly string[], i: number): string {
   return argv[i] as string;
 }
 
-export interface ProcRow { ppid: number; command: string; argv?: string[] }
+export interface ProcRow { ppid: number; command: string; argv?: string[]; startTime?: string; executable?: string }
+
+function procStat(pid: number): { ppid: number; startTime: string } {
+  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+  const ppid = Number(fields[1]);
+  const startTime = fields[19]; // /proc stat field 22, counting state as field 3
+  if (!Number.isInteger(ppid) || !startTime || !/^\d+$/.test(startTime)) throw new Error("invalid process stat");
+  return { ppid, startTime };
+}
+
+/** Stable process identity to compare with a Unix socket peer PID captured at accept. */
+export function readProcessStartTime(pid: number): string | null {
+  try {
+    if (process.platform === "linux") return procStat(pid).startTime;
+    if (process.platform !== "darwin") return null;
+    const r = Bun.spawnSync(["ps", "-p", String(pid), "-o", "lstart="],
+      { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin" }, timeout: 3_000 });
+    return r.exitCode === 0 ? r.stdout.toString().trim() || null : null;
+  } catch { return null; }
+}
 
 /** A process's exact argv on Linux (/proc/<pid>/cmdline, NUL-separated), or undefined. */
 function procArgv(pid: number): string[] | undefined {
@@ -194,10 +214,11 @@ function procTable(): Map<number, ProcRow> | null {
     for (const name of readdirSync("/proc")) {
       if (!/^\d+$/.test(name)) continue;
       try {
-        const stat = readFileSync(`/proc/${name}/stat`, "utf8");
-        const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]); // after "(comm) state"
+        const { ppid, startTime } = procStat(Number(name));
         const argv = procArgv(Number(name));
-        table.set(Number(name), { ppid, command: (argv ?? []).join(" "), ...(argv ? { argv } : {}) });
+        let executable: string | undefined;
+        try { executable = readlinkSync(`/proc/${name}/exe`); } catch { /* inaccessible */ }
+        table.set(Number(name), { ppid, startTime, command: (argv ?? []).join(" "), ...(argv ? { argv } : {}), ...(executable ? { executable } : {}) });
       } catch { /* exited meanwhile */ }
     }
     return table.size ? table : null;
@@ -215,12 +236,19 @@ export function readProcessTable(): Map<number, ProcRow> | null {
   const proc = procTable();
   if (proc) return proc;
   try {
-    const r = Bun.spawnSync(["ps", "-ww", "-A", "-o", "pid=,ppid=,command="], { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin" }, timeout: 3_000 });
+    const r = Bun.spawnSync(["ps", "-ww", "-A", "-o", "pid=,ppid=,lstart=,command="], { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin" }, timeout: 3_000 });
     if (r.exitCode !== 0) return null;
+    const comm = Bun.spawnSync(["ps", "-A", "-o", "pid=,comm="], { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin" }, timeout: 3_000 });
+    const executables = new Map<number, string>();
+    if (comm.exitCode === 0) for (const line of comm.stdout.toString().split("\n")) {
+      const match = /^\s*(\d+)\s+(.*\S)\s*$/.exec(line);
+      if (match) executables.set(Number(match[1]), match[2]!);
+    }
     const table = new Map<number, ProcRow>();
     for (const line of r.stdout.toString().split("\n")) {
-      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-      if (m) table.set(Number(m[1]), { ppid: Number(m[2]), command: m[3] as string });
+      const m = /^\s*(\d+)\s+(\d+)\s+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d{4})\s+(.*)$/.exec(line);
+      if (m) table.set(Number(m[1]), { ppid: Number(m[2]), startTime: m[3]!, command: m[4]!,
+        ...(executables.get(Number(m[1])) ? { executable: executables.get(Number(m[1])) } : {}) });
     }
     return table.size ? table : null;
   } catch {

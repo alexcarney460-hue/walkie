@@ -4,7 +4,7 @@ import { isCompiledWalkie } from "../hooks/install.ts";
 import { refreshClaudeHooks } from "../hooks/refresh.ts";
 import { startHookStatePrune } from "./hook-state-prune.ts";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { LicenseVerifier } from "../license/format.ts";
@@ -27,6 +27,7 @@ import { defaultHome, ensureHome, pathsFor, type Paths } from "./paths.ts";
 import type { RateLimits } from "./ratelimit.ts";
 import { Hub } from "./sse.ts";
 import { Store } from "./store.ts";
+import { removeLegacyHermesFiles } from "./hermes-legacy.ts";
 import { SyncManager, type SyncOptions } from "./sync.ts";
 import { VERSION } from "./version.ts";
 import { accountsView, agentsPayload, agentsView, nodesView } from "./views.ts";
@@ -49,6 +50,9 @@ import { LinearImportService } from "../integrations/linear-import/service.ts";
 import "../pool/run/routes.ts"; // registers /v1/pool (WALKIE-POOL-2 split runs)
 import { PoolService, type PoolOptions } from "../pool/run/service.ts";
 import { PeerCallError } from "./peer-client.ts";
+import { startSshBridge } from "./ssh/bridge.ts";
+import { closeSshTunnelsQuietly } from "./ssh/tunnel.ts";
+import { beginSshDaemon } from "./ssh/state.ts";
 import type { PeerAddr } from "./transport.ts";
 import type { End } from "../pool/run/tunnel.ts";
 import { nodeMember } from "./roster.ts";
@@ -62,6 +66,9 @@ import "./orchestrator/schedule-routes.ts";
 import "./projects/routes.ts"; // registers /v1/projects, /v1/tasks (WALKIE-PROJECTS-1)
 import "./projects/room-routes.ts"; // registers /v1/projects/:ch/room, /v1/tasks/:ref/context (DATA-ROOM-1)
 import "./admin/routes.ts"; // registers /v1/admin (AGENT-ADMIN-1: switches, audit, remote admin)
+import "./provision/routes.ts"; // local enrollment grant and bounded profile status/apply
+import { backfillEnrollment } from "./provision/grant.ts";
+import "./ssh/routes.ts"; // owner SSH status and local revoke
 import { postUpgradeNotice } from "./admin/audit.ts";
 import { JoinStatusReporter } from "./join-status.ts";
 import "./projects/steward-routes.ts"; // registers /v1/steward (FO-6 board steward)
@@ -80,9 +87,19 @@ import { registerCompute } from "./compute/routes.ts";
 import { ComputeService, type ComputeOptions } from "./compute/service.ts";
 import { ComputeSite, computeBaseFromEnv } from "./compute/site.ts";
 import { RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION } from "../protocol/compute-release.ts";
+import { GuestRegistry } from "../mcp/guest-registry.ts";
+import { guestData } from "../mcp/guest-data.ts";
+import { GuestGateway, HmacTunnelAuth } from "../mcp/guest-gateway.ts";
+import { GuestScope } from "../mcp/guest-scope.ts";
+import { registerGuests } from "../mcp/guest-routes.ts";
+import "../mcp/guest-routes.ts"; // registers person-only /v1/guests
 
 export interface DaemonOptions {
   home?: string;
+  /** Tests: enrolled person's scratch home for authorized_keys. */
+  sshUserHome?: string;
+  /** Tests: fake sshd's loopback port. */
+  sshPort?: number;
   socket?: string;
   /** Defaults to TailscaleIdentity. Tests pass a FakeIdentity explicitly. */
   identity?: Identity;
@@ -102,6 +119,8 @@ export interface DaemonOptions {
   /** Apply WALKIE_* env overrides to config (default true). */
   env?: boolean;
   writePid?: boolean;
+  /** Tests only: simulate the startup enrollment migration boundary. */
+  enrollmentBackfill?: (home: string) => boolean;
   /** Connector options (tests inject the HTTP layer and drive runs). */
   integrations?: ManagerOptions;
   /** Linear import (tests: another GraphQL URL, a fast schedule tick). */
@@ -133,6 +152,8 @@ export interface DaemonOptions {
   direct?: DirectOptions;
   /** WALKIE-POOL-2 split runs (tests: the runtime directory, extra llama.cpp arguments, the stage lease). */
   pool?: PoolOptions;
+  /** Tests can start the guest listener with a local fake tunnel assertion key. */
+  guestGateway?: { port: number; tunnelKey: Uint8Array };
   /** Walkie on your phone (off until `walkie mobile pair`); tests point it at a local relay. */
   mobile?: MobileOptions;
   /** RENT-2 rental compute: the site (tests inject base + fetch), poll timing, a release tag for dev builds. */
@@ -242,7 +263,18 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const home = opts.home ?? defaultHome();
   const paths = pathsFor(home, opts.socket);
   ensureHome(paths);
+  let enrollmentBlock: string | null = null;
+  try {
+    if (opts.enrollmentBackfill) opts.enrollmentBackfill(home);
+    else backfillEnrollment(home);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "enrollment state is unreadable";
+    enrollmentBlock = message.includes("walkie provision migrate-enrollment")
+      ? "enrollment migration requires local elevation: run walkie provision migrate-enrollment"
+      : "enrollment state is unreadable: seats refuse to start";
+  }
   const log = createLogger({ file: paths.log, stderr: opts.logStderr, level: opts.logLevel });
+  if (enrollmentBlock) log.warn("enrollment_startup_restricted", { reason: enrollmentBlock });
   const config = loadConfig(paths.config, opts.env !== false);
   const keys = loadOrCreateKeys(paths.key);
   const token = loadOrCreateToken(paths.token);
@@ -256,9 +288,11 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const peerHost = fixedHost ?? ("error" in self ? undefined : self.ip);
 
   const store = new Store(paths.db);
+  removeLegacyHermesFiles(paths.home);
   const hub = new Hub(opts.heartbeatMs);
   const core = new Core({
     paths, config, log, keys, store, identity, hub, limits: opts.limits, hostname,
+    ...(opts.sshUserHome ? { sshUserHome: opts.sshUserHome } : {}),
     ip: peerHost ?? "", login: "error" in self ? null : self.login, peerPort: opts.peerPort ?? config.peer_port,
     ...(opts.licenseVerifier ? { licenseVerifier: opts.licenseVerifier } : {}),
     ...(opts.clock ? { clock: opts.clock } : {}),
@@ -280,12 +314,16 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   }, opts.peerLink);
   // Walkie Direct: started now if this node is on a Direct team, or later by init/join (src/daemon/direct/link.ts).
   const direct = new DirectLink({
-    core, sync, client, api: new PeerApi(core), log, stopTailscale: () => link.stop(),
+    core, sync, client, api: new PeerApi(core, { ...(opts.sshPort ? { port: opts.sshPort } : {}) }), log, stopTailscale: () => link.stop(),
     options: { ...(config.relays ? { relays: config.relays } : {}), ...opts.direct },
   }, config);
   directUp = () => direct.direct() !== null;
   // Projects (WALKIE-PROJECTS-1): boards folded from project channels' posts; restricted members follow the roster.
   const projects = new ProjectsIndex(core, log);
+  const guestRegistry = new GuestRegistry(store);
+  const guestSource = guestData(core, projects, client, sync.requestCatchUp);
+  registerGuests(core, guestRegistry, guestSource);
+  let guestGateway: GuestGateway | null = null;
   const restricted = new RestrictedMembership(core, log);
   const poster = new Poster({ core });
   const manager = new IntegrationManager(core, poster, opts.integrations);
@@ -327,7 +365,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   registerHost(core, orchestrator);
   // Set once the accounts service starts (below); the reset routes answer 404 until then.
   let accountsRef: AccountsService | null = null;
-  const seats = new SeatsHost({ core, client, catchUp: sync.requestCatchUp, log, accounts: () => accountsView(core, sync) }, opts.seats);
+  const seats = new SeatsHost({ core, client, catchUp: sync.requestCatchUp, log, accounts: () => accountsView(core, sync) },
+    { ...opts.seats, ...(enrollmentBlock ? { enrollmentBlock } : {}) });
   registerSeats(core, seats);
   // JOIN-STATUS-1: the one #general post after this machine is admitted (retried until the channel is synced).
   const joinStatus = new JoinStatusReporter(core, log);
@@ -350,6 +389,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   });
 
   let statsSampler: MachineStatsSampler | null = null;
+  let sshBridge: Awaited<ReturnType<typeof startSshBridge>> | null = null;
   try {
     core.onLocalEvent = (ev) => sync.push(ev);
     core.onRosterChange = () => {
@@ -363,6 +403,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     // Mixed teams: an event its origin pushed here goes on to the peers that origin can't reach (sync.ts relay).
     core.onPeerEvent = (ev, from) => sync.relay(ev, from);
     core.reachedPeers = () => sync.reachedPeers();
+    core.sshTeamConfirmed = () => sync.sshTeamConfirmed();
     core.peerRtts = () => sync.peerRtts();
     const addrOrThrow = (nodeId: string) => {
       const n = core.roster.nodes.get(nodeId);
@@ -417,9 +458,25 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     });
 
     await local.startUnix(paths.socket);
+    beginSshDaemon(paths.home);
+    sshBridge = await startSshBridge(core, client);
     const localPort = opts.localPort ?? config.local_port;
     if (localPort !== false) local.startTcp(localPort);
+    const guestSetting = opts.guestGateway ?? (config.guest_gateway ? (() => {
+      const path = config.guest_gateway.assertion_key_file;
+      const file = statSync(path);
+      if (!file.isFile() || (file.mode & 0o077) !== 0) throw new Error("guest assertion key file must be private (0600)");
+      return { port: config.guest_gateway.port, tunnelKey: readFileSync(path) };
+    })() : null);
+    if (guestSetting) {
+      guestGateway = new GuestGateway(guestRegistry, new GuestScope(guestSource), new HmacTunnelAuth(guestSetting.tunnelKey, Date.now,
+        (subject, nonce) => guestRegistry.consumeNonce(subject, nonce)), Date.now,
+        (guest) => !!core.teamId && !!core.me() && core.me()?.role !== "removed" && guest.node === core.nodeId && guest.owner === core.myHandle());
+      guestGateway.listen(guestSetting.port);
+    }
   } catch (err) {
+    guestGateway?.stop();
+    await sshBridge?.stop();
     local.stop();
     mobile.stop();
     hub.close();
@@ -465,7 +522,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   }
   // Running agent sessions that have no hooks yet (started before `walkie hooks install`).
   const discoverable = process.platform === "darwin" || process.platform === "linux" || !!(opts.discovery && opts.discovery.provider);
-  const discovery = opts.discovery !== false && config.discover_agents && discoverable ? new AgentDiscovery(core, log, { share: () => core.sharePolicy(), home: paths.home, ...(opts.discovery || { unnamedMinAgeMs: UNNAMED_MIN_AGE_MS }) }) : null;
+  const discovery = opts.discovery !== false && config.discover_agents && discoverable ? new AgentDiscovery(core, log, { share: () => core.sharePolicy(), hermesActivity: () => core.hermesActivityProfiles(), home: paths.home, ...(opts.discovery || { unnamedMinAgeMs: UNNAMED_MIN_AGE_MS }) }) : null;
   // ACCOUNTS-2: this machine's vault (switchable accounts; read-only here), for the poller and hand-outs.
   const vault = lazyVault(paths.home);
   core.vault = vault;
@@ -548,6 +605,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     async stop() {
       if (stopped) return;
       stopped = true;
+      closeSshTunnelsQuietly(core);
+      await sshBridge?.stop();
       clearInterval(housekeeping);
       if (watchdog) stopWatchdog(watchdog);
       clearInterval(planClock);
@@ -568,6 +627,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       stopHookPrune();
       sampler?.stop();
       accounts?.stop();
+      guestGateway?.stop();
       core.statuses.stop();
       core.close();
       sync.stop();

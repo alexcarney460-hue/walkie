@@ -8,7 +8,8 @@ import { extname, join, resolve, sep } from "node:path";
 import type { Core } from "./core.ts";
 import { DashboardSessions, type Session, type SessionOptions } from "./dashboard-sessions.ts";
 import { ORCHESTRATOR_AGENT, ORCHESTRATOR_TOKEN_HEADER } from "../protocol/orchestrator.ts";
-import { HttpError, errorResponse } from "./http.ts";
+import { HttpError, errorResponse, json, readJson } from "./http.ts";
+import { DesktopProof, isDesktopChallenge, type DesktopProofOptions } from "./desktop-proof.ts";
 import { acquireInstanceLock, type InstanceLock } from "./instance-lock.ts";
 import { dispatch, validAgentHeader, type RouteCtx } from "./local-routes.ts";
 import { adminGate } from "./admin/gate.ts";
@@ -23,6 +24,7 @@ import type { LicenseService } from "../license/service.ts";
 import type { MobileManager } from "./mobile/manager.ts";
 import type { ProjectsIndex } from "./projects/index.ts";
 import { trackOp } from "./watchdog.ts";
+import { VERSION } from "./version.ts";
 
 export const CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'";
 const SECURITY_HEADERS = {
@@ -64,12 +66,22 @@ export interface LocalApiDeps {
   rotateToken?: () => { token: string; path: string };
   /** Dashboard session timings (tests). */
   sessions?: SessionOptions;
+  /** The Windows desktop app's listener-proof clock (tests). */
+  desktop?: DesktopProofOptions;
   /** This machine's accounts service, for limit resets (null while accounts are off). */
   accounts?: () => AccountsService | null;
   /** Paired phones: pairing and the relay link (src/daemon/mobile/manager.ts); absent → `/v1/mobile` answers 404. */
   mobile?: MobileManager;
   /** The board index (WALKIE-PROJECTS-1). */
   projects?: ProjectsIndex;
+}
+
+/** An agent-marked caller (see LocalApi.callerOf): named or proven by the orchestrator's token, or the CLI saying it runs under one. */
+interface Caller { agent: string | undefined; underAgent: boolean }
+
+/** A person's alone: an agent-marked caller gets `person_only`, with the sentence for what the route protects. */
+function refuseAgent(caller: Caller, why: string): void {
+  if (caller.agent || caller.underAgent) throw new HttpError(403, "person_only", why);
 }
 
 function tokenEq(a: string, b: string): boolean {
@@ -113,6 +125,8 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   ["GET", /^\/v1\/import\/linear\/status$/],
   ["POST", /^\/v1\/import\/linear\/(?:plan|run|resume|cancel|sync|settings)$/],
   ["GET", /^\/v1\/(?:me|team|agents|accounts|peers|events|asks|team\/pending|license|integrations|linear\/issues|stream|pool)$/],
+  ["GET", /^\/v1\/guests(?:\/audit)?$/],
+  ["POST", /^\/v1\/guests(?:\/kill|\/[a-z0-9-]+\/revoke)?$/],
   ["GET", /^\/v1\/events\/[^/]+$/],
   ["GET", /^\/v1\/artifacts\/[0-9a-f]{64}$/],
   // WALKIE-PROJECTS-1: projects, boards and cards (the dashboard is a person: every board action is open to it).
@@ -186,6 +200,8 @@ export class LocalApi {
   private lock: InstanceLock | null = null;
   /** The socket path this instance bound (removed on stop, before the lock is released). */
   private boundSocket: string | null = null;
+  /** The per-boot secret and the live challenges that prove a loopback listener is this daemon (desktop-proof.ts). */
+  private readonly desktop: DesktopProof;
 
   constructor(private readonly d: LocalApiDeps) {
     // Sessions' hashes are kept in the store's meta, so a daemon restart (an upgrade) doesn't sign dashboards out.
@@ -196,6 +212,7 @@ export class LocalApi {
     } : undefined);
     this.sessions = new DashboardSessions({ generation: tokenGeneration(d.token), ...d.sessions, ...(persist ? { persist } : {}) });
     this.currentToken = d.token;
+    this.desktop = new DesktopProof(d.desktop);
   }
 
   get tcpPort(): number | null { return this.tcpServer?.port ?? null; }
@@ -325,6 +342,7 @@ export class LocalApi {
         if ("early" in checked) return checked.early;
         auth = checked.credential;
       }
+      if (url.pathname.startsWith("/v1/desktop/")) return await this.desktopRoute(req, url, transport);
       if (!url.pathname.startsWith("/v1/")) {
         if (transport === "tcp") return this.serveStatic(req, url);
         throw new HttpError(404, "not_found", "no such route");
@@ -393,6 +411,74 @@ export class LocalApi {
     }
   }
 
+  /**
+   * `/v1/desktop/*`, for the Windows desktop app (desktop-proof.ts). The identity (port, version, node) and the
+   * registration of a challenge are the owner socket's; only the proof is answered on loopback, and only for a
+   * challenge registered over the socket. The identity is information: it is not served on loopback, and no copy of
+   * it proves anything.
+   */
+  private async desktopRoute(req: Request, url: URL, transport: "unix" | "tcp"): Promise<Response> {
+    const path = url.pathname;
+    if (path === "/v1/desktop/prove") {
+      if (transport !== "tcp") throw new HttpError(404, "not_found", "no such route");
+      return this.desktopProve(req);
+    }
+    if (path !== "/v1/desktop/identity" && path !== "/v1/desktop/challenge") throw new HttpError(404, "not_found", "no such route");
+    // Like /v1/auth/*: the loopback listener is exactly what these protect.
+    if (transport !== "unix") throw new HttpError(403, "forbidden", "this route is only served on the unix socket");
+    if (path === "/v1/desktop/identity") {
+      if (req.method !== "GET") throw new HttpError(405, "method_not_allowed", "method not allowed");
+      return json({ ok: true, version: VERSION, node_id: this.d.core.nodeId, port: this.tcpPort });
+    }
+    return this.desktopRegister(req);
+  }
+
+  /** `POST /v1/desktop/challenge` (unix socket): registers the app's challenge and answers it. A person's, like the login nonce. */
+  private async desktopRegister(req: Request): Promise<Response> {
+    if (req.method !== "POST") throw new HttpError(405, "method_not_allowed", "method not allowed");
+    // The answer lets a loopback port squatter pass for this daemon, so it is as much a person's as the login nonce it
+    // protects (an agent that could register would let a listener it runs collect that nonce): the same check, the same function.
+    refuseAgent(this.callerOf(req), "agents can't register a dashboard listener challenge; it protects the person's login link");
+    const challenge = await this.challengeOf(req);
+    const registered = this.desktop.register(challenge);
+    if (!registered) throw new HttpError(409, "challenge_reused", "this challenge is already registered; make a new one");
+    return json({ ok: true, answer: registered.answer, expires_at: registered.expiresAt });
+  }
+
+  /** `POST /v1/desktop/prove` (loopback): the answer to a registered, unexpired, unanswered challenge, once. */
+  private async desktopProve(req: Request): Promise<Response> {
+    if (req.method !== "POST") throw new HttpError(405, "method_not_allowed", "method not allowed");
+    const answer = this.desktop.answer(await this.challengeOf(req));
+    if (answer === null) throw new HttpError(404, "unknown_challenge", "no such challenge");
+    return json({ ok: true, answer });
+  }
+
+  private async challengeOf(req: Request): Promise<string> {
+    const body = await readJson(req, 1024);
+    const challenge = typeof body === "object" && body !== null ? (body as { challenge?: unknown }).challenge : undefined;
+    if (!isDesktopChallenge(challenge)) throw new HttpError(400, "invalid", "challenge must be 64 lowercase hex characters");
+    return challenge;
+  }
+
+  /**
+   * Who a unix-socket request comes from, for every route that is a person's alone (the login nonce, and the Windows app's
+   * listener-proof challenge that protects it): the agent it names, or the orchestrator its per-run token proves. A request that
+   * carries that token is an agent even with no agent header; a token that is not the orchestrator's, or one beside another
+   * agent's name, is refused outright. ONE function, so the two routes cannot classify the same caller differently.
+   */
+  private callerOf(req: Request): Caller {
+    const namedAgent = validAgentHeader(req.headers.get("x-walkie-agent"));
+    const token = req.headers.get(ORCHESTRATOR_TOKEN_HEADER);
+    if (token !== null && (!hostFor(this.d.core)?.acceptsToken(token)
+      || (namedAgent !== undefined && namedAgent !== ORCHESTRATOR_AGENT))) {
+      throw new HttpError(403, "forbidden", "the orchestrator token requires the orchestrator agent identity");
+    }
+    return {
+      agent: token !== null ? ORCHESTRATOR_AGENT : namedAgent,
+      underAgent: token !== null || req.headers.get("x-walkie-under-agent") === "1",
+    };
+  }
+
   /** `/v1/auth/*`: login nonces, sign-out of every dashboard, token rotation. Unix socket only. */
   private authRoute(req: Request, url: URL, transport: "unix" | "tcp"): Response {
     // The loopback listener is exactly what these protect: a caller must prove it is this OS user.
@@ -404,16 +490,10 @@ export class LocalApi {
     // same-OS-user limit applies (SECURITY.md).
     // AGENT-ADMIN-1: a dashboard session is a credential handed out in plain text (the login link), so it stays a
     // person's; signing out every dashboard and rotating the token are admin actions an agent may take (audited).
-    const namedAgent = validAgentHeader(req.headers.get("x-walkie-agent"));
-    const token = req.headers.get(ORCHESTRATOR_TOKEN_HEADER);
-    if (token !== null && (!hostFor(this.d.core)?.acceptsToken(token)
-      || (namedAgent !== undefined && namedAgent !== ORCHESTRATOR_AGENT))) {
-      throw new HttpError(403, "forbidden", "the orchestrator token requires the orchestrator agent identity");
-    }
-    const agent = token !== null ? ORCHESTRATOR_AGENT : namedAgent;
-    const underAgent = token !== null || req.headers.get("x-walkie-under-agent") === "1";
-    if ((agent || underAgent) && url.pathname === "/v1/auth/nonce") {
-      throw new HttpError(403, "person_only", "agents can't open the dashboard (its login link is a credential in plain text); a person runs walkie dashboard in their own terminal");
+    const caller = this.callerOf(req);
+    const { agent, underAgent } = caller;
+    if (url.pathname === "/v1/auth/nonce") {
+      refuseAgent(caller, "agents can't open the dashboard (its login link is a credential in plain text); a person runs walkie dashboard in their own terminal");
     }
     if (url.pathname === "/v1/auth/logout" || url.pathname === "/v1/auth/rotate") {
       adminGate({ core: this.d.core, agent, underAgent, req }, url.pathname === "/v1/auth/logout" ? "signed out every dashboard session" : "rotated the local API token");
@@ -445,6 +525,12 @@ export class LocalApi {
     const host = req.headers.get("host") ?? "";
     if (!allowedHosts.includes(host)) throw new HttpError(403, "forbidden", "bad Host header");
     const allowedOrigins = allowedHosts.map((h) => `http://${h}`);
+    if (url.pathname === "/v1/desktop/prove") {
+      // The one loopback route the Windows app calls with no credential; a page in a browser can't (Origin).
+      const origin = req.headers.get("origin");
+      if (origin !== null && !allowedOrigins.includes(origin)) throw new HttpError(403, "forbidden", "bad Origin");
+      return { credential: null };
+    }
     if (url.pathname === "/auth") return { early: this.auth(req, url, host, port) };
     if (url.pathname === "/auth/logout") return { early: this.logout(req, host, allowedOrigins) };
     if (!url.pathname.startsWith("/v1/")) return { credential: null };

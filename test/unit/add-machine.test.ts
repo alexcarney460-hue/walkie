@@ -16,8 +16,8 @@ describe("add-machine link and command", () => {
     expect(releaseTag("1.2.3; rm -rf ~")).toBeNull();
   });
   test("the command pins the release and passes the code to setup; the link keeps both in the fragment", () => {
-    expect(addMachineCommand(CODE, "v0.2.0-pre.2")).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${CODE}`);
-    expect(addMachineCommand(CODE, null)).toBe(`curl -fsSL ${INSTALL_URL} | sh -s -- --invite ${CODE}`);
+    expect(addMachineCommand(CODE, "v0.2.0-pre.2")).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=v0.2.0-pre.2 sh -s -- --invite ${CODE} --company-machine`);
+    expect(addMachineCommand(CODE, null)).toBe(`curl -fsSL ${INSTALL_URL} | sh -s -- --invite ${CODE} --company-machine`);
     const link = new URL(addMachineLink(CODE, "v0.2.0-pre.2"));
     expect(`${link.origin}${link.pathname}`).toBe(JOIN_URL);
     expect(link.search).toBe("");

@@ -34,7 +34,7 @@ if (credentialsPath && existsSync(credentialsPath)) {
     refreshFile = !!login.claudeAiOauth?.refreshToken;
   } catch { /* the test will report missing projected access */ }
 }
-log({ argv, cwd: process.cwd(), walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined), access_file: accessFile, refresh_file: refreshFile, credential_mode: credentialMode });
+log({ argv, cwd: process.cwd(), walkie_agent: process.env.WALKIE_AGENT ?? null, claude_config: process.env.CLAUDE_CONFIG_DIR ?? null, env: SEEN.filter((k) => process.env[k] !== undefined), access_file: accessFile, refresh_file: refreshFile, credential_mode: credentialMode });
 
 const need = ["-p", "--verbose", "--include-partial-messages"];
 for (const f of need) if (!argv.includes(f)) { process.stderr.write(`fake claude: missing ${f}\n`); process.exit(2); }
@@ -159,6 +159,13 @@ async function turn(text: string): Promise<void> {
       out({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
       return;
     }
+  } else if (text.includes("echo-token")) {
+    let token = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "";
+    if (!token && credentialsPath) {
+      try { token = (JSON.parse(readFileSync(credentialsPath, "utf8")) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken ?? ""; } catch { /* no file */ }
+    }
+    reply = `provider token ${token}`;
+    delta(reply);
   } else if (text.includes("TEAMPOST")) {
     // The orchestrator's Claude posting to the team through Walkie, as its MCP server would (the real client, which
     // sends the host's per-run secret from this process's environment: ORCH-FIX-13).

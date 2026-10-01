@@ -12,17 +12,18 @@ import {
 import { parseDuration } from "../../daemon/seats/busy.ts";
 import { setupUser } from "./seat-user.ts";
 import { doctorCommand, enableCommand, startCommand } from "./seats-enable.ts";
+import { doctorFacts } from "../../daemon/seats/doctor.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
-import { EXIT, readStdin, type Ctx } from "../context.ts";
+import { EXIT, readStdin, requirePerson, type Ctx } from "../context.ts";
 import { ago, c, safeTerm } from "../format.ts";
 
-const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user] | seats doctor"
+const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user|--seat-users] | seats doctor | seats cleanup-root <root-key> | seats migration-preflight | seats migrate --same-user"
   + " | seats start <machine> [--count n] [--provider claude|codex] (--prompt \"…\" | --brief file|-)"
   + " | seats setup-user [--apply] [--accept-readable-home] | seats allow [--same-user]"
-  + " [--accept-readable-home] [--launchers @a,@a/machine,@a/machine/agent] [--max n]"
-  + " [--runtimes claude,codex,kimi] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
+  + " [--accept-readable-home] [--inherit-person-config] [--launchers @a,@a/machine,@a/machine/agent] [--max n]"
+  + " [--runtimes claude,codex,kimi,grok] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
   + " | seats repo [list] | seats repo add <id> <path> | seats repo rm <id>";
-const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
+const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi|grok] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
   + " [--repo <bundle|git dir|artifact hash>] [--timeout 3600] [--max-concurrent 9] [--wait] -- <prompt…|->"
   + " | seat run --machine <host> --brief-file <file|-> [--label x] [--repo-id id --ref <sha|branch> --mode branch|detached|fresh"
   + " [--branch b] [--delta <bundle file>]] [--account <owner>:<id>] [--result-file rel/path] (v2: hosts announcing seats_v2)"
@@ -32,10 +33,15 @@ export async function seats(ctx: Ctx): Promise<number> {
   const sub = ctx.args.pos[0];
   switch (sub) {
     case undefined: case "list": return list(ctx);
-    // AGENT-ADMIN-1: the machine's person, or an agent of theirs while agent admin is on (audited by the daemon).
+    // AGENT-ADMIN-1: the machine's person, or an agent of theirs while agent admin is on (audited by the daemon). Anything
+    // that is not a person at a terminal (a marked agent, or an unattended caller with no marker) is gated as an agent, with
+    // or without --yes: adminCtx hands a person the plain context, so a flag cannot be a way past it.
     case "allow": return configure(adminCtx(ctx, "allow seats here"), true);
     case "enable": return enableCommand(adminCtx(ctx, "enable seats here"));
     case "doctor": return doctorCommand(ctx);
+    case "cleanup-root": return cleanupRoot(ctx);
+    case "migration-preflight": return migrationPreflight(ctx);
+    case "migrate": return migrate(ctx);
     case "start": return startCommand(ctx);
     case "deny": return configure(adminCtx(ctx, "turn seats off here"), false);
     case "busy": return busy(adminCtx(ctx, "mark this machine busy"));
@@ -46,6 +52,16 @@ export async function seats(ctx: Ctx): Promise<number> {
     case "resume": return resume(adminCtx(ctx, "resume seats here"));
     default: throw new UsageError(`unknown subcommand "${sub}" (${SEATS_USAGE})`);
   }
+}
+
+async function cleanupRoot(ctx: Ctx): Promise<number> {
+  const id = need(ctx.args, 1, "pending seat id (see: walkie seats doctor)");
+  if (!/^[0-9a-f]{16}:[1-9][0-9]*(?:@[0-9a-f]{32})?$/.test(id)) throw new UsageError("invalid pending worker root key");
+  await requirePerson(ctx, `remove pending worker root ${id}; process absence is best effort, and a process that left its group cannot be ruled out`, id);
+  const { local } = await ctx.client().seatsCleanupRoot(id);
+  if (ctx.json) ctx.out(JSON.stringify({ local }));
+  else ctx.out(c.green(`Removed pending worker root ${id}. Process absence is best effort; a process that left its group cannot be ruled out.`));
+  return EXIT.ok;
 }
 
 /** `seats setup-user`: its sudo steps never reach the daemon, so an agent's --apply is audited here. */
@@ -127,9 +143,53 @@ export function isolationLines(l: SeatsLocalView): string[] {
   }
   return [
     c.yellow("Seats run as YOUR OS user: a seat can reach your Walkie (and act as you on this team) and read or change everything your user can."),
+    c.dim("Private worker directories organize each run; they do not restrict its OS access."),
+    c.yellow("Only allow trusted launchers. Grok credential path denies and output checks cannot remove that file access."),
     c.yellow("Give them users of their own: walkie seats setup-user --apply (see INSTALL.md, \"Remote seats\")."),
     ...q,
   ];
+}
+
+/** Read-only inventory before changing a machine that already uses seat users. */
+async function migrationPreflight(ctx: Ctx): Promise<number> {
+  const { local, seats: all } = await ctx.client().seats();
+  const me = await ctx.client().me();
+  const facts = doctorFacts(local, me.team?.name ?? null);
+  const live = all.filter((s) => s.host.node === me.node.id && !TERMINAL_STATES.has(s.state));
+  const inventory = {
+    mode: local.ephemeral ? "seat_users" : local.same_user ? "same_user" : "unconfigured",
+    allowed: local.allow, live: live.map((s) => ({ id: s.id, state: s.state })),
+    running: local.running, queued: local.queued, quarantined: local.quarantined ?? [],
+    helper: local.helper_version?.state ?? (local.ephemeral ? "unverified" : "not selected"),
+    helper_ownership: facts.release ? facts.runnerProblem ?? "root-owned paths verified" : "source build: not verified",
+    helper_reachability: facts.release ? facts.helper : "source build: not verified",
+    helper_problem: local.helper_version?.problem ?? local.reconcile_error ?? null,
+  };
+  if (ctx.json) { ctx.out(JSON.stringify(inventory)); return EXIT.ok; }
+  ctx.out(`Seat migration preflight: ${inventory.mode}; seats ${local.allow ? "on" : "off"}`);
+  ctx.out(`Live seats: ${inventory.running} running, ${inventory.queued} queued${live.length ? ` (${live.map((s) => `${s.id} ${s.state}`).join(", ")})` : ""}`);
+  ctx.out(`Quarantined users: ${inventory.quarantined.length ? inventory.quarantined.join(", ") : "none"}`);
+  ctx.out(`Helper: ${inventory.helper}; ownership ${inventory.helper_ownership}; reachability ${inventory.helper_reachability}${inventory.helper_problem ? ` (${inventory.helper_problem})` : ""}; no cleanup was performed`);
+  ctx.out("Migration: let seats finish or stop them, reconcile quarantined users, then the person runs walkie seats migrate --same-user. Keep the helper until cleanup is verified.");
+  return EXIT.ok;
+}
+
+/** A person at this machine's terminal inventories, denies, then explicitly consents to the mode change. */
+async function migrate(ctx: Ctx): Promise<number> {
+  if (!bool(ctx.args, "same-user")) throw new UsageError("use walkie seats migrate --same-user");
+  if (adminCaller(ctx).kind !== "person") throw new UsageError("seat migration is for the person at this machine's terminal; remote admin and agents are refused");
+  await migrationPreflight(ctx);
+  const client = ctx.client();
+  const before = (await client.seats()).local;
+  if (!before.ephemeral) throw new UsageError("this machine is not in seat-user mode");
+  if (before.running || before.queued || before.quarantined?.length || before.reconcile_error) {
+    throw new UsageError("seat-user inventory is not clean; finish or stop seats and reconcile held users before migration");
+  }
+  await requirePerson(ctx, "migrate this company machine from seat users to same-user seats, allowing agents your OS access", "migrate same-user seats");
+  await client.seatsConfig({ allow: false });
+  const { local } = await client.seatsConfig({ allow: true, mode: "same_user", migration_confirm: "migrate same-user seats" });
+  ctx.out(ctx.json ? JSON.stringify({ local }) : "Seats now run as your OS user. The seat-user helper remains installed for verified cleanup.");
+  return EXIT.ok;
 }
 
 function localLine(l: SeatsLocalView): string {
@@ -202,10 +262,11 @@ async function resume(ctx: Ctx): Promise<number> {
 /** Applies the opt-in helper for `walkie join … --allow-seats` too. */
 export async function allowSeats(client: WalkieClient, opts: {
   launchers?: string[]; max?: number; runtimes?: SeatRuntime[]; dir?: string; env?: string[]; sameUser?: boolean;
-  acceptReadableHome?: boolean;
+  acceptReadableHome?: boolean; inheritPersonConfig?: boolean;
 } = {}): Promise<SeatsLocalView> {
   const res = await client.seatsConfig({
     allow: true, ...(opts.sameUser ? { same_user: true } : {}),
+    ...(opts.inheritPersonConfig !== undefined ? { inherit_person_config: opts.inheritPersonConfig } : {}),
     ...(opts.acceptReadableHome ? { accept_readable_home: true } : {}),
     ...(opts.launchers ? { launchers: opts.launchers } : {}), ...(opts.max ? { max: opts.max } : {}),
     ...(opts.runtimes ? { runtimes: opts.runtimes } : {}), ...(opts.dir ? { dir: opts.dir } : {}), ...(opts.env ? { env: opts.env } : {}),
@@ -226,6 +287,8 @@ export function seatsDirArg(dir: string, cwd: string = process.cwd()): string {
 async function configure(ctx: Ctx, allow: boolean): Promise<number> {
   const client = ctx.client();
   let local: SeatsLocalView;
+  const inheritFlag = ctx.args.flags.get("inherit-person-config");
+  const inheritPersonConfig = inheritFlag === undefined ? undefined : inheritFlag === true;
   if (allow) {
     const launchers = listArg(str(ctx.args, "launchers"));
     for (const l of launchers ?? []) if (!parseLauncher(l)) throw new UsageError(`--launchers: "${l}" is not @handle, @handle/machine or @handle/machine/agent`);
@@ -235,14 +298,22 @@ async function configure(ctx: Ctx, allow: boolean): Promise<number> {
     const dir = str(ctx.args, "dir");
     const env = listArg(str(ctx.args, "env"));
     const sameUser = bool(ctx.args, "same-user");
+    const before = (await client.seats()).local;
+    if (sameUser && before.ephemeral) throw new UsageError("seat-user migration requires the person here: run walkie seats migration-preflight, then walkie seats migrate --same-user");
+    // A person confirms (or passes --yes) before seats run as their own OS user; an agent of theirs goes ahead with the
+    // flags it gave (AGENT-ADMIN-1: adminCtx checked agent admin is on, and its requests are marked, so the daemon audits).
+    if (!before.allow && !before.ephemeral && adminCaller(ctx).kind === "person" && !bool(ctx.args, "yes")) {
+      await requirePerson(ctx, "let the team run agents as your OS user with access to your files, keys and Walkie daemon", "yes");
+    }
     const acceptReadableHome = bool(ctx.args, "accept-readable-home");
     local = await allowSeats(client, {
       ...(launchers ? { launchers } : {}), ...(max ? { max } : {}), ...(runtimes ? { runtimes: runtimes as SeatRuntime[] } : {}),
       ...(dir ? { dir: seatsDirArg(dir) } : {}), ...(env ? { env } : {}), ...(sameUser ? { sameUser } : {}),
       ...(acceptReadableHome ? { acceptReadableHome } : {}),
+      ...(inheritPersonConfig !== undefined ? { inheritPersonConfig } : {}),
     });
   } else {
-    local = (await client.seatsConfig({ allow: false })).local;
+    local = (await client.seatsConfig({ allow: false, ...(inheritPersonConfig !== undefined ? { inherit_person_config: inheritPersonConfig } : {}) })).local;
   }
   if (ctx.json) { ctx.out(JSON.stringify({ local })); return EXIT.ok; }
   ctx.out(localLine(local));
@@ -367,7 +438,7 @@ async function run(ctx: Ctx): Promise<number> {
   const node = team.nodes.find((n) => n.node_id === machine || n.hostname === machine);
   if (!node) throw new UsageError(`no machine ${machine} in the team (see: walkie who)`);
   const repo = str(ctx.args, "repo");
-  if (repo && (v2 || runtime === "kimi")) throw new UsageError("--repo is for v1 seats: a v2 seat works in the host's clone (--repo-id, --ref, --delta)");
+  if (repo && (v2 || runtime === "kimi" || runtime === "grok")) throw new UsageError("--repo is for v1 seats: a v2 seat works in the host's clone (--repo-id, --ref, --delta)");
   const bundle = repo ? await repoBundle(ctx, repo) : undefined;
   const timeout = int(ctx.args, "timeout");
   const maxConcurrent = int(ctx.args, "max-concurrent");

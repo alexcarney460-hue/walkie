@@ -12,10 +12,16 @@ export type Runtime = "claude-code" | "codex" | "kimi" | "cli" | "other";
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,47}$/;
 
 export function detectRuntime(env: NodeJS.ProcessEnv = process.env): Runtime {
+  if (env.GROK_SESSION_ID || env.GROK_HOOK_EVENT) return "other";
   if (env.CLAUDE_CODE_SESSION_ID || env.CLAUDECODE) return "claude-code";
   if (env.CODEX_THREAD_ID || env.CODEX_SANDBOX || env.CODEX_HOME) return "codex";
   if (env.KIMI_SESSION_ID) return "kimi";
   return "cli";
+}
+
+/** An unenumerated runtime's display name; the wire value remains "other". */
+export function otherRuntimeName(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.GROK_SESSION_ID ? "grok" : undefined;
 }
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,6 +49,8 @@ export function normalizeAgentName(raw: string | undefined): string | null {
 export function resolveAgentName(env: NodeJS.ProcessEnv = process.env, sessionId?: string): string | null {
   const explicit = normalizeAgentName(env.WALKIE_AGENT);
   if (explicit) return explicit;
+  const grok = env.GROK_SESSION_ID ?? (env.GROK_HOOK_EVENT ? sessionId : undefined);
+  if (grok) return `grok-${shortId(grok)}`;
   const cc = env.CLAUDE_CODE_SESSION_ID ?? (detectRuntime(env) === "claude-code" ? sessionId : undefined);
   if (cc) return `cc-${shortId(cc)}`;
   const codex = env.CODEX_THREAD_ID ?? (detectRuntime(env) === "codex" ? sessionId : undefined);

@@ -5,6 +5,7 @@
 // parent exits, it is reparented to init/launchd, and the CLI's ancestors are that shell and init only.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { throwawayHomeEnv } from "./test-home.ts";
 
 const INNER = `#!/bin/sh
 orig="$1"; d="$2"; shift 2
@@ -34,9 +35,14 @@ export interface PersonOptions {
 
 const PTY_RUN = join(import.meta.dir, "pty-run.py");
 
-/** `argv` (the executable first) with exactly `env`, detached from this process's ancestry; waits for it to finish. */
+/**
+ * `argv` (the executable first) with `env`, detached from this process's ancestry; waits for it to finish. A test that names no
+ * HOME gets the test run's throwaway home (and what goes with it) added, because the child, a bun CLI under a shell, would
+ * otherwise ask the passwd entry for its home and resolve the real one; a test that names a HOME keeps exactly its own.
+ */
 export async function runAsPerson(argv: string[], env: Record<string, string>, opts: PersonOptions | number = {}): Promise<CliResult> {
   const o: PersonOptions = typeof opts === "number" ? { timeoutMs: opts } : opts;
+  const childEnv = "HOME" in env ? env : { ...throwawayHomeEnv(), ...env };
   const dir = mkdtempSync("/tmp/walkie-person-");
   try {
     const inner = join(dir, "inner.sh");
@@ -44,7 +50,7 @@ export async function runAsPerson(argv: string[], env: Record<string, string>, o
     if (o.stdin !== undefined && !o.tty) writeFileSync(join(dir, "in"), o.stdin);
     const cmd = o.tty ? ["python3", PTY_RUN, o.type?.after ?? "", o.type?.text ?? "", ...argv] : argv;
     const p = Bun.spawn(["/bin/sh", "-c", '/bin/sh "$0" "$$" "$@" </dev/null >/dev/null 2>&1 &', inner, dir, ...cmd], {
-      env, stdin: "ignore", stdout: "ignore", stderr: "ignore",
+      env: childEnv, stdin: "ignore", stdout: "ignore", stderr: "ignore",
     });
     await p.exited;
     const deadline = Date.now() + (o.timeoutMs ?? 60_000);

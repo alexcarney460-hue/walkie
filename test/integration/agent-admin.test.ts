@@ -100,6 +100,23 @@ describe("local: an agent does its person's admin, audited", () => {
     expect((await auditPosts(alex)).some((p) => p.text.includes("turned agent admin off"))).toBe(true);
   });
 
+  test("a CLI-only step's outcome (final review B): a done one is logged and posted, one that failed or was refused is logged on this machine only, with its reason", async () => {
+    const entries = () => readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { action: string; refused?: string; via: string });
+    const posts = async () => (await auditPosts(alex)).length;
+    const before = await posts();
+    await marked(alex).adminAudit("installed the Walkie hooks for grok (probe: done)");
+    expect(entries().find((e) => e.action === "installed the Walkie hooks for grok (probe: done)")).not.toHaveProperty("refused");
+    expect(await posts()).toBe(before + 1); // posted to #general like any admin action
+    await marked(alex).adminAudit("tried to install the Walkie hooks for grok (probe: failed)", "failed: ~/.claude/settings.json is not valid JSON; no changes made");
+    expect(entries().find((e) => e.action === "tried to install the Walkie hooks for grok (probe: failed)")).toMatchObject({ refused: "failed: ~/.claude/settings.json is not valid JSON; no changes made", via: "local" });
+    expect(await posts()).toBe(before + 1); // a refusal is never posted
+    // A person's request is not recorded at all; an unknown field is refused (the body is strict); an empty reason is not a reason.
+    expect(await alex.client().adminAudit("probe: a person", "failed: x")).toEqual({ recorded: false });
+    expect((await refused(marked(alex).request("POST", "/v1/admin/audit", { action: "x", other: 1 }))).status).toBe(400);
+    expect((await refused(marked(alex).request("POST", "/v1/admin/audit", { action: "x", refused: "" }))).status).toBe(400);
+    expect(entries().some((e) => e.action === "probe: a person")).toBe(false);
+  });
+
   test("an older config.json without the switches reads as on (the upgrade migration)", async () => {
     const path = join(kira2.home, "config.json");
     const { agent_admin: _a, remote_admin: _r, ...older } = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
@@ -187,7 +204,7 @@ describe("remote admin over Walkie", () => {
     expect(remoteArgvProblem(["seats", "enable", "--claude-token-stdin"])).toContain("--claude-token-stdin");
     expect(remoteArgvProblem(["orchestrator", "start", "--claude=/tmp/x"])).toContain("--claude");
     expect(remoteArgvProblem(["accounts", "exec", "--", "sh"])).toContain("can't run remotely");
-    expect(remoteArgvProblem(["seats", "enable", "--yes", "--same-user", "--max", "12"])).toBeNull();
+    expect(remoteArgvProblem(["seats", "enable", "--yes", "--same-user", "--max", "12"])).toContain("cannot run remotely");
   });
 
   test("the CLI: walkie admin --machine … passes the command's own flags through; --json errors are machine-readable", async () => {

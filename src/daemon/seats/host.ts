@@ -10,21 +10,21 @@ import { CLAUDE_ACCESS_MIN_LEFT_MS, claudeSeatAccess } from "../../accounts/vaul
 import { claudeTokenFrom, guardedClaudeKeychain, identifyClaude, readClaudeToken, systemKeychain, type KeychainReader } from "../../accounts/adapters/claude.ts";
 import { KEYCHAIN_BLOCK_MS } from "../../accounts/poll.ts";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { RELEASE_BUILD } from "../../license/service.ts";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { homeRelative } from "../../agent/identity.ts";
 import { redactSecrets } from "../../protocol/safety.ts";
 import type { BodyOf, Event } from "../../protocol/schemas.ts";
 import { HttpError } from "../http.ts";
 import {
-  DEFAULT_HOST_MAX, DEFAULT_SEAT_MODE, MAX_SEAT_BRIEF, SEATS_AGENT, SEATS_POOL_CODE, SEATS_POOL_CONFLICT, SEAT_RUNTIMES_V1, SEAT_TASK_PROMPT, TURN_SEATS_OFF, hostText, isSeatAgent, isV2, seatAgentName, seatOf, seatsChannel, stateText,
+  DEFAULT_HOST_MAX, DEFAULT_SEAT_MODE, DEFAULT_SEAT_TIMEOUT_S, MAX_SEAT_BRIEF, SEATS_AGENT, SEATS_POOL_CODE, SEATS_POOL_CONFLICT, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SEAT_TASK_PROMPT, TURN_SEATS_OFF, hostText, isSeatAgent, isV2, seatAgentName, seatOf, seatsChannel, stateText,
   type AnySeatRun, type HostAvailability, type SeatHost, type SeatRun, type SeatRunV2, type SeatRuntime, type SeatState, type SeatsLocalView,
 } from "../../protocol/seats.ts";
 import type { AccountView } from "../../protocol/accounts.ts";
 import { releaseLease, writeLease, type Lease } from "../../accounts/leases.ts";
-import { ACCOUNT_NOT_USABLE, planSeatAccount, seatCredentials, type PoolContext, type SeatCredentials } from "./account.ts";
+import { ACCOUNT_NOT_USABLE, planSeatAccount, seatCredentials, type AccountPlan, type PoolContext, type SeatCredentials } from "./account.ts";
 import { removeLeaseHome, sweepLeaseHomes, writeLeaseHome } from "../../accounts/vault/codex-lease-home.ts";
 import { codexBaseHome } from "../../accounts/vault/codex-home.ts";
 import {
@@ -33,6 +33,9 @@ import {
   type ResultFile, type TaskFile,
 } from "./v2.ts";
 import { requestLease } from "../vault-lease.ts";
+import { enrollmentMode, readGrant } from "../provision/grant.ts";
+import { rootMarkerPresent } from "../provision/root-marker.ts";
+import { bindWorkerAccount, requiredWorkerAccount, superviseWorkerAccount } from "./enrollment-account.ts";
 import { MAX_BLOB_BYTES, readBlob, sha256Hex, writeBlob } from "../blobs.ts";
 import { blobServable } from "../blob-auth.ts";
 import { saveFleetConfig, saveSeatsConfig, type FleetConfig, type SeatsConfig } from "../config.ts";
@@ -60,15 +63,18 @@ import { writeDurably } from "./fsat.ts";
 import { SEATS_PHRASES } from "../../protocol/status-projection.ts";
 import type { StatusProvenance } from "../../protocol/status-projection.ts";
 import { SeatApi } from "./seat-api.ts";
+import { createWorkerRoot, markWorkerStarting, readWorkerProcess, recordWorkerProcess, removeWorkerRoot, sweepWorkerRoots, workerRootIds, workerRootOccupied, WORKER_ROOT_KEY, type WorkerRoot } from "./worker-root.ts";
 import { SeatStatusThrottle } from "./status-throttle.ts";
 import { CleanupQueue } from "./cleanup-queue.ts";
 import { postAudit } from "../admin/audit.ts";
 import { ambiguousLaunchers, channelFit, decideRun, decideStop, desiredMembers, launcherHandles, launcherPolicyEmpty, parseLaunchers, type SeatsPolicy } from "./rules.ts";
 import {
-  KIMI_FULL_ACCESS_ONLY, claudeSeatArgs, claudeSeatParser, codexSeatArgs, codexSeatLine, findRuntime, kimiSeatArgs, kimiSeatLine, loginEnv, seatEnvFile, seatSystemPrompt, withBinDir, type SeatSignal,
+  KIMI_FULL_ACCESS_ONLY, claudeSeatArgs, claudeSeatParser, codexSeatArgs, codexSeatLine, findRuntime, grokCredentialOutput, grokGuardOutput, grokLoginPresent, grokSeatArgs, grokSeatHome, grokSeatParser, kimiSeatArgs, kimiSeatLine, loginEnv, seatEnvFile, seatSystemPrompt, withBinDir, type SeatSignal,
 } from "./runtime.ts";
 
 export interface SeatsOptions {
+  /** Startup enrollment migration failed: this daemon must refuse every seat until restarted after repair. */
+  enrollmentBlock?: string;
   /** Test seam for the person's Claude Code Keychain item. */
   keychain?: KeychainReader;
   /** The environment seats start from (tests); default process.env. HOME in it is the person's home (~/walkie-seats, `~/` in seats.env_file). */
@@ -145,6 +151,7 @@ interface Seat {
   /** The child's start time as `ps` reports it (a crash-restart kills its group only if it is still that process). */
   childStarted: string | null;
   env: Record<string, string> | null;
+  workerRoot: WorkerRoot | null;
   timer: ReturnType<typeof setTimeout> | null;
   /** The wall-clock limit, which doesn't run while the seat is paused. */
   limit: SeatLimit;
@@ -156,6 +163,8 @@ interface Seat {
   lastText: string;
   /** Projected Claude access token, kept only until this seat ends for output redaction. */
   projectedClaudeToken: string | null;
+  /** Unshared suffix that could still become a Grok credential. */
+  grokOutputTail: string;
   activity: string;
   activityKind: "tool" | "reply" | null;
   lastOutputAt: number;
@@ -166,7 +175,7 @@ interface Seat {
   /** A v2 request refused while it prepared (a missing prerequisite, an account not usable): posted `refused`. */
   refusal: string | null;
   /** `local`: the host's person stopped it on this machine (its post-run git is aborted, like a revoke's). */
-  stop: { reason: "stopped" | "timeout" | "revoked" | "shutdown" | "unadmitted" | "reserve"; by?: string; local?: boolean } | null;
+  stop: { reason: "stopped" | "timeout" | "revoked" | "shutdown" | "unadmitted" | "reserve" | "account"; by?: string; local?: boolean } | null;
   /** Aborted by a stop in any phase: preparing (env, clone), running, or the post-run git. */
   abort: AbortController;
   /** conclude() has started: the seat stays tracked (and counted) until its group is reaped and its state posted. */
@@ -178,7 +187,9 @@ interface Seat {
 
 /** A running seat as persisted: its child's pid (its process group) and that process's start time, when known. */
 export interface SavedSeat {
-  id: string; dir: string; pid?: number; started?: string; runner?: true; user?: number;
+  id: string; dir: string; runtime?: SeatRuntime; pid?: number; started?: string; runner?: true; user?: number;
+  /** Unique credential-root instance; absent in legacy saved seats. */
+  root?: string;
   /** FO-2: a same-user v2 seat's brief in the person's tree, removed at the next start if this daemon died first. */
   task?: { cwd: string; file: string; exclude?: string; hash?: string; tmp?: string };
   /** FO-2: a same-user v2 seat's lane branch, whose ownership record follows it at the next start after a crash. */
@@ -192,6 +203,8 @@ export interface SeatsBusy { max: number; by: string; since: number; until?: num
  */
 interface Persisted {
   handled: Record<string, number>; running: SavedSeat[]; busy?: SeatsBusy; queued?: string[];
+  /** Worker roots awaiting verified process absence after crash or failed removal. */
+  pending_roots?: RootRecord[];
   /** Launch times per launcher over the last day (the daily bound outlives a restart: Codex r4 LOW 7). */
   launches?: Record<string, number[]>;
   /** Seat users made and not verified destroyed (a restart destroys them first); the highest id asked for. */
@@ -199,6 +212,7 @@ interface Persisted {
   user_high?: number;
   cleanup_unfinished_since?: number;
 }
+type RootRecord = Pick<SavedSeat, "id" | "pid" | "started"> & { uncertain?: true };
 
 /** A launch accepted while the machine is busy, waiting to start. */
 interface Queued { ev: Event; run: AnySeatRun; launcher: string; at: number }
@@ -222,6 +236,7 @@ interface V2Seat {
   creds: SeatCredentials | null;
   lease: Lease | null;
   cancelReserve?: () => void;
+  cancelAccount?: () => void;
   /** The result file as read after the run. */
   result: ResultFile | null;
   /** A lane worktree's HEAD as the seat ended (what Walkie's lane record may follow). */
@@ -239,6 +254,8 @@ const OUTPUT_CHUNK = 28_000;
 const FLUSH_AT_CHARS = 8_000;
 const TAIL_CHARS = 6_000;
 const RECONCILE_RETRY_MS = 30_000;
+/** How long a login verdict (and a Keychain read behind it) is trusted: a launch older than this checks its runtime's again. */
+const LOGIN_FRESH_MS = 15 * 60_000;
 /** The longest wait between requests to mark a seats channel an older authority keeps unmarked. */
 const UNMARKED_MAX_MS = 60 * 60_000;
 /** Launches waiting on a busy machine at once; more are refused. */
@@ -278,6 +295,9 @@ export class SeatsHost {
   private residueSummary = { homes: 0, vaults: 0, knownBytes: 0 };
   /** Serialized user cleanup and retry. */
   private readonly cleanup: CleanupQueue<CleanResult>;
+  private readonly pendingRoots = new Map<string, RootRecord>();
+  private codexReadiness: { login: "machine" | "unavailable"; reason?: string } | null = null;
+  private rootRetry: ReturnType<typeof setTimeout> | null = null;
   private busyReapply: ReturnType<typeof setInterval> | null = null;
   /** Seat user ids made and not verified destroyed; the highest id ever asked for (ids only go up). */
   private readonly liveUsers = new Set<number>();
@@ -318,9 +338,14 @@ export class SeatsHost {
    * Whether the environment seats get (the daemon's, with what the seat env file exports) carries a non-empty Claude token,
    * as last sourced (refreshLogin); null until then. Never guessed from the file's text (Codex r6 LOW 9).
    */
-  private machineToken: { has: boolean; at: number } | null = null;
+  private machineToken: { has: boolean; hasEnvToken?: boolean; at: number } | null = null;
   private cachedClaudeAccess: { credentials: string; expiresAt: number; readAt: number; identityId: string | null } | null = null;
+  private knownClaudeExpiry: number | null = null;
+  /** When the Codex verdict (codexReadiness) was made; the Claude one carries its own (machineToken.at). */
+  private codexCheckedAt: number | null = null;
   private refreshingLogin: Promise<void> | null = null;
+  private refreshingClaude: Promise<void> | null = null;
+  private refreshingCodex: Promise<void> | null = null;
   private readonly startedAt = Date.now();
   private cleanupUnfinishedSince: number | null = null;
   private cleanupBusyAttempts = 0;
@@ -650,8 +675,8 @@ export class SeatsHost {
     }
     return null;
   }
-  /** Seats may run: allowed in config.json AND isolated as required (a legacy or unsafe configuration runs nothing). */
-  get allowed(): boolean { return this.current.allow === true && this.iso.problem === null; }
+  /** Seats may run only when config, isolation, and startup enrollment are ready. */
+  get allowed(): boolean { return this.current.allow === true && this.iso.problem === null && !this.opts.enrollmentBlock; }
   /** Seats running at once on this machine, whoever launched them: the person's `max`, else DEFAULT_HOST_MAX. */
   get hostMax(): number { return this.current.max ?? DEFAULT_HOST_MAX; }
   /** This machine's seats settings (config.json `seats`) as last saved. */
@@ -670,8 +695,7 @@ export class SeatsHost {
    * AGENT-ADMIN, their agent) turned it on (`walkie seats allow --runtimes …,kimi`): never on by default (FO-2 r1 MEDIUM 7).
    */
   private runtimes(): SeatRuntime[] {
-    const kimi = this.current.kimi === true;
-    return [...(this.current.runtimes ?? SEAT_RUNTIMES_V1), ...(kimi ? ["kimi" as const] : [])];
+    return [...(this.current.runtimes ?? SEAT_RUNTIMES_V1), ...(this.current.kimi === true ? ["kimi" as const] : []), ...(this.current.grok === true ? ["grok" as const] : [])];
   }
 
   /** FO-2: this machine's repo clones for v2 seats, by repo id. */
@@ -699,6 +723,30 @@ export class SeatsHost {
   init(): void {
     const saved = this.load();
     this.cleanupUnfinishedSince = saved.cleanup_unfinished_since ?? null;
+    for (const r of [...(saved.pending_roots ?? []), ...saved.running]) {
+      const key = "root" in r && r.root ? r.root : r.id;
+      if (WORKER_ROOT_KEY.test(key)) this.pendingRoots.set(key, {
+        id: key, ...(r.pid ? { pid: r.pid } : {}), ...(r.started ? { started: r.started } : {}),
+        ...("uncertain" in r && r.uncertain ? { uncertain: true as const } : {}),
+      });
+    }
+    try {
+      for (const id of workerRootIds(this.home)) {
+        const savedRoot = this.pendingRoots.get(id);
+        const process = readWorkerProcess(this.home, id);
+        if (savedRoot) {
+          if (!savedRoot.pid && process) this.pendingRoots.set(id, { ...savedRoot, ...process });
+          continue;
+        }
+        if (!saved.unreadable && !process) continue;
+        this.pendingRoots.set(id, { id, ...(process ?? { uncertain: true as const }) });
+      }
+      sweepWorkerRoots(this.home, new Set(this.pendingRoots.keys()), (id, err) => {
+        this.pendingRoots.set(id, { id });
+        this.log.warn("seats_worker_root_sweep", { id, err: scrub((err as Error).message) });
+      });
+    }
+    catch (err) { this.log.warn("seats_worker_root_sweep", { err: scrub((err as Error).message) }); }
     const now = Date.now();
     this.handled = new Map(Object.entries(saved.handled).filter(([, until]) => until >= now));
     for (const [k, v] of Object.entries(saved.launches ?? {})) this.launchesDay.set(k, v);
@@ -720,7 +768,8 @@ export class SeatsHost {
       void recordLaneTip(r.lane.clone, r.lane.branch, env).catch(() => undefined);
     }
     this.startApi();
-    if (this.current.ephemeral) void this.refreshLogin();
+    // The sign-ins are checked at start only where seats are on: a machine that never turned them on is never read.
+    if (this.current.allow) void this.refreshLogin();
     // Nothing of a seat user outlives a daemon: every one made and not verified destroyed is destroyed now, counted
     // against the machine's seats until that is verified.
     const leftUsers = new Set([...(saved.users ?? []), ...saved.running.map((r) => r.user).filter((u): u is number => u !== undefined)]);
@@ -733,6 +782,12 @@ export class SeatsHost {
     // A daemon that died without stopping its seats left their process groups running (or what their tools started,
     // after the runtime itself exited): end every survivor now (killLeftover), then report them.
     for (const r of saved.running) {
+      // Unreleased lane builds omitted runtime. Preserve an unknown seat's files and name any possible Grok home
+      // for manual cleanup; a seat user may take the early runner branch below.
+      const unknownHome = join(r.dir, "grok-home");
+      if (!r.runtime && existsSync(unknownHome)) {
+        this.log.warn("seats_unknown_runtime_home_preserved", { id: r.id, dir: r.dir, home: unknownHome });
+      }
       // A seat user's seat: said stopped only once its user's destroy is verified (Codex r5 MEDIUM 3), never assumed.
       if (r.runner && r.user !== undefined) {
         void this.destroyUser(r.user).then((d) => {
@@ -750,7 +805,15 @@ export class SeatsHost {
         continue;
       }
       const killed = r.runner ? false : killLeftover(r);
+      // A crash can happen after projecting auth but before conclude(), even before the child has a pid.
+      // Only unreleased development builds of this lane saved Grok seats without runtime. A missing runtime is
+      // unknown and may belong to another seat; preserve its directory. Sweep known Grok links after handling the group.
+      if (r.runtime === "grok") {
+        try { rmSync(join(r.dir, "grok-home"), { recursive: true, force: true }); }
+        catch (error) { this.log.warn("seats_grok_home_recovery_cleanup", { id: r.id, err: scrub((error as Error).message) }); }
+      }
       this.log.warn("seats_leftover", { id: r.id, pid: r.pid ?? null, killed });
+      if (killed) void Bun.sleep(200).then(() => this.retryPendingRoots());
       this.postState(r.id, { state: "failed", reason: `the host's Walkie daemon restarted while it ran${killed ? " (its processes were stopped)" : ""}`, dir: homeRelative(r.dir) });
       this.endSavedSeatCard(r.id);
     }
@@ -761,7 +824,11 @@ export class SeatsHost {
       this.armBusyTimer();
     }
     this.save();
-    if (!this.allowed) return;
+    this.retryPendingRoots();
+    if (!this.allowed) {
+      if (this.opts.enrollmentBlock) this.status();
+      return;
+    }
     this.published = this.lastPublished();
     this.status();
     this.publish();
@@ -775,7 +842,58 @@ export class SeatsHost {
     if (saved.unreadable) this.save();
   }
 
-  /** Daemon shutdown: stop seats within one launchd-safe bound; the ledger retains unfinished user cleanup. */
+  /** Never remove a crash survivor's credential root until its old process group is absent. */
+  private retryPendingRoots(): void {
+    if (this.rootRetry) { clearTimeout(this.rootRetry); this.rootRetry = null; }
+    for (const [id, r] of this.pendingRoots) {
+      if (r.uncertain) continue; // no trustworthy process identity: preserve the root for review
+      if (r.pid && workerProcessPresent(r)) continue;
+      try {
+        removeWorkerRoot(this.home, id);
+        this.pendingRoots.delete(id);
+      } catch (err) {
+        this.log.warn("seats_worker_root_cleanup", { id, err: scrub((err as Error).message) });
+      }
+    }
+    this.save();
+    if (this.pendingRoots.size && !this.closing) this.rootRetry = setTimeout(() => this.retryPendingRoots(), 30_000);
+  }
+
+  pendingWorkerRoots(): NonNullable<SeatsLocalView["pending_worker_roots"]> {
+    return [...this.pendingRoots.values()].map((r) => {
+      const root = join(this.home, ".walkie-workers", `seat-${r.id.replace(":", "-").replace("@", "-")}`);
+      let age = 0;
+      try {
+        const st = lstatSync(root);
+        age = Math.max(0, Math.floor((Date.now() - (st.birthtimeMs || st.mtimeMs)) / 1_000));
+      } catch { /* missing root is still reported */ }
+      return { id: r.id, age_s: age, reason: r.uncertain ? "process identity unknown" : r.pid ? "recorded process may still be running" : "cleanup pending" };
+    });
+  }
+
+  /** Explicit local review only; the route also requires the machine's person at their terminal. */
+  cleanupPendingRoot(id: string, occupied: (root: string) => boolean = workerRootOccupied): void {
+    if (!WORKER_ROOT_KEY.test(id)) throw new HttpError(400, "invalid", "invalid worker root key");
+    const pending = this.pendingRoots.get(id);
+    if (!pending) throw new HttpError(404, "not_found", "no pending worker root with that seat id");
+    if ([...this.seats.values()].some((seat) => seat.workerRoot?.key === id)) throw new HttpError(409, "busy", "this seat is still running");
+    const recorded = readWorkerProcess(this.home, id);
+    if (pending.uncertain || !pending.pid || !recorded || "uncertain" in recorded
+      || recorded.pid !== pending.pid || recorded.started !== pending.started
+      || workerProcessPresent(pending)) {
+      throw new HttpError(409, "unverified", "a process of this seat may still be running; nothing was removed");
+    }
+    const root = join(this.home, ".walkie-workers", `seat-${id.replace(":", "-").replace("@", "-")}`);
+    let busy: boolean;
+    try { busy = occupied(root); }
+    catch { throw new HttpError(409, "unverified", "worker root process check could not finish; nothing was removed"); }
+    if (busy) throw new HttpError(409, "busy", "a process is still using this worker root");
+    removeWorkerRoot(this.home, id);
+    this.pendingRoots.delete(id);
+    if (!this.save()) throw new HttpError(500, "state_write_failed", "worker root was removed but cleanup state could not be saved; run walkie seats doctor again");
+  }
+
+  /** Daemon shutdown: stop seats within one launchd-safe bound; the ledger retains unfinished cleanup. */
   async close(): Promise<void> {
     const deadline = Date.now() + Math.min(14_000, Math.max(1, this.opts.shutdownWaitMs ?? 14_000));
     const bounded = async (work: Promise<unknown>, cap = Number.POSITIVE_INFINITY): Promise<boolean> => {
@@ -803,6 +921,7 @@ export class SeatsHost {
     if (this.busyTimer) clearTimeout(this.busyTimer);
     if (this.publishTimer) clearTimeout(this.publishTimer);
     if (this.busyReapply) clearInterval(this.busyReapply);
+    if (this.rootRetry) clearTimeout(this.rootRetry);
     const stopped = await bounded(this.stopAll("shutdown"));
     if (!stopped) {
       this.log.warn("seats_stop_shutdown_wait_expired", {});
@@ -822,11 +941,19 @@ export class SeatsHost {
   }
 
   /** `walkie seats allow|deny` (people only, local). Deny stops every running seat. */
-  async configure(next: SeatsConfig): Promise<SeatsLocalView> {
+  async configure(next: SeatsConfig, migrationApproved = false): Promise<SeatsLocalView> {
     // Deny first, whatever else changed (Codex r4 MEDIUM 3): every seat stops, by the identities it runs as.
     if (!next.allow) return this.deny(next);
     const nextIso = this.evaluate(next);
     const moving = nextIso.mode !== this.iso.mode;
+    if ((this.current.mode === "seat_users" || this.current.ephemeral === true) && nextIso.mode === "same_user") {
+      if (!migrationApproved || this.current.allow) {
+        throw new HttpError(409, "migration_required", "seat-user migration requires the person here: run walkie seats migration-preflight, then walkie seats migrate --same-user (plain seats allow --same-user cannot switch modes)");
+      }
+      if (this.seats.size || this.queue.length || this.liveUsers.size || this.quarantine.size || this.reconcileError) {
+        throw new HttpError(409, "migration_unsafe", "seat-user inventory is not clean: reconcile running, queued or quarantined users before migrating");
+      }
+    }
     // A seat that is only finishing (its state already posted) is waited for, not counted as running.
     if (moving) await Promise.all([...this.seats.values()].filter((x) => x.concluding).map((x) => x.done));
     if (moving && (this.seats.size || this.queue.length)) {
@@ -913,8 +1040,11 @@ export class SeatsHost {
     const ch = this.core.roster.channels.get(this.channel);
     const fit = me ? channelFit(ch, me, launcherHandles(this.core.roster, this.policy())) : "not_in_team";
     const pool = this.core.pool?.seatsConflict() ?? null;
-    const off = this.current.allow ? fresh.problem ?? this.socketProblem() ?? pool : null;
+    const off = this.current.allow ? this.opts.enrollmentBlock ?? fresh.problem ?? this.socketProblem() ?? pool : null;
     const helperVersion = this.helperVersionView();
+    const codexLogin = this.codexLogin();
+    let enrolled = false;
+    try { enrolled = rootMarkerPresent(this.core.paths.home); } catch { /* disabled_reason reports startup marker failures */ }
     return {
       ...(pool ? { pool_conflict: pool } : {}),
       allow: this.current.allow === true, launchers: this.current.launchers ?? [], launchers_default: this.current.launchers == null,
@@ -922,12 +1052,16 @@ export class SeatsHost {
       ambiguous_launchers: ambiguousLaunchers(this.core.roster, this.policy()), runtimes: this.runtimes(),
       max: this.hostMax, ...(this.current.env?.length ? { env: [...this.current.env] } : {}),
       ephemeral: this.current.ephemeral === true, same_user: this.iso.mode === "same_user", readable_home: this.current.accept_readable_home === true,
-      claude_login: this.claudeLogin(), codex_login: this.codexLogin(), ...(this.reconcileError ? { reconcile_error: this.reconcileError } : {}), ...(this.quarantine.size ? { quarantined: [...this.quarantine].sort((a, b) => Number(a.slice(8)) - Number(b.slice(8))) } : {}),
+      enrolled,
+      claude_login: this.claudeLogin(), codex_login: codexLogin, ...(codexLogin === "unavailable" && this.codexReadiness?.reason ? { codex_login_reason: this.codexReadiness.reason } : {}),
+      ...(this.reconcileError ? { reconcile_error: this.reconcileError } : {}), ...(this.quarantine.size ? { quarantined: [...this.quarantine].sort((a, b) => Number(a.slice(8)) - Number(b.slice(8))) } : {}),
       ...(this.residueSummary.homes || this.residueSummary.vaults ? { retired_residue: { ...this.residueSummary } } : {}),
       ...(this.quarantineWhy.size ? { quarantine_why: Object.fromEntries([...this.quarantineWhy].filter(([u]) => this.quarantine.has(u))) } : {}),
       ...(this.cleanup.active ? { cleanup_in_flight: this.cleanup.active } : {}),
       ...(this.cleanupUnfinishedSince ? { cleanup_helper_unfinished_since: this.cleanupUnfinishedSince } : {}),
       ...(this.cleanupBusySince ? { cleanup_helper_busy_since: this.cleanupBusySince } : {}),
+      ...(this.claudeProjectionNearExpiry() ? { claude_projection_near_expiry: true } : {}),
+      ...(this.pendingRoots.size ? { pending_worker_roots: this.pendingWorkerRoots() } : {}),
       ...(off ? { disabled_reason: off } : {}),
       dir: homeRelative(this.seatsDir()),
       channel: this.core.teamId ? this.channel : null, channel_ok: fit === null,
@@ -1341,15 +1475,24 @@ export class SeatsHost {
       this.postState(ev.id, { state: "refused", reason: "switch WalkieTalkie back to Walkie platform access to use same-user machines" });
       return;
     }
-    const v2why = isV2(d.run) ? this.v2Refusal(d.run, d.launcher) : null;
+    let prepared: AnySeatRun = d.run;
+    let enrollmentProblem: string | null = this.opts.enrollmentBlock ?? null;
+    try {
+      if (!enrollmentProblem) {
+        const grant = readGrant(this.core.paths.home);
+        enrollmentProblem = requiredWorkerAccount(grant, prepared, Date.now(), enrollmentMode(this.core.paths.home));
+        if (!enrollmentProblem) prepared = bindWorkerAccount(grant, prepared);
+      }
+    } catch { enrollmentProblem = "the private enrollment grant is unreadable: seats refuse to start"; }
+    const v2why = enrollmentProblem ?? (isV2(prepared) ? this.v2Refusal(prepared, d.launcher) : null);
     if (v2why) {
       this.log.info("seats_refused", { id: ev.id, reason: v2why.split(":")[0] ?? "v2", from: d.launcher });
       this.postState(ev.id, { state: "refused", reason: v2why });
       return;
     }
-    const why = this.admit(d.launcher, d.run);
+    const why = this.admit(d.launcher, prepared);
     if (why === "queue") {
-      this.queue = [...this.queue, { ev, run: d.run, launcher: d.launcher, at: Date.now() }];
+      this.queue = [...this.queue, { ev, run: prepared, launcher: d.launcher, at: Date.now() }];
       this.save();
       this.log.info("seats_queued", { id: ev.id, from: d.launcher, queued: this.queue.length });
       const until = this.busy?.until;
@@ -1363,7 +1506,7 @@ export class SeatsHost {
       this.postState(ev.id, { state: "refused", reason: why });
       return;
     }
-    void this.launch(ev, d.run, d.launcher);
+    void this.launch(ev, prepared, d.launcher);
   }
 
   /**
@@ -1377,6 +1520,11 @@ export class SeatsHost {
    * handed over), a workspace in a repo this machine has no clone of, an account this machine may not use.
    */
   private v2Refusal(run: SeatRunV2, launcher: string): string | null {
+    if (run.runtime === "grok") {
+      if (this.ephemeral || run.shell_user) return "Grok seats run only as this machine's person (walkie seats allow --same-user)";
+      if (run.account) return "Grok seats use only this machine's subscription login, not a vault account";
+      if (!grokLoginPresent(this.home)) return "Grok subscription login is unavailable for this machine's user (sign in with grok login first)";
+    }
     if (run.runtime === "kimi" && run.permission_mode !== "bypassPermissions") return KIMI_FULL_ACCESS_ONLY;
     if (run.runtime === "kimi" && this.ephemeral) {
       return "kimi seats run only as this machine's person (walkie seats allow --same-user): Kimi's login can't be handed to a seat user";
@@ -1393,9 +1541,39 @@ export class SeatsHost {
     return plan.kind === "refused" ? plan.why : null;
   }
 
+  private enrollmentRefusal(run: AnySeatRun): string | null {
+    if (this.opts.enrollmentBlock) return this.opts.enrollmentBlock;
+    try { return requiredWorkerAccount(readGrant(this.core.paths.home), run, Date.now(), enrollmentMode(this.core.paths.home)); }
+    catch { return "the private enrollment grant is unreadable: seats refuse to start"; }
+  }
+
   /** COMPANY POOL (pre.8 merge): the team's pool as this machine knows it, and each handle's role, for a named account. */
   private poolContext(): PoolContext {
     return { team: this.core.teamPolicy(), roleOf: (h) => this.core.roster.members.get(h)?.role ?? null };
+  }
+
+  /** Stop a borrowed seat if its selected login is revoked, expires or loses consent while it runs. */
+  private watchAccount(seat: Seat, initial: Exclude<AccountPlan, { kind: "refused" }>): () => void {
+    const consent = readGrant(this.core.paths.home)?.created_at ?? null;
+    return superviseWorkerAccount({
+      allowed: () => {
+        if (!seat.v2 || seat.stop || seat.concluding) return true;
+        const me = this.core.myHandle();
+        if ((readGrant(this.core.paths.home)?.created_at ?? null) !== consent) throw new Error("enrollment consent changed");
+        const binding = this.enrollmentRefusal(seat.v2.run);
+        const expires = seat.v2.creds?.expiresAt;
+        if (me && !binding && (!expires || expires > Date.now())) {
+          const current = planSeatAccount(seat.v2.run.account as string, { runtime: seat.v2.run.runtime, me,
+            launcher: seat.launcher, vault: this.core.vault?.list() ?? [], pooled: this.deps.accounts?.() ?? [], pool: this.poolContext() });
+          // The holder's node is part of the binding: switching to a different copy requires a new lease.
+          if (current.kind === "peer" && initial.kind === "peer") return current.node === initial.node;
+          if (current.kind === "local" && initial.kind === "local") return current.entry.id === initial.entry.id;
+        }
+        return false;
+      },
+      stop: () => this.stopSeat(seat, { reason: "account" }),
+      error: (err) => this.log.warn("seats_account_stop", { id: seat.id, err: scrub(String(err)).slice(0, 200) }),
+    });
   }
 
   /**
@@ -1411,7 +1589,10 @@ export class SeatsHost {
     const spec = agent !== undefined ? `@${launcher}/${originHost}/${agent}` : `@${launcher}`;
     switch (reason) {
       case "seats_not_allowed":
-        return `seats are turned off on ${hostname}: its person runs \`walkie seats allow\` there to turn them on`;
+        // A startup enrollment block is why they don't run, not the person's choice: `walkie seats allow` would change nothing.
+        return this.opts.enrollmentBlock
+          ? `seats are blocked on ${hostname}: ${this.opts.enrollmentBlock}`
+          : `seats are turned off on ${hostname}: its person runs \`walkie seats allow\` there to turn them on`;
       case "not_a_launcher":
         return `${spec} is not allowed to start seats on ${hostname}: its person runs \`walkie seats allow --launchers ${spec}\` there to add you`;
       case "agent_not_allowed":
@@ -1497,13 +1678,13 @@ export class SeatsHost {
     const dir = join(this.seatsDir(), `${stamp}-${seatAgentName(req.id).slice(5)}`);
     // Isolation is judged again right before a launch (Codex r3 HIGH 2): config.json or the OS may have changed.
     this.iso = this.evaluate(this.current);
-    const unsafe = req.author.agent === "orchestrator" && run.shell_user && !this.ephemeral
+    const unsafe = this.enrollmentRefusal(run) ?? (req.author.agent === "orchestrator" && run.shell_user && !this.ephemeral
       ? "switch WalkieTalkie back to Walkie platform access to use same-user machines"
-      : this.current.allow ? this.iso.problem ?? this.socketProblem() ?? this.core.pool?.seatsConflict() ?? null : "seats are turned off on this machine";
+      : this.current.allow ? this.iso.problem ?? this.socketProblem() ?? this.core.pool?.seatsConflict() ?? null : "seats are turned off on this machine");
     const seat: Seat = {
-      id: req.id, order: ++this.launchOrder, launcher, run, v2: isV2(run) ? newV2(run, req.id) : null, dir, cwd: dir, base: null, startedAt: Date.now(), child: null, runner: null, user: null, userN: null, lost: false, uncontrolled: false, waitedForCleanup: false, cleanupFailure: null, pauseVerified: false, childStarted: null, env: null,
+      id: req.id, order: ++this.launchOrder, launcher, run, v2: isV2(run) ? newV2(run, req.id) : null, dir, cwd: dir, base: null, startedAt: Date.now(), child: null, runner: null, user: null, userN: null, lost: false, uncontrolled: false, waitedForCleanup: false, cleanupFailure: null, pauseVerified: false, childStarted: null, env: null, workerRoot: null,
       timer: null, limit: new SeatLimit(run.timeout_s * 1000), paused: false, flushTimer: null, refusal: null,
-      buf: [], posts: 0, lastText: "", projectedClaudeToken: null, activity: "", activityKind: null, lastOutputAt: 0, statusTimer: null,
+      buf: [], posts: 0, lastText: "", projectedClaudeToken: null, grokOutputTail: "", activity: "", activityKind: null, lastOutputAt: 0, statusTimer: null,
       tail: "", truncated: 0, final: null, stop: null, abort: new AbortController(), concluding: false, done, finish,
     };
     this.seats.set(seat.id, seat);
@@ -1526,9 +1707,14 @@ export class SeatsHost {
       if (!ephemeral) mkdirSync(dir, { recursive: true, mode: 0o700 });
       const { env, error } = await loginEnv(this.env, this.home, this.envFile, this.current.env ?? [], seat.abort.signal);
       if (error) this.log.warn("seats_env", { err: error });
+      if (!ephemeral) {
+        seat.workerRoot = createWorkerRoot(this.home, seat.id);
+        env.TMPDIR = seat.workerRoot.temp;
+      }
       seat.env = env;
-      this.machineToken = { has: !!env.CLAUDE_CODE_OAUTH_TOKEN?.trim(), at: Date.now() };
+      if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) this.machineToken = { has: true, hasEnvToken: true, at: Date.now() };
       if (seat.v2) await this.prepareV2(seat, seat.v2, env, ephemeral);
+      await this.recheckLogin(seat, env);
       if (seat.stop) { await this.conclude(seat, null, ""); return; }
       if (ephemeral) {
         // The current access token is read just before the seat starts (Claude Code remains its only refresher).
@@ -1581,6 +1767,8 @@ export class SeatsHost {
     if (v.brief === null) throw new SeatRefusal(`the brief isn't UTF-8 text of at most ${MAX_SEAT_BRIEF / 1000} KB`);
     this.seatStatus(seat);
     const refusal = this.v2Refusal(v.run, seat.launcher); // the vault, the policy and the repos as they are now
+    const enrollment = this.enrollmentRefusal(v.run);
+    if (enrollment) throw new SeatRefusal(enrollment);
     if (refusal) throw new SeatRefusal(refusal);
     if (v.run.account) {
       const me = this.core.myHandle() as string;
@@ -1620,6 +1808,7 @@ export class SeatsHost {
         });
       }
       this.log.info("seats_account", { id: seat.id, account: v.creds.lease.account, from_node: v.creds.lease.from_node ?? null });
+      v.cancelAccount = this.watchAccount(seat, plan);
     }
     const ws = v.run.workspace;
     if (!ephemeral || !ws) return;
@@ -1690,14 +1879,14 @@ export class SeatsHost {
   }
 
   /** A login handed out by the owner's machine for this seat (vault-lease.ts; never stored): a Claude setup-token or an access-only Codex auth.json. */
-  private async leaseToken(id: string, node: string, agent: string, provider: "claude" | "codex"): Promise<{ token?: string; codex_auth?: string; grant: string }> {
+  private async leaseToken(id: string, node: string, agent: string, provider: "claude" | "codex"): Promise<{ token?: string; codex_auth?: string; grant: string; expires_at?: number | null }> {
     const client = this.deps.client as SeatsDeps["client"] & { addrOf?: (n: NodeRec) => PeerAddr | null; vaultLease?: PeerClient["vaultLease"] };
     const r = await requestLease(this.core, (_addr, body, n) => {
       const addr = client.addrOf ? client.addrOf(n) : { ip: n.ip, port: n.port };
       if (!addr) throw new Error("the owner's machine can't be reached from this machine");
       return this.deps.client.vaultLease(addr, body);
     }, { account: id, node, agent: agent.slice(0, 48), ...(provider === "codex" ? { provider } : {}) });
-    return { ...(r.token ? { token: r.token } : {}), ...(r.codex_auth ? { codex_auth: r.codex_auth } : {}), grant: r.grant };
+    return { ...(r.token ? { token: r.token } : {}), ...(r.codex_auth ? { codex_auth: r.codex_auth } : {}), grant: r.grant, expires_at: r.expires_at };
   }
 
   /** The launcher's repo bundle, from this store or an online teammate; a stop (`signal`) ends the search at once. */
@@ -1740,15 +1929,24 @@ export class SeatsHost {
     // credential is a 0600 file in the seat's directory, named by WALKIE_SEAT_TOKEN_FILE: never in an environment,
     // where `ps -E` would show it to the machine's other processes (Opus r2 LOW 2).
     // A v2 seat's account (FO-2): its credentials replace the machine's default login for this run only.
-    const env = withBinDir({ ...base, ...(seat.v2?.creds?.env ?? {}), WALKIE_AGENT: seatAgentName(seat.id) }, bin);
+    const credentials = seat.v2?.creds;
+    const runEnv = { ...base, ...(credentials?.env ?? {}), WALKIE_AGENT: seatAgentName(seat.id) };
+    const env = withBinDir(seat.workerRoot ? await this.sameUserEnv(seat, runEnv) : runEnv, bin);
     const mode = run.permission_mode ?? DEFAULT_SEAT_MODE;
     // v2: the brief is TASK.md in the work tree; the prompt is only the fixed pointer to it (never the brief).
     const text = seat.v2 ? (seat.v2.task?.prompt ?? SEAT_TASK_PROMPT) : (run as SeatRun).prompt;
     let args: string[];
     let parse: (line: string) => SeatSignal[] | null;
+    let grokHome: string | undefined;
     if (run.runtime === "kimi") {
       args = kimiSeatArgs({ prompt: text, ...(run.model ? { model: run.model } : {}) });
       parse = kimiSeatLine;
+    } else if (run.runtime === "grok") {
+      if (!seat.v2?.task) throw new Error("Grok seat brief is unavailable");
+      grokHome = grokSeatHome(seat.dir, this.home);
+      args = grokSeatArgs({ taskFile: seat.v2.task.file, cwd: seat.cwd, session: randomUUID(), mode,
+        home: this.home, seatHome: grokHome, env, ...(run.model ? { model: run.model } : {}) });
+      parse = grokSeatParser();
     } else if (run.runtime === "claude") {
       // A seat user's seat asks its runtime itself, as that user (the runner's probe): the daemon never runs a
       // binary a seat user could have written (Codex r4 MEDIUM 5).
@@ -1766,17 +1964,25 @@ export class SeatsHost {
       args = codexSeatArgs({ cwd: seat.user ? "{cwd}" : seat.cwd, mode, ...(run.model ? { model: run.model } : {}) });
       parse = codexSeatLine;
     }
+    if (seat.v2) {
+      const accountProblem = this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher);
+      if (accountProblem || (seat.v2.creds?.expiresAt && seat.v2.creds.expiresAt <= Date.now())) {
+        throw new SeatRefusal(accountProblem ?? "the owner's account lease expired before launch");
+      }
+    }
     if (seat.stop || this.closing) { await this.conclude(seat, null, ""); return; }
     // Still an admitted, non-observer member at the last moment (Codex r2 HIGH 1): a host demoted while this seat
     // prepared starts nothing.
     const me = this.core.me();
     if (!me || me.role === "observer") throw new Error("the host machine is no longer an admitted member of the team");
     // Kimi takes its (fixed) prompt on argv and nothing on stdin.
-    const prompt = run.runtime === "claude" ? userMessage(text) : run.runtime === "kimi" ? "" : text;
-    if (seat.user) { await this.spawnAsUser(seat, seat.user, bin, args, env, parse, bundle ?? null, prompt); return; }
+    const prompt = run.runtime === "claude" ? userMessage(text) : run.runtime === "kimi" || run.runtime === "grok" ? "" : text;
+    const runtimeEnv = grokHome ? { ...env, GROK_HOME: grokHome } : env;
+    if (seat.user) { await this.spawnAsUser(seat, seat.user, bin, args, runtimeEnv, parse, bundle ?? null, prompt); return; }
     const tokenFile = join(seat.dir, SEAT_TOKEN_FILE);
     writeFileSync(tokenFile, this.api.issue(seat.id), { mode: 0o600 });
-    const childEnv = { ...env, WALKIE_SOCKET: this.api.socket, WALKIE_SEAT_TOKEN_FILE: tokenFile };
+    const childEnv = { ...runtimeEnv, WALKIE_SOCKET: this.api.socket, WALKIE_SEAT_TOKEN_FILE: tokenFile };
+    if (seat.workerRoot) markWorkerStarting(this.home, seat.workerRoot.key);
     const child = new ClaudeChild<SeatSignal[]>(bin, args, seat.cwd, childEnv, {
       onSignal: (sigs) => { for (const s of sigs) this.onSignal(seat, s); },
       onExit: (code, stderr) => { void this.conclude(seat, code, stderr); },
@@ -1789,6 +1995,10 @@ export class SeatsHost {
     child.write(prompt);
     child.endInput();
     seat.childStarted = processStart(child.pid);
+    if (seat.workerRoot) {
+      try { recordWorkerProcess(this.home, seat.workerRoot.key, child.pid, seat.childStarted); }
+      catch (err) { this.log.warn("seats_worker_process_record", { id: seat.id, err: scrub((err as Error).message) }); }
+    }
     this.save();
     this.log.info("seats_spawned", { id: seat.id, pid: child.pid, runtime: run.runtime, paused: seat.paused });
     // Paused while it was preparing (the person became busy meanwhile): it starts stopped, its limit not running.
@@ -1871,6 +2081,54 @@ export class SeatsHost {
     return bin;
   }
 
+  /** Project file logins into the run's private config roots; retain a provider home if no safe copy is available. */
+  private async sameUserEnv(seat: Seat, env: Record<string, string>): Promise<Record<string, string>> {
+    const root = seat.workerRoot;
+    if (!root) return env;
+    if (seat.run.runtime === "claude") {
+      const withToken = seat.v2?.creds ? env : this.withClaudeLogin(env, "claude");
+      if (this.current.inherit_person_config) {
+        seat.projectedClaudeToken = withToken.CLAUDE_CODE_OAUTH_TOKEN ?? null;
+        return withToken;
+      }
+      if (withToken.CLAUDE_CODE_OAUTH_TOKEN) {
+        seat.projectedClaudeToken = withToken.CLAUDE_CODE_OAUTH_TOKEN;
+        return { ...withToken, CLAUDE_CONFIG_DIR: root.claude };
+      }
+      const defaultDir = join(this.home, ".claude");
+      const source = withToken.CLAUDE_CONFIG_DIR ?? defaultDir;
+      const minLeftMs = seat.run.timeout_s * 1000 + CLAUDE_ACCESS_MIN_LEFT_MS;
+      let copy: string | null = null;
+      try { copy = accessOnlyClaude(readFileSync(join(source, ".credentials.json"), "utf8"), Date.now(), minLeftMs); } catch { /* Keychain or no file */ }
+      // Keychain's default service belongs only to the default identity. A selected worker dir must never
+      // silently receive the person's default account when that worker's file is absent or near expiry.
+      if (!copy && resolve(source) === resolve(defaultDir)) {
+        copy = (await this.claudeCredentials(minLeftMs, source)).claude_credentials ?? null;
+      }
+      if (copy) {
+        seat.projectedClaudeToken = claudeTokenFrom(copy)?.value ?? null;
+        writeFileSync(join(root.claude, ".credentials.json"), copy, { mode: 0o600, flag: "wx" });
+        return { ...withToken, CLAUDE_CONFIG_DIR: root.claude };
+      }
+      if (resolve(source) === resolve(defaultDir)) {
+        throw new Error("this machine's default Claude login cannot be projected for the full seat timeout without using personal settings; refresh Claude Code, use a seat token, or locally opt in with seats allow --inherit-person-config --yes");
+      }
+      return withToken; // a selected worker login keeps its own refreshing path, never another identity
+    }
+    if (seat.run.runtime === "codex" && !seat.v2?.creds?.env.CODEX_HOME) {
+      const { copy, reason, source } = await this.codexProjection(env);
+      if (reason || !source) throw new Error(reason ?? "the selected CODEX_HOME could not be resolved to an absolute path");
+      const selectedEnv = { ...env, CODEX_HOME: source };
+      if (this.current.inherit_person_config) return selectedEnv;
+      if (copy) {
+        writeFileSync(join(root.codex, "auth.json"), copy, { mode: 0o600, flag: "wx" });
+        return { ...selectedEnv, CODEX_HOME: root.codex };
+      }
+      return selectedEnv;
+    }
+    return env; // named vault/leased homes and other runtimes retain their selected environment
+  }
+
   /** `walkie seats token set`: a Claude token only seats use (optional; the machine's own login otherwise). */
   private get seatTokenPath(): string { return join(this.core.paths.home, "seats-claude-token"); }
 
@@ -1890,34 +2148,45 @@ export class SeatsHost {
   }
 
   /** Read the person's current login by Claude Code's platform convention, without refreshing it. */
-  private async claudeCredentials(): Promise<{ claude_credentials?: string }> {
-    const fileCopy = this.claudeFileCredentials();
+  private async claudeCredentials(minLeftMs = CLAUDE_ACCESS_MIN_LEFT_MS, dir = this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude")): Promise<{ claude_credentials?: string }> {
+    const fileCopy = this.claudeFileCredentials(minLeftMs, dir);
     if (fileCopy) return { claude_credentials: fileCopy };
-    const dir = this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude");
     const file = join(dir, ".credentials.json");
     try { if (existsSync(file) && (!statSync(file).isFile() || statSync(file).size > 64 * 1024)) return {}; } catch { return {}; }
     const isDefault = resolve(dir) === resolve(join(this.home, ".claude"));
     const identityId = identifyClaude({ provider: "claude", dir, isDefault }, this.home)?.id ?? null;
     if (isDefault && identityId !== null && this.cachedClaudeAccess && this.cachedClaudeAccess.identityId === identityId
-      && Date.now() - this.cachedClaudeAccess.readAt < 15 * 60_000
-      && this.cachedClaudeAccess.expiresAt - Date.now() >= CLAUDE_ACCESS_MIN_LEFT_MS)
+      && Date.now() - this.cachedClaudeAccess.readAt < LOGIN_FRESH_MS
+      && this.cachedClaudeAccess.expiresAt - Date.now() >= minLeftMs)
       return { claude_credentials: this.cachedClaudeAccess.credentials };
     this.cachedClaudeAccess = null;
     // A test host has a synthetic HOME; it must never read the developer's actual Keychain item.
     const keychain = this.opts.keychain ?? (this.home === homedir() ? systemKeychain : async () => null);
-    const token = await readClaudeToken({ provider: "claude", dir, isDefault }, guardedClaudeKeychain(keychain, KEYCHAIN_BLOCK_MS), undefined, CLAUDE_ACCESS_MIN_LEFT_MS);
+    const token = await readClaudeToken({ provider: "claude", dir, isDefault }, guardedClaudeKeychain(keychain, KEYCHAIN_BLOCK_MS), undefined, minLeftMs);
     if (typeof token === "string") return {};
-    const copy = claudeSeatAccess(token, Date.now());
+    this.knownClaudeExpiry = token.expiresAt;
+    const copy = claudeSeatAccess(token, Date.now(), minLeftMs);
     if (copy && token.expiresAt !== null) this.cachedClaudeAccess = { credentials: copy, expiresAt: token.expiresAt, readAt: Date.now(), identityId };
     return copy ? { claude_credentials: copy } : {};
   }
 
-  private claudeFileCredentials(): string | null {
-    const file = join(this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude"), ".credentials.json");
+  private claudeFileCredentials(minLeftMs = CLAUDE_ACCESS_MIN_LEFT_MS, dir = this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude")): string | null {
+    const file = join(dir, ".credentials.json");
     try {
       const st = statSync(file);
-      return st.isFile() && st.size <= 64 * 1024 ? accessOnlyClaude(readFileSync(file, "utf8"), Date.now()) : null;
+      return st.isFile() && st.size <= 64 * 1024 ? accessOnlyClaude(readFileSync(file, "utf8"), Date.now(), minLeftMs) : null;
     } catch { return null; }
+  }
+
+  /** The ordinary one-hour seat needs an access-only login that lasts through its run and a refresh margin. */
+  private claudeProjectionNearExpiry(): boolean {
+    if (this.current.ephemeral || this.current.inherit_person_config || this.dedicatedToken() || this.machineToken?.hasEnvToken) return false;
+    const dir = this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude");
+    let expiry: number | null = this.cachedClaudeAccess?.expiresAt ?? this.knownClaudeExpiry;
+    if (expiry === null) {
+      try { expiry = claudeTokenFrom(readFileSync(join(dir, ".credentials.json"), "utf8"))?.expiresAt ?? null; } catch { /* Keychain or no file */ }
+    }
+    return expiry !== null && expiry < Date.now() + DEFAULT_SEAT_TIMEOUT_S * 1000 + CLAUDE_ACCESS_MIN_LEFT_MS;
   }
 
   /**
@@ -1936,38 +2205,124 @@ export class SeatsHost {
     }
   }
 
-  /** Whether Codex seats have a sign-in: as the person, whatever their Codex uses; as seat users, the auth file. */
-  codexLogin(): "machine" | "unavailable" {
-    if (!this.current.ephemeral) return "machine";
-    return this.codexAuthFile().codex_auth ? "machine" : "unavailable";
+  /** The same source and access-only conversion used just before a same-user Codex launch. */
+  private async codexProjection(env: Record<string, string>): Promise<{ copy: string | null; source?: string; reason?: string }> {
+    let source: string;
+    try {
+      const value = env.CODEX_HOME ?? join(this.home, ".codex");
+      if (!value.trim() || value.includes("\0")) throw new Error("invalid CODEX_HOME");
+      source = resolve(value);
+      if (!isAbsolute(source)) throw new Error("relative CODEX_HOME could not be resolved");
+    } catch {
+      return { copy: null, reason: "the selected CODEX_HOME could not be resolved to an absolute path" };
+    }
+    let copy: string | null = null;
+    try {
+      const file = join(source, "auth.json");
+      const st = statSync(file);
+      if (st.isFile() && st.size <= 64 * 1024) copy = accessOnlyCodex(readFileSync(file, "utf8"));
+    } catch { /* missing or unreadable file */ }
+    if (copy) return { copy: this.current.inherit_person_config ? null : copy, source };
+    if (this.current.inherit_person_config && await codexLoginStatus({ ...env, CODEX_HOME: source }, this.home)) return { copy: null, source };
+    return resolve(source) === resolve(join(this.home, ".codex"))
+      ? { copy: null, source, reason: this.current.inherit_person_config
+        ? "this machine's default Codex login could not be verified; sign in or use a named account"
+        : "this machine's default Codex login cannot be projected without using personal settings; sign in with a file credential store, use a named account, or locally opt in with seats allow --inherit-person-config --yes" }
+      : { copy: null, source, reason: "this machine's selected Codex login has no usable auth.json or verified login status in CODEX_HOME; sign in to that home or use a named account" };
   }
 
+  /**
+   * Whether Codex seats have a sign-in. As seat users the auth file is the whole answer and one cheap read that cannot
+   * prompt, so a status read looks at it live: a sign-in made after seats were enabled shows at once, as it always has.
+   * Otherwise it is what the last check found (refreshLogin): a status read serves that answer and never looks again
+   * (SEATS-FIX-5), and a machine nobody has checked reads as it did before verdicts existed: signed in.
+   */
+  codexLogin(): "machine" | "unavailable" {
+    if (this.current.ephemeral) return this.codexAuthFile().codex_auth ? "machine" : "unavailable";
+    return this.codexReadiness?.login ?? "machine";
+  }
+
+  /**
+   * The Claude login seats run on, from what is already known: the seats' own token, else the last check's answer, else
+   * (as seat users) the credentials file, the env token and the cached Keychain token's own expiry. Never a Keychain
+   * read, a command or a refresh (SEATS-FIX-5: dashboard polling must not re-read a near-expiry token, and the item can
+   * prompt the person), and never "unavailable" for age alone: a verdict older than LOGIN_FRESH_MS keeps its value
+   * until a launch (recheckLogin), the doctor, enable or the daemon's start checks it again.
+   */
   claudeLogin(): "dedicated" | "machine" | "unavailable" {
     if (this.dedicatedToken()) return "dedicated";
-    if (!this.current.ephemeral) return "machine";
-    if (!this.machineToken) void this.refreshLogin();
+    if (!this.current.ephemeral) {
+      if (this.current.inherit_person_config || this.machineToken?.hasEnvToken) return "machine";
+      return this.machineToken?.has === false ? "unavailable" : "machine"; // unchecked: as before verdicts existed
+    }
     if (this.claudeFileCredentials()) return "machine";
     if (this.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return "machine";
     if (this.cachedClaudeAccess) {
       const dir = this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude");
       const identityId = identifyClaude({ provider: "claude", dir, isDefault: resolve(dir) === resolve(join(this.home, ".claude")) }, this.home)?.id ?? null;
-      return this.cachedClaudeAccess.identityId === identityId && Date.now() - this.cachedClaudeAccess.readAt < 15 * 60_000
-        && this.cachedClaudeAccess.expiresAt - Date.now() >= CLAUDE_ACCESS_MIN_LEFT_MS ? "machine" : "unavailable";
+      return this.cachedClaudeAccess.identityId === identityId && this.cachedClaudeAccess.expiresAt - Date.now() >= CLAUDE_ACCESS_MIN_LEFT_MS ? "machine" : "unavailable";
     }
-    if (this.machineToken?.has) return "machine";
-    return "unavailable";
+    return this.machineToken?.has ? "machine" : "unavailable";
   }
 
-  /** Sources the seats' environment (as a launch does) to learn whether it carries a usable Claude token. */
-  refreshLogin(): Promise<void> {
-    this.refreshingLogin ??= loginEnv(this.env, this.home, this.envFile, this.current.env ?? [])
-      .then(async ({ env }) => {
-        const has = !!env.CLAUDE_CODE_OAUTH_TOKEN?.trim() || (!this.claudeFileCredentials() && !!(await this.claudeCredentials()).claude_credentials);
-        this.machineToken = { has, at: Date.now() };
+  /**
+   * Checks this machine's sign-ins as a launch would find them (the seats' environment sourced, the Codex login
+   * resolved, the Claude token read: the Keychain and `codex login status` included) and keeps the answers the views
+   * serve. Only explicit points call it: the daemon's start with seats allowed, enable/configure, a seat token change,
+   * `walkie seats doctor` (POST /v1/seats/doctor) and a launch whose verdict has gone stale (recheckLogin). A status
+   * read never does. `only` checks one runtime's verdict; `env` is the environment a launch has already sourced.
+   */
+  refreshLogin(only?: "claude" | "codex", env?: Record<string, string>): Promise<void> {
+    const slot = only === "claude" ? "refreshingClaude" : only === "codex" ? "refreshingCodex" : "refreshingLogin";
+    this[slot] ??= (env ? Promise.resolve({ env }) : loginEnv(this.env, this.home, this.envFile, this.current.env ?? []))
+      .then(async ({ env: sourced }) => {
+        if (only !== "claude") {
+          const reason = this.current.ephemeral
+            ? this.codexAuthFile().codex_auth ? undefined : "this machine's Codex isn't signed in where a seat user can use it (no ~/.codex/auth.json): its person runs codex login (file credential store), then walkie seats doctor"
+            : (await this.codexProjection(sourced)).reason;
+          this.codexReadiness = reason ? { login: "unavailable", reason } : { login: "machine" };
+          this.codexCheckedAt = Date.now();
+        }
+        if (only === "codex") return;
+        const hasEnvToken = !!sourced.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+        const source = sourced.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude");
+        const custom = resolve(source) !== resolve(join(this.home, ".claude"));
+        const minLeftMs = !this.current.ephemeral && !this.current.inherit_person_config
+          ? DEFAULT_SEAT_TIMEOUT_S * 1000 + CLAUDE_ACCESS_MIN_LEFT_MS : CLAUDE_ACCESS_MIN_LEFT_MS;
+        const has = hasEnvToken || custom || !!this.claudeFileCredentials(minLeftMs, source)
+          || !!(await this.claudeCredentials(minLeftMs, source)).claude_credentials;
+        this.machineToken = { has, hasEnvToken, at: Date.now() };
       })
-      .catch(() => { this.machineToken = { has: false, at: Date.now() }; })
-      .finally(() => { this.refreshingLogin = null; });
-    return this.refreshingLogin;
+      .catch(() => {
+        const at = Date.now();
+        if (only !== "codex") this.machineToken = { has: false, hasEnvToken: false, at };
+        if (only !== "claude") {
+          this.codexReadiness = { login: "unavailable", reason: "the seat login environment could not be resolved" };
+          this.codexCheckedAt = at;
+        }
+      })
+      .finally(() => { this[slot] = null; });
+    return this[slot] as Promise<void>;
+  }
+
+  /** Whether this runtime's login verdict was never made or is older than LOGIN_FRESH_MS. */
+  private loginStale(runtime: "claude" | "codex"): boolean {
+    const at = runtime === "claude" ? this.machineToken?.at : this.codexCheckedAt;
+    return at === undefined || at === null || Date.now() - at >= LOGIN_FRESH_MS;
+  }
+
+  /**
+   * Just before a launch: the verdict of the runtime it launches, when it is stale (or was never made), is checked
+   * again with the environment the seat is about to get. A Claude token that expired since the last check, or a
+   * Codex sign-in that went away, is found by this launch, which refuses with its reason, and the next status read
+   * shows it. A seat that doesn't use the machine's Claude login (a named account, a token of its own) leaves it alone.
+   */
+  private async recheckLogin(seat: Seat, env: Record<string, string>): Promise<void> {
+    const runtime = seat.run.runtime;
+    if (seat.stop || (runtime !== "claude" && runtime !== "codex") || seat.v2?.creds) return;
+    // Nor does a Claude seat that runs on the person's own configuration (it projects no token) read one.
+    if (runtime === "claude" && (this.claudeToken(env) || (this.current.inherit_person_config && !this.ephemeral))) return;
+    if (this.loginStale(runtime)) await this.refreshLogin(runtime, env);
   }
 
   /** Sets (or, with null, clears) the dedicated seat token. The machine's person only (route). */
@@ -1986,8 +2341,33 @@ export class SeatsHost {
 
   private onSignal(seat: Seat, s: SeatSignal): void {
     if (this.closing || this.closed || seat.concluding) return;
-    const safe = scrubSeatOutput(s.text, seat.projectedClaudeToken);
-    if (s.kind === "final") { seat.final = { ok: s.ok, text: safe }; return; }
+    let output = s.text;
+    let withheld = false;
+    if (seat.run.runtime === "grok") {
+      if (seat.refusal) return;
+      const guarded = grokGuardOutput(seat.grokOutputTail, output);
+      if (guarded.credential) {
+        seat.refusal = "Grok output resembled a credential; the seat was stopped before that output was shared";
+        this.log.warn("seats_grok_credential_output", { id: seat.id });
+        void this.stopSeat(seat, { reason: "revoked", local: true }).catch((error) => {
+          this.log.warn("seats_grok_credential_stop_failed", { id: seat.id, err: scrub((error as Error).message) });
+        });
+        return;
+      }
+      seat.grokOutputTail = s.kind === "final" ? "" : guarded.pending;
+      output = guarded.safe;
+      if (s.kind === "final" && guarded.pending) {
+        seat.buf.push("[output withheld]");
+        withheld = !s.ok;
+      }
+    }
+    const safe = scrubSeatOutput(output, seat.projectedClaudeToken);
+    if (s.kind === "final") {
+      const marker = " [output withheld]";
+      seat.final = { ok: s.ok, text: withheld ? `${safe.replace(/\s+/g, " ").slice(0, 280 - marker.length)}${marker}` : safe };
+      return;
+    }
+    if (!safe) return;
     const text = s.kind === "tool" ? `⚙ ${safe.replace(/\s+/g, " ").slice(0, 200)}` : safe;
     if (s.kind === "text") seat.lastText = safe;
     seat.activity = safe.trim().split(/\r?\n/)[0]?.slice(0, 200) ?? "";
@@ -2030,7 +2410,7 @@ export class SeatsHost {
     if (!seat.stop) seat.stop = stop;
     // Preparing: abort it. Running: a launcher's stop or the time limit ends the group and the commits still come back;
     // a revoke or shutdown aborts everything, the post-run git included (no result bundle).
-    if (stop.reason === "revoked" || stop.reason === "shutdown" || stop.reason === "unadmitted" || stop.local || (!seat.child && !seat.runner?.runtimePid)) seat.abort.abort();
+    if (stop.reason === "revoked" || stop.reason === "account" || stop.reason === "shutdown" || stop.reason === "unadmitted" || stop.local || (!seat.child && !seat.runner?.runtimePid)) seat.abort.abort();
     this.log.info("seats_stopping", { id: seat.id, reason: stop.reason, by: stop.by ?? null, paused: seat.paused });
     // A paused group can't act on SIGTERM: it continues first, so it can exit (then the usual TERM, then KILL).
     if (seat.paused) { this.signal(seat, "SIGCONT"); seat.paused = false; }
@@ -2094,6 +2474,10 @@ export class SeatsHost {
     try {
       // Kimi (text output) says nothing when it is done: its clean exit is its result.
       if (seat.run.runtime === "kimi" && !seat.final && code === 0) seat.final = { ok: true, text: "" };
+      if (seat.run.runtime === "grok" && seat.grokOutputTail) {
+        if (!seat.refusal) seat.buf.push("[output withheld]");
+        seat.grokOutputTail = "";
+      }
       const fin = seat.final;
       if (fin?.text.trim() && fin.ok && fin.text.trim() !== seat.lastText.trim()) seat.buf.push(fin.text);
       this.flush(seat, true);
@@ -2138,7 +2522,19 @@ export class SeatsHost {
       this.log.warn("seats_conclude_failed", { id: seat.id, err: scrub((err as Error).message) });
       this.seatStatus(seat, seat.stop?.reason ?? "the seat ended");
     } finally {
-      await this.endV2(seat); // idempotent (a throw above skipped it)
+      try { await this.endV2(seat); } catch (err) { this.log.warn("seats_end_v2_cleanup", { id: seat.id, err: scrub((err as Error).message) }); }
+      if (seat.workerRoot) {
+        try { removeWorkerRoot(this.home, seat.workerRoot.key); }
+        catch (err) {
+          this.pendingRoots.set(seat.workerRoot.key, { id: seat.workerRoot.key, ...(seat.child ? { pid: seat.child.pid } : {}), ...(seat.childStarted ? { started: seat.childStarted } : {}) });
+          this.log.warn("seats_worker_root_cleanup", { id: seat.id, err: scrub((err as Error).message) });
+          if (!this.closing && !this.rootRetry) this.rootRetry = setTimeout(() => this.retryPendingRoots(), 30_000);
+        }
+      }
+      if (seat.run.runtime === "grok" && !seat.user) {
+        try { rmSync(join(seat.dir, "grok-home"), { recursive: true, force: true }); }
+        catch (error) { this.log.warn("seats_grok_home_cleanup", { id: seat.id, err: scrub((error as Error).message) }); }
+      }
       this.seats.delete(seat.id);
       this.save();
       this.status();
@@ -2151,6 +2547,8 @@ export class SeatsHost {
   private async endV2(seat: Seat): Promise<void> {
     const v = seat.v2;
     if (!v) return;
+    v.cancelAccount?.();
+    v.cancelAccount = undefined;
     v.cancelReserve?.();
     v.cancelReserve = undefined;
     if (v.lease) { releaseLease(this.core.paths.home, v.lease); v.lease = null; }
@@ -2193,6 +2591,10 @@ export class SeatsHost {
 
   private finalState(seat: Seat, code: number | null, stderr: string): Pick<SeatState, "state" | "reason"> {
     if (seat.refusal) return { state: "refused", reason: seat.refusal };
+    if (seat.run.runtime === "grok" && grokCredentialOutput(stderr)) {
+      this.log.warn("seats_grok_credential_stderr", { id: seat.id });
+      return { state: "failed", reason: "Grok stderr resembled a credential; its contents were not shared" };
+    }
     if (seat.uncontrolled) {
       if (seat.waitedForCleanup && seat.cleanupFailure === "seat cleanup deferred until restart")
         return { state: "stopped", reason: "waiting for the cleanup of an earlier seat user; its seat user remains quarantined" };
@@ -2255,7 +2657,8 @@ export class SeatsHost {
     try {
       this.seatStatuses.submit(seatAgentName(seat.id), {
         agent: seatAgentName(seat.id), parent: SEATS_AGENT, launcher: seat.launcher, state,
-        runtime: seat.run.runtime === "claude" ? "claude-code" : seat.run.runtime,
+        runtime: seat.run.runtime === "claude" ? "claude-code" : seat.run.runtime === "grok" ? "other" : seat.run.runtime,
+        ...(seat.run.runtime === "grok" ? { runtime_name: "grok" } : {}),
         ...(seat.run.model ? { model: seat.run.model } : {}),
         ...(title ? { title } : {}), activity, started_at: seat.startedAt, ask_policy: "off", launch: "headless",
       }, provenance);
@@ -2315,7 +2718,9 @@ export class SeatsHost {
     const a = this.availability();
     // Fixed phrases only (the team-wide status projection, status-projection.ts, shares nothing else); the counts are
     // in the host's availability post and the seats views.
-    const activity = !this.allowed ? SEATS_PHRASES.off : a.state === "busy" ? SEATS_PHRASES.busy : n ? SEATS_PHRASES.running : SEATS_PHRASES.allowed;
+    const activity = this.opts.enrollmentBlock
+      ? this.opts.enrollmentBlock.includes("walkie provision migrate-enrollment") ? SEATS_PHRASES.enrollmentMigration : SEATS_PHRASES.enrollmentUnreadable
+      : !this.allowed ? SEATS_PHRASES.off : a.state === "busy" ? SEATS_PHRASES.busy : n ? SEATS_PHRASES.running : SEATS_PHRASES.allowed;
     try {
       this.core.statuses.submit(SEATS_AGENT, {
         agent: SEATS_AGENT, state: !this.allowed ? "offline" : n || this.queue.length ? "working" : "idle", runtime: "other", title: this.queue.length ? `Seats · ${this.queue.length} queued` : "Seats",
@@ -2350,11 +2755,14 @@ export class SeatsHost {
       }
       const queued = (raw as { queued?: unknown }).queued;
       const unfinished = (raw as { cleanup_unfinished_since?: unknown }).cleanup_unfinished_since;
+      const roots = (raw as { pending_roots?: unknown }).pending_roots;
       return {
         handled,
         running: Array.isArray(raw.running) ? raw.running.filter((x) => typeof x?.id === "string" && typeof x?.dir === "string")
           .map((x) => ({
-            id: x.id as string, dir: x.dir as string, ...(Number.isInteger(x.pid) && (x.pid as number) > 1 ? { pid: x.pid } : {}),
+            id: x.id as string, dir: x.dir as string, ...(typeof x.root === "string" && WORKER_ROOT_KEY.test(x.root) ? { root: x.root } : {}),
+            ...(typeof x.runtime === "string" && SEAT_RUNTIMES.includes(x.runtime as SeatRuntime) ? { runtime: x.runtime as SeatRuntime } : {}),
+            ...(Number.isInteger(x.pid) && (x.pid as number) > 1 ? { pid: x.pid } : {}),
             ...(typeof x.started === "string" ? { started: x.started } : {}), ...(x.runner === true ? { runner: true as const } : {}),
             ...(Number.isInteger(x.user) ? { user: x.user } : {}),
             ...(validTaskRecord(x.task) ? { task: x.task } : {}),
@@ -2365,6 +2773,7 @@ export class SeatsHost {
         user_high: Number.isInteger((raw as { user_high?: unknown }).user_high) ? (raw as { user_high: number }).user_high : 0,
         ...(typeof unfinished === "number" && Number.isFinite(unfinished) && unfinished > 0 ? { cleanup_unfinished_since: unfinished } : {}),
         ...(Array.isArray(queued) ? { queued: queued.filter((id): id is string => typeof id === "string" && /^[0-9a-f]{16}:\d+$/.test(id)).slice(0, QUEUE_CAP) } : {}),
+        ...(Array.isArray(roots) ? { pending_roots: roots.filter((r): r is RootRecord => typeof r?.id === "string" && WORKER_ROOT_KEY.test(r.id)).slice(0, 1_000) } : {}),
       };
     } catch (err) {
       this.log.warn("seats_state_unreadable", { err: (err as Error).message });
@@ -2379,8 +2788,9 @@ export class SeatsHost {
   private save(durable = false): boolean {
     const data: Persisted = {
       handled: Object.fromEntries(this.handled),
+      ...(this.pendingRoots.size ? { pending_roots: [...this.pendingRoots.values()] } : {}),
       running: [...this.seats.values()].map((s) => ({
-        id: s.id, dir: s.dir, ...(s.child ? { pid: s.child.pid } : {}), ...(s.childStarted ? { started: s.childStarted } : {}),
+        id: s.id, dir: s.dir, runtime: s.run.runtime, ...(s.workerRoot ? { root: s.workerRoot.key } : {}), ...(s.child ? { pid: s.child.pid } : {}), ...(s.childStarted ? { started: s.childStarted } : {}),
         ...(s.runner ? { runner: true as const } : {}), ...(s.userN !== null ? { user: s.userN } : {}),
         ...(s.v2?.clone && s.v2.dirs && s.v2.branch && !s.user ? { lane: { clone: s.v2.clone, branch: s.v2.branch } } : {}),
         ...(s.v2?.task && !s.user ? {
@@ -2410,6 +2820,24 @@ export class SeatsHost {
   }
 }
 
+/** Check only the selected runtime's login exit status; provider output and credential values are discarded. */
+async function codexLoginStatus(env: Record<string, string>, home: string): Promise<boolean> {
+  const bin = findRuntime("codex", env.PATH, home, env.CODEX_HOME);
+  if (!bin) return false;
+  try {
+    const child = Bun.spawn([bin, "login", "status"], {
+      env: { ...env, HOME: home }, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true,
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+    }, 10_000);
+    try { return (await child.exited) === 0 && !timedOut; }
+    finally { clearTimeout(timer); }
+  } catch { return false; }
+}
+
 /** A process's start time as `ps` prints it (stable for the process's life), or null when it isn't running. */
 function processStart(pid: number): string | null {
   try {
@@ -2419,6 +2847,24 @@ function processStart(pid: number): string | null {
   } catch {
     return null;
   }
+}
+
+/** A reused leader PID cannot own the old group; otherwise retain until the original group is absent. */
+function workerProcessPresent(r: RootRecord): boolean {
+  if (!r.pid) return false;
+  const leader = processStart(r.pid);
+  if (r.started && leader !== null) return leader === r.started;
+  const present = (target: number): boolean => {
+    try { process.kill(target, 0); return true; }
+    catch (err) { return (err as NodeJS.ErrnoException).code !== "ESRCH"; }
+  };
+  if (leader !== null || present(r.pid)) return true;
+  if (!present(-r.pid)) return false;
+  if (!r.started) return true;
+  const since = Date.parse(r.started);
+  const members = groupMembers(r.pid);
+  if (!Number.isFinite(since) || !members.length) return true;
+  return members.some((m) => m.startMs >= since - START_SLACK_MS);
 }
 
 /** The processes of process group `pgid` and their start times (ms), from `ps`; [] when it can't tell. */
@@ -2500,6 +2946,7 @@ function readIfThere(path: string): string | null {
 function stopText(stop: NonNullable<Seat["stop"]>, run: AnySeatRun): Pick<SeatState, "state" | "reason"> {
   switch (stop.reason) {
     case "reserve": return { state: "stopped", reason: "borrowed account returned to preserve its person’s 10% reserve" };
+    case "account": return { state: "stopped", reason: "named owner account expired, was revoked, or is no longer available" };
     case "timeout": return { state: "timeout", reason: `stopped after the ${Math.round(run.timeout_s / 60)} min limit` };
     case "stopped": return { state: "stopped", reason: stop.by ? `stopped by @${stop.by}` : "stopped" };
     case "revoked": return { state: "stopped", reason: "seats were turned off on this machine" };
@@ -2550,9 +2997,9 @@ export function seatsFor(core: Core): SeatsHost | undefined { return hosts.get(c
  * the refresh token (a seat refreshing with it could sign the machine out where refresh tokens are single-use, and
  * it would outlive the seat). Null when there is none, or it expires within 10 minutes (the seat couldn't refresh it).
  */
-export function accessOnlyClaude(text: string, now: number): string | null {
+export function accessOnlyClaude(text: string, now: number, minLeftMs = CLAUDE_ACCESS_MIN_LEFT_MS): string | null {
   const token = claudeTokenFrom(text);
-  return token ? claudeSeatAccess(token, now) : null;
+  return token ? claudeSeatAccess(token, now, minLeftMs) : null;
 }
 
 /**

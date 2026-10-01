@@ -16,6 +16,8 @@ export { parseAddress, type ParsedAddress } from "../protocol/address.ts";
 export function addressedTo(to: string, me: { handle: string; hostname: string; agent?: string }): boolean {
   const a = parseAddress(to);
   if (a.handle !== me.handle) return false;
+  // Cloud aliases are assigned-card guests, with no ask inbox or answer authority.
+  if (a.machine === "cloud") return false;
   if (a.machine && a.machine !== me.hostname) return false;
   if (a.agent && me.agent && a.agent !== me.agent) return false;
   return true;

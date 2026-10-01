@@ -104,6 +104,12 @@ describe("joinStatusText", () => {
     expect(text).not.toContain("Claude");
   });
 
+  test("a seat enrollment block prevents a Ready announcement even when both runtimes are signed in", () => {
+    const text = joinStatusText({ ...READY, disabled_reason: "enrollment migration requires local elevation: run walkie provision migrate-enrollment" });
+    expect(text).toContain("enrollment migration requires local elevation: run walkie provision migrate-enrollment");
+    expect(text.startsWith("Ready:")).toBe(false);
+  });
+
   test("everything wrong: every reason named, in order", () => {
     const text = joinStatusText({
       handle: "kira", machine: "kiras-mbp", version: "0.2.0-pre.8", seats: { running: 0, max: 3 },

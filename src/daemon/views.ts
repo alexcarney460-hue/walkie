@@ -4,6 +4,7 @@ import { PROTOCOL_VERSION, type AgentState, type AgentsPayload, type AgentView, 
 import { FUTURE_SKEW_MS } from "../license/plans.ts";
 import { UNKNOWN_MS, usageUntil } from "../protocol/accounts-format.ts";
 import type { MachineStats } from "../protocol/machine-stats.ts";
+import { cloudAddress, isCloudAgent } from "../protocol/guest-cloud.ts";
 import { clockFromReading, mergeClock, shiftClock, validClock } from "../accounts/clock.ts";
 import { MAX_LEASES_PER_NODE, PROVIDERS, type AccountLeaseView, type AccountUsage, type AccountView, type ResetClock as ResetClockT } from "../protocol/accounts.ts";
 import { countByNode, IDLE_ARCHIVE_MS, isArchived, matchesSearch } from "../protocol/agent-roster.ts";
@@ -183,8 +184,10 @@ function rawAgentsView(core: Core, sync: SyncManager, now: number): AgentView[] 
     const online = sync.isOnline(row.node, now);
     const observed = observedAt(status, row.ts);
     const effective = effectiveState(status.state, observed, online, now);
+    const id = isCloudAgent({ agent: row.agent, status }) ? cloudAddress({ handle: member.handle, agent: row.agent })
+      : `${member.handle}/${node.hostname}/${row.agent}`;
     out.push({
-      id: `${member.handle}/${node.hostname}/${row.agent}`,
+      id,
       handle: member.handle, node: row.node, hostname: node.hostname, agent: row.agent,
       status: { ...status, runtime: status.runtime ?? "other" },
       updated_at: observed, machine_online: online,
@@ -194,7 +197,7 @@ function rawAgentsView(core: Core, sync: SyncManager, now: number): AgentView[] 
     // Time-in-state never starts before this node received the status (Opus r1 LOW): a peer's `observed_at` (or ts)
     // can't make a card claim hours in a state. This node's own statuses keep their observed time (re-signed copies).
     const received = row.node === core.nodeId ? null : core.store.agentReceivedAt(row);
-    starts.set(`${member.handle}/${node.hostname}/${row.agent}`, received === null ? observed : Math.max(observed, received));
+    starts.set(id, received === null ? observed : Math.max(observed, received));
   }
   return withSince(core, out, starts, now);
 }

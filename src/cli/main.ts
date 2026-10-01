@@ -31,6 +31,9 @@ import { roomCmd } from "./commands/room.ts";
 import { boardCmd } from "./commands/steward.ts";
 import { wrap } from "./commands/wrap.ts";
 import { admin, runRemote, splitRemote } from "./commands/admin.ts";
+import { provision } from "./commands/provision.ts";
+import { profileArgvProblem } from "../daemon/provision/profiles.ts";
+import { sshCommand, sshTunnelCommand } from "./commands/ssh.ts";
 import { CLI_BOOLEANS } from "./booleans.ts";
 import { errorForModel, underAgent } from "./agent-output.ts";
 import { EXIT, makeCtx, type Command, type Ctx } from "./context.ts";
@@ -54,7 +57,7 @@ team
   init <team-name> --handle <you> [--direct|--tailscale]   create a team on this machine (you become owner)
   invite --handle <h> [--role member|owner|observer]       Walkie Direct: print a single-use invite code (7 days)
   invite <tailscale-login> --handle <h> [--role …] [--name "Display Name"]   a Tailscale team: add their tailnet login
-  join <invite-code> | <peer-host-or-100.x-ip>   join with a Walkie Direct invite code, or a Tailscale team through
+  join <invite-code> | <peer-host-or-100.x-ip> | --invite-stdin   join with a Walkie Direct invite code, or a Tailscale team through
            [--allow-team-agents | --no-team-agents (aliases --allow-seats / --no-seats)] [--same-user]
            [--accept-readable-home]        any teammate's machine (same seat opt-in flags as setup)
   channel create <name> [--topic t] [--members a,b | --public]   (members = restricted; --public opens an existing one)
@@ -73,6 +76,13 @@ team
                                            stop them; install llama.cpp (elsewhere with --dir; --dry-run: print, don't run)
   accounts                                 model-provider accounts in use and usage left (5-hour, weekly), team-wide
   team add-machine <handle> [--json]       owner: a one-time link + install command for another of a member's machines
+  ssh key                                  show or create this owner's SSH key under ~/.walkie
+  ssh config <machine>                     print a Host block for ssh/scp/rsync/editors
+  ssh <machine> [-- ssh options]           sign in through Walkie Direct as the target's OS user
+  tunnel ssh <machine>                     stdio bridge for SSH ProxyCommand
+  ssh revoke                               on the enrolled machine, remove the tagged owner key
+  ssh enable                               install or repair Walkie's SSH service here (macOS, Linux, WSL): one administrator step
+  ssh status [--wait] [--json]             is owner SSH ready here: server on, owner key installed, tunnel open (--wait: up to a minute)
 switching accounts at usage limits (your own logins, in this machine's encrypted vault)
   claude [args…] · codex [args…]           the real CLI, same terminal, resumed on an account with room at a limit
   accounts add claude|codex                store a login (claude: paste a \`claude setup-token\`; codex: runs codex login)
@@ -168,6 +178,14 @@ admin (agents set Walkie up: audited in #general; the machine's person keeps the
   agents admin on|off|status (alias: admin agents on|off|status)   may agents on this machine do its setup
                                            (default on; only you turn it on)
   admin remote on|off|status               may owners (and your other machines) administer this one (default on)
+  provision status|apply --profile developer-worker|freight-worker   bounded enrollment steps and receipts
+  provision grant --owner-node ID --owner-handle HANDLE --launchers @handle --seat-cap N --profile ID   local typed consent
+  provision grant-bootstrap                the Windows enrollment records its one consent from inside WSL (JSON on stdin, never a terminal)
+  provision reset --profile ID             archive an old profile receipt after new consent
+  provision revoke                         locally revoke enrollment provisioning consent (person only)
+  provision prepare-enrollment             install the root-owned marker before desktop enrollment consent
+  provision migrate-enrollment             elevate an older grant or receipt to a root-owned marker
+  provision unenroll                       terminal confirmation and elevation after seats off and grant revoked
 agents
   agents archive [--machine m] [--search q] [--limit n] [--offset n]
                                            idle and offline agents (the Agent archive), newest first, with last title and last seen
@@ -191,15 +209,17 @@ WalkieTalkie (your team's orchestrator: your own Claude Code session; walkie orc
   talkie schedules                         list scheduled WalkieTalkie turns
   talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset  scheduled WalkieTalkie turns
 seats (agents a teammate starts on a machine whose person opted in; they run on that machine's own sign-in)
-  seats enable [--yes] [--same-user] [--accept-readable-home] [--launchers …] [--max n] [--claude-token-stdin]
-                                           one step: let your team start agents on THIS machine (sets up a fresh
-                                           OS user per seat with your sudo, then allows seats; prints what it did;
+  seats enable [--yes] [--same-user | --seat-users] [--accept-readable-home] [--launchers …] [--max n] [--claude-token-stdin]
+                                           one step: let your team start agents on THIS company machine (same-user
+                                           by default, existing seat-user mode retained; --seat-users uses sudo;
                                            claude setup-token | walkie seats enable --yes --claude-token-stdin
                                            also gives Claude seats a token of their own, on a Keychain-only Mac)
-  seats setup-user [--apply] [--accept-readable-home]   just the OS-user step (seats enable does this for you)
+  seats setup-user [--apply] [--accept-readable-home]   explicit OS-user hardening step
   seats token set (Claude token on stdin) | seats token clear   give Claude seats a token of their own, or
                                            go back to this machine's login
   seats doctor                             is this machine ready for seats (Claude/Codex signed in for them, …)?
+  seats cleanup-root <root-key>            person-only cleanup of a pending worker root shown by doctor; process absence is best effort
+  seats migration-preflight                read-only inventory before changing an existing seat-user machine
   seats start <machine> [--count n (1-10)] [--provider claude|codex|kimi] [--max-concurrent n]
               (--prompt "…" | --brief <file|->) [--model m]
               [--permission-mode default|acceptEdits|bypassPermissions] [--timeout 3600]
@@ -228,9 +248,10 @@ artifacts
   fetch <hash> [-o path]                   fetch an artifact (from peers if needed)
 agent integration
   discover --once [--json]                         read-only local process census (no daemon)
-  hooks install|uninstall claude|codex|kimi|all [--dry-run]   status hooks + MCP tools for your agents (all = claude + codex)
+  hooks install|uninstall claude|codex|kimi|grok|hermes|all [--dry-run]   status hooks + MCP tools for your agents (all = claude + codex; Hermes needs --profiles name[,name])
+                                           Hermes: activity text is hidden for every Hermes profile unless listed with --activity name[,name] (--activity "" clears the list)
   mcp                                      run the MCP server (stdio; used by agent configs)
-  hook claude|codex|kimi|switch            hook entrypoint (called by Claude Code / Codex / Kimi / the account switcher)
+  hook claude|codex|kimi|grok|hermes|switch   hook entrypoint (called by Claude Code / Codex / Kimi / Grok / Hermes / the account switcher)
 integrations (run in this machine's daemon; keys stay on this machine)
   integrations [list]                      Fireflies, Wispr Flow and Linear: status and last sync
   integrations enable <fireflies|wispr|linear> [--key-path ~/keys/x.txt | --key -] [--channel c]
@@ -273,7 +294,7 @@ const computeUnavailable: Command = async (ctx) => {
 export const COMMANDS: Record<string, Command> = {
   init, invite, join, channel, team: teamCmd, who: whoCmd, pool: poolCmd, direct: directCmd, post, get, reply, subscribe, ask, inbox, answer, status,
   share, fetch: fetchCmd, accounts, agents: agentsCmd, projects: projectsCmd, tasks: tasksCmd, task: taskCmd, import: importCmd, room: roomCmd, mobile, dashboard, token, doctor, daemon, mcp, hook, hooks, setup, update, integrations, linear, license, upgrade,
-  orchestrator, talkie: orchestrator, seats, seat, admin, stale: staleCmd, discover, board: boardCmd,
+  orchestrator, talkie: orchestrator, seats, seat, admin, provision, stale: staleCmd, discover, board: boardCmd,
   compute: RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION ? compute : computeUnavailable,
 };
 
@@ -296,6 +317,10 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
   if (cmd === "talkie-capability" && rest.length === 0) { writeOut("talkie-user-v3\n"); return EXIT.ok; }
+  if (cmd === "ssh" || cmd === "tunnel") {
+    try { return cmd === "ssh" ? await sshCommand(rest) : await sshTunnelCommand(rest); }
+    catch (err) { writeErr(`walkie ${cmd}: ${(err as Error).message}\n`); return EXIT.error; }
+  }
   // ACCOUNTS-2: the CLI's own arguments go through untouched (Walkie's flag parser never sees them).
   if (cmd === "claude" || cmd === "codex") return wrap(cmd, rest);
   // The seat user helper (admin.ts): root only, through sudo, `seat-admin create <n>` / `destroy <n>` / `pending`.
@@ -337,7 +362,18 @@ export async function main(argv: string[]): Promise<number> {
   if (!run) { writeErr(`walkie: unknown command "${cmd}" (see: walkie help)\n`); return EXIT.error; }
   let ctx: Ctx | undefined;
   try {
-    const args = parseArgs(rest, BOOLEANS);
+    if (cmd === "provision") {
+      const problem = rest[0] === "revoke" ? (rest.length === 1 || (rest.length === 2 && rest[1] === "--json") ? null : "revoke takes no other arguments")
+        : rest[0] === "grant" ? null : rest[0] === "grant-bootstrap" ? (rest.length === 1 ? null : "grant-bootstrap takes its input on stdin")
+        : rest[0] === "reset" ? profileArgvProblem(["status", ...rest.slice(1)])
+        : rest[0] === "unenroll-root" ? (rest.length === 2 && rest[1]?.startsWith("/") ? null : "unenroll-root needs an absolute home path")
+        : ["unenroll", "prepare-enrollment", "migrate-enrollment"].includes(rest[0] ?? "")
+          ? (rest.length === 1 ? null : `${rest[0]} takes no other arguments`)
+        : rest[0] === "root-marker" ? ((rest.length === 3 || (rest.length === 4 && (rest[3] === "ssh-linux" || rest[3] === "ssh-macos"))) && rest[1] === "install" && rest[2]?.startsWith("/") ? null : "root-marker permits install, optionally followed by ssh-linux or ssh-macos, only")
+        : profileArgvProblem(rest);
+      if (problem) throw new UsageError(problem);
+    }
+    const args = parseArgs(rest, cmd === "provision" ? new Set([...BOOLEANS].filter((x) => x !== "profile")) : BOOLEANS);
     if (args.flags.get("help") === true) { writeOut(USAGE + "\n"); return EXIT.ok; }
     ctx = makeCtx(args);
     return await run(ctx);

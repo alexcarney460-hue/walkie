@@ -34,12 +34,17 @@ import { adminGate, agentCaller, personOnly } from "./admin/gate.ts";
 import { FLEET_AGENT, STEWARD_AGENT } from "../protocol/projects/steward-core.ts";
 import type { SyncManager } from "./sync.ts";
 import { parseProvenance, projectStatus } from "../protocol/status-projection.ts";
+import { hookDeliveryKey, parseHookDelivery } from "../protocol/hook-delivery.ts";
 import { accountsView, agentsPayload, ARCHIVE_PAGE_MAX, askView, cutAskView, isLiveSubagentRow, liveSubagents, meView, nodesView, teamView } from "./views.ts";
 import { MAX_SUBAGENTS_PER_PARENT, namedUnder } from "../protocol/subagents.ts";
-import { requestLease } from "./vault-lease.ts";
+import { LocalLeaseReq, requestLease } from "./vault-lease.ts";
 import { plainText } from "../protocol/plain-text.ts";
 import { VERSION } from "./version.ts";
+import { HermesStatusReq, applyHermesStatus, submitHermesUpdate } from "./hermes-status.ts";
+import { HERMES_HOOK_LIMIT } from "./ratelimit.ts";
 import { addMachineCommand, addMachineLink, releaseTag } from "../protocol/add-machine.ts";
+import { ownerPublicKey } from "./ssh/owner-key.ts";
+import { encodeOwnerSshGrant, mintOwnerSshGrant } from "./ssh/grant.ts";
 import type { Integrations } from "../integrations/routes.ts";
 import { activateCode, isActivationCode } from "../license/bind.ts";
 import { refreshLicense } from "../license/renew.ts";
@@ -146,6 +151,7 @@ function requireOwner(c: RouteCtx): void {
  * process got (X-Walkie-Orchestrator-Token), so nothing else in the team can pass for this machine's orchestrator.
  */
 function refuseReservedAgent(c: RouteCtx): void {
+  if (c.agent && isGuestAgent(c.agent)) throw new HttpError(403, "forbidden", "cloud guest names are reserved for the guest gateway");
   if (c.agent !== ORCHESTRATOR_AGENT) return;
   if (hostFor(c.core)?.acceptsToken(c.orchestratorToken)) return;
   throw new HttpError(403, "forbidden", "the agent name \"orchestrator\" is reserved for this machine's orchestrator host");
@@ -351,7 +357,7 @@ route("POST", "/v1/team/invite-code", async (c) => {
  */
 
 /** Mints a Walkie Direct code for `handle` through this request's transport (invite-mint.ts). */
-async function mintInvite(c: RouteCtx, handle: string, asked: Role): Promise<{ code: string; role: Role; expires_at: number; existing_member: boolean }> {
+async function mintInvite(c: RouteCtx, handle: string, asked: Role): Promise<{ code: string; id: string; role: Role; expires_at: number; existing_member: boolean }> {
   c.noTimeout();
   return mintInviteCode(c.core, c.transport, handle, asked);
 }
@@ -371,14 +377,23 @@ route("POST", "/v1/team/add-machine", async (c) => {
   if (!m || m.role === "removed") throw new HttpError(404, "not_found", `@${b.handle} isn't on the team; invite a new person with: walkie invite --handle ${b.handle}`);
   const inv = await mintInvite(c, b.handle, m.role as Role);
   const tag = releaseTag(VERSION);
+  const ownerSsh = mintOwnerSshGrant(c.core.keys, {
+    team_id: c.core.teamId as string, owner_handle: c.core.myHandle() as string, recipient: b.handle,
+    invite_id: inv.id, public_key: ownerPublicKey(c.core.paths.home, true) as string, expires_at: inv.expires_at,
+  });
+  const encodedSsh = encodeOwnerSshGrant(ownerSsh);
   // The pinned build's setup asks the consent question only when it hosts seats (src/cli/commands/team-agents.ts).
   const teamAgents = hasRoute("GET", "/v1/seats");
+  // One link and one command for every caller: an agent's copy goes only to its person (private delivery), and it
+  // carries the owner SSH authorization too, so a link an agent minted enrolls the machine exactly as the person's would.
+  const link = `${addMachineLink(inv.code, tag, teamAgents)}&ssh=${encodedSsh}`;
+  const command = `${addMachineCommand(inv.code, tag)} --owner-ssh ${encodedSsh}`;
   if (privateJoinCaller(c)) return privateJoinDelivery(c,
-    `Add a machine for @${b.handle} (${inv.role}), expires ${new Date(inv.expires_at).toISOString()}.\nLink: ${addMachineLink(inv.code, tag, teamAgents)}\nInstall: ${addMachineCommand(inv.code, tag)}`,
+    `Add a machine for @${b.handle} (${inv.role}), expires ${new Date(inv.expires_at).toISOString()}.\nLink: ${link}\nInstall: ${command}`,
     b.handle, inv.expires_at);
   return json({
     code: inv.code, handle: b.handle, role: inv.role, expires_at: inv.expires_at, existing_member: true,
-    version: VERSION, team_agents: teamAgents, link: addMachineLink(inv.code, tag, teamAgents), command: addMachineCommand(inv.code, tag),
+    version: VERSION, team_agents: teamAgents, owner_ssh: encodedSsh, link, command,
   });
 });
 
@@ -633,6 +648,7 @@ route("POST", "/v1/ask", async (c) => {
   refuseAgentJoinContent(c, b.text);
   limitWrite(c);
   const target = parseAddress(b.to);
+  if (target.machine === "cloud") throw new HttpError(403, "forbidden", "cloud guests receive assigned card work, not direct asks");
   if (!memberByHandle(c.core.roster, target.handle) || memberByHandle(c.core.roster, target.handle)?.role === "removed") {
     throw new HttpError(404, "not_found", `no member @${target.handle}`);
   }
@@ -713,6 +729,31 @@ route("POST", "/v1/answer", async (c) => {
 
 // ---- agents --------------------------------------------------------------------------
 
+route("POST", "/v1/hermes/status", async (c) => {
+  requireTeam(c);
+  const input = parseWith(HermesStatusReq, await readJson(c.req, LOCAL_BODY_MAX));
+  if (c.agent !== `hermes-${input.profile}`) throw new HttpError(403, "forbidden", "Hermes profile must match X-Walkie-Agent");
+  refuseAgentJoinContent(c, { activity: input.activity }); // every agent-authored field is checked, as on /v1/status
+  if (Math.abs(Date.now() - input.at) > 2 * 60 * 60_000) throw new HttpError(400, "invalid", "Hermes event timestamp is outside the session window");
+  // Only a NEW session takes a token of the profile's admission bucket. An update or end for a session the daemon
+  // already knows takes none, and this route applies no other request limiter (there is no per-connection limit on
+  // them). What bounds a flood of those: the status coalescer below (one signed agent.status per `status:<agent>`
+  // token, latest wins) and the row caps (HERMES_PROFILE_CAP per profile, HERMES_TOTAL_CAP in all: known updates
+  // rewrite existing rows and cannot grow the table). The database work of each request is not itself rate limited.
+  const known = c.core.store.db.query<{ present: number }, [string, string]>(
+    "SELECT 1 AS present FROM hermes_sessions WHERE profile = ? AND session = ? LIMIT 1",
+  ).get(input.profile, input.session);
+  if (!known && !c.core.limiter.take(`hermes-hook:${input.profile}`, HERMES_HOOK_LIMIT)) {
+    throw new HttpError(429, "rate_limited", "too many new Hermes sessions; slow down");
+  }
+  // A profile shows its state only unless config.json lists it (hermes_activity_profiles): its activity is dropped here, before it is
+  // stored, and again where its card is posted (a row stored while the profile was listed must not show once it is not).
+  const activityProfiles = c.core.hermesActivityProfiles();
+  const clean = activityProfiles.includes(input.profile) ? redactStatus(c, input) : { ...input, activity: undefined, source: undefined };
+  const event = submitHermesUpdate(c.core.statuses, applyHermesStatus(c.core.store, clean), activityProfiles);
+  return event ? json({ event }) : json({ event: null, coalesced: true }, 202);
+});
+
 route("POST", "/v1/status", async (c) => {
   requireTeam(c);
   const raw = await readJson(c.req, LOCAL_BODY_MAX);
@@ -722,6 +763,7 @@ route("POST", "/v1/status", async (c) => {
   const provenance = parseProvenance((raw as { provenance?: unknown } | null)?.provenance);
   if (c.agent && c.agent !== b.agent) throw new HttpError(403, "forbidden", "status agent must match X-Walkie-Agent");
   if (RESERVED_AGENTS.has(b.agent)) throw new HttpError(403, "forbidden", `agent name "${b.agent}" is reserved for the ${b.agent} integration`);
+  if (isGuestAgent(b.agent)) throw new HttpError(403, "forbidden", "cloud guest status is set by the guest gateway only");
   if (b.agent === ORCHESTRATOR_AGENT) throw new HttpError(403, "forbidden", "the orchestrator's status is set by its host daemon only");
   if (b.agent === STEWARD_AGENT || b.agent === FLEET_AGENT) throw new HttpError(403, "forbidden", `the name "${b.agent}" is reserved for this daemon`);
   if (isSeatAgent(b.agent)) throw new HttpError(403, "forbidden", "seats' status is set by the host daemon only (PROTOCOL §11)");
@@ -739,6 +781,10 @@ route("POST", "/v1/status", async (c) => {
   if (b.parent && b.state !== "offline" && !isLiveSubagentRow(latest) && liveSubagents(c.core, b.parent, b.agent) >= MAX_SUBAGENTS_PER_PARENT) {
     throw new HttpError(429, "rate_limited", `${b.parent} already shows ${MAX_SUBAGENTS_PER_PARENT} live sub-agents`);
   }
+  // One hook event can reach the daemon twice (the same Grok event through two hooks, src/hooks/grok-events.ts): the first
+  // is applied, a repeat is dropped. Judged by what the event is, never by what is configured; every refusal above comes first.
+  const delivery = parseHookDelivery((raw as { delivery?: unknown } | null)?.delivery);
+  if (delivery && !c.core.hookDeliveries.firstSeen(hookDeliveryKey(b.agent, delivery))) return json({ event: null, duplicate: true });
   c.core.noteLocalCwd(b.agent, b.cwd);
   const clean = redactStatus(c, JSON.parse(JSON.stringify(b)) as typeof b);
   // This machine's dashboard shows a sub-agent's description even when the team doesn't get it (share_prompts off).
@@ -785,16 +831,33 @@ function ownerAddr(c: RouteCtx, node: NodeRec): PeerAddr {
 
 // ACCOUNTS-2 phase 3: a setup-token handed out by another machine's vault, for one wrapped launch. Unix socket only
 // (the caller proved it is this OS user); the token is returned, never stored (vault-lease.ts).
+const LOCAL_LEASE_BUCKET = { capacity: 20, perSecond: 20 / 3600 };
 route("POST", "/v1/vault/lease", async (c) => {
   if (c.listener !== "unix") throw new HttpError(403, "forbidden", "this route is only served on the unix socket");
   requireTeam(c);
-  if (!c.core.limiter.take("vault-lease-local", { capacity: 20, perSecond: 20 / 3600 })) throw new HttpError(429, "rate_limited", "too many hand-outs; try later");
+  if (!c.core.limiter.take("vault-lease-local", LOCAL_LEASE_BUCKET)) throw new HttpError(429, "rate_limited", "too many hand-outs; try later");
   // The owner's machine over a transport both serve (pre.4 merge: a Walkie Direct owner too), like every peer call.
   const res = await requestLease(c.core, (_addr, body, node) => c.client.vaultLease(ownerAddr(c, node), body).catch((err: unknown) => {
     const e = err as { status?: number; code?: string; message?: string };
     throw new HttpError(e.status && e.status >= 400 && e.status < 600 ? e.status : 502, e.code ?? "unreachable", `the owner's machine refused: ${plainText(String(e.message ?? "unreachable"), 200)}`);
   }), await readJson(c.req, 16 * 1024));
   return new Response(JSON.stringify(res), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+});
+
+route("POST", "/v1/vault/probe", async (c) => {
+  if (c.listener !== "unix") throw new HttpError(403, "forbidden", "this route is only served on the unix socket");
+  requireTeam(c);
+  if (!c.core.limiter.can("vault-lease-local", LOCAL_LEASE_BUCKET)) throw new HttpError(429, "rate_limited", "too many hand-outs; try later");
+  const b = parseWith(LocalLeaseReq, await readJson(c.req, 1024));
+  if (b.node === c.core.nodeId) throw new HttpError(400, "invalid", "that account is in this machine's own vault");
+  const node = c.core.roster.nodes.get(b.node);
+  if (!node || node.revoked) throw new HttpError(404, "not_found", "no such machine in the team");
+  try { return json(await c.client.vaultProbe(ownerAddr(c, node), { account: b.account, provider: b.provider ?? "claude" })); }
+  catch (err) {
+    const e = err as { status?: number; code?: string; message?: string };
+    throw new HttpError(e.status && e.status >= 400 && e.status < 600 ? e.status : 502,
+      e.code ?? "unreachable", `the owner's machine refused: ${plainText(String(e.message ?? "unreachable"), 200)}`);
+  }
 });
 
 // ---- artifacts -------------------------------------------------------------------------
@@ -899,6 +962,7 @@ route("GET", "/v1/stream", (c) => {
 
 /** Agent names reserved for this daemon's connectors (the dashboard badges their posts as integrations). */
 export const RESERVED_AGENTS: ReadonlySet<string> = new Set(["fireflies", "wispr", "linear"]);
+export function isGuestAgent(name: string): boolean { return name.startsWith("dots-") || name.startsWith("grokbot-"); }
 
 /**
  * An absent header is a person; a PRESENT header must name an agent. Fetch trims header values, so `--agent " "`
@@ -909,6 +973,7 @@ export function validAgentHeader(v: string | null): string | undefined {
   if (v === "") throw new HttpError(400, "invalid", "X-Walkie-Agent is empty: name the agent, or send no header for a person");
   if (!AgentName.safeParse(v).success) throw new HttpError(400, "invalid", "X-Walkie-Agent is not a valid agent name");
   if (RESERVED_AGENTS.has(v)) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for the ${v} integration`);
+  if (isGuestAgent(v)) throw new HttpError(403, "forbidden", "cloud guest names are reserved for the guest gateway");
   if (v === SEATS_AGENT) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for the seats host daemon`);
   if (v === ADMIN_AGENT) throw new HttpError(403, "forbidden", `agent name "${v}" is reserved for the admin audit trail`);
   // FO-6: the board steward's moves are trusted by the fold (it may move a person's card); only the daemon signs as it.

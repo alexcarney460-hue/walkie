@@ -113,7 +113,7 @@ describe("cloud-init user-data", () => {
     writeFileSync(join(dir, "hb.sh"), hb);
     expect(hb).toContain("/api/compute/heartbeat");
     expect(spawnSync("bash", ["-n", join(dir, "hb.sh")]).status).toBe(0);
-    expect(u).toContain(`curl -fsSL https://getwalkie.vercel.app/install.sh | WALKIE_VERSION=v0.2.0-pre.7 sh -s -- --invite ${p.joinCode} --allow-team-agents`);
+    expect(u).toContain(`curl -fsSL https://getwalkie.vercel.app/install.sh | WALKIE_VERSION=v0.2.0-pre.7 sh -s -- --invite ${p.joinCode} --allow-team-agents --seat-users`);
     expect(u).not.toContain("same-user");
     expect(u).toContain("-d 169.254.0.0/16 -m owner ! --uid-owner 0 -j REJECT");
     expect(u).toContain("tbf rate 1000mbit");

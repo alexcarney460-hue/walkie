@@ -6,6 +6,7 @@ import { runText, type SeatRun } from "../../src/protocol/seats.ts";
 const WT = join(import.meta.dir, "../..");
 const { hostFor } = await import(`${WT}/src/daemon/orchestrator/host.ts`);
 const { Cluster, waitFor } = await import(`${WT}/test/helpers/cluster.ts`);
+const { noKeychainSeats } = await import(`${WT}/test/helpers/no-keychain.ts`);
 const FAKE_DIR = join(WT, "test", "fixtures", "fake-claude");
 let c: any; let alex: any; let launches = ""; let credentials = "";
 const launchRows = () => existsSync(launches) ? readFileSync(launches, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r: any) => r.argv?.includes("-p")) : [];
@@ -24,7 +25,7 @@ beforeAll(async () => {
   writeFileSync(runtime, `#!/bin/sh\nexec '${process.execPath}' '${join(FAKE_DIR, "claude")}' "$@"\n`); chmodSync(runtime, 0o755);
   const env: Record<string, string | undefined> = { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches, CLAUDE_CONFIG_DIR: cfgDir };
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
-  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator: {
+  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", seats: noKeychainSeats(join(c.root, "alex-home")), orchestrator: {
     autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, shellTokenMarginMs: 1_000, env,
     shellUser: { ready: () => true, existing: () => false, privateHome: () => null, socketRoot: c.root, runner, runtime,
       testEnv: { FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: launches },

@@ -3,6 +3,8 @@
 // it from the address bar and history entry at once, and offers the macOS package plus a terminal fallback.
 // It makes no network request of any kind (the page's CSP is connect-src 'none'), stores nothing, and never puts
 // the code anywhere but the local deep link and the fallback command on screen. The install URL comes from the page.
+// An owner's SSH authorization rides in the same fragment ("&ssh=<packet>"): it is held in memory only, goes only into
+// that same local deep link (when seats are allowed) and the fallback command's `--owner-ssh`, and leaves with the fragment.
 // States: ready, expired, invalid (not a code), missing (no fragment: opened without one, or reloaded after reading).
 (function (root) {
   "use strict";
@@ -11,6 +13,7 @@
   var CODE_RE = /^wk1[A-Za-z0-9_-]{38,297}$/; // 41-300 characters, base64url after the prefix
   var TAG_RE = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]{1,40})?$/; // a release tag the installer accepts
   var HANDLE_RE = /^[a-z][a-z0-9-]{0,23}$/;
+  var SSH_RE = /^[A-Za-z0-9_-]{1,1200}$/; // an owner SSH authorization: base64url, bounded as the installers bound it
   var ROLES = ["owner", "member", "observer"];
   // v(1) team(8) authority(32) issuer(8) secret(16) expiry(4) position(4) role(1) handle-length(1) handle …
   var EXPIRY_AT = 65;
@@ -18,8 +21,10 @@
   var HANDLE_LEN_AT = 74;
 
   /**
-   * "#<code>", "#<code>&v=<tag>", "…&a=1" → { code, tag, agents } or { error: "missing" | "invalid" }. `a=1`: the team's
-   * build asks "may your team start agents here?" during setup (the minting daemon hosts seats). Unknown params are ignored.
+   * "#<code>", "#<code>&v=<tag>", "…&a=1", "…&ssh=<packet>" → { code, tag, agents[, ssh | sshDamaged] } or
+   * { error: "missing" | "invalid" }. `a=1`: the team's build asks "may your team start agents here?" during setup (the
+   * minting daemon hosts seats). `ssh`: the owner's SSH authorization, kept only if it is well-formed base64url of a
+   * bounded length; a malformed or repeated one is dropped and flagged `sshDamaged`. Other unknown params are ignored.
    */
   function parseFragment(hash) {
     var raw = String(hash || "").replace(/^#/, "");
@@ -30,13 +35,22 @@
     var code = parts[0];
     var tag = null;
     var agents = false;
+    var ssh = null;
+    var sshDamaged = false;
     for (var i = 1; i < parts.length; i++) {
       var kv = parts[i].split("=");
       if (kv[0] === "v" && TAG_RE.test(kv[1] || "")) tag = kv[1];
       if (kv[0] === "a" && kv[1] === "1") agents = true;
+      if (kv[0] === "ssh") {
+        if (ssh !== null || sshDamaged || kv.length !== 2 || !SSH_RE.test(kv[1])) { ssh = null; sshDamaged = true; }
+        else ssh = kv[1];
+      }
     }
     if (!CODE_RE.test(code)) return { error: "invalid" };
-    return { code: code, tag: tag, agents: agents };
+    var parsed = { code: code, tag: tag, agents: agents };
+    if (ssh !== null) parsed.ssh = ssh;
+    if (sshDamaged) parsed.sshDamaged = true;
+    return parsed;
   }
 
   function bytesOf(b64url) {
@@ -63,8 +77,9 @@
     return { handle: handle, role: role, expiresAt: expiry * 1000 };
   }
 
-  function command(installUrl, code, tag) {
-    return "curl -fsSL " + installUrl + " | " + (tag ? "WALKIE_MIN_VERSION=" + tag + " " : "") + "sh -s -- --invite " + code;
+  function command(installUrl, code, tag, ssh) {
+    return "curl -fsSL " + installUrl + " | " + (tag ? "WALKIE_MIN_VERSION=" + tag + " " : "") + "sh -s -- --invite " + code + " --company-machine"
+      + (ssh && SSH_RE.test(ssh) ? " --owner-ssh " + ssh : "");
   }
 
   // ---- local seat consent ---------------------------------------------------------------------
@@ -92,35 +107,46 @@
     var maxBlock = page.querySelector("[data-consent-max]");
     var maxInput = page.querySelector("[data-consent-max-input]");
     if (!choices.length || !maxBlock || !maxInput) return;
+    var cap = page.querySelector('[data-field="seat-cap"]');
     var sync = function () {
       var yes = false;
       for (var i = 0; i < choices.length; i++) {
         if (choices[i].checked && choices[i].getAttribute("data-consent-choice") === "yes") yes = true;
       }
       maxBlock.hidden = !yes;
+      if (cap) cap.textContent = yes ? String(clampSeatMax(maxInput.value)) : "0";
     };
     for (var i = 0; i < choices.length; i++) choices[i].addEventListener("change", sync);
-    maxInput.addEventListener("change", function () { maxInput.value = String(clampSeatMax(maxInput.value)); });
+    maxInput.addEventListener("change", function () { maxInput.value = String(clampSeatMax(maxInput.value)); sync(); });
   }
 
-  /** Back to the default "yes" (Alex 2026-09-28), seat maximum shown and reset: a previous link's answer never survives into this one. */
+  /** A previous link's answer never survives into this one. */
   function resetConsent(page) {
     var choices = page.querySelectorAll("[data-consent-choice]");
-    for (var i = 0; i < choices.length; i++) choices[i].checked = choices[i].getAttribute("data-consent-choice") === "yes";
+    for (var i = 0; i < choices.length; i++) choices[i].checked = false;
     var maxInput = page.querySelector("[data-consent-max-input]");
     if (maxInput) maxInput.value = String(SEAT_MAX_DEFAULT);
     var maxBlock = page.querySelector("[data-consent-max]");
-    if (maxBlock) maxBlock.hidden = false;
+    if (maxBlock) maxBlock.hidden = true;
   }
 
-  function handoff(code, yes, max, tag) {
+  function consentChosen(page) {
+    var choices = page.querySelectorAll("[data-consent-choice]");
+    for (var i = 0; i < choices.length; i++) if (choices[i].checked && !choices[i].disabled) return true;
+    return false;
+  }
+
+  /** The local deep link: the invite, the seat choice, the release and, only when seats are allowed, the owner's SSH authorization. */
+  function handoff(code, yes, max, tag, ssh) {
     if (!CODE_RE.test(code)) throw new Error("invalid invite");
-    return "wal" + "kie-join://join#" + code + "&seats=" + (yes ? "yes&max=" + clampSeatMax(max) : "no&max=0") + (tag && TAG_RE.test(tag) ? "&v=" + tag : "");
+    return "wal" + "kie-join://join#" + code + "&seats=" + (yes ? "yes&max=" + clampSeatMax(max) : "no&max=0") + (tag && TAG_RE.test(tag) ? "&v=" + tag : "")
+      + (yes && ssh && SSH_RE.test(ssh) ? "&ssh=" + ssh : "");
   }
 
-  var FIELDS = ["handle", "expires", "command", "version"];
+  var FIELDS = ["handle", "expires", "command", "version", "seat-cap"];
   var pendingCode = null;
   var pendingTag = null;
+  var pendingSsh = null; // memory only: never in a URL query, storage, a log or history
   var downloadStarted = 0;
 
   function bindInstall(page, win) {
@@ -134,13 +160,13 @@
     var fallback = page.querySelector("[data-terminal-fallback]");
     if (fallback && !available) fallback.open = true;
     var openApp = function () {
-      if (!pendingCode) return;
+      if (!pendingCode || !consentChosen(page)) return;
       var yes = page.querySelector('[data-consent-choice="yes"]');
       var max = page.querySelector("[data-consent-max-input]");
-      win.location.assign(handoff(pendingCode, !!(yes && yes.checked), max && max.value, pendingTag));
+      win.location.assign(handoff(pendingCode, !!(yes && yes.checked), max && max.value, pendingTag, pendingSsh));
     };
     button.addEventListener("click", function () {
-      if (!pendingCode || !available) return;
+      if (!pendingCode || !available || !consentChosen(page)) return;
       // The package URL is fixed; the bearer code is never appended to a request.
       var link = page.querySelector("[data-package-url]");
       if (link) link.click();
@@ -177,6 +203,7 @@
     var state = parsed.error || (!info ? "invalid" : info.expiresAt <= env.now ? "expired" : "ready");
     pendingCode = state === "ready" ? parsed.code : null;
     pendingTag = state === "ready" ? parsed.tag : null;
+    pendingSsh = state === "ready" && parsed.ssh ? parsed.ssh : null;
     downloadStarted = 0;
     var open = page.querySelector("[data-join-open]");
     if (open) open.hidden = true;
@@ -187,13 +214,17 @@
     for (var f = 0; f < FIELDS.length; f++) field(FIELDS[f], "");
     var consent = page.querySelectorAll("[data-team-agents]");
     for (var k = 0; k < consent.length; k++) consent[k].hidden = state !== "ready";
+    // Owner SSH: described when the link carries a usable authorization, said plainly when it carried a damaged one.
+    setHidden(page, "[data-ssh-consent]", !pendingSsh);
+    setHidden(page, "[data-ssh-command-note]", !pendingSsh);
+    setHidden(page, "[data-ssh-damaged]", !(state === "ready" && parsed.sshDamaged));
     resetConsent(page);
     var yesChoice = page.querySelector('[data-consent-choice="yes"]');
     var noChoice = page.querySelector('[data-consent-choice="no"]');
     if (yesChoice) yesChoice.disabled = !!(info && info.role === "observer");
     if (info && info.role === "observer" && noChoice && yesChoice) {
       yesChoice.checked = false;
-      noChoice.checked = true;
+      noChoice.checked = false;
       var maxForObserver = page.querySelector("[data-consent-max]");
       if (maxForObserver) maxForObserver.hidden = true;
     }
@@ -202,12 +233,18 @@
       field("expires", formatDate(info.expiresAt));
     }
     if (state === "ready") {
-      field("command", command(page.getAttribute("data-install") || "", parsed.code, parsed.tag));
+      field("command", command(page.getAttribute("data-install") || "", parsed.code, parsed.tag, pendingSsh));
+      field("seat-cap", "0");
       field("version", parsed.tag ? "Installs the newest compatible release, at least " + parsed.tag + "." : "Installs the default release.");
     }
     var states = page.querySelectorAll("[data-state]");
     for (var i = 0; i < states.length; i++) states[i].classList.toggle("is-on", states[i].getAttribute("data-state") === state);
     return state;
+  }
+
+  function setHidden(page, selector, hidden) {
+    var els = page.querySelectorAll(selector);
+    for (var i = 0; i < els.length; i++) els[i].hidden = hidden;
   }
 
   function formatDate(ms) {

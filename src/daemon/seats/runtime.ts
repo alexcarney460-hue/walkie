@@ -1,7 +1,8 @@
 // How a seat runs its agent CLI (PROTOCOL §11): argv, environment, and the child's stdout reduced to what a seat
 // posts back. Every stdout line is untrusted input: anything unexpected is ignored, never thrown.
-import { existsSync, statSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { userInfo } from "node:os";
 import { describeTool } from "../../hooks/activity.ts";
 import { redactSecrets } from "../../protocol/safety.ts";
 import type { SeatMode, SeatRuntime } from "../../protocol/seats.ts";
@@ -55,6 +56,247 @@ export function kimiSeatLine(line: string): SeatSignal[] | null {
   // eslint-disable-next-line no-control-regex
   const text = line.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trimEnd();
   return text.trim() ? [{ kind: "text", text }] : null;
+}
+
+/** Grok's prompt file contains the brief; argv contains only its relative path. `--prompt-file` starts headless mode. */
+export function grokSeatArgs(o: { taskFile: string; cwd: string; session: string; mode: SeatMode; home: string; seatHome: string; env?: Readonly<Record<string, string>>; model?: string }): string[] {
+  const mode: Record<SeatMode, string> = { default: "dontAsk", acceptEdits: "acceptEdits", bypassPermissions: "bypassPermissions" };
+  // Grok merges project/.claude allow rules even in dontAsk. CLI deny wins across all sources; the sandbox also
+  // protects the work tree if a future tool bypasses permission checks. Only read/search built-ins are exposed;
+  // MCP meta-tools survive --tools, so deny those too. No subagent can get a wider tool set.
+  const readOnly = o.mode === "default"
+    ? ["--tools", "read_file,grep,list_dir", "--deny", "Bash", "--deny", "Edit", "--deny", "MCPTool", "--no-subagents", "--sandbox", "read-only"]
+    : [];
+  const configuredHomes = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "KIMI_CODE_HOME", "HERMES_HOME"]
+    .map((name) => o.env?.[name]).filter((path): path is string => !!path)
+    .map((path) => resolve(o.home, path.startsWith("~/") ? path.slice(2) : path));
+  const protectedHomes = [o.seatHome, join(o.home, ".grok"), join(o.home, ".claude"), join(o.home, ".codex"),
+    join(o.home, ".kimi-code"), join(o.home, ".hermes"), join(o.home, ".hermes-agent"),
+    "~/.grok", "~/.claude", "~/.codex", "~/.kimi-code", "~/.hermes", "~/.hermes-agent", ...configuredHomes];
+  if (protectedHomes.some((path) => /[\r\n()]/.test(path))) throw new Error("Grok credential path cannot be protected safely");
+  const credentialDenies = protectedHomes.flatMap((path) => ["--deny", `Read(${path}/**)`, "--deny", `Edit(${path}/**)`]);
+  return ["--prompt-file", o.taskFile, "--output-format", "streaming-json", "--session-id", o.session,
+    "--cwd", o.cwd, "--permission-mode", mode[o.mode], ...readOnly, ...credentialDenies,
+    "--max-turns", "100", ...(o.model ? ["--model", o.model] : [])];
+}
+
+/** Detect credential-shaped output without ever loading the real credential. This is a tripwire, not isolation. */
+export function grokCredentialOutput(text: string): boolean {
+  return /(?:"(?:refresh_token|access_token|session_token)"\s*:\s*"[A-Za-z0-9_./+=-]{24,}"|xai-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.)/i.test(text);
+}
+
+const GROK_TOKEN_KEYS = ['"refresh_token"', '"access_token"', '"session_token"'];
+const GROK_PENDING_LIMIT = 8_192;
+type GrokPrefix = "none" | "prefix" | "credential";
+type GrokProbe = { kind: GrokPrefix; work: number };
+
+function grokLiteral(text: string, at: number, literal: string): { kind: "none" | "prefix" | "match"; next: number; work: number } {
+  for (let j = 0; j < literal.length; j++) {
+    if (at + j === text.length) return { kind: "prefix", next: at + j, work: j };
+    if (text[at + j]!.toLowerCase() !== literal[j]) return { kind: "none", next: at + j, work: j + 1 };
+  }
+  return { kind: "match", next: at + literal.length, work: literal.length };
+}
+
+function grokKeyScan(text: string, at: number): GrokProbe {
+  let work = 0;
+  for (const key of GROK_TOKEN_KEYS) {
+    const match = grokLiteral(text, at, key);
+    work += match.work;
+    if (match.kind === "none") continue;
+    if (match.kind === "prefix") return { kind: "prefix", work };
+    let pos = match.next;
+    while (pos < text.length && /\s/.test(text[pos]!)) {
+      pos++; work++;
+      if (pos - at > GROK_PENDING_LIMIT) return { kind: "credential", work };
+    }
+    if (pos === text.length) return { kind: "prefix", work };
+    work++;
+    if (text[pos++] !== ":") return { kind: "none", work };
+    while (pos < text.length && /\s/.test(text[pos]!)) {
+      pos++; work++;
+      if (pos - at > GROK_PENDING_LIMIT) return { kind: "credential", work };
+    }
+    if (pos === text.length) return { kind: "prefix", work };
+    work++;
+    if (text[pos++] !== '"') return { kind: "none", work };
+    let count = 0;
+    while (pos < text.length && /[A-Za-z0-9_./+=-]/.test(text[pos]!)) {
+      pos++; count++; work++;
+      if (count >= 24) return { kind: "credential", work };
+    }
+    return { kind: pos === text.length ? "prefix" : "none", work: work + (pos < text.length ? 1 : 0) };
+  }
+  return { kind: "none", work };
+}
+
+function grokXaiScan(text: string, at: number): GrokProbe {
+  const match = grokLiteral(text, at, "xai-");
+  if (match.kind !== "match") return { kind: match.kind, work: match.work };
+  let work = match.work;
+  let count = 0;
+  for (let pos = match.next; pos < text.length; pos++) {
+    work++;
+    if (!/[A-Za-z0-9_-]/.test(text[pos]!)) return { kind: "none", work };
+    if (++count >= 12) return { kind: "credential", work };
+  }
+  return { kind: "prefix", work };
+}
+
+/** Keep only a bounded suffix between events; `work` counts examined characters for regression tests. */
+export function grokGuardOutput(pending: string, chunk: string): { safe: string; pending: string; credential: boolean; work: number } {
+  const text = pending + chunk;
+  let work = 0;
+  let pendingAt = -1;
+  // Two bounded states cover overlapping eyJ starts: the earliest first segment and a second segment after a dot.
+  // Later starts in either segment cannot finish before the earliest one, so no suffix needs rescanning.
+  let first = 0; // 0 none, 1 e, 2 ey, 3 eyJ + base64
+  let firstAt = -1;
+  let firstCount = 0;
+  let second = 0; // 0 none, 1 expect e, 2 expect y, 3 expect J, 4 eyJ + base64
+  let secondAt = -1;
+  let secondCount = 0;
+  for (let i = 0; i < text.length; i++) {
+    work++;
+    const char = text[i]!;
+    const lower = char.toLowerCase();
+    const base64 = /[A-Za-z0-9_-]/.test(char);
+    if (char === ".") {
+      if (second === 4 && secondCount >= 8) return { safe: "", pending: "", credential: true, work };
+      if (first === 3 && firstCount >= 8) {
+        second = 1;
+        secondAt = firstAt;
+        secondCount = 0;
+      } else second = 0;
+      first = 0;
+    } else {
+      if (second === 1) second = lower === "e" ? 2 : 0;
+      else if (second === 2) second = lower === "y" ? 3 : 0;
+      else if (second === 3) second = lower === "j" ? 4 : 0;
+      else if (second === 4) {
+        if (base64) secondCount++;
+        else second = 0;
+      }
+      if (first === 0) {
+        if (lower === "e") { first = 1; firstAt = i; }
+      } else if (first === 1) {
+        if (lower === "y") first = 2;
+        else { first = lower === "e" ? 1 : 0; firstAt = i; }
+      } else if (first === 2) {
+        if (lower === "j") { first = 3; firstCount = 0; }
+        else { first = lower === "e" ? 1 : 0; firstAt = i; }
+      } else if (base64) firstCount++;
+      else { first = lower === "e" ? 1 : 0; firstAt = i; }
+    }
+    if ((first && i - firstAt > GROK_PENDING_LIMIT) || (second && i - secondAt > GROK_PENDING_LIMIT)) {
+      return { safe: "", pending: "", credential: true, work };
+    }
+    const result = lower === '"' ? grokKeyScan(text, i) : lower === "x" ? grokXaiScan(text, i) : null;
+    if (result) {
+      work += result.work;
+      if (result.kind === "credential" || (result.kind === "prefix" && text.length - i > GROK_PENDING_LIMIT)) {
+        return { safe: "", pending: "", credential: true, work };
+      }
+      if (result.kind === "prefix" && pendingAt < 0) pendingAt = i;
+    }
+  }
+  if (first) pendingAt = pendingAt < 0 ? firstAt : Math.min(pendingAt, firstAt);
+  if (second) pendingAt = pendingAt < 0 ? secondAt : Math.min(pendingAt, secondAt);
+  return pendingAt < 0 ? { safe: text, pending: "", credential: false, work }
+    : { safe: text.slice(0, pendingAt), pending: text.slice(pendingAt), credential: false, work };
+}
+
+/** A same-user Grok seat uses only that user's existing subscription sign-in, never an API key. No auth bytes are read. */
+export function grokLoginPresent(home: string): boolean {
+  try {
+    const file = lstatSync(join(home, ".grok", "auth.json"));
+    return file.isFile() && file.uid === process.getuid?.() && (file.mode & 0o077) === 0 && file.size > 0;
+  } catch { return false; }
+}
+
+/** Give one Grok seat its own config home. The CLI reads the existing subscription itself through this link. */
+/** A present MDM domain may pin model routing; capture neither its values nor diagnostics. */
+export function grokManagedPreferencesPresent(): boolean {
+  if (process.platform !== "darwin") return false;
+  const root = "/Library/Managed Preferences";
+  const domains = [join(root, "ai.x.grok"), join(root, userInfo().username, "ai.x.grok")];
+  for (const domain of domains) {
+    if (existsSync(`${domain}.plist`)) return true;
+    const result = Bun.spawnSync(["/usr/bin/defaults", "read", domain], { stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode === 0) return true;
+    if (result.exitCode !== 1) throw new Error("Grok macOS managed configuration cannot be checked safely");
+  }
+  return false;
+}
+
+export function grokSeatHome(seatDir: string, home: string, systemConfigDir = "/etc/grok", managedPreferencesPresent = grokManagedPreferencesPresent): string {
+  if (!grokLoginPresent(home)) throw new Error("Grok subscription login is unavailable for this machine's user");
+  // System-managed model routing could reintroduce API billing despite a fresh GROK_HOME. Inspect no config bytes.
+  for (const name of ["managed_config.toml", "requirements.toml"]) {
+    try { lstatSync(join(systemConfigDir, name)); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw new Error("Grok system configuration cannot be checked safely");
+    }
+    throw new Error("Grok system configuration is present; subscription-only auth cannot be proven");
+  }
+  try {
+    if (managedPreferencesPresent()) throw new Error("Grok macOS managed configuration is present; subscription-only auth cannot be proven");
+  } catch (error) {
+    if ((error as Error).message.includes("subscription-only auth cannot be proven")) throw error;
+    throw new Error("Grok macOS managed configuration cannot be checked safely");
+  }
+  const dir = join(seatDir, "grok-home");
+  mkdirSync(dir, { mode: 0o700 });
+  try {
+    // Never copy or parse auth.json: Grok alone reads its session, and the link is removed when the seat ends.
+    symlinkSync(join(home, ".grok", "auth.json"), join(dir, "auth.json"));
+    writeFileSync(join(dir, "config.toml"), "[features]\nmanaged_config = false\n[session]\nload_envrc = false\n", { mode: 0o600, flag: "wx" });
+    return dir;
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Grok's documented streaming-json lines (ACP updates plus xAI text/end/error). Unknown events are ignored. */
+export function grokSeatParser(): (line: string) => SeatSignal[] | null {
+  const tools = new Map<string, string>();
+  let failedMessage: string | null = null;
+  return (line) => {
+    if (!line.trimStart().startsWith("{")) return null;
+    let event: Record<string, unknown> | null;
+    try { event = obj(JSON.parse(line)); } catch { return null; }
+    if (!event) return null;
+    if (event.type === "text") {
+      const value = str(event.data);
+      return value?.trim() ? [{ kind: "text", text: value }] : null;
+    }
+    if (event.type === "tool_call") {
+      const name = str(event.title) ?? str(event.toolName) ?? str(event.kind);
+      if (!name?.trim()) return null;
+      const safe = name.length > 8_192 ? "Using a tool" : redactSecrets(name).text.slice(0, 180);
+      const id = str(event.toolCallId);
+      if (id && id.length <= 128 && tools.size < 256) tools.set(id, safe);
+      return [{ kind: "tool", text: safe }];
+    }
+    if (event.type === "tool_call_update") {
+      const id = str(event.toolCallId);
+      const status = str(event.status);
+      if (!id || !status || !["completed", "failed", "cancelled"].includes(status)) return null;
+      const name = tools.get(id);
+      tools.delete(id);
+      return name ? [{ kind: "tool", text: `${name} ${status}` }] : null;
+    }
+    if (event.type === "error") {
+      failedMessage = str(event.message) ?? "Grok failed";
+      return [{ kind: "final", ok: false, text: failedMessage }];
+    }
+    if (event.type === "end") {
+      const reason = str(event.stopReason);
+      return [{ kind: "final", ok: !failedMessage && reason === "end_turn", text: failedMessage ?? (reason && reason !== "end_turn" ? `Grok stopped: ${reason}` : "") }];
+    }
+    return null;
+  };
 }
 
 const CODEX_MODE: Record<SeatMode, string[]> = {
@@ -141,7 +383,8 @@ export function codexSeatLine(line: string): SeatSignal[] | null {
 export function dropFromSeat(name: string): boolean {
   if (dropFromChild(name)) return true;
   if (name === "OPENAI_API_KEY" || name === "OPENAI_BASE_URL" || name === "CODEX_API_KEY" || name === "AZURE_OPENAI_API_KEY") return true;
-  if (/^(GEMINI|GOOGLE|XAI|GROQ|MISTRAL|OPENROUTER|DEEPSEEK|MOONSHOT|KIMI)_API_KEY$/.test(name)) return true;
+  if (name === "API_KEY" || name.endsWith("_API_KEY")) return true;
+  if (name.startsWith("XAI_") || name.startsWith("GROK_")) return true;
   return ["WALKIE_AGENT", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "KIMI_SESSION_ID", "HERMES_SESSION",
     "HERMES_SESSION_ID", "AI_AGENT", "CLAUDE_PID", "GEMINI_CLI", "CURSOR_AGENT", "OPENCODE"].includes(name);
 }

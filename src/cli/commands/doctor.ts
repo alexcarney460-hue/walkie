@@ -1,6 +1,6 @@
 // walkie doctor: Tailscale, daemon, team, peers, clock skew, DB integrity, socket perms.
 import { Database } from "bun:sqlite";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { claudeHooksDoctor } from "../../hooks/refresh.ts";
 import { WalkieClient } from "../../client/index.ts";
 import { tailscaleBinary, TailscaleIdentity } from "../../daemon/identity.ts";
@@ -9,6 +9,12 @@ import { EXIT, type Ctx } from "../context.ts";
 import { planLine } from "./license.ts";
 import { c } from "../format.ts";
 import type { MachineStats } from "../../protocol/machine-stats.ts";
+import { enrollmentMode, grantSuspensionProblem, readGrant } from "../../daemon/provision/grant.ts";
+import { observedStatus } from "../../daemon/provision/runner.ts";
+import { executorFor } from "../../daemon/provision/executor.ts";
+import { profile } from "../../daemon/provision/profiles.ts";
+import { REVOCATION_UNSAVED_MESSAGE, sshRevocationProblem } from "../../daemon/ssh/state.ts";
+import { join } from "node:path";
 
 type Level = "ok" | "warn" | "fail";
 interface Check { level: Level; name: string; detail: string }
@@ -39,8 +45,37 @@ async function tailscaleChecks(out: Check[]): Promise<void> {
     : { level: "fail", name: "whois self", detail: `tailscale whois ${ip} failed (tagged device or not logged in?)` });
 }
 
-function localChecks(out: Check[]): void {
+/** `GET /v1/ssh/status`, as this machine's daemon answers it. */
+export interface SshStatus {
+  owner_key_present: boolean; owner_key_error?: string | null; tunnel_allowed: boolean; reason: string | null;
+  server: { enabled: boolean; detail: string };
+  /** This machine is the roster authority: it waits for its peers, not for an authority above it. */
+  is_authority?: boolean;
+  /** A revocation was saved nowhere (disk and team both failed): only this process's memory still refuses SSH. */
+  revocation_unsaved?: boolean;
+}
+
+const WAITING_ON_AUTHORITY = "SSH waits for the team's authority to confirm access";
+const WAITING_ON_PEERS = "SSH waits for every team machine that shares a transport with this one to confirm access (this machine is the team's authority)";
+
+export function sshStatusChecks(ssh: SshStatus): Check[] {
+  return [
+    ...ssh.revocation_unsaved ? [{ level: "fail" as const, name: "owner ssh", detail: REVOCATION_UNSAVED_MESSAGE }] : [],
+    { level: ssh.server.enabled ? "ok" : "warn", name: "ssh server", detail: ssh.server.detail },
+    { level: ssh.owner_key_error ? "fail" : ssh.owner_key_present && !ssh.reason ? "ok" : "warn", name: "owner ssh key",
+      detail: ssh.owner_key_error ?? (ssh.owner_key_present ? ssh.reason ? `still present; access denied (${ssh.reason})` : "authorized" : "absent") },
+    { level: ssh.tunnel_allowed ? "ok" : "warn", name: "ssh tunnel", detail: ssh.tunnel_allowed ? "allowed through Walkie Direct"
+      : ssh.reason === "ssh_team_waiting" ? ssh.is_authority ? WAITING_ON_PEERS : WAITING_ON_AUTHORITY : ssh.reason ?? "not allowed" },
+  ];
+}
+
+async function localChecks(out: Check[]): Promise<void> {
   const paths = pathsFor(defaultHome());
+  out.push(...await provisionChecks(paths.home));
+  out.push(...vaultProbeLogChecks(paths.home));
+  try {
+    out.push(...sshStatusChecks(await new WalkieClient().request<SshStatus>("GET", "/v1/ssh/status")));
+  } catch { /* Older daemons do not have this route. */ }
   try {
     for (const r of claudeHooksDoctor({ home: paths.home })) out.push({ level: r.level, name: "claude hooks", detail: r.detail });
   } catch (err) {
@@ -63,6 +98,59 @@ function localChecks(out: Check[]): void {
     } catch (err) {
       out.push({ level: "fail", name: "db integrity", detail: (err as Error).message });
     }
+  }
+}
+
+/** Recent owner-side reasons stay local; borrower probes always receive only `unavailable`. */
+export function vaultProbeLogChecks(home: string): Check[] {
+  const path = join(home, "logs", "daemon.log");
+  let lines: string[];
+  try { lines = readFileSync(path, "utf8").slice(-64 * 1024).split("\n"); }
+  catch { return []; }
+  const reasons: string[] = [];
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line) as { msg?: unknown; reason?: unknown };
+      if (event.msg === "vault_probe_denied" && typeof event.reason === "string" && /^[a-z_]{1,48}$/.test(event.reason)) reasons.push(event.reason);
+    } catch { /* partial or unrelated log line */ }
+  }
+  return [...new Set(reasons.slice(-5))].map((reason) => ({ level: "warn", name: "vault probe", detail: `recent owner-side refusal: ${reason}` }));
+}
+
+/** Local grant and every selected profile step; a receipt is evidence of setup, not seat readiness. */
+export async function provisionChecks(home: string, mode: (home: string) => boolean = enrollmentMode): Promise<Check[]> {
+  try {
+    const grant = readGrant(home);
+    const enrolled = mode(home);
+    if (grant && !enrolled) return [{ level: "fail", name: "provision", detail: "root enrollment marker is missing: grant cannot authorize seats" }];
+    if (enrolled && !grant) return [{ level: "fail", name: "provision", detail: "enrollment grant is missing: renew local consent, or disable seats and run walkie provision unenroll locally" }];
+    if (!grant) return [];
+    if (grant.owner_ssh) {
+      const revocation = sshRevocationProblem(home);
+      if (revocation && revocation !== "revoked") return [{ level: "fail", name: "owner ssh", detail: `SSH revocation incomplete: ${revocation}` }];
+    }
+    if (grantSuspensionProblem(home, grant)) return [{ level: "fail", name: "provision", detail: "grant suspended: SSH install failed; revoke and renew local consent" }];
+    if (grant.revoked_at) return [{ level: "warn", name: "provision", detail: "enrollment grant revoked" }];
+    if (grant.owner_ssh && grant.ssh_state !== "active") return [{ level: "fail", name: "provision", detail: "owner SSH enrollment pending or denied" }];
+    if (grant.expires_at <= Date.now()) return [{ level: "fail", name: "provision", detail: "enrollment grant expired; renew local consent" }];
+    if (grant.profiles.some((selected) => selected.version !== profile(selected.id)?.version)) {
+      return [{ level: "fail", name: "provision", detail: "profile version changed: revoke the old grant, renew local consent, then run walkie provision reset --profile <id>" }];
+    }
+    const all = await Promise.all(grant.profiles.map(async ({ id }) => {
+      const journal = await observedStatus(home, id, executorFor(home));
+      return journal.steps.map((s) => ({
+        level: s.state === "done" ? "ok" as const : ["failed", "uncertain", "started", "drift"].includes(s.state) ? "fail" as const : "warn" as const,
+        name: `provision ${s.id}`, detail: `${id} v${journal.version}: ${s.state}${s.reason ? ` (${s.reason})` : s.state === "started" ? " (running or interrupted)" : ""}`,
+      }));
+    }));
+    return all.flat();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    return [{ level: "fail", name: "provision", detail: message.includes("walkie provision migrate-enrollment")
+      ? "enrollment migration requires local elevation: run walkie provision migrate-enrollment"
+      : message === "profile journal version mismatch"
+        ? "profile version changed: renew local consent, then run walkie provision reset --profile <id>"
+        : "private grant or receipt is unreadable" }];
   }
 }
 
@@ -151,7 +239,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
   if (await daemonMode() === "direct") checks.push({ level: "ok", name: "transport", detail: "Walkie Direct (Tailscale not needed)" });
   else await tailscaleChecks(checks);
   await daemonChecks(checks);
-  localChecks(checks);
+  await localChecks(checks);
   if (ctx.json) ctx.out(JSON.stringify({ checks }));
   else for (const ch of checks) ctx.out(`${MARK[ch.level]} ${ch.name.padEnd(18)} ${ch.detail}`);
   return checks.some((x) => x.level === "fail") ? EXIT.error : EXIT.ok;

@@ -29,7 +29,10 @@ if [ "$pre" = 1 ]; then bun scripts/build.ts --targets "${WALKIE_PRE_TARGETS:-da
 [ -x dist/walkie-darwin-arm64 ] || { echo "darwin-arm64 binary missing from release build" >&2; exit 1; }
 scripts/smoke-binary.sh dist/walkie-darwin-arm64 "$ver"
 bun scripts/discovery-package-check.ts
-(cd dist && shasum -a 256 walkie-* > SHA256SUMS)
+cp scripts/windows/bootstrap.ps1 dist/walkie-windows-bootstrap.ps1
+cp scripts/windows/stage0.ps1 dist/walkie-windows-stage0.ps1
+cp scripts/install.sh dist/install.sh
+(cd dist && shasum -a 256 walkie-* install.sh > SHA256SUMS)
 # SHA256SUMS gets its signed `version <tag>` line and SHA256SUMS.sig (ECDSA P-256, ~/keys/walkie-release-signing-p256.pem,
 # 0600); both are verified by install.sh and `walkie update`, which also refuse a release named otherwise.
 bun scripts/sign-release.ts dist/SHA256SUMS "$tag"
@@ -44,6 +47,6 @@ git tag -a "$tag" -m "$tag"
 git push origin "$tag"
 # Binaries go to the public, releases-only repo (the source repo stays private).
 gh release create "$tag" -R "${WALKIE_RELEASE_REPO:-alexcarney460-hue/walkie-releases}" \
-  dist/walkie-* dist/SHA256SUMS dist/SHA256SUMS.sig --title "Walkie $tag" --notes-file dist/NOTES.md \
+  dist/walkie-* dist/install.sh dist/SHA256SUMS dist/SHA256SUMS.sig --title "Walkie $tag" --notes-file dist/NOTES.md \
   $( [ "$pre" = 1 ] && echo --prerelease --latest=false )
 echo "released $tag"

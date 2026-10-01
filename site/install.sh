@@ -3,7 +3,8 @@
 # signature over the checksums, the release version and the binary's checksum, puts it on PATH and
 # runs `walkie setup`.
 #   curl -fsSL https://getwalkie.vercel.app/install.sh | sh
-#   … | sh -s -- --invite wk1…                 (extra args go to walkie setup: a teammate's invite code)
+#   … | sh -s -- --invite wk1… --company-machine  (company enrollment; setup asks once)
+#   … | sh -s -- --invite wk1… --company-machine --owner-ssh <packet>   (the owner's SSH access, in that same consent)
 #   … | sh -s -- --join <teammate-machine>     (a Tailscale team: join through a teammate's machine)
 #   … | sh -s -- --invite wk1… --allow-team-agents   (and let the team start agents here: walkie seats enable)
 # Env: WALKIE_VERSION (default: DEFAULT_VERSION below; "latest" = GitHub's latest release), WALKIE_REPO (default below),
@@ -29,7 +30,7 @@ REPO="${WALKIE_REPO:-alexcarney460-hue/walkie-releases}"
 BIN_DIR="${WALKIE_BIN_DIR:-$HOME/.local/bin}"
 # The release a plain `curl … | sh` installs. Bump this one line when a new release should be what new machines get;
 # site/build.py reads it for the landing page's footer, so the page and the installer can't drift apart.
-DEFAULT_VERSION="v0.2.0-pre.10.1"
+DEFAULT_VERSION="v0.2.0-pre.11"
 VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"
 if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -n "${WALKIE_BASE_URL:-}" ]; then VERSION="$WALKIE_MIN_VERSION"; fi
 # The Walkie release-signing public key (EC P-256). Not the license key. Rotated only by a new installer.
@@ -206,9 +207,11 @@ command -v tailscale >/dev/null 2>&1 || [ -x /Applications/Tailscale.app/Content
   || say "Walkie connects with Walkie Direct (nothing else to install). Tailscale is optional: a team on a tailnet can use it instead."
 
 # AGENT-ADMIN-1: said plainly before anything joins.
-say "Once this machine is on the team, your own agents and the team's owners can set Walkie up on it for you (seats,"
-say "accounts, hooks, pool), over Walkie, never a shell. Every such action is posted to the team and names who did it."
-say "Turn it off any time on this machine: walkie admin remote off (owners, remotely) and walkie agents admin off (agents)."
+say "Company enrollment requires your one explicit consent in setup. Same-user seats let named launchers run code as you,"
+say "read and change your files and keys, use your Walkie daemon, and use owner-leased subscription logins for a run."
+say "Walkie records the actor. Revoke seats: walkie seats deny; remote setup: walkie admin remote off and walkie agents admin off."
+say "Terminal fallback warning: an invite passed as --invite appears on the command line and may remain in shell history or process listings;"
+say "so does an owner SSH authorization passed as --owner-ssh. It works once, only for the machine the invite admits, and setup never prints it."
 
 # Hand the terminal to setup so it can prompt: by its own device (/dev/ttys003, /dev/pts/2) when ps names it, not
 # /dev/tty itself. On macOS a Bun program whose stdin is /dev/tty never sees a keystroke (kqueue rejects /dev/tty), so

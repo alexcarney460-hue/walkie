@@ -28,6 +28,9 @@ export interface IsolationDeps {
 }
 
 export function evaluateIsolation(cfg: SeatsConfig, d: IsolationDeps): Isolation {
+  if (cfg.mode === "same_user" && cfg.ephemeral) return { mode: "none", problem: "seat mode conflicts with seat-user setup" };
+  if (cfg.mode === "seat_users" && cfg.same_user) return { mode: "none", problem: "seat mode conflicts with same-user consent" };
+  if (cfg.mode === "seat_users" && !cfg.ephemeral) return { mode: "none", problem: "seat users are selected but not set up: walkie seats setup-user --apply" };
   if (!cfg.ephemeral) {
     if (cfg.same_user === true || (d.platform !== "darwin" && d.platform !== "linux")) return { mode: "same_user", problem: null };
     return {

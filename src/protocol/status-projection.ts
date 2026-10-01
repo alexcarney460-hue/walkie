@@ -56,7 +56,10 @@ export { ACTIVITY_PHRASES, STATE_PHRASE } from "./activity-phrases.ts";
 import { ACTIVITY_PHRASES, STATE_PHRASE } from "./activity-phrases.ts";
 
 /** The seats host's status phrases (src/daemon/seats/host.ts): fixed, so shareable (in ACTIVITY_PHRASES above). */
-export const SEATS_PHRASES = { off: "Seats off", allowed: "Seats allowed", running: "Seats running", busy: "Busy: its person is using it" } as const;
+export const SEATS_PHRASES = {
+  off: "Seats off", allowed: "Seats allowed", running: "Seats running", busy: "Busy: its person is using it",
+  enrollmentMigration: "Seats blocked: enrollment migration", enrollmentUnreadable: "Seats blocked: enrollment state unreadable",
+} as const;
 
 /** The fields a projected status can have at all. */
 export const STATUS_FIELDS: ReadonlySet<string> = new Set([

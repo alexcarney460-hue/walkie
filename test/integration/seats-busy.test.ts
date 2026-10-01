@@ -12,6 +12,7 @@ import { TERMINAL_STATES, seatOf, seatsChannel, type SeatView } from "../../src/
 import type { Event } from "../../src/protocol/schemas.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
+import { signInCodex } from "../helpers/fake-seat-users.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const CLI = join(import.meta.dir, "../../src/cli/main.ts");
@@ -90,6 +91,7 @@ beforeAll(async () => {
   c = new Cluster();
   const home = join(c.root, "arvid-home");
   mkdirSync(home, { recursive: true });
+  signInCodex(home);
   log = join(c.root, "codex.jsonl");
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
   arvid = await c.add({

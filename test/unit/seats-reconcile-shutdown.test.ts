@@ -131,14 +131,14 @@ test("one shutdown bound defers backlog and two live destroys for restart", asyn
 test("a queued live destroy keeps its waiting reason in the final state", () => {
   const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
   const state = (host.finalState as (seat: unknown, code: number | null, stderr: string) => { state: string; reason?: string })
-    .call(host, { refusal: null, uncontrolled: true, waitedForCleanup: true, cleanupFailure: "seat cleanup deferred until restart" }, null, "");
+    .call(host, { run: { runtime: "claude" }, refusal: null, uncontrolled: true, waitedForCleanup: true, cleanupFailure: "seat cleanup deferred until restart" }, null, "");
   expect(state.reason).toContain("waiting for the cleanup of an earlier seat user");
 });
 
 test("a queued destroy that later fails reports its actual file failure", async () => {
   const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
   Object.assign(host, { log: { info: () => undefined }, destroyUser: async () => ({ ok: false, why: "files it owns remain or couldn't be checked" }) });
-  const seat = { id: "seat", refusal: null, uncontrolled: false, waitedForCleanup: true, cleanupFailure: null,
+  const seat = { id: "seat", run: { runtime: "claude" }, refusal: null, uncontrolled: false, waitedForCleanup: true, cleanupFailure: null,
     runner: { runtimePid: 123, close: async () => undefined }, child: null, userN: 1,
     paused: false, abort: new AbortController(), stop: null, done: Promise.resolve() };
   await (host.stopSeat as (seat: unknown, stop: unknown) => Promise<void>).call(host, seat, { reason: "stopped" });

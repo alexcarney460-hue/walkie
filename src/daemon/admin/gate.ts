@@ -35,15 +35,36 @@ export function localActor(c: GateCtx): string {
 }
 
 /**
+ * An admin action the gate let through, whose audit line is still to be written: `record()` once the action's own
+ * checks have passed (the line, and for a local agent the #general post), or `refuse(code)` when one of them refuses it
+ * (audited as refused, on this machine only). Only the first of the two does anything.
+ */
+export interface Admission {
+  record(): void;
+  refuse(code: string): void;
+}
+
+const NOTHING_TO_RECORD: Admission = { record: () => undefined, refuse: () => undefined };
+
+/**
  * An admin action: a person passes (nothing recorded, as before); an agent passes while agent admin is on and the
  * action is audited. `action` says what was done, for the audit line ("enabled seats: same-user, max 12").
  */
 export function adminGate(c: GateCtx, action: string, options: { post?: boolean } = {}): void {
+  admit(c, action, options).record();
+}
+
+/**
+ * adminGate in two steps, for an action with refusals of its own after the gate (a remote run turning same-user seats
+ * on): the gate's checks run now (an agent while agent admin is off is refused and audited, as ever), and the line of an
+ * action that goes ahead is written by `record()`, so an attempt that is then refused is not audited as allowed.
+ */
+export function admit(c: GateCtx, action: string, options: { post?: boolean } = {}): Admission {
   const privateJoinMint = c.req.method === "POST" && ["/v1/team/invite-code", "/v1/team/add-machine"].includes(new URL(c.req.url).pathname);
   if (c.req.headers.get(TALKIE_SHELL_HEADER) === "1" && !privateJoinMint) {
     throw new HttpError(403, "talkie_shell_forbidden", "WalkieTalkie shell access cannot make admin changes; switch WalkieTalkie back to Walkie platform access");
   }
-  if (!agentCaller(c)) return;
+  if (!agentCaller(c)) return NOTHING_TO_RECORD;
   // The name "orchestrator" is this machine's orchestrator's alone (its per-run token proves it): nobody else is
   // audited under it (local-routes.ts refuseReservedAgent, for admin too).
   if (c.agent === ORCHESTRATOR_AGENT && !hostFor(c.core)?.acceptsToken(c.req.headers.get(ORCHESTRATOR_TOKEN_HEADER) ?? undefined)) {
@@ -56,7 +77,11 @@ export function adminGate(c: GateCtx, action: string, options: { post?: boolean 
     throw new HttpError(403, "agent_admin_off", AGENT_ADMIN_OFF);
   }
   // A remote run's command line is posted once by the peer route (remote.ts); its steps are logged here only.
-  recordAdmin(c.core, entry, { post: !run && options.post !== false });
+  let settled = false;
+  return {
+    record: () => { if (!settled) { settled = true; recordAdmin(c.core, entry, { post: !run && options.post !== false }); } },
+    refuse: (code) => { if (!settled) { settled = true; appendAudit(c.core, { ...entry, refused: code }); } },
+  };
 }
 
 /** A read for an agent (orchestrator status, …): allowed while agent admin is on, not audited (no action). */

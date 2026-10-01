@@ -9,7 +9,7 @@ import { ORCHESTRATOR_AGENT } from "../protocol/orchestrator.ts";
 import { isSeatAgent } from "../protocol/seats.ts";
 import type { Event, MeView } from "../protocol/schemas.ts";
 import { defang, redactSecrets, wrapForModel } from "../protocol/safety.ts";
-import { askPolicy, detectRuntime, detectTask, repoContext, resolveAgentName } from "../agent/identity.ts";
+import { askPolicy, detectRuntime, detectTask, otherRuntimeName, repoContext, resolveAgentName } from "../agent/identity.ts";
 import { readSharePolicy } from "../agent/share-policy.ts";
 import { loadState, shareableTask, shareableTitle, stateProvenance } from "../hooks/state.ts";
 import { TOOLS, callTool } from "./tools.ts";
@@ -121,7 +121,7 @@ export async function announce(client: WalkieClient, agent: string, cwd = proces
   const cachedTask = shareableTask(st, share.prompts);
   const prov = stateProvenance(st);
   await client.status({
-    agent, state: "idle", runtime: detectRuntime(), title: shareableTitle(st, share.prompts),
+    agent, state: "idle", runtime: detectRuntime(), ...(otherRuntimeName() ? { runtime_name: otherRuntimeName() } : {}), title: shareableTitle(st, share.prompts),
     task: cachedTask ?? detectTask(ctx.branch?.toUpperCase()), repo: ctx.repo, branch: ctx.branch, cwd: ctx.cwd,
     activity: "Connected to Walkie", started_at: st.started_at ?? Date.now(), ask_policy: askPolicy(),
   }, { title: prov.title, task: cachedTask ? prov.task : "branch", activity: "phrase" });

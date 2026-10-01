@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { assetName } from "../../src/cli/commands/update.ts";
 import { dashboardRoute } from "../../src/daemon/local-api.ts";
 import { decodeInvite } from "../../src/daemon/invite.ts";
+import { decodeOwnerSshGrant, verifyOwnerSshGrant } from "../../src/daemon/ssh/grant.ts";
 import { VERSION } from "../../src/daemon/version.ts";
 import { WalkieClient, WalkieError } from "../../src/client/index.ts";
 import { INSTALL_URL, JOIN_URL, releaseTag } from "../../src/protocol/add-machine.ts";
@@ -63,10 +64,12 @@ describe("POST /v1/team/add-machine", () => {
     expect(res.existing_member).toBe(true);
     expect(res.version).toBe(VERSION);
     expect(res.team_agents).toBe(true); // this build hosts seats (SEATS-PRE3): its setup asks, so the page says so
-    expect(res.link).toBe(`${JOIN_URL}#${res.code}&v=${TAG}&a=1`);
+    expect(res.link).toBe(`${JOIN_URL}#${res.code}&v=${TAG}&a=1&ssh=${res.owner_ssh}`);
     expect(new URL(res.link).search).toBe(""); // nothing a server would see
     expect(new URL(res.link).pathname).toBe("/join");
-    expect(res.command).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=${TAG} sh -s -- --invite ${res.code}`);
+    expect(res.command).toBe(`curl -fsSL ${INSTALL_URL} | WALKIE_MIN_VERSION=${TAG} sh -s -- --invite ${res.code} --company-machine --owner-ssh ${res.owner_ssh}`);
+    const ssh = verifyOwnerSshGrant(decodeOwnerSshGrant(res.owner_ssh as string), alex.d.core.keys.pubkey, Date.now());
+    expect([ssh.owner_node, ssh.recipient]).toEqual([alex.d.nodeId, "kira"]);
     const inv = decodeInvite(res.code);
     expect("error" in inv).toBe(false);
     if (!("error" in inv)) {
@@ -131,16 +134,16 @@ describe("walkie team add-machine", () => {
     expect(r.transcript).toContain(`To mint an add-machine link for @kira, type "kira" to confirm: kira`);
     expect(r.out).toMatch(/^add a machine for @kira \(member\) · works once, only for @kira · expires in 7 days/);
     expect(r.out).toContain(`  ${JOIN_URL}#wk1`);
-    expect(r.out).toMatch(new RegExp(`  curl -fsSL ${INSTALL_URL.replace(/\./g, "\\.")} \\| WALKIE_MIN_VERSION=${TAG.replace(/\./g, "\\.")} sh -s -- --invite wk1[A-Za-z0-9_-]+\\n`));
+    expect(r.out).toMatch(new RegExp(`  curl -fsSL ${INSTALL_URL.replace(/\./g, "\\.")} \\| WALKIE_MIN_VERSION=${TAG.replace(/\./g, "\\.")} sh -s -- --invite wk1[A-Za-z0-9_-]+ --company-machine --owner-ssh [A-Za-z0-9_-]+\\n`));
     expect(r.out).toContain("anyone with this link or command can join once as one of @kira's machines");
   });
 
   test("--json is the route's reply", async () => {
     const r = await walkie(alex, ["team", "add-machine", "kira", "--json"], {}, "kira");
     expect(r.code).toBe(0);
-    const j = JSON.parse(r.out) as { handle: string; link: string; command: string; code: string };
+    const j = JSON.parse(r.out) as { handle: string; link: string; command: string; code: string; owner_ssh: string };
     expect(j.handle).toBe("kira");
-    expect(j.link).toBe(`${JOIN_URL}#${j.code}&v=${TAG}&a=1`);
+    expect(j.link).toBe(`${JOIN_URL}#${j.code}&v=${TAG}&a=1&ssh=${j.owner_ssh}`);
     expect(j.command).toContain(`--invite ${j.code}`);
   });
 
@@ -448,7 +451,7 @@ describe.skipIf(!["curl", "openssl", "sh"].every((t) => existsSync(`/usr/bin/${t
   let server: ReturnType<typeof Bun.serve> | null = null;
   afterAll(() => { server?.stop(true); if (root) rmSync(root, { recursive: true, force: true }); });
 
-  test("installs the pinned release (verified), runs setup --invite, and the daemon joins as @kira's second machine", async () => {
+  test("installs the pinned release and joins, then requires terminal consent before company seats", async () => {
     root = mkdtempSync("/tmp/walkie-am-");
     // A local mirror of the site's installer and the release: the repo's installer with a test release key (the only
     // change), and a "binary" that reports the pinned version and otherwise runs this checkout's CLI.
@@ -497,13 +500,16 @@ describe.skipIf(!["curl", "openssl", "sh"].every((t) => existsSync(`/usr/bin/${t
     const p = Bun.spawn(["/usr/bin/env", "-i", ...Object.entries(env).map(([k, v]) => `${k}=${v}`), "/bin/sh", "-c", cmd], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     console.log(`[run] install + setup output:\n${out}${err ? `\n[stderr]\n${err}` : ""}`);
-    expect(code).toBe(0);
+    expect(code).toBe(4);
     expect(out).toContain(`Verified: release signature (openssl), version ${TAG} and SHA-256.`);
     expect(out).toContain("daemon already running");
     expect(out).toContain("joined acme as @kira (Walkie Direct)");
+    expect(out).toContain("company seats stay off: type yes at this machine's terminal");
+    expect(err).toContain("Company enrollment is incomplete");
+    expect((await kira2.client().seats()).local.allow).toBe(false);
     expect(served).toContain(`/${TAG}/${assetName()}`);
-    expect(readFileSync(join(root, "claude-calls.log"), "utf8")).toContain("mcp add --scope user walkie --");
-    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(true); // the temporary HOME, never this Mac's
+    expect(existsSync(join(root, "claude-calls.log"))).toBe(false);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false); // no setup continuation before consent
 
     // kira2 is admitted as @kira (same role), and the team now lists two machines for @kira.
     const me = await kira2.client().me();
@@ -514,7 +520,7 @@ describe.skipIf(!["curl", "openssl", "sh"].every((t) => existsSync(`/usr/bin/${t
     expect((await alex.client().team()).members.filter((m) => m.handle === "kira")).toHaveLength(1);
 
     // The code worked once: another machine is refused with it.
-    const code2 = printed.split("--invite ")[1] as string;
+    const code2 = /^wk1[A-Za-z0-9_-]+/.exec(printed.split("--invite ")[1] ?? "")?.[0] as string;
     const again = await riley.client().join(code2);
     expect([again.admitted, again.reason]).toEqual([false, "invite_used"]);
   }, 60_000);

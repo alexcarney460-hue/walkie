@@ -140,7 +140,7 @@ systemctl daemon-reload
 systemctl enable --now walkie-metadata.service
 loginctl enable-linger walkie
 
-sudo -u walkie -H bash -c 'curl -fsSL ${p.siteOrigin}/install.sh | WALKIE_VERSION=${p.walkieVersion} sh -s -- --invite ${p.joinCode} --allow-team-agents'
+sudo -u walkie -H bash -c 'curl -fsSL ${p.siteOrigin}/install.sh | WALKIE_VERSION=${p.walkieVersion} sh -s -- --invite ${p.joinCode} --allow-team-agents --seat-users'
 
 rm -f /etc/sudoers.d/90-walkie-bootstrap
 # The join code is spent; drop cloud-init's copies of this script.

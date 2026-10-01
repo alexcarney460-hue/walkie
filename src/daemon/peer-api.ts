@@ -18,7 +18,7 @@ import type { Server } from "bun";
 import { nodeIdFromPubkey } from "../protocol/ids.ts";
 import { jsonDepthOk, stubOf } from "../protocol/header.ts";
 import {
-  ChannelName, EventId, MAX_IDS_PER_FETCH, NodeId, PEER_PAGE_BUDGET, PeerEventsPush, PeerJoinReq, PeerVvRelay, RosterRequest,
+  AgentName, ChannelName, EventId, MAX_IDS_PER_FETCH, NodeId, PEER_PAGE_BUDGET, PeerEventsPush, PeerJoinReq, PeerVvRelay, RosterRequest,
   type Event, type PeerHello, type PeerJoinRes, type PeerOwnerAddr, type PeerPushRes,
 } from "../protocol/schemas.ts";
 import { blobServable } from "./blob-auth.ts";
@@ -30,7 +30,7 @@ import { checkInvite, decodeInvite, directLogin } from "./invite.ts";
 import { isValidPubkey } from "./keys.ts";
 import type { BucketSpec } from "./ratelimit.ts";
 import { applyRequest } from "./requests.ts";
-import { grantLease, refreshBorrowedUsage } from "./vault-lease.ts";
+import { grantLease, probeLease, refreshBorrowedUsage } from "./vault-lease.ts";
 import {
   DEFAULT_PEER_PORT, canSeeChannel, directMemberByKey, endpointHex, isRestricted, memberByHandle, nodeMember, pickTransport, servesDirect, transportFields,
   transportsOf, withTransport, type MemberRec,
@@ -43,6 +43,10 @@ import { trackOp } from "./watchdog.ts";
 import { PEER_SIG_CAP, PeerNonceBook, hasPeerSig, peerSigTier, signPeerVv, verifyPeerSigResult, type PeerSigHeaders, type PeerSigResult } from "./peer-sig.ts";
 import { peerSigRequired, peerSigStrict, recordPeerProof, recordPeerSignature, rememberValidPeerSignature } from "./peer-capabilities.ts";
 import { PeerClient } from "./peer-client.ts";
+import { sshTunnelGrant } from "./ssh/tunnel.ts";
+import { sshTunnelProblem } from "./ssh/tunnel.ts";
+import { retainSshRevocation, SSH_REVOCATION_CAP } from "./ssh/team-revocation.ts";
+import { userInfo } from "node:os";
 
 export const PEER_BODY_MAX = 1024 * 1024;
 
@@ -72,7 +76,7 @@ export function authorityAddr(core: Core): PeerOwnerAddr | null {
 export class PeerApi {
   private readonly peerNonces = new PeerNonceBook(Date.now());
   private readonly unsignedWarned = new Map<string, number>();
-  constructor(private readonly core: Core) {}
+  constructor(private readonly core: Core, private readonly sshOptions: { port?: number; keyHome?: string } = {}) {}
 
   private badSignature(reason: PeerSigResult = "bad_signature"): never {
     const message = reason === "clock_skew" ? "peer signature clock skew exceeds two minutes"
@@ -175,7 +179,19 @@ export class PeerApi {
       if (lower["x-walkie-node"] !== undefined && lower["x-walkie-node"] !== nodeId) throw new HttpError(403, "forbidden", "X-Walkie-Node does not match the connection's key");
       const signed = new Request(`http://peer.invalid${path}`, { headers });
       if (hasPeerSig(signed.headers)) await this.checkSignature(signed, new URL(signed.url), nodeId, pubkey);
-      const g = this.tunnelGrant(path, nodeId);
+      // These headers are supplied by the source node. Direct authenticates the
+      // node key and roster owner; caller labels only add reported audit detail.
+      const sshAgent = lower["x-walkie-ssh-claim"] ?? lower["x-walkie-ssh-agent"];
+      const sshCaller = lower["x-walkie-ssh-caller"];
+      if (path === "/peer/v1/ssh" && sshAgent !== undefined && !AgentName.safeParse(sshAgent).success) {
+        throw new HttpError(400, "invalid_agent", "invalid SSH caller agent");
+      }
+      if (path === "/peer/v1/ssh" && sshCaller !== undefined &&
+          sshCaller !== "person" && sshCaller !== "unverified caller" && !AgentName.safeParse(sshCaller).success) {
+        throw new HttpError(400, "invalid_caller", "invalid SSH caller attribution");
+      }
+      const g = path === "/peer/v1/ssh" ? sshTunnelGrant(core, nodeId, this.sshOptions.port, this.sshOptions.keyHome,
+        { caller: sshCaller ?? "unverified caller", ...(sshAgent ? { claim: sshAgent } : {}) }) : this.tunnelGrant(path, nodeId);
       return { accept: g.accept, release: g.release };
     } catch (err) {
       return { refuse: errorResponse(err, core.log) };
@@ -312,6 +328,11 @@ export class PeerApi {
       core.log.warn("peer_denied", { node: nodeId, path, via: "direct", reason: "node_header_mismatch" });
       throw new HttpError(403, "forbidden", "X-Walkie-Node does not match the connection's key");
     }
+    if (req.method === "GET" && path === "/peer/v1/ssh/info") {
+      const problem = sshTunnelProblem(core, nodeId);
+      if (problem) throw new HttpError(403, problem, `SSH unavailable: ${problem}`);
+      return json({ user: userInfo().username });
+    }
     return this.serveAdmitted(req, url, nodeId, member);
   }
 
@@ -323,7 +344,7 @@ export class PeerApi {
       const online = core.reachedPeers?.() ?? [];
       const body = {
         node: core.nodeId, vv: core.store.vv(), ts: Date.now(),
-        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, PEER_SIG_CAP] },
+        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, PEER_SIG_CAP, SSH_REVOCATION_CAP] },
         ...(online.length ? { online } : {}),
         ...(core.publishedStats() ? { stats: core.publishedStats() } : {}),
         ...(core.accounts ? { accounts: core.accounts } : {}), // ACCOUNTS-1: this machine's accounts + usage (PROTOCOL §3)
@@ -410,9 +431,16 @@ export class PeerApi {
       const res = await grantLease(core, { vault: core.vault, sharing: core.vaultSharing, nonces: core.vaultNonces, grants: core.vaultGrants, teamPolicy: core.teamPolicy, roomLeft: core.vaultRoomLeft, renew: core.vaultRenew }, nodeId, member, await readJson(req, 16 * 1024));
       return new Response(JSON.stringify(res), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
     }
+    if (req.method === "POST" && path === "/peer/v1/vault/probe") {
+      return json(await probeLease(core, { vault: core.vault, sharing: core.vaultSharing, nonces: core.vaultNonces,
+        teamPolicy: core.teamPolicy, roomLeft: core.vaultRoomLeft }, nodeId, member, await readJson(req, 1024)));
+    }
     if (req.method === "GET" && path === "/peer/v1/events") return json(this.serveEvents(url, member.handle));
     if (req.method === "POST" && path === "/peer/v1/events") return json(await this.receive(req, nodeId));
     if (req.method === "POST" && path === "/peer/v1/roster-request") return json(await this.rosterRequest(req, nodeId));
+    if (req.method === "POST" && path === "/peer/v1/ssh/revocation") {
+      return json({ event_id: retainSshRevocation(core, nodeId, await readJson(req, 1024)) });
+    }
     if (req.method === "POST" && path === "/peer/v1/pool/stage") return json(await this.poolStage(req, nodeId, member));
     if (req.method === "POST" && path === "/peer/v1/pool/serve") return json(await this.poolServe(req, nodeId, member));
     // AGENT-ADMIN-1: an allow-listed walkie command, for an owner or this machine's own person (admin/remote.ts).

@@ -23,6 +23,7 @@ import { projectCounts } from "../../lib/project-counts.ts";
 import { useProjects } from "../../state/projects.ts";
 import { api } from "../../api/client.ts";
 import { LocalLagBanner, type LocalLag } from "./LocalLagBanner.tsx";
+import { isCloudAgent } from "../../../../src/protocol/guest-cloud.ts";
 
 /** Mission Control shows working agents and those needing a person; the strip narrows it to one of those. */
 type StateFilter = "all" | "working" | "waiting" | "blocked";
@@ -38,6 +39,9 @@ function sortAgents(list: AgentView[]): AgentView[] {
 function matches(a: AgentView, f: StateFilter): boolean {
   return f === "all" ? shownByDefault(a) : a.effective_state === f;
 }
+function matchesCloud(a: AgentView, f: StateFilter): boolean {
+  return f === "all" || a.effective_state === f;
+}
 
 /** LiveView draws rows only for nodes belonging to listed team members. */
 function defaultLiveAgents(shown: AgentView[], team: TeamView | null, nodes: NodeView[]): AgentView[] {
@@ -46,14 +50,14 @@ function defaultLiveAgents(shown: AgentView[], team: TeamView | null, nodes: Nod
 }
 
 /** The live roster split: what Mission Control shows, and per machine what waits in the archive. */
-export function useRosterSplit(): { shown: AgentView[]; hidden: ArchiveCount[]; archivedTotal: number } {
+export function useRosterSplit(): { shown: AgentView[]; cloud: AgentView[]; hidden: ArchiveCount[]; archivedTotal: number } {
   const { agents, archive } = useStore();
   const now = Math.floor(useNow() / 30_000) * 30_000; // re-split every 30 s, not every render tick
   return useMemo(() => {
     // An agent the stream sent as live can have aged into the archive since (no new status announces that).
     const live = agents.map((a) => (isArchived(a, now) ? { ...a, archived: true } : a));
     const hidden = hiddenByNode(live, archive);
-    return { shown: live.filter(shownByDefault), hidden, archivedTotal: hidden.reduce((n, h) => n + h.idle + h.offline, 0) };
+    return { shown: live.filter(shownByDefault), cloud: live.filter(isCloudAgent), hidden, archivedTotal: hidden.reduce((n, h) => n + h.idle + h.offline, 0) };
   }, [agents, archive, now]);
 }
 
@@ -228,10 +232,28 @@ function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered, comput
   );
 }
 
+type GuestListing = Awaited<ReturnType<typeof api.guests>>["guests"][number];
+function UnreportedGuest({ guest, killed, refresh }: { guest: GuestListing; killed: boolean; refresh: () => void }) {
+  const [error, setError] = useState(false);
+  const now = useNow();
+  return (
+    <div className="agent-card is-offline" data-testid={`guest-unreported-${guest.agent}`}>
+      <span className="agent-card-top"><span className="agent-name mono">{guest.agent}</span><span className="chip">self-report pending</span><span className="agent-card-spacer" /><StatePill state="offline" /></span>
+      <span className="agent-title">No recent report from this cloud agent.</span>
+      <span className="agent-meta">{guest.cards.length ? guest.cards.map((card) => card.key).join(", ") : "Assignment removed"}</span>
+      <span className="agent-foot"><span className="agent-activity mono">{guest.lastReportAt ? `Last report ${ago(guest.lastReportAt, now)} ago` : "No report received"} · current state unverified</span></span>
+      <button type="button" className="btn btn-sm" disabled={guest.revoked || killed} onClick={() => {
+        void api.revokeGuest(guest.agent).then(refresh).catch(() => setError(true));
+      }}>{guest.revoked ? "Access revoked" : killed ? "Guest access off" : "Revoke Walkie access"}</button>
+      {error && <span role="alert">Could not revoke access.</span>}
+    </div>
+  );
+}
+
 export function MissionControl() {
   const route = getRoute();
   const tab = route.tab === "archive" ? "archive" : "live";
-  const { shown, hidden, archivedTotal } = useRosterSplit();
+  const { shown, cloud, hidden, archivedTotal } = useRosterSplit();
   const { me, team, nodes } = useStore();
   const counted = useMemo(() => defaultLiveAgents(shown, team, nodes), [shown, team, nodes]);
   const compute = useCompute(me?.role === "owner");
@@ -258,7 +280,7 @@ export function MissionControl() {
             Archive <span className="seg-n tnum">{archivedTotal}</span>
           </a>
         </nav>
-        {tab === "archive" ? <ArchiveView machine={route.machine} /> : <LiveView shown={shown} hidden={hidden} />}
+        {tab === "archive" ? <ArchiveView machine={route.machine} /> : <LiveView shown={shown} cloud={cloud} hidden={hidden} />}
       </div>
       <ActivityFeed />
       {tab === "live" && <MissionExtras />}
@@ -267,8 +289,13 @@ export function MissionControl() {
   );
 }
 
-function LiveView({ shown, hidden }: { shown: AgentView[]; hidden: ArchiveCount[] }) {
+function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentView[]; hidden: ArchiveCount[] }) {
   const { team, nodes, me, accounts } = useStore();
+  const [guestRegistry, setGuestRegistry] = useState<Awaited<ReturnType<typeof api.guests>> | null>(null);
+  const [guestControlError, setGuestControlError] = useState(false);
+  const refreshGuests = useCallback(() => { void api.guests().then(setGuestRegistry).catch(() => setGuestRegistry(null)); }, []);
+  const meNodeId = me?.node?.id;
+  useEffect(() => { if (meNodeId) refreshGuests(); }, [meNodeId, refreshGuests]);
   const owner = me?.role === "owner";
   const compute = useCompute(owner);
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
@@ -283,20 +310,23 @@ function LiveView({ shown, hidden }: { shown: AgentView[]; hidden: ArchiveCount[
   const attention = useMemo(() => sortAgents(shown.filter((a) => needsAttention(a.effective_state) && (!people.length || people.includes(a.handle)))), [shown, people]);
   const filtering = stateFilter !== "all" || people.length > 0;
   const togglePerson = (h: string) => setPeople((p) => (p.includes(h) ? p.filter((x) => x !== h) : [...p, h]));
-  const everyone = shown.length + hidden.reduce((n, h) => n + h.idle + h.offline, 0);
+  const everyone = shown.length + hidden.reduce((n, h) => n + h.idle + h.offline, 0) + (guestRegistry?.guests.length ?? 0);
 
   const sections = members
     .filter((m) => !people.length || people.includes(m.handle))
     .map((m) => {
       const machines = nodes.filter((n) => n.handle === m.handle).map((n) => ({
         node: n,
-        agents: sortAgents(shown.filter((a) => a.node === n.node_id && matches(a, stateFilter))),
+        agents: sortAgents(shown.filter((a) => a.node === n.node_id && !isCloudAgent(a) && matches(a, stateFilter))),
         hidden: hidden.find((h) => h.node === n.node_id),
       }));
+      const guests = sortAgents(cloud.filter((a) => a.handle === m.handle && matchesCloud(a, stateFilter)));
+      const unreported = stateFilter === "all" && m.handle === me?.handle
+        ? (guestRegistry?.guests ?? []).filter((guest) => !cloud.some((a) => a.node === guest.node && a.agent === guest.agent)) : [];
       const list = filtering ? machines.filter((x) => x.agents.length) : machines;
-      return { member: m, machines: list, working: shown.filter((a) => a.handle === m.handle).length };
+      return { member: m, machines: list, guests, unreported, working: shown.filter((a) => a.handle === m.handle).length };
     })
-    .filter((s) => s.machines.length || !filtering);
+    .filter((s) => s.machines.length || s.guests.length || s.unreported.length || !filtering);
 
   return (
     <>
@@ -341,7 +371,7 @@ function LiveView({ shown, hidden }: { shown: AgentView[]; hidden: ArchiveCount[
           <button type="button" className="btn btn-sm" onClick={() => { setStateFilter("all"); setPeople([]); }}>Clear filters</button>
         </EmptyState>
       ) : (
-        sections.map(({ member, machines, working }) => (
+        sections.map(({ member, machines, guests, unreported, working }) => (
           <section key={member.handle} className="person" aria-labelledby={`p-${member.handle}`}>
             <header className="person-head" style={hueVar("--ph", hueFor(member.handle))}>
               <Avatar handle={member.handle} name={member.display_name ?? member.handle} size={26} />
@@ -350,6 +380,21 @@ function LiveView({ shown, hidden }: { shown: AgentView[]; hidden: ArchiveCount[
               {member.handle === me?.handle && <span className="chip">you</span>}
               <span className="person-meta tnum">{plural(working, "active agent")} · {plural(nodes.filter((n) => n.handle === member.handle).length, "machine")}</span>
             </header>
+            {(guests.length > 0 || unreported.length > 0) && (
+              <div className="machine cloud-group" data-testid={`cloud-${member.handle}`}>
+                <div className="machine-head">
+                  <span className="machine-name mono">Cloud · @{member.handle}</span><span className="chip">guest access</span>
+                  {member.handle === me?.handle && guestRegistry && <button type="button" className="btn btn-sm" onClick={() => {
+                    void api.setGuestKill(!guestRegistry.killed).then(refreshGuests).catch(() => setGuestControlError(true));
+                  }}>{guestRegistry.killed ? "Enable guest access" : "Disable all guest access"}</button>}
+                  {guestControlError && <span role="alert">Could not change guest access.</span>}
+                </div>
+                <div className="agent-grid">
+                  {groupAgents(guests).map((group) => <AgentGroupView key={group.agent.id} group={group} onOpen={open} />)}
+                  {unreported.map((guest) => <UnreportedGuest key={guest.id} guest={guest} killed={guestRegistry?.killed ?? false} refresh={refreshGuests} />)}
+                </div>
+              </div>
+            )}
             {machines.length ? (
               machines.map(({ node, agents: list, hidden: h }) => <MachineBlock key={node.node_id} node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} compute={compute} owner={owner} />)
             ) : (

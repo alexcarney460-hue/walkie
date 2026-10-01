@@ -199,6 +199,9 @@ export const api = {
    */
   agents: (p: { scope?: "live" | "archive" | "all"; node?: string; q?: string; states?: string; limit?: number; offset?: number } = {}) =>
     request<AgentsPayload>("GET", `/v1/agents${qs({ ...p })}`),
+  guests: () => request<{ guests: { id: string; node: string; agent: string; owner: string; address: string; revoked: boolean; expiresAt: number; lastReportAt: number | null; cards: { id: string; key: string }[] }[]; killed: boolean }>("GET", "/v1/guests"),
+  revokeGuest: (agent: string) => request<{ revoked: boolean }>("POST", `/v1/guests/${encodeURIComponent(agent)}/revoke`, {}),
+  setGuestKill: (killed: boolean) => request<{ killed: boolean }>("POST", "/v1/guests/kill", { killed }),
   peers: () => request<{ nodes: NodeView[]; local_lag?: { max_ms: number; at: number } | null }>("GET", "/v1/peers"),
   accounts: () => request<{ accounts: AccountView[]; pool?: AccountsPool }>("GET", "/v1/accounts"),
   /** The attempt the confirmation sheet confirms: minted and bound to the account by the daemon (or an earlier one). */
@@ -260,7 +263,7 @@ export const api = {
   seats: () => request<SeatsView>("GET", "/v1/seats"),
   /** The dashboard sets only these (the daemon refuses the rest from a session: the CLI's). */
   seatsConfig: (b: { allow: boolean; same_user?: boolean }) => request<{ local: SeatsLocalView }>("POST", "/v1/seats/config", b, 60_000),
-  seatRun: (b: { machine: string; runtime: SeatRuntime; model?: string; permission_mode?: SeatMode; prompt: string; timeout_s?: number }) =>
+  seatRun: (b: { machine: string; runtime: SeatRuntime; model?: string; permission_mode?: SeatMode; prompt: string; timeout_s?: number; v?: 2 }) =>
     request<{ event: Event; seat: string }>("POST", "/v1/seats/run", b),
   seatStop: (seat: string) => request<{ stopped: string; verified?: boolean; why?: string }>("POST", "/v1/seats/stop", { seat }, 30_000),
   /** "I'm using this computer": at most `max` seats keep running here (the rest pause, launches queue). */

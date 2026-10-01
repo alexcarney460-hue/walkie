@@ -1,0 +1,1 @@
+{"name":"walkie-provision-claude-code","version":"1.0.0","private":true,"dependencies":{"@anthropic-ai/claude-code":"2.1.285"}}

@@ -17,11 +17,13 @@ import { Transports, addrLabel, peerUrl, type PeerAddr } from "./transport.ts";
 import { ServeRes, StageRes, type ServeReq, type StageReq } from "../protocol/pool.ts";
 import { TunnelRefused } from "./direct/net.ts";
 import { WsEnd, type End } from "../pool/run/tunnel.ts";
-import { BorrowedUsageRes, PeerLeaseRes, type PeerLeaseReq } from "./vault-lease.ts";
+import { BorrowedUsageRes, PeerLeaseRes, PeerProbeRes, type PeerLeaseReq, type PeerProbeReq } from "./vault-lease.ts";
 import { RemoteRunRes } from "../protocol/admin.ts";
 import type { NodeKeys } from "./keys.ts";
 import { nodeIdFromPubkey } from "../protocol/ids.ts";
 import { newPeerNonce, signPeerRequest, verifyPeerVv } from "./peer-sig.ts";
+import type { SshCaller } from "./ssh/caller.ts";
+import type { SshRevocationPacket } from "./ssh/team-revocation.ts";
 
 export { peerUrl, type PeerAddr } from "./transport.ts";
 
@@ -268,6 +270,9 @@ export class PeerClient {
   vaultLease(addr: PeerAddr, body: PeerLeaseReq): Promise<PeerLeaseRes> {
     return this.call(addr, "POST", "/peer/v1/vault/lease", PeerLeaseRes, body, 10_000);
   }
+  vaultProbe(addr: PeerAddr, body: PeerProbeReq): Promise<{ ready: true }> {
+    return this.call(addr, "POST", "/peer/v1/vault/probe", PeerProbeRes, body, 10_000);
+  }
   /** Asks the roster authority to append a roster event (PROTOCOL §4); `event` is the authority's. */
   rosterRequest(addr: PeerAddr, req: RosterRequest): Promise<{ event?: unknown }> {
     return this.call(addr, "POST", "/peer/v1/roster-request", RosterRequestRes, req, 10_000);
@@ -295,18 +300,32 @@ export class PeerClient {
     return this.tunnelTo(addr, `/peer/v1/pool/tunnel/${run}`);
   }
 
+  sshInfo(addr: PeerAddr): Promise<{ user: string }> {
+    if (!addr.pubkey) return Promise.reject(new PeerCallError(0, "direct_required", "SSH requires Walkie Direct"));
+    return this.call(addr, "GET", "/peer/v1/ssh/info", z.object({ user: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/) }), undefined, 5000);
+  }
+
+  sshRevoke(addr: PeerAddr, packet: SshRevocationPacket, timeoutMs = 10_000): Promise<{ event_id: string }> {
+    return this.call(addr, "POST", "/peer/v1/ssh/revocation", z.object({ event_id: z.string() }), packet, timeoutMs);
+  }
+
   /** POOL-REAL-1: start / connect to / renew / disconnect from / stop a model a machine serves whole. */
   serve(addr: PeerAddr, body: ServeReq): Promise<ServeRes> {
     return this.call(addr, "POST", "/peer/v1/pool/serve", ServeRes, body, body.action === "start" ? 30_000 : 10_000);
   }
 
   /** A tunnel connection to any tunnel path of a peer (split-run stages, served models' proxies). */
-  async tunnelTo(addr: PeerAddr, path: string): Promise<End> {
+  async tunnelTo(addr: PeerAddr, path: string, sshCaller?: SshCaller): Promise<End> {
     if (addr.pubkey) {
       const t = this.transports.direct;
       if (!t?.openTunnel) throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (Walkie Direct is not running on this machine)`);
       try {
-        return await t.openTunnel(addr, path, this.headers(false), AbortSignal.timeout(20_000));
+        const headers = this.headers(false);
+        if (sshCaller) {
+          headers["X-Walkie-SSH-Caller"] = sshCaller.caller;
+          if (sshCaller.claim) headers["X-Walkie-SSH-Claim"] = sshCaller.claim;
+        }
+        return await t.openTunnel(addr, path, headers, AbortSignal.timeout(20_000));
       } catch (err) {
         if (err instanceof TunnelRefused) throw refusal(err.status, err.body);
         throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (${(err as Error).message.slice(0, 160)})`);

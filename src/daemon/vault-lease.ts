@@ -12,9 +12,9 @@
 //                                                       shared → also a listed teammate, and only while this
 //                                                       owner has "vault_sharing": true; local → refused.
 //                                                       COMPANY POOL (team setting on, login not personal):
-//                                                       any owner/member, never an observer, and only while
-//                                                       this machine's reading shows more than the 10 %
-//                                                       kept for its person
+//                                                       any owner/member, never an observer.
+//                                                     · every cross-person hand-out (shared or pooled) keeps
+//                                                       the last 10 % for the vault holder
 //                                                     · at most 10 hand-outs per calling node per hour
 //                                                     · reply sealed to the caller's ephemeral X25519 key (seal.ts)
 //   ◄── {token}  (never stored on the requester; it lives in the wrapper's memory for one launch)
@@ -23,11 +23,14 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { SETUP_TOKEN_RE } from "../accounts/vault/vault.ts";
+import { CLAUDE_ACCESS_MIN_LEFT_MS } from "../accounts/vault/claude-access.ts";
 import { isAccessOnly } from "../accounts/vault/codex-access.ts";
+import { CODEX_LEASE_MIN_LEFT_MS } from "../accounts/vault/codex-access.ts";
 import { AccountUsage, DEFAULT_TEAM_POLICY, type TeamPolicy } from "../protocol/accounts.ts";
 import { PERSONAL_RESERVE_PCT } from "../protocol/pool-rules.ts";
 import { ephemeralKey, openLease, sealLease } from "../accounts/vault/seal.ts";
 import type { VaultSource } from "../accounts/service.ts";
+import type { VaultEntry } from "../accounts/vault/vault.ts";
 import type { Core } from "./core.ts";
 import { HttpError } from "./http.ts";
 import type { MemberRec, NodeRec } from "./roster.ts";
@@ -35,6 +38,50 @@ import type { MemberRec, NodeRec } from "./roster.ts";
 export const LEASE_WINDOW_MS = 60_000;
 export const LEASES_PER_NODE_PER_HOUR = 10;
 const LEASE_BUCKET = { capacity: LEASES_PER_NODE_PER_HOUR, perSecond: LEASES_PER_NODE_PER_HOUR / 3600 };
+/** Same borrower-visible deadline for a warm hit, miss, or cold cache. */
+const PROBE_DEADLINE_MS = 750;
+const PROBE_CACHE_MS = 60_000;
+const PROBE_REFRESH_AHEAD_MS = 10_000;
+
+interface ProbeCache {
+  results: Map<string, { ready: boolean; until: number }>;
+  pending: Map<string, () => Promise<{ ready: boolean; until: number }>>;
+  reading: string | null;
+}
+/** A vault has one credential read at a time. Only health, never credential bytes, is retained. */
+const probeCaches = new WeakMap<VaultSource, ProbeCache>();
+
+function probeCache(vault: VaultSource): ProbeCache {
+  let cache = probeCaches.get(vault);
+  if (!cache) {
+    cache = { results: new Map(), pending: new Map(), reading: null };
+    probeCaches.set(vault, cache);
+  }
+  return cache;
+}
+
+function drainProbeReads(cache: ProbeCache): void {
+  if (cache.reading) return;
+  const next = cache.pending.entries().next().value;
+  if (!next) return;
+  const [key, read] = next;
+  cache.pending.delete(key);
+  cache.reading = key;
+  void Promise.resolve().then(read).then((result) => {
+    while (cache.results.size >= 256) cache.results.delete(cache.results.keys().next().value as string);
+    cache.results.set(key, result);
+  }).catch(() => {
+    cache.results.set(key, { ready: false, until: Date.now() + PROBE_CACHE_MS });
+  }).finally(() => {
+    cache.reading = null;
+    drainProbeReads(cache);
+  });
+}
+
+function queueProbeRead(cache: ProbeCache, key: string, read: () => Promise<{ ready: boolean; until: number }>): void {
+  if (cache.reading !== key && !cache.pending.has(key)) cache.pending.set(key, read);
+  drainProbeReads(cache);
+}
 
 const AccountRef = z.string().regex(/^[0-9a-f]{24}$/);
 const AgentRef = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,47}$/);
@@ -68,6 +115,10 @@ export const LocalLeaseReq = z.object({
   /** What the caller expects back (default claude): a reply of the other kind is refused. */
   provider: z.enum(["claude", "codex"]).optional(),
 }).strict();
+
+export const PeerProbeReq = z.object({ account: AccountRef, provider: z.enum(["claude", "codex"]) }).strict();
+export type PeerProbeReq = z.infer<typeof PeerProbeReq>;
+export const PeerProbeRes = z.object({ ready: z.literal(true) }).strict();
 
 /** What both sides bind the sealed reply to. */
 export function leaseContext(account: string, requesterNode: string, ownerNode: string): string {
@@ -134,6 +185,80 @@ function sharingOn(d: VaultPeerDeps): boolean {
   try { return typeof d.sharing === "function" ? d.sharing() : d.sharing; } catch { return false; }
 }
 
+function eligibleEntry(core: Core, d: VaultPeerDeps, caller: MemberRec, account: string, now: number,
+  deny: (code: string, message: string, status?: number) => never): { entry: VaultEntry; policy: string } {
+  const me = core.me();
+  if (!me) deny("not_ready", "this machine is not in the team", 409);
+  const entry = d.vault?.list().find((e) => e.id === account);
+  if (!entry || (entry.provider !== "claude" && !(entry.provider === "codex" && d.vault?.codexAccess))) deny("not_found", "no such account in this machine's vault", 404);
+  const e = entry as VaultEntry;
+  if (e.provider === "claude" && e.expires_at !== null && e.expires_at < now + CLAUDE_ACCESS_MIN_LEFT_MS) {
+    deny("expired", "the owner's Claude setup-token has expired or has too little time left", 409);
+  }
+  const owner = (me as MemberRec).login === caller.login;
+  let team: TeamPolicy = DEFAULT_TEAM_POLICY;
+  try { team = d.teamPolicy?.() ?? DEFAULT_TEAM_POLICY; } catch { /* the default */ }
+  const byPolicy = e.policy === "own" ? owner : e.policy === "shared" ? owner || (sharingOn(d) && e.share_with.includes(caller.handle)) : false;
+  const byPool = !byPolicy && team === "company" && !e.personal && (owner || caller.role === "owner" || caller.role === "member");
+  if (!byPolicy && !byPool) {
+    deny("not_allowed", e.policy === "shared" && !sharingOn(d) && e.share_with.includes(caller.handle) ? "the owner has not turned vault sharing on" : "this account's policy does not allow that");
+  }
+  if (!owner) {
+    let room: number | null = null;
+    try { room = d.roomLeft?.(e.id, now) ?? null; } catch { room = null; }
+    if (room === null || !Number.isFinite(room)) deny("reserved", `no current usage reading here, so the last ${PERSONAL_RESERVE_PCT}% kept for its person cannot be checked`, 409);
+    if (room - PERSONAL_RESERVE_PCT <= 0) deny("reserved", `the last ${PERSONAL_RESERVE_PCT}% of it is kept for its person`, 409);
+  }
+  return { entry: e, policy: byPool ? "company" : e.policy };
+}
+
+/** Owner-side readiness check: same policy and account health as a hand-out, without issuing one. */
+export async function probeLease(core: Core, d: VaultPeerDeps, callerNode: string, caller: MemberRec, raw: unknown, now = Date.now()): Promise<z.infer<typeof PeerProbeRes>> {
+  const deadline = performance.now() + PROBE_DEADLINE_MS;
+  let result: z.infer<typeof PeerProbeRes> | undefined;
+  let error: unknown;
+  try { result = probeLeaseUnchecked(core, d, callerNode, caller, raw, now); }
+  catch (caught) { error = caught; }
+  await Bun.sleep(Math.max(0, deadline - performance.now()));
+  if (error) throw error;
+  return result as z.infer<typeof PeerProbeRes>;
+}
+
+function probeLeaseUnchecked(core: Core, d: VaultPeerDeps, callerNode: string, caller: MemberRec, raw: unknown, now: number): z.infer<typeof PeerProbeRes> {
+  const deny = (code: string, _message: string, _status = 403): never => {
+    core.log.warn("vault_probe_denied", { to_node: callerNode, to_handle: caller.handle, reason: code });
+    throw new HttpError(503, "unavailable", "lease unavailable");
+  };
+  const parsed = PeerProbeReq.safeParse(raw);
+  if (!parsed.success) throw new HttpError(400, "invalid", "bad lease probe");
+  if (!core.limiter.take(`vault-probe:${callerNode}`, { capacity: 60, perSecond: 60 / 3600 }, now)) throw new HttpError(429, "rate_limited", "too many lease probes");
+  if (!core.limiter.can(`vault-lease:${callerNode}`, LEASE_BUCKET, now)) deny("handout_rate_limited", "lease unavailable", 503);
+  const req = parsed.data as PeerProbeReq;
+  const { entry } = eligibleEntry(core, d, caller, req.account, now, deny);
+  if (entry.provider !== req.provider) deny("not_found", "the selected account is for a different provider", 404);
+  const vault = d.vault as VaultSource;
+  const cache = probeCache(vault);
+  const key = `${entry.provider}:${entry.id}`;
+  const cached = cache.results.get(key);
+  if (!cached || cached.until - now <= PROBE_REFRESH_AHEAD_MS) {
+    if (cached && cached.until <= now) cache.results.delete(key);
+    queueProbeRead(cache, key, async () => {
+      const checkedAt = Date.now();
+      if (entry.provider === "codex") {
+        const access = vault.codexAccess?.(entry.id, checkedAt) ?? null;
+        const ready = !!access && (access.expiresAt === null || access.expiresAt > checkedAt + CODEX_LEASE_MIN_LEFT_MS);
+        return { ready, until: ready && access.expiresAt !== null
+          ? Math.min(checkedAt + PROBE_CACHE_MS, access.expiresAt - CODEX_LEASE_MIN_LEFT_MS) : checkedAt + PROBE_CACHE_MS };
+      }
+      const token = await vault.claudeToken(entry.id);
+      return { ready: SETUP_TOKEN_RE.test(token), until: Date.now() + PROBE_CACHE_MS };
+    });
+    if (!cached || cached.until <= now) return deny("readiness_pending", "lease unavailable", 503);
+  }
+  if (!cached.ready) deny(entry.provider === "codex" ? "codex_access_unavailable" : "claude_token_unreadable", "lease unavailable", 503);
+  return { ready: true };
+}
+
 /** Owner side of POST /peer/v1/vault/lease. The caller's identity is already verified (peer-api.ts). */
 export async function grantLease(core: Core, d: VaultPeerDeps, callerNode: string, caller: MemberRec, raw: unknown, now = Date.now()): Promise<PeerLeaseRes> {
   const deny = (code: string, message: string, status = 403): never => {
@@ -146,29 +271,8 @@ export async function grantLease(core: Core, d: VaultPeerDeps, callerNode: strin
   if (!core.limiter.take(`vault-lease:${callerNode}`, LEASE_BUCKET, now)) deny("rate_limited", "too many hand-outs from this machine; try later", 429);
   if (Math.abs(now - req.ts) > LEASE_WINDOW_MS) deny("stale", "lease request is too old or from the future (check the clocks)");
   if (!d.nonces.take(req.nonce, now)) deny("replay", "lease request already seen");
-  const me = core.me();
-  if (!me) deny("not_ready", "this machine is not in the team", 409);
-  const entry = d.vault?.list().find((e) => e.id === req.account);
-  if (!entry || (entry.provider !== "claude" && !(entry.provider === "codex" && d.vault?.codexAccess))) deny("not_found", "no such account in this machine's vault", 404);
-  const e = entry as NonNullable<typeof entry>;
-  const owner = (me as MemberRec).login === caller.login;
-  let team: TeamPolicy = DEFAULT_TEAM_POLICY;
-  try { team = d.teamPolicy?.() ?? DEFAULT_TEAM_POLICY; } catch { /* the default */ }
-  // Its own policy first (unchanged: own = the owner's machines; shared = listed teammates while vault_sharing is on).
-  const byPolicy = e.policy === "own" ? owner : e.policy === "shared" ? owner || (sharingOn(d) && e.share_with.includes(caller.handle)) : false;
-  // COMPANY POOL: while the team's pool is on, a login its person has not marked personal is lent to every owner and
-  // member (never an observer) — keeping the last PERSONAL_RESERVE_PCT of it for its person.
-  const byPool = !byPolicy && team === "company" && !e.personal && (owner || caller.role === "owner" || caller.role === "member");
-  if (!byPolicy && !byPool) {
-    deny("not_allowed", e.policy === "shared" && !sharingOn(d) && e.share_with.includes(caller.handle) ? "the owner has not turned vault sharing on" : "this account's policy does not allow that");
-  }
-  const pol = byPool ? "company" : e.policy;
-  if (byPool && !owner) {
-    let room: number | null = null;
-    try { room = d.roomLeft?.(e.id, now) ?? null; } catch { room = null; }
-    if (room === null) deny("reserved", `no current usage reading here, so the last ${PERSONAL_RESERVE_PCT}% kept for its person cannot be checked`, 409);
-    if ((room as number) - PERSONAL_RESERVE_PCT <= 0) deny("reserved", `the last ${PERSONAL_RESERVE_PCT}% of it is kept for its person`, 409);
-  }
+  const { entry: e, policy: pol } = eligibleEntry(core, d, caller, req.account, now, deny);
+  const me = core.me() as MemberRec;
   let secret: string;
   let expiresAt: number | null = null;
   if (e.provider === "codex") {
@@ -183,13 +287,14 @@ export async function grantLease(core: Core, d: VaultPeerDeps, callerNode: strin
     expiresAt = access.expiresAt;
   } else {
     try { secret = await (d.vault as VaultSource).claudeToken(e.id); } catch { return deny("unavailable", "the vault could not be read on the owner's machine", 503); }
+    if (!SETUP_TOKEN_RE.test(secret)) deny("unavailable", "the owner's vault entry is not a Claude setup-token", 503);
   }
   const grant = d.grants?.record(e.id, callerNode, now) ?? randomBytes(8).toString("hex");
   core.log.info("vault_lease_granted", { account: e.id, provider: e.provider, policy: pol, to_node: callerNode, to_handle: caller.handle, ...(req.agent ? { agent: req.agent } : {}) });
   const sealed = sealLease(secret, req.epk, req.nonce, leaseContext(e.id, callerNode, core.nodeId));
   return {
     ...sealed, owner: (me as MemberRec).handle, grant, gen: e.gen,
-    ...(e.provider === "codex" ? { provider: "codex" as const, expires_at: expiresAt } : {}),
+    ...(e.provider === "codex" ? { provider: "codex" as const, expires_at: expiresAt } : { expires_at: e.expires_at }),
   };
 }
 
@@ -224,7 +329,7 @@ export async function requestLease(
   }
   if (!SETUP_TOKEN_RE.test(opened)) throw new HttpError(502, "bad_lease", "the owner's reply is not a setup-token");
   core.log.info("vault_lease_received", { account, from_node: node, ...(agent ? { agent } : {}) });
-  return { token: opened, owner: res.owner, grant: res.grant, gen: res.gen };
+  return { token: opened, expires_at: res.expires_at ?? null, owner: res.owner, grant: res.grant, gen: res.gen };
 }
 
 /** An existing borrower may refresh usage, under the poller's shared throttle and provider backoff. */

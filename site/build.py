@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-import urllib.request
-import urllib.error
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
@@ -22,16 +20,6 @@ GUARDED = [*SRC.glob("*.html"), *(SITE / "assets").glob("*.css"), *(SITE / "asse
 PLACEHOLDER = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 INSTALLER = SITE.parent / "scripts" / "install.sh"
 DEFAULT_VERSION = re.compile(r'^DEFAULT_VERSION="(v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"$', re.MULTILINE)
-
-
-def signed_package_available(url: str) -> bool:
-    """Fail closed when the signed asset has not been published or cannot be checked."""
-    try:
-        request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "walkie-site-build"})
-        with urllib.request.urlopen(request, timeout=8) as response:
-            return response.status == 200
-    except (urllib.error.URLError, TimeoutError):
-        return False
 
 
 def installer_version() -> str:
@@ -54,8 +42,9 @@ def load_brand() -> dict[str, str]:
     repo = str(raw.get("repo") or f"{owner}/{cli}")
     site_url = str(raw.get("site_url", "")).rstrip("/")
     tagline = str(raw.get("tagline", "")).strip()
-    package_url = f"https://github.com/{owner}/{cli}-releases/releases/download/v{installer_version()}/{name}.pkg"
-    package_available = signed_package_available(package_url)
+    # A HEAD response only proves bytes exist. WALK-50 must supply a verified signing and
+    # notarization receipt before this action can be enabled in a generated production page.
+    package_available = False
     return {
         "name": name,
         "cli": cli,

@@ -1,9 +1,8 @@
 // "This should all be handled by the sign-up link" (Alex, SEATS product requirement): once a teammate joins and says
 // yes to "let your team start agents on this machine", the team can start agents there over Walkie alone, on the
 // machine's own Claude/Codex sign-in. Three commands for that:
-//   walkie seats enable [--yes] [--same-user] [--accept-readable-home] [--launchers …] [--max n]
-//       one command (the installer's and `walkie setup --allow-seats`'s too): seat users set up if they aren't (its
-//       only interactive step: the person's sudo for the root helper), seats allowed, then what it did and the doctor;
+//   walkie seats enable [--yes] [--seat-users|--same-user] [--launchers …] [--max n]
+//       one command: company same-user seats by default, or explicit seat-user hardening, then doctor;
 //   walkie seats doctor     whether this machine is ready to take seats, and what fixes each thing that isn't;
 //   walkie seats start <machine> --count N --provider claude|codex (--prompt "…" | --brief file.md)
 //       N seats on a teammate's machine from here (the dashboard's launch form has the same "How many").
@@ -13,6 +12,10 @@ import type { WalkieClient } from "../../client/index.ts";
 import { RUNTIMES_DIR } from "../../daemon/seats/seat-user.ts";
 import { doctorChecks, doctorFacts, type Check } from "../../daemon/seats/doctor.ts";
 import { MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, launcherPolicyLabel, parseLauncher, type SeatMode, type SeatRuntime, type SeatsLocalView } from "../../protocol/seats.ts";
+import { enrollmentMode, readGrant } from "../../daemon/provision/grant.ts";
+import { probeWorkerLeases, workerAccountChecks } from "../../daemon/seats/enrollment-account.ts";
+import { defaultHome } from "../../daemon/paths.ts";
+import { wslKeepaliveChecks } from "../../daemon/seats/wsl-keepalive.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, requirePerson, type Ctx } from "../context.ts";
 import { adminCaller } from "../admin-gate.ts";
@@ -49,7 +52,7 @@ export function launcherSummary(entries: readonly string[]): string {
 }
 
 export interface EnableOptions {
-  sameUser?: boolean; acceptReadableHome?: boolean; launchers?: string[]; max?: number;
+  sameUser?: boolean; seatUsers?: boolean; inheritPersonConfig?: boolean; acceptReadableHome?: boolean; launchers?: string[]; max?: number;
   /**
    * A Claude token for seats only (from `claude setup-token`), set in the same step (ADD-MACHINE-1 finding 5):
    * `walkie seats enable --claude-token-stdin`, or typed at a hidden prompt when this Mac's login is Keychain-only.
@@ -64,7 +67,7 @@ export interface EnableOptions {
 }
 
 /**
- * Seats on, as fresh seat users (set up first when they aren't), or as the person with `sameUser`. Returns the view,
+ * Seats on as this machine's person by default, preserving an existing seat-user mode. Returns the view,
  * or null when it couldn't (already said why). Prints each thing it did.
  */
 export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<SeatsLocalView | null> {
@@ -76,7 +79,13 @@ export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<Seat
     ctx.err(c.red(`seats were not turned on: ${before.pool_conflict}`));
     return null;
   }
-  if (!o.sameUser && !before.ephemeral) {
+  if (o.sameUser && o.seatUsers) { ctx.err(c.red("choose --same-user or --seat-users, not both")); return null; }
+  const seatUsers = o.seatUsers === true || (!o.sameUser && before.ephemeral === true);
+  if (o.sameUser && before.ephemeral) {
+    ctx.err(c.red("seat-user migration requires the person here: run walkie seats migration-preflight, then walkie seats migrate --same-user"));
+    return null;
+  }
+  if (seatUsers && !before.ephemeral) {
     if (process.platform !== "darwin" && process.platform !== "linux") {
       ctx.err(c.red(`seat users are set up on macOS and Linux only (this is ${process.platform}); seats as your own user: walkie seats enable --same-user`));
       return null;
@@ -88,13 +97,13 @@ export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<Seat
       return null;
     }
     did.push(`set up seat users: the group walkie-seats, the root-owned runner and user helper in ${RUNTIMES_DIR.replace(/\/runtimes$/, "")}, their sudo rules`);
-  } else if (before.ephemeral) {
+  } else if (seatUsers) {
     did.push("seat users were already set up");
   }
   // A dedicated Claude token is checked and stored BEFORE seats are allowed (Codex r8 MEDIUM 5): no launch in between
   // may get the machine's own login instead.
   const pre = (await client.seats()).local;
-  if (!o.claudeToken && o.askClaudeToken && pre.claude_login === "unavailable" && !o.sameUser && process.stdin.isTTY) {
+  if (!o.claudeToken && o.askClaudeToken && pre.claude_login === "unavailable" && seatUsers && process.stdin.isTTY) {
     ctx.out("This machine has no usable Claude access token for seats. Give seats a token of their own:");
     ctx.out(c.dim("run `claude setup-token` in another terminal, then paste the token here (hidden; Enter skips)."));
     const typed = (await askHidden("Claude token for seats: ")).text.trim();
@@ -110,12 +119,13 @@ export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<Seat
     did.push("a Claude token for seats only is set (0600 in the Walkie home; never echoed)");
   }
   const res = await client.seatsConfig({
-    allow: true, ...(o.sameUser ? { same_user: true } : {}),
+    allow: true, ...(o.sameUser || o.seatUsers ? { mode: seatUsers ? "seat_users" as const : "same_user" as const } : {}), same_user: !seatUsers, ephemeral: seatUsers,
     ...(o.acceptReadableHome ? { accept_readable_home: true } : {}),
+    ...(o.inheritPersonConfig ? { inherit_person_config: true } : {}),
     ...(o.launchers ? { launchers: o.launchers } : {}), ...(o.max ? { max: o.max } : {}),
   });
   const local = res.local;
-  did.push(`seats allowed: ${local.launcher_policy_empty ? "nobody" : local.launchers?.length ? launcherSummary(local.launchers) : launcherPolicyLabel(local)} may start up to ${local.max ?? 3} at once here${o.sameUser ? ", as your own OS user" : ", each as a fresh seat user"}`);
+  did.push(`seats allowed: ${local.launcher_policy_empty ? "nobody" : local.launchers?.length ? launcherSummary(local.launchers) : launcherPolicyLabel(local)} may start up to ${local.max ?? 3} at once here${seatUsers ? ", each as a fresh seat user" : ", as your own OS user"}`);
   ctx.out(c.green("Seats are on for this machine."));
   for (const d of did) ctx.out(`  ${c.green("✓")} ${d}`);
   ctx.out(local.claude_login === "dedicated"
@@ -144,20 +154,53 @@ export function extractClaudeToken(text: string): string | null {
 export function doctorLines(checks: Check[]): string[] {
   const lines = checks.map((k) => `  ${k.ok === true ? c.green("✓") : k.ok === "warn" ? c.yellow("!") : c.red("✗")} ${k.what}${k.fix && k.ok !== true ? c.dim(`  → ${k.fix}`) : ""}`);
   const bad = checks.filter((k) => k.ok === false);
-  const claudeOk = checks.some((k) => k.ok === true && k.what.startsWith("Claude seats: using"));
-  const codexOk = checks.some((k) => k.ok === true && k.what.startsWith("Codex seats: signed in"));
-  const ready = bad.filter((k) => !k.what.startsWith("Claude seats") && !k.what.startsWith("Codex seats") && !k.what.startsWith("Claude Code isn't")).length === 0;
+  const enrolled = checks.some((k) => k.what.startsWith("owner Claude account"));
+  const claudeOk = checks.some((k) => k.ok === true && k.what.startsWith(enrolled ? "owner Claude account" : "Claude seats: using"));
+  const codexOk = checks.some((k) => k.ok === true && k.what.startsWith(enrolled ? "owner Codex account" : "Codex seats: signed in"));
+  const ready = enrolled ? bad.length === 0
+    : bad.filter((k) => !k.what.startsWith("Claude seats") && !k.what.startsWith("Claude Code isn't")).length === 0;
   const which = [claudeOk ? "Claude" : "", codexOk ? "Codex" : ""].filter(Boolean).join(" and ");
-  lines.push(ready && which
+  lines.push(ready && which && (!enrolled || (claudeOk && codexOk))
     ? c.green(`Ready: the team can start ${which} seats on this machine.`)
     : c.red(`Not ready${bad.length ? `: fix the ${bad.length === 1 ? "item" : `${bad.length} items`} marked ✗` : ""}.`));
   return lines;
 }
 
+async function readinessChecks(client: WalkieClient, local: SeatsLocalView, me: Awaited<ReturnType<WalkieClient["me"]>>): Promise<Check[]> {
+  let checks = doctorChecks(local, doctorFacts(local, me.team?.name ?? null));
+  try {
+    const grant = readGrant(defaultHome());
+    const enrolled = local.enrolled ?? enrollmentMode(defaultHome());
+    if (grant && !enrolled) checks.push({ ok: false, what: "root enrollment marker is missing: grant cannot authorize seats" });
+    if (enrolled && !grant) {
+      checks.push({ ok: false, what: "enrollment grant is missing: seats cannot launch", fix: "renew the grant through local consent, or disable seats and run walkie provision unenroll locally" });
+    }
+    if (grant) {
+      // An enrolled company seat uses its owner binding, never the recipient's browser or default provider login.
+      checks = checks.filter((k) => !/^(Claude seats:|Codex seats:|Claude's projected|Claude seats use)/.test(k.what));
+      checks = checks.map((k) => k.what.startsWith("Codex isn't installed") || k.what.startsWith("the seats channel waits")
+        ? { ...k, ok: false } : k);
+      const [team, view] = await Promise.all([client.team(), client.accounts()]);
+      const owner = team.nodes.find((n) => n.node_id === grant.owner_node)?.handle;
+      if (!owner || !team.members.some((m) => m.handle === owner && m.role === "owner")) {
+        checks.push({ ok: false, what: "owner account: waiting for current roster owner" });
+      } else {
+        const worker = workerAccountChecks(grant, { me: me.handle ?? "", owner, role: me.role,
+          accounts: view.accounts, team: view.pool?.policy ?? "per-account" });
+        checks.push(...await probeWorkerLeases(worker, (b) => client.vaultProbe(b)));
+      }
+    }
+  } catch {
+    checks.push({ ok: false, what: "owner account: private grant or vault view is unreadable" });
+  }
+  return checks;
+}
+
 async function doctor(ctx: Ctx): Promise<number> {
   const client = ctx.client();
-  const [{ local }, me] = await Promise.all([client.seats(), client.me()]);
-  const checks = doctorChecks(local, doctorFacts(local, me.team?.name ?? null));
+  // The doctor is the explicit check: it asks the daemon to look at the sign-ins now (a status read serves the last answer).
+  const [{ local }, me] = await Promise.all([client.seatsDoctor(), client.me()]);
+  const checks = [...await readinessChecks(client, local, me), ...await wslKeepaliveChecks()];
   if (ctx.json) { ctx.out(JSON.stringify({ checks })); return checks.some((k) => k.ok === false) ? EXIT.error : EXIT.ok; }
   ctx.out(c.bold("Seats on this machine"));
   for (const l of doctorLines(checks)) ctx.out(l);
@@ -169,15 +212,20 @@ async function doctor(ctx: Ctx): Promise<number> {
 async function enable(ctx: Ctx): Promise<number> {
   // A person types "yes" at their terminal unless `--yes` (or --allow-team-agents) answers for them; an agent of theirs
   // (AGENT-ADMIN-1: seats.ts adminCtx checked agent admin is on) goes ahead with the flags it gave, audited.
+  // Moving seat users to same-user mode is not this command's: enableSeats refuses it, `seats migrate` is the person's.
   const yes = bool(ctx.args, "yes") || allowTeamAgents(ctx) || adminCaller(ctx).kind === "agent";
   const sameUser = bool(ctx.args, "same-user");
+  const seatUsers = bool(ctx.args, "seat-users");
+  if (sameUser && seatUsers) throw new UsageError("choose --same-user or --seat-users");
   if (!yes) {
     const before = (await ctx.client().seats()).local;
     ctx.out(enableConsentLine());
-    ctx.out(sameUser ? "as your own OS user." : "each as a fresh OS user of its own, removed after it. Turn it off any time: walkie seats deny.");
+    const ownUser = sameUser || (!seatUsers && !before.ephemeral);
+    ctx.out(ownUser ? "as your own OS user, with access to your files, keys and Walkie daemon." : "each as a fresh OS user of its own, removed after it. Turn it off any time: walkie seats deny.");
+    if (ownUser) ctx.out("Only allow trusted launchers: Grok path and output checks cannot restrict your user's file access.");
     ctx.out(before.claude_login === "dedicated"
       ? "Claude seats use the token set for seats only; a running seat can read it."
-      : sameUser ? "A running seat can read everything you can, including your full Claude login."
+      : ownUser ? "A running seat can read everything you can, including your full Claude login."
         : "A running seat can read this machine's short-lived Claude access token, never the refresh token.");
     await requirePerson(ctx, "let your team start agents on this machine", "yes");
   }
@@ -185,16 +233,16 @@ async function enable(ctx: Ctx): Promise<number> {
   const max = int(ctx.args, "max");
   const claudeToken = bool(ctx.args, "claude-token-stdin") ? await readStdin() : undefined;
   const local = await enableSeats(ctx, {
-    sameUser, acceptReadableHome: bool(ctx.args, "accept-readable-home"), ...(launchers ? { launchers } : {}), ...(max ? { max } : {}),
+    sameUser, seatUsers, inheritPersonConfig: bool(ctx.args, "inherit-person-config"), acceptReadableHome: bool(ctx.args, "accept-readable-home"), ...(launchers ? { launchers } : {}), ...(max ? { max } : {}),
     ...(claudeToken !== undefined ? { claudeToken } : {}), askClaudeToken: !ctx.json,
   });
   if (!local) return EXIT.error;
   const me = await ctx.client().me();
-  const checks = doctorChecks(local, doctorFacts(local, me.team?.name ?? null));
-  if (ctx.json) { ctx.out(JSON.stringify({ local, checks })); return EXIT.ok; }
+  const checks = [...await readinessChecks(ctx.client(), local, me), ...await wslKeepaliveChecks()];
+  if (ctx.json) { ctx.out(JSON.stringify({ local, checks })); return checks.some((k) => k.ok === false) ? EXIT.error : EXIT.ok; }
   for (const l of doctorLines(checks)) ctx.out(l);
   ctx.out(c.dim("Turn seats off (and stop every running one) any time: walkie seats deny"));
-  return EXIT.ok;
+  return checks.some((k) => k.ok === false) ? EXIT.error : EXIT.ok;
 }
 
 // ---- start ---------------------------------------------------------------------------------------------------

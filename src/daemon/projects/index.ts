@@ -238,6 +238,12 @@ export class ProjectsIndex {
     this.noteDrained();
   }
 
+  /** Refresh one project's authorization view without draining another project's queued cards. */
+  flushProject(channel: string): void {
+    while (this.flush(Number.MAX_SAFE_INTEGER, channel)) { /* until this project is clean */ }
+    if (!this.hasPending()) this.noteDrained();
+  }
+
   /** The project's settings entities, folded (cached until something marks the project). */
   settingsOf(channel: string): Settings {
     const hit = this.settings.get(channel);
@@ -266,8 +272,9 @@ export class ProjectsIndex {
   }
 
   /** One pass: returns true while work remains. */
-  private flush(budget: number): boolean {
+  private flush(budget: number, onlyChannel?: string): boolean {
     for (const ch of [...this.rosterDirty]) {
+      if (onlyChannel && ch !== onlyChannel) continue;
       this.rosterDirty.delete(ch);
       if (this.dirtyFull.has(ch)) continue;
       const before = this.settings.get(ch);
@@ -277,6 +284,7 @@ export class ProjectsIndex {
       else if (!this.dirtyCards.has(ch)) this.finishChannel(ch, after);
     }
     for (const ch of [...this.dirtyFull]) {
+      if (onlyChannel && ch !== onlyChannel) continue;
       this.dirtyFull.delete(ch);
       this.settings.delete(ch);
       const ids = new Set([...this.db.cardRootIds(ch), ...this.db.cardRows(ch).map((r) => r.id)]);
@@ -288,6 +296,7 @@ export class ProjectsIndex {
     }
     let done = 0;
     for (const [ch, ids] of this.dirtyCards) {
+      if (onlyChannel && ch !== onlyChannel) continue;
       const s = this.settingsOf(ch);
       for (const id of ids) {
         if (done >= budget) return true;
@@ -298,13 +307,20 @@ export class ProjectsIndex {
       this.dirtyCards.delete(ch);
       this.finishChannel(ch, s);
     }
-    for (const ch of [...this.keysDirty]) this.finishChannel(ch, this.settingsOf(ch));
+    for (const ch of [...this.keysDirty]) if (!onlyChannel || ch === onlyChannel) this.finishChannel(ch, this.settingsOf(ch));
     for (const ch of [...this.roomDirty]) {
+      if (onlyChannel && ch !== onlyChannel) continue;
       this.roomDirty.delete(ch);
       this.delta(ch).room = true;
       this.finishChannel(ch, this.settingsOf(ch));
     }
-    return this.dirtyFull.size > 0 || this.dirtyCards.size > 0 || this.rosterDirty.size > 0;
+    return onlyChannel ? this.dirtyFull.has(onlyChannel) || this.dirtyCards.has(onlyChannel) || this.rosterDirty.has(onlyChannel)
+      : this.dirtyFull.size > 0 || this.dirtyCards.size > 0 || this.rosterDirty.size > 0;
+  }
+
+  private hasPending(): boolean {
+    return this.dirtyFull.size > 0 || this.dirtyCards.size > 0 || this.rosterDirty.size > 0
+      || this.keysDirty.size > 0 || this.roomDirty.size > 0;
   }
 
   private delta(ch: string): { cards: Map<string, CardView>; removed: Set<string>; reset: boolean; room?: boolean } {

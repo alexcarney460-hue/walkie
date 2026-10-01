@@ -18,7 +18,9 @@
 import { accessSync, chmodSync, chownSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { CLAUDE_EVENTS, installedClaudeCommand, isOurHook, ourEntry, type HookEntry, type Settings } from "./install.ts";
+import { CLAUDE_EVENTS, detectIndent, installedClaudeCommand, isOurHook, ourEntry, type HookEntry, type Settings } from "./install.ts";
+
+export { detectIndent }; // the settings writer (install.ts) keeps a file's indentation the same way
 
 /** The events this version introduced: the only ones a refresh adds. */
 export const SUBAGENT_EVENTS: readonly { event: string; matcher?: string }[] = CLAUDE_EVENTS.filter((e) => ["PreToolUse", "SubagentStart", "SubagentStop"].includes(e.event));
@@ -105,12 +107,6 @@ function writable(target: string): boolean {
 
 export type RefreshStatus = "written" | "current" | "not-installed" | "no-settings" | "read-only" | "hard-linked" | "changed-underneath";
 
-/** The file's indentation (two / four spaces, a tab), so a refresh changes only what it adds. */
-export function detectIndent(text: string): string | number {
-  const m = /^[{[][ \t]*\r?\n([ \t]+)\S/.exec(text);
-  if (!m?.[1]) return 2;
-  return m[1].startsWith("\t") ? "\t" : m[1].length;
-}
 export interface RefreshResult { status: RefreshStatus; added: string[]; detail?: string }
 
 export interface RefreshOptions {

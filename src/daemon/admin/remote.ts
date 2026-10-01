@@ -4,7 +4,7 @@
 // `walkie <argv>` as its own OS user (no shell, stdin closed, a timeout, capped output), posts one audit line to the
 // team naming the actor and mentioning its person, and returns the exit code and output.
 import { redactSecrets } from "../../protocol/safety.ts";
-import { canonicalArgv, remoteArgvProblem, remoteRosterProblem, REMOTE_ERRORS, DEFAULT_REMOTE_TIMEOUT_S, MAX_REMOTE_OUTPUT, RemoteRunReq, type RemoteRunRes } from "../../protocol/admin.ts";
+import { canonicalArgv, remoteArgvProblem, remoteRosterProblem, REMOTE_COMMANDS, REMOTE_ERRORS, DEFAULT_REMOTE_TIMEOUT_S, MAX_REMOTE_OUTPUT, RemoteRunReq, type RemoteRunRes } from "../../protocol/admin.ts";
 import { walkieArgv } from "../../hooks/install.ts";
 import type { Core } from "../core.ts";
 import { HttpError, parseWith } from "../http.ts";
@@ -12,6 +12,8 @@ import { activeNodes, memberByHandle, nodeMember, type MemberRec, type NodeRec }
 import { appendAudit, recordAdmin } from "./audit.ts";
 import { beginRun, claimSlot, MAX_RUNS, MAX_RUNS_PER_CALLER } from "./runs.ts";
 import { readSwitches } from "./switches.ts";
+import { provisionProblem } from "../provision/authorization.ts";
+import { profileIdFromArgv } from "../provision/profiles.ts";
 
 /** Whether `caller` may administer `node` (an owner: any machine of the team; anyone else: their own). */
 export function mayAdminister(core: Core, caller: MemberRec, node: NodeRec): { ok: true } | { ok: false; code: keyof typeof REMOTE_ERRORS; why: string } {
@@ -100,6 +102,8 @@ export interface RunGuard {
   /** Still allowed? False ends the run (its whole process group), reported as `revoked`. */
   readonly authorized?: () => boolean;
   readonly recheckMs?: number;
+  readonly callerNode?: string;
+  readonly callerHandle?: string;
 }
 
 /**
@@ -110,7 +114,7 @@ export interface RunGuard {
 export async function runAdminArgv(
   core: Core, argv: readonly string[], actor: string, notify: string | null, timeoutS: number, guard: RunGuard = {},
 ): Promise<RunOutcome> {
-  const run = beginRun(core, { actor, notify });
+  const run = beginRun(core, { actor, notify, callerNode: guard.callerNode, callerHandle: guard.callerHandle });
   try {
     const child = Bun.spawn([...walkieArgv(), ...argv], { stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env: runEnv(core, run.token) });
     const group = (sig: "SIGTERM" | "SIGKILL") => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* gone */ } } };
@@ -174,7 +178,8 @@ export async function servePeerAdmin(core: Core, nodeId: string, member: MemberR
   if (!callerNode || !self || !mine) throw new HttpError(409, "no_team", "this machine is not an admitted member");
   const actor = `@${member.handle}/${callerNode.hostname}${b.agent ? `/${b.agent}` : ""}`;
   const refuse = (status: number, code: string, why: string): never => {
-    appendAudit(core, { actor, action: commandLine(b.argv), machine: core.hostname, via: "remote", refused: code });
+    const verb = b.argv[0] && Object.hasOwn(REMOTE_COMMANDS, b.argv[0]) ? b.argv[0] : "unknown";
+    appendAudit(core, { actor, action: `${verb} refused: ${code}`, machine: core.hostname, via: "remote", refused: code });
     throw new HttpError(status, code, why);
   };
   const may = mayAdminister(core, member, self);
@@ -196,12 +201,18 @@ export async function servePeerAdmin(core: Core, nodeId: string, member: MemberR
   }
   const rosterProblem = remoteRosterProblem(argv as string[], (h) => memberByHandle(core.roster, h)?.role ?? null);
   if (rosterProblem) refuse(400, "not_allowed_remotely", rosterProblem);
+  const provisionId = b.argv[0] === "provision" ? profileIdFromArgv(b.argv.slice(1)) : null;
+  if (provisionId) {
+    const problem = provisionProblem(core, nodeId, provisionId);
+    if (problem) refuse(403, problem, `provision ${provisionId} refused: ${problem}`);
+  }
   const release = claimSlot(core, nodeId);
   if (!release) refuse(429, "busy", `${core.hostname} is running as many remote admin commands as it takes (${MAX_RUNS}, ${MAX_RUNS_PER_CALLER} per calling machine): retry when one finishes`);
   let res: RunOutcome;
   try {
     res = await runAdminArgv(core, argv as string[], actor, mine.handle, b.timeout_s ?? DEFAULT_REMOTE_TIMEOUT_S, {
-      authorized: () => stillAuthorized(core, nodeId, member.handle),
+      authorized: () => stillAuthorized(core, nodeId, member.handle) && (!provisionId || !provisionProblem(core, nodeId, provisionId)),
+      callerNode: nodeId, callerHandle: member.handle,
     });
   } finally {
     release?.();

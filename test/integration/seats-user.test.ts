@@ -66,9 +66,8 @@ beforeAll(async () => {
 afterAll(async () => { await c.close(); });
 
 describe("seats as a separate OS user", () => {
-  test("opting in needs a seat user, or an explicit --same-user; the user must exist", async () => {
-    await expect(person(arvid).seatsConfig({ allow: true })).rejects.toThrow(/seat users of their own \(walkie seats setup-user --apply\).*--same-user/);
-    const same = await person(arvid).seatsConfig({ allow: true, same_user: true, env: ["FAKE_CODEX_LOG"] });
+  test("a fresh company's allow-only config selects same-user mode", async () => {
+    const same = await person(arvid).seatsConfig({ allow: true, env: ["FAKE_CODEX_LOG"] });
     expect(same.local).toMatchObject({ allow: true, ephemeral: false, same_user: true });
     await waitFor(async () => (await alex.client().seats()).hosts.find((h) => h.node === arvid.d.nodeId && h.allows && h.member), { what: "arvid-mac takes seats" });
   }, 30_000);
@@ -158,7 +157,7 @@ describe("seats as a separate OS user", () => {
     const id = await launch("ticker 600 before deny");
     const pid = (await launchLine("ticker 600 before deny")).pid as number;
     await inState(id, "running");
-    await expect(person(arvid).seatsConfig({ allow: true, ephemeral: false, same_user: true })).rejects.toThrow(/before changing the users seats run as/);
+    await expect(person(arvid).seatsConfig({ allow: true, ephemeral: false, same_user: true })).rejects.toThrow(/migration/i);
     const { local } = await person(arvid).seatsConfig({ allow: false });
     expect(local.running).toBe(0);
     await waitFor(() => !alive(pid), { what: "the runtime gone" });

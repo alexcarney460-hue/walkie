@@ -8,10 +8,13 @@
 //             WALKIE_SHARE_PROMPTS=0 turns it off whatever the config says.
 // - activity: the text of tool calls and notifications. Only with "share_activity": true; else fixed phrases.
 // - paths:    the working directory. Only with "share_paths": true.
+// - hermes_activity_profiles: the Hermes profiles whose status may carry activity text (src/protocol/hermes-activity.ts); every
+//             other Hermes profile shows its state only. Absent = none.
 // An unreadable or invalid config shares nothing.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { walkieHome } from "../client/index.ts";
+import { hermesActivityProfiles } from "../protocol/hermes-activity.ts";
 import { PRIVATE_TITLE as TITLE } from "../protocol/status-projection.ts";
 
 export interface SharePolicy {
@@ -44,25 +47,47 @@ export function readSharePolicy(home = walkieHome(), env: NodeJS.ProcessEnv = pr
   }
 }
 
-/** The daemon's view of the policy: config.json re-read when it changes (so a change applies without a restart). */
+/** The Hermes profiles <walkie home>/config.json lets show activity text (hooks run outside the daemon and read it on every call). */
+export function readHermesActivityProfiles(home = walkieHome()): readonly string[] {
+  try {
+    return hermesActivityProfiles(JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as unknown);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The daemon's view of the policy: config.json re-read when it changes (so a change applies without a restart). The Hermes
+ * allow list comes from the same read, through the function the hook uses.
+ */
 export class SharePolicyFile {
   private key = "";
   private value: SharePolicy = SHARE_NOTHING;
+  private hermes: readonly string[] = [];
 
   constructor(private readonly file: string, private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   get(): SharePolicy {
+    this.refresh();
+    return this.value;
+  }
+
+  /** The Hermes profiles allowed to show activity text; none while the file is missing, unreadable or invalid. */
+  hermesActivityProfiles(): readonly string[] {
+    this.refresh();
+    return this.hermes;
+  }
+
+  private refresh(): void {
     let key = "missing";
     try { const s = statSync(this.file); key = `${s.mtimeMs}:${s.size}:${s.ino}`; } catch { /* no config: nothing shared */ }
-    if (key !== this.key) {
-      this.key = key;
-      try {
-        this.value = key === "missing" || !statSync(this.file).isFile() ? sharePolicy(null, this.env)
-          : sharePolicy(JSON.parse(readFileSync(this.file, "utf8")) as unknown, this.env);
-      } catch {
-        this.value = sharePolicy(null, this.env);
-      }
-    }
-    return this.value;
+    if (key === this.key) return;
+    this.key = key;
+    let cfg: unknown = null;
+    try {
+      if (key !== "missing" && statSync(this.file).isFile()) cfg = JSON.parse(readFileSync(this.file, "utf8")) as unknown;
+    } catch { /* unreadable or invalid: nothing shared */ }
+    this.value = sharePolicy(cfg, this.env);
+    this.hermes = hermesActivityProfiles(cfg);
   }
 }

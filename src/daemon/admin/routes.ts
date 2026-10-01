@@ -6,10 +6,11 @@ import { LOCAL_BODY_MAX, requireTeam, route, type RouteCtx } from "../local-rout
 import { PeerCallError } from "../peer-client.ts";
 import { nodeMember, type NodeRec } from "../roster.ts";
 import { appendAudit, readAudit, recordAdmin } from "./audit.ts";
-import { adminGate, agentCaller, AGENT_ADMIN_OFF, localActor, personOnly } from "./gate.ts";
+import { admit, agentCaller, AGENT_ADMIN_OFF, localActor, personOnly } from "./gate.ts";
 import { mayAdminister, resolveMachines, servePeerAdmin } from "./remote.ts";
 import { readSwitches, writeSwitch } from "./switches.ts";
 import { nodesView } from "../views.ts";
+import { closeSshTunnelsQuietly } from "../ssh/tunnel.ts";
 
 /** What the last remote admin call to each machine found (`ok`, or an error code), for `walkie admin machines`. */
 const lastResult = new WeakMap<object, Map<string, { at: number; result: string }>>();
@@ -51,19 +52,24 @@ route("POST", "/v1/admin/switches", async (c) => {
     const v = b[k];
     if (v === undefined || v === cur[k]) continue;
     next = writeSwitch(c.core.paths.config, k, v);
+    if (k === "remote_admin" && !v) closeSshTunnelsQuietly(c.core);
     changes.push(`${k === "agent_admin" ? "agent admin" : "remote admin"} ${v ? "on" : "off"}`);
   }
   if (changes.length) recordAdmin(c.core, { actor: actorOf(c), action: `turned ${changes.join(", ")}`, machine: c.core.hostname, via: "local" }, { post: true });
   return json(next);
 });
 
-const AuditReq = z.object({ action: z.string().min(1).max(600) }).strict();
+const AuditReq = z.object({ action: z.string().min(1).max(600), refused: z.string().min(1).max(300).optional() }).strict();
 
-/** The CLI's own admin steps (the vault, hooks, sudo setup, …): audited like a daemon route. People aren't recorded. */
+/**
+ * The CLI's own admin steps (the vault, hooks, sudo setup, …): audited like a daemon route. People aren't recorded. A step
+ * that was refused or failed says so in `refused`: it is logged on this machine only (never posted), as a daemon route's own refusal is.
+ */
 route("POST", "/v1/admin/audit", async (c) => {
   const b = parseWith(AuditReq, await readJson(c.req, LOCAL_BODY_MAX));
   if (!agentCaller(c)) return json({ recorded: false });
-  adminGate(c, b.action);
+  const admitted = admit(c, b.action);
+  if (b.refused) admitted.refuse(b.refused); else admitted.record();
   return json({ recorded: true });
 });
 
@@ -120,12 +126,18 @@ async function runOn(c: RouteCtx, n: NodeRec, argv: string[], timeoutS: number |
     const res = n.node_id === c.core.nodeId
       ? await servePeerAdmin(c.core, c.core.nodeId, me, body)
       : await callPeer(c, n, body, timeoutS);
+    if (argv[0] === "provision" && res.exit !== 0 && /unknown command ["']?provision|unknown: walkie provision/i.test(res.stderr)) {
+      return fail("target_outdated", `${n.hostname}: this Walkie has remote admin but no provisioning profile; update it first`);
+    }
     noteResult(c, n.node_id, "ok");
     return { ...base, ok: res.exit === 0, exit: res.exit, stdout: res.stdout, stderr: res.stderr, truncated: res.truncated, timed_out: res.timed_out };
   } catch (err) {
     if (err instanceof HttpError) return fail(err.code, err.message);
     if (err instanceof PeerCallError) {
       if (err.status === 404) return fail("target_outdated", `${n.hostname}: ${REMOTE_ERRORS.target_outdated} (then retry)`);
+      if (argv[0] === "provision" && err.code === "not_allowed_remotely" && /walkie provision.*can't run remotely/i.test(err.message)) {
+        return fail("target_outdated", `${n.hostname}: this Walkie has remote admin but no provisioning profile; update it first`);
+      }
       if (err.status === 0) return fail("unreachable", `${n.hostname}: ${REMOTE_ERRORS.unreachable} (${err.message})`);
       return fail(err.code, `${n.hostname}: ${err.message}`);
     }
@@ -152,6 +164,7 @@ route("POST", "/v1/admin/run", async (c) => {
   const targets = resolveMachines(c.core, b.machines);
   appendAudit(c.core, { actor: actorOf(c), action: `asked ${targets.map((t) => t.hostname).join(", ")} to run walkie ${b.argv.join(" ")}`.slice(0, 600), machine: c.core.hostname, via: "local" });
   c.noTimeout();
-  const results = await Promise.all(targets.map((n) => runOn(c, n, b.argv, b.timeout_s)));
+  const timeout = b.timeout_s ?? (b.argv[0] === "provision" && b.argv[1] === "apply" ? MAX_REMOTE_TIMEOUT_S : undefined);
+  const results = await Promise.all(targets.map((n) => runOn(c, n, b.argv, timeout)));
   return json({ results, ok: results.every((r) => r.ok) });
 });

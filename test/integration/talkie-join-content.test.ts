@@ -45,6 +45,14 @@ test("agent asks, answers, statuses and card text refuse credentials", async () 
   await refused(agent.commentTask(card, code));
 });
 
+test("a Hermes hook's status refuses a credential in its activity, as /v1/status does, and takes an ordinary line", async () => {
+  const hermes = node.client("hermes-work");
+  const status = (activity: string) => hermes.hermesStatus({ profile: "work", session: "a".repeat(64), at: Date.now(), sequence: 1,
+    state: "working", fallback: "working", activity, source: "tool" });
+  for (const activity of [code, `%77k1${code.slice(3)}`, `${code.slice(0, 6)}\u200b${code.slice(6)}`]) await refused(status(activity));
+  expect((await status("Using terminal")).event?.kind).toBe("agent.status");
+});
+
 test("agent project settings refuse join credentials before the admin write drops agent identity", async () => {
   for (const description of [code, `${code.slice(0, 7)}\n${code.slice(7)}`]) {
     await refused(agent.updateProject(project, { description }));

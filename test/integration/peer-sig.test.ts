@@ -4,6 +4,9 @@ import { generateKeys } from "../../src/daemon/keys.ts";
 import { createInvite, inviteMintPos } from "../../src/daemon/invite.ts";
 import { signPeerRequest, signPeerVv, newPeerNonce } from "../../src/daemon/peer-sig.ts";
 import { peerCapabilities, rememberValidPeerSignature } from "../../src/daemon/peer-capabilities.ts";
+import { signSshRevocation } from "../../src/daemon/ssh/team-revocation.ts";
+import { grantFor } from "../helpers/ssh-team.ts";
+import { signedPeerFetch } from "../helpers/signed-peer-fetch.ts";
 
 let cluster: Cluster;
 let owner: TestNode;
@@ -306,3 +309,29 @@ test("signed vv proof survives response fields unknown to this client", async ()
     expect(vv.verified).toBe(true);
   } finally { fake.stop(true); await member.start(); }
 }, 10_000);
+
+test("the SSH revocation receipt route is a signed peer route: tier A, admission first, only the caller's own receipt", async () => {
+  const body = JSON.stringify(signSshRevocation(member.d.core, grantFor(member, owner)));
+  const refusedCode = async (res: Response) => (await res.json() as { error: { code: string } }).error.code;
+  // No peer signature: refused like admin/run, before the receipt is looked at.
+  const unsigned = await forged("/peer/v1/ssh/revocation", "POST", body);
+  expect([unsigned.status, await refusedCode(unsigned)]).toEqual([403, "bad_peer_sig"]);
+  // A signature from a key the roster does not admit: refused at admission, whatever the receipt says.
+  const ghost = generateKeys();
+  cluster.identities.set(ghost.nodeId, { login: "member@example.com", nodeName: "ghost-mac" });
+  const ghostSig = signPeerRequest(ghost, { method: "POST", path: "/peer/v1/ssh/revocation", query: "", body,
+    requester: ghost.nodeId, target: owner.d.nodeId, team: owner.d.core.teamId ?? "", ts: Date.now(), nonce: newPeerNonce() });
+  const notAdmitted = await fetch(`http://${owner.peerAddr}/peer/v1/ssh/revocation`, { method: "POST",
+    headers: { "X-Walkie-Node": ghost.nodeId, "X-Walkie-Team": owner.d.core.teamId ?? "", "Content-Type": "application/json", ...ghostSig }, body });
+  expect(notAdmitted.status).toBe(403);
+  // The admitted node's signed request stores its own receipt; a repeat answers the same event.
+  const stored = await signedPeerFetch(member, owner, "/peer/v1/ssh/revocation", { method: "POST", body });
+  expect(stored.status).toBe(200);
+  const { event_id } = await stored.json() as { event_id: string };
+  expect(event_id).toMatch(/./);
+  expect(await (await signedPeerFetch(member, owner, "/peer/v1/ssh/revocation", { method: "POST", body })).json()).toEqual({ event_id });
+  // A valid peer signature does not make another machine's receipt storable: the receipt must name the caller.
+  const other = JSON.stringify(signSshRevocation(owner.d.core, grantFor(owner, owner)));
+  const named = await signedPeerFetch(member, owner, "/peer/v1/ssh/revocation", { method: "POST", body: other });
+  expect([named.status, await refusedCode(named)]).toEqual([403, "invalid_ssh_revocation"]);
+});

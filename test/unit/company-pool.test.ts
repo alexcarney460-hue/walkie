@@ -229,7 +229,8 @@ describe("the home machine lends (vault-lease)", () => {
     const { core, alex } = owner();
     await expect(grantLease(core, { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() }, "node-kira", kira, req(), now())).rejects.toMatchObject({ code: "not_allowed" });
     expect((await grantLease(core, { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() }, "node-alex-2", alex, req(), now())).owner).toBe("alex");
-    const shared = { vault: vault([{ policy: "shared", share_with: ["kira"] }]), nonces: new NonceBook() };
+    // Every cross-person hand-out keeps the vault holder's last 10 %, so the teammate needs a usage reading with room.
+    const shared = { vault: vault([{ policy: "shared", share_with: ["kira"] }]), nonces: new NonceBook(), roomLeft: () => 50 };
     await expect(grantLease(core, { ...shared, sharing: false }, "node-kira", kira, req(), now())).rejects.toMatchObject({ code: "not_allowed" });
     expect((await grantLease(core, { ...shared, sharing: true, nonces: new NonceBook() }, "node-kira", kira, req(), now())).owner).toBe("alex");
   });

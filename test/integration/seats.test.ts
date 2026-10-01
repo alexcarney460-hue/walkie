@@ -12,6 +12,7 @@ import { SEATS_AGENT, TERMINAL_STATES, seatAgentName, seatOf, seatsChannel, type
 import type { Event } from "../../src/protocol/schemas.ts";
 import { seatsFor } from "../../src/daemon/seats/host.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { FAKE_CODEX_AUTH_FILE } from "../helpers/fake-seat-users.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const BUN_DIR = dirname(process.execPath);
@@ -79,6 +80,10 @@ beforeAll(async () => {
   c = new Cluster();
   home = join(c.root, "arvid-home");
   mkdirSync(home, { recursive: true });
+  mkdirSync(join(home, ".claude"));
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixture-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  mkdirSync(join(home, ".codex-seat"));
+  writeFileSync(join(home, ".codex-seat", "auth.json"), FAKE_CODEX_AUTH_FILE, { mode: 0o600 });
   claudeLog = join(c.root, "claude.jsonl");
   codexLog = join(c.root, "codex.jsonl");
   const seats = {
@@ -211,7 +216,7 @@ describe("remote seats over a 2-machine team", () => {
     const launch = lines(codexLog).find((l) => l.prompt === "-- commit this --sandbox danger") as { argv: string[]; codex_home: string; env: string[] };
     expect(launch.argv).toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(launch.argv).not.toContain("danger");
-    expect(launch.codex_home).toBe(join(home, ".codex-seat"));
+    expect(launch.codex_home).toContain(join(home, ".walkie-workers", "seat-"));
     for (const k of ["UNIT_MARK", "OPENAI_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "WALKIE_HOME"]) expect(launch.env).not.toContain(k);
   }, 60_000);
 

@@ -33,6 +33,7 @@ export function parseArgs(argv: readonly string[], booleans: ReadonlySet<string>
           const b = booleanValue(value);
           if (b === null) throw new UsageError(`--${name} is a switch: give it alone, or =true / =false`);
           if (b) flags.set(name, true);
+          else if (name === "inherit-person-config") flags.set(name, "false"); // this opt-in can be explicitly withdrawn
           else flags.delete(name); // a later =false overrides an earlier switch (wrappers append overrides)
           continue;
         }

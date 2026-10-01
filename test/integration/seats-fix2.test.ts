@@ -10,6 +10,7 @@ import type { WalkieClient } from "../../src/client/index.ts";
 import { TERMINAL_STATES, seatsChannel, type SeatView } from "../../src/protocol/seats.ts";
 import { seatsFor } from "../../src/daemon/seats/host.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
+import { signInCodex } from "../helpers/fake-seat-users.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 
@@ -32,6 +33,7 @@ beforeAll(async () => {
   c = new Cluster();
   const home = join(c.root, "arvid-home");
   mkdirSync(home, { recursive: true });
+  signInCodex(home);
   log = join(c.root, "codex.jsonl");
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
   kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kiras-mbp" });

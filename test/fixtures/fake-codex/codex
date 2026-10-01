@@ -34,7 +34,7 @@ const logFile = process.env.FAKE_CODEX_LOG;
 if (logFile) {
   appendFileSync(logFile, JSON.stringify({
     pid: process.pid, argv, cwd, prompt, walkie_agent: process.env.WALKIE_AGENT ?? null, env: SEEN.filter((k) => process.env[k] !== undefined),
-    codex_home: process.env.CODEX_HOME ?? null, home: process.env.HOME ?? null, uid: process.getuid?.() ?? null, user: userInfo().username,
+    codex_home: process.env.CODEX_HOME ?? null, temp_dir: process.env.TMPDIR ?? null, home: process.env.HOME ?? null, uid: process.getuid?.() ?? null, user: userInfo().username,
     // v2 (FO-2): the raw stdin prompt and the work tree's branch and commit as the seat found them.
     ...(pointer ? {
       stdin_prompt: stdinPrompt,

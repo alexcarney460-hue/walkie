@@ -225,7 +225,8 @@ describe("hand-outs: sharing read live, grants make leases verifiable (Opus 7, C
     core.ingest(create, "local");
     const entry = { id: "a".repeat(24), provider: "claude", label: "Claude account", plan: null, policy: "shared", share_with: ["kira"], created_at: 1, expires_at: null, home: null, linked: false, gen: "g" } as VaultEntry;
     const grants = new GrantBook();
-    const deps = { vault: { list: () => [entry], claudeToken: async () => TOKEN }, sharing: () => liveVaultSharing(cfg), nonces: new NonceBook(), grants };
+    // Every cross-person hand-out now keeps the vault holder's last 10%, so a borrower needs a usage reading with room (11% here).
+    const deps = { vault: { list: () => [entry], claudeToken: async () => TOKEN }, sharing: () => liveVaultSharing(cfg), nonces: new NonceBook(), grants, roomLeft: () => 11 };
     const kira = { login: "kira@example.com", handle: "kira", role: "member" as const };
     const req = () => ({ account: entry.id, epk: ephemeralKey().publicKey, nonce: crypto.getRandomValues(new Uint8Array(16)).reduce((x, b) => x + b.toString(16).padStart(2, "0"), ""), ts: now() });
     const res = await grantLease(core, deps, "node-kira", kira, req(), now());

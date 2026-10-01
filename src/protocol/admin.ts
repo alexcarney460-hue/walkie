@@ -6,6 +6,7 @@ import { z } from "zod";
 import { isAbsolute } from "node:path";
 import { parseArgs, UsageError } from "../cli/args.ts";
 import { CLI_BOOLEANS } from "../cli/booleans.ts";
+import { profileArgvProblem } from "../daemon/provision/profiles.ts";
 
 /** `walkie <command> <sub>` allowed remotely; "" = the command with no subcommand (its status / list). */
 export const REMOTE_COMMANDS: Readonly<Record<string, readonly string[]>> = {
@@ -24,6 +25,7 @@ export const REMOTE_COMMANDS: Readonly<Record<string, readonly string[]>> = {
   integrations: ["", "list", "enable", "disable", "run"],
   agents: ["admin"],
   admin: ["", "remote", "log"],
+  provision: ["status", "apply"],
 };
 
 /** Never remotely, whatever the list above says (defence in depth: they run programs with an account's login). */
@@ -40,7 +42,7 @@ const REFUSED_FLAGS = new Set(["--claude", "--claude-token-stdin", "--key", "--b
  * - integrations enable `--key-path`: a key file on that machine is its person's to name.
  */
 const REFUSED_OPTIONS: Readonly<Record<string, readonly string[]>> = {
-  seats: ["env"],
+  seats: ["env", "inherit-person-config"],
   "pool install": ["dir"],
   "orchestrator start": ["permission-mode", "cwd", "access"],
   "talkie start": ["permission-mode", "cwd", "access"],
@@ -68,6 +70,7 @@ export function remoteArgvProblem(argv: readonly string[]): string | null {
     if (a.length > MAX_ARG || /[\0\r\n]/.test(a)) return "an argument is too long or has a line break";
   }
   const cmd = argv[0] as string;
+  if (cmd === "provision") return profileArgvProblem(argv.slice(1));
   const subs = REMOTE_COMMANDS[cmd];
   if (!subs) return `walkie ${cmd} can't run remotely (allowed: ${Object.keys(REMOTE_COMMANDS).join(", ")})`;
   // The subcommand exactly as the walkie that runs it parses it (fix round 2, Opus HIGH): its own parser, its own
@@ -81,6 +84,7 @@ export function remoteArgvProblem(argv: readonly string[]): string | null {
   }
   const sub = pos[0] ?? "";
   if (!subs.includes("*") && !subs.includes(sub)) return `walkie ${cmd} ${sub || "(no subcommand)"} can't run remotely (allowed: ${subs.map((s) => s || "(none)").join(", ")})`;
+  if (cmd === "seats" && flags.has("same-user") && (sub === "allow" || sub === "enable")) return "seat mode migration cannot run remotely: the machine's person runs walkie seats migrate --same-user there";
   if (cmd === "accounts" && REFUSED_ACCOUNTS.has(sub)) return `walkie accounts ${sub} can't run remotely (it runs a program with an account's credential)`;
   for (const a of argv) {
     const flag = a.split("=")[0] as string;
@@ -121,6 +125,8 @@ export function remoteArgvProblem(argv: readonly string[]): string | null {
  */
 export function canonicalArgv(argv: readonly string[]): string[] | null {
   if (!argv.length) return null;
+  // The provision grammar is already exact; the global parser treats `--profile` as a boolean for accounts shims.
+  if (argv[0] === "provision") return profileArgvProblem(argv.slice(1)) ? null : [...argv];
   let parsed: ReturnType<typeof parseArgs>;
   try { parsed = parseArgs(argv.slice(1), CLI_BOOLEANS); } catch { return null; }
   const flags = [...parsed.flags].map(([k, v]) => (v === true ? `--${k}` : `--${k}=${v}`));
@@ -132,6 +138,7 @@ export function canonicalArgv(argv: readonly string[]): string[] | null {
  * (a current owner's handle keeps its role). `roleOf` answers the current role of a handle, or null.
  */
 export function remoteRosterProblem(argv: readonly string[], roleOf: (handle: string) => string | null): string | null {
+  if (argv[0] === "provision") return profileArgvProblem(argv.slice(1));
   let parsed: ReturnType<typeof parseArgs>;
   try { parsed = parseArgs(argv.slice(1), CLI_BOOLEANS); } catch { return "the arguments don't parse"; }
   const handle = argv[0] === "team" && parsed.pos[0] === "add-machine" ? parsed.pos[1]

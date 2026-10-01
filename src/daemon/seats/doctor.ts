@@ -42,7 +42,8 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
       : { ok: false, what: `the seats channel isn't ready: ${local.channel_error}` });
   }
   if (local.ephemeral) {
-    out.push({ ok: true, what: "every seat runs as a fresh OS user, removed after it" });
+    out.push({ ok: true, what: "mode: seat users (each seat runs as a fresh OS user)" });
+    out.push({ ok: "warn", what: "migration to company same-user mode needs a local inventory and consent", fix: "walkie seats migration-preflight" });
     if (f.release) out.push(f.runnerProblem ? { ok: false, what: `the seat runner and helper: ${f.runnerProblem}`, fix: "walkie seats setup-user --apply" } : { ok: true, what: "the runner and user helper are root's" });
     if (f.release) out.push(f.helper === "ok" ? { ok: true, what: "sudo reaches the user helper without a password" } : { ok: false, what: `the user helper: ${f.helper}`, fix: "walkie seats setup-user --apply" });
     if (f.release) out.push(f.rootsFile === "ok" ? { ok: true, what: "the helper knows this machine's world-writable directories" } : { ok: false, what: f.rootsFile, fix: "walkie seats setup-user --apply" });
@@ -54,7 +55,7 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
         : { ok: v.state === "stale" ? false : "warn", what: problem, fix: "walkie seats setup-user --apply" });
     }
   } else if (local.same_user) {
-    out.push({ ok: "warn", what: "seats run as YOUR OS user (they can reach your Walkie and your files)", fix: "walkie seats setup-user --apply" });
+    out.push({ ok: "warn", what: "mode: same user (seats can reach your Walkie, files and keys)" });
   } else {
     out.push({ ok: false, what: "no seat users set up", fix: "walkie seats enable" });
   }
@@ -67,10 +68,11 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
   if (claudeBin && local.claude_login === "machine") out.push({ ok: "warn", what: local.ephemeral
     ? "Claude seats use this machine's Claude subscription; a running seat can read this machine's short-lived Claude access token, never the refresh token. Near expiry, use Claude Code here to refresh its login"
     : "Claude seats run as your user and can read everything you can, including your full Claude login" });
+  if (claudeBin && local.claude_projection_near_expiry) out.push({ ok: "warn", what: "Claude's projected access-only login is near expiry; a long seat may be refused unless a selected worker login can refresh", fix: "use Claude Code here to refresh its login before a long seat" });
   if (claudeBin && local.claude_login === "dedicated") out.push({ ok: "warn", what: "Claude seats use the token set for seats only; a running seat can read it" });
   const codexBin = f.runtimes.codex;
   out.push(!codexBin ? { ok: "warn", what: "Codex isn't installed where seats can run it (only Claude seats)", fix: local.ephemeral ? "install codex, then walkie seats setup-user --apply" : "install codex" }
-    : local.codex_login === "unavailable" ? { ok: false, what: "Codex seats: not signed in where seat users can use it (no ~/.codex/auth.json)", fix: "codex login" }
+    : local.codex_login === "unavailable" ? { ok: false, what: `Codex seats: ${local.codex_login_reason ?? "not signed in where seat users can use it (no ~/.codex/auth.json)"}`, fix: local.codex_login_reason ? undefined : "codex login" }
     : { ok: true, what: "Codex seats: signed in (this machine's own sign-in)" });
   if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed" });
   if (local.cleanup_in_flight && Date.now() - local.cleanup_in_flight.since >= 60_000) {
@@ -103,6 +105,11 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
     out.push({ ok: false, what: `${count} seat user${count === 1 ? "" : "s"} awaiting cleanup (hold slots after their seats end${reason}): ${names.slice(0, 5).join(", ")}${count > 5 ? " …" : ""}`,
       fix: "see walkie seats (the reason), https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional" });
     if (count >= 10) out.push({ ok: "warn", what: `large cleanup backlog: ${count} seat users awaiting cleanup`, fix: "inspect walkie seats for the reason summary" });
+  }
+  if (local.pending_worker_roots?.length) {
+    const roots = local.pending_worker_roots;
+    out.push({ ok: "warn", what: `${roots.length} pending worker root${roots.length === 1 ? "" : "s"} retained for review`, fix: "the machine's person can run walkie seats cleanup-root <root-key> at this terminal; process absence is best effort, and a process that left its group cannot be ruled out" });
+    for (const root of roots) out.push({ ok: "warn", what: `worker root ${root.id}: ${root.age_s}s old; ${root.reason}` });
   }
   if (local.availability?.state === "busy") out.push({ ok: "warn", what: "this machine is busy (its person is using it): new seats queue", fix: "walkie seats resume" });
   if (!f.release && local.ephemeral) out.push({ ok: "warn", what: "a source build: its own runner and helper, not the installed ones (not checked)" });

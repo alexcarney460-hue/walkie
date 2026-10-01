@@ -32,7 +32,7 @@ test("indexed claim lookup migrates an old latest post and bounds each schedule 
     store.db.exec(`DROP INDEX events_claim_latest;
       ALTER TABLE events DROP COLUMN claim_schedule; ALTER TABLE events DROP COLUMN claim_at;
       ALTER TABLE events DROP COLUMN claim_term; ALTER TABLE events DROP COLUMN claim_after;
-      DELETE FROM migrations WHERE version >= 14;`);
+      DROP TABLE hermes_sessions; DELETE FROM migrations WHERE version >= 14;`);
     store.close();
     store = new Store(path);
     expect(store.scheduleClaimEvents(OTHER, AT + 1, CLAIMS_PER_SCHEDULE, terms).map((row) => row.id))
@@ -69,7 +69,7 @@ test("migration 14 records bounded progress and resumes after a store closes mid
     store.db.exec(`DROP INDEX events_claim_latest;
       ALTER TABLE events DROP COLUMN claim_schedule; ALTER TABLE events DROP COLUMN claim_at;
       ALTER TABLE events DROP COLUMN claim_term; ALTER TABLE events DROP COLUMN claim_after;
-      DELETE FROM migrations WHERE version >= 14;`);
+      DROP TABLE hermes_sessions; DELETE FROM migrations WHERE version >= 14;`);
     store.close();
     store = new Store(path);
     expect(store.claimIndexReady).toBe(false);
@@ -78,12 +78,19 @@ test("migration 14 records bounded progress and resumes after a store closes mid
     expect(progress).toBeLessThan(1_600);
     expect(store.channelEventCount(SCHEDULE_CHANNEL)).toBe(1_600);
     expect(store.db.query("SELECT version FROM migrations WHERE version = 14").get()).toBeNull();
+    // What comes after the claim index (Hermes sessions, 16 to 18) waits for its last batch: the ledger is never ahead of the index.
+    expect(store.db.query("SELECT version FROM migrations WHERE version > 13").all()).toEqual([]);
+    expect(store.db.query("SELECT name FROM sqlite_master WHERE name = 'hermes_sessions'").get()).toBeNull();
     store.close();
     store = new Store(path);
     for (let i = 0; i < 100 && !store.claimIndexReady; i++) await Bun.sleep(5);
     expect(store.claimIndexReady).toBe(true);
     expect(store.getMeta("claim_index_cursor")).toBeNull();
     expect(store.db.query("SELECT version FROM migrations WHERE version = 14").get()).toEqual({ version: 14 });
+    // Its last batch ran 15 and the migrations after it, in order, in the same transaction.
+    expect(store.db.query<{ version: number }, []>("SELECT version FROM migrations WHERE version >= 14 ORDER BY version").all().map((r) => r.version))
+      .toEqual([14, 15, 16, 17, 18]);
+    expect(store.db.query("SELECT name FROM sqlite_master WHERE name = 'hermes_sessions'").get()).toEqual({ name: "hermes_sessions" });
     expect(store.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE claim_schedule IS NOT NULL").get()?.n)
       .toBe(1_600);
   } finally { store?.close(); rmSync(dir, { recursive: true, force: true }); }

@@ -27,7 +27,7 @@ test("switches: absent file or keys = on (existing installs migrate to on); fals
 });
 
 test("remote allow-list: walkie subcommands only, no stdin, no program paths, switches only off", () => {
-  expect(remoteArgvProblem(["seats", "enable", "--yes", "--same-user", "--max", "12", "--launchers", "@alex"])).toBeNull();
+  expect(remoteArgvProblem(["seats", "enable", "--yes", "--same-user", "--max", "12", "--launchers", "@alex"])).toContain("cannot run remotely");
   expect(remoteArgvProblem(["hooks", "install", "all"])).toBeNull();
   expect(remoteArgvProblem(["agents", "admin", "off"])).toBeNull();
   expect(remoteArgvProblem(["admin", "remote", "off"])).toBeNull();
@@ -110,7 +110,7 @@ test("Opus HIGH / Codex HIGH 1: a leading flag never hides the subcommand; what 
 
 test("the canonical form parses back to the same positionals and flags, and is itself allowed", () => {
   for (const argv of [
-    ["seats", "enable", "--yes", "--same-user", "--max", "12", "--launchers", "@alex,@alex/alex-mbp/cc-1"],
+    ["seats", "enable", "--yes", "--max", "12", "--launchers", "@alex,@alex/alex-mbp/cc-1"],
     ["seats", "-j", "list"], ["hooks", "install", "all", "--dry-run"], ["accounts", "policy", "abc123", "own", "--with=kira"],
     ["admin", "--json", "remote", "off"], ["invite", "kira@example.com", "--handle", "kira", "--role=member"],
   ]) {
@@ -175,7 +175,7 @@ test("round 3: options the machine's person sets there are refused remotely; the
     ["invite", "kira@example.com", "--handle", "k2", "--role", "owner"], ["invite", "--handle", "k3", "--role=owner"],
   ];
   for (const argv of refused) expect([argv.join(" "), remoteArgvProblem(argv) === null]).toEqual([argv.join(" "), false]);
-  for (const argv of [["seats", "allow", "--same-user", "--launchers", "@alex", "--dir", "/srv/seats"], ["pool", "install"], ["pool", "share", "on"],
+  for (const argv of [["seats", "allow", "--launchers", "@alex", "--dir", "/srv/seats"], ["pool", "install"], ["pool", "share", "on"],
     ["orchestrator", "start"], ["orchestrator", "stop"], ["integrations", "enable", "linear"], ["integrations", "disable", "wispr"],
     ["invite", "--handle", "k4"], ["invite", "--handle", "k5", "--role", "member"]]) {
     expect([argv.join(" "), remoteArgvProblem(argv)]).toEqual([argv.join(" "), null]);

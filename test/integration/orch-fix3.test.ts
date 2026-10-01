@@ -48,6 +48,8 @@ beforeAll(async () => {
   launches = join(c.root, "fake-launches.jsonl");
   path = `${FAKE_DIR}:${process.env.PATH ?? "/usr/bin:/bin"}`;
   const orchestrator = {
+    // A Claude login without looking for one: the real check asks this machine's Keychain (tests never touch it).
+    logins: async () => ({ found: ["claude" as const], claude: "cli" as const }),
     autoCheckMs: 500, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, interruptGraceMs: 400,
     env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: join(c.root, "fake-state"), FAKE_CLAUDE_LOG: launches },
   };

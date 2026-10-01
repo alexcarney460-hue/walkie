@@ -17,6 +17,7 @@ import { PRIVATE_TITLE, readSharePolicy, SHARE_NOTHING, type SharePolicy } from 
 import { describeTool, titleFromPrompt } from "./activity.ts";
 import { cardRefIn } from "../protocol/projects/assoc.ts";
 import { roomUnavailableNote, taskContextForModel } from "../protocol/projects/room-format.ts";
+import { isGrokHook } from "./grok-events.ts";
 import { loadState, saveState, shareableTask, shareableTitle, stateProvenance, type HookState } from "./state.ts";
 import { dropPendingLaunches, endSubagents, isSubagentEvent, LAUNCH_TOOLS, recordLaunch, recordLaunched, runningIds, runSubagentEvent, type SubagentFields } from "./subagents.ts";
 import { recordSwitchEvent, type SwitchEventInput } from "./switch-channel.ts";
@@ -181,9 +182,19 @@ function isMentioned(e: Event, agent: string | undefined): boolean {
 
 /** Runs the hook, then tells a wrapping account switcher about the event (switch-channel.ts). */
 export async function runClaudeHook(raw: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  // Grok loads Claude-compatible entries, but sends camelCase fields and must keep its own runtime identity. This is
+  // its "claude" path: it reports the events that path owns, and the native hook owns the rest (grok-events.ts).
+  if (isGrokHook(env)) {
+    const { runGrokHook } = await import("./grok.ts");
+    await runGrokHook(raw, env, "claude");
+    return "";
+  }
+  // Not Grok's hook runner, so a GROK_SESSION_ID here is inherited (a Claude Code started from a Grok tool shell). It
+  // must not name this session after the Grok one, whose card it would overwrite (the same as codexAgentName).
+  const { GROK_SESSION_ID: _inherited, ...own } = env;
   let out = "";
   try {
-    out = await claudeHook(raw, env);
+    out = await claudeHook(raw, own);
   } finally {
     let input: SwitchEventInput = {};
     try { input = JSON.parse(raw) as SwitchEventInput; } catch { /* not JSON */ }

@@ -50,6 +50,7 @@ export function planSeatAccount(
   const id = key.slice(at + 1);
   if (at <= 0 || !/^[0-9a-f]{24}$/.test(id)) return refused("not an account key (<owner>:<24 hex id>)");
   if (o.runtime === "kimi") return refused("Kimi logins aren't vault accounts: leave the account out to use this machine's own Kimi login");
+  if (o.runtime === "grok") return refused("Grok uses only this machine's subscription login, not a vault account");
   if (owner === o.me) {
     const entry = o.vault.find((e) => e.id === id);
     if (entry) {
@@ -82,6 +83,8 @@ export function planSeatAccount(
 /** What a seat's run gets from its account: environment additions and, for a seat user's Codex, its auth.json copy. */
 export interface SeatCredentials {
   env: Record<string, string>;
+  /** Owner-reported lease expiry; unknown on old Claude peers. */
+  expiresAt?: number | null;
   /** A seat user's Codex: the account's access-only auth.json (handed to its runner, never the refresh token). */
   codexAuth?: string;
   /** A same-user seat's leased Codex home (COMPANY POOL; codex-lease-home.ts), deleted when the seat ends. */
@@ -94,7 +97,7 @@ export interface CredentialDeps {
   /** This machine's vault: a Claude token, decrypted in memory for one launch. */
   claudeToken: (id: string) => Promise<string>;
   /** A hand-out from the owner's machine (vault-lease.ts): a Claude setup-token, or an access-only Codex auth.json. */
-  lease: (id: string, node: string, provider: "claude" | "codex") => Promise<{ token?: string; codex_auth?: string; grant: string }>;
+  lease: (id: string, node: string, provider: "claude" | "codex") => Promise<{ token?: string; codex_auth?: string; grant: string; expires_at?: number | null }>;
   /** A same-user seat's Codex home for a leased login (codex-lease-home.ts writeLeaseHome). */
   leaseHome?: (grant: string, authJson: string) => string;
   /** Codex auth.json reduced to access-only (host.ts accessOnlyCodex). */
@@ -105,16 +108,17 @@ export interface CredentialDeps {
 export async function seatCredentials(plan: Exclude<AccountPlan, { kind: "refused" }>, me: string, asSeatUser: boolean, d: CredentialDeps): Promise<SeatCredentials> {
   if (plan.kind === "peer") {
     const r = await d.lease(plan.id, plan.node, plan.provider);
+    if (r.expires_at !== undefined && r.expires_at !== null && r.expires_at <= Date.now()) throw new Error("the owner's account lease expired");
     const lease = { provider: plan.provider, account: plan.id, from_node: plan.node, ...(plan.owner !== me ? { owner: plan.owner } : {}), grant: r.grant };
     if (plan.provider === "claude") {
       if (!r.token) throw new Error("the owner's machine sent no token");
-      return { env: { CLAUDE_CODE_OAUTH_TOKEN: r.token }, lease };
+      return { env: { CLAUDE_CODE_OAUTH_TOKEN: r.token }, expiresAt: r.expires_at, lease };
     }
     if (!r.codex_auth) throw new Error("the owner's machine sent no Codex login");
-    if (asSeatUser) return { env: {}, codexAuth: r.codex_auth, lease };
+    if (asSeatUser) return { env: {}, codexAuth: r.codex_auth, expiresAt: r.expires_at, lease };
     if (!d.leaseHome) throw new Error("a leased Codex login needs a home of its own on this machine");
     const home = d.leaseHome(r.grant, r.codex_auth);
-    return { env: { CODEX_HOME: home }, leaseHome: home, lease };
+    return { env: { CODEX_HOME: home }, leaseHome: home, expiresAt: r.expires_at, lease };
   }
   const e = plan.entry;
   if (e.provider === "claude") return { env: { CLAUDE_CODE_OAUTH_TOKEN: await d.claudeToken(e.id) }, lease: { provider: "claude", account: e.id } };

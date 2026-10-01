@@ -22,22 +22,33 @@ export function errorResponse(err: unknown, log?: { error(m: string, f?: Record<
 }
 
 /** Reads the request body as bytes, enforcing a byte cap regardless of Content-Length honesty. */
-export async function readBytes(req: Request, maxBytes: number): Promise<Uint8Array> {
+export async function readBytes(req: Request, maxBytes: number, deadlineMs?: number): Promise<Uint8Array> {
   const declared = Number(req.headers.get("content-length") ?? "0");
   if (declared > maxBytes) throw new HttpError(413, "too_large", `body exceeds ${maxBytes} bytes`);
   if (!req.body) return new Uint8Array(0);
   const reader = req.body.getReader();
+  let timedOut = false;
+  const timer = deadlineMs === undefined ? null : setTimeout(() => {
+    timedOut = true;
+    void reader.cancel().catch(() => undefined);
+  }, deadlineMs);
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw new HttpError(413, "too_large", `body exceeds ${maxBytes} bytes`);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (timedOut) throw new HttpError(408, "read_timeout", "request body deadline exceeded");
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw new HttpError(413, "too_large", `body exceeds ${maxBytes} bytes`);
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } finally {
+    if (timer) clearTimeout(timer);
+    reader.releaseLock();
   }
   const out = new Uint8Array(total);
   let off = 0;

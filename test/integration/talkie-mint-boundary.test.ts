@@ -85,3 +85,31 @@ test("auth routes treat a child token as orchestrator and reject a different age
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(code);
   }
 });
+
+// Final review B: the Windows app's POST /v1/desktop/challenge (a listener-proof registration that protects the person's login
+// link) was written to refuse agents "exactly as /v1/auth/nonce does", but it read only the agent headers, so a request that
+// carried the orchestrator's per-run token and nothing else registered. One function now classifies the caller for both routes.
+test("the desktop challenge route classifies every caller exactly as the login nonce does", async () => {
+  const cases: Array<[string, Record<string, string>, number, string | null]> = [
+    ["a person (no agent headers)", {}, 200, null],
+    ["a named agent header", { "X-Walkie-Agent": "helper" }, 403, "person_only"],
+    ["the under-agent marker the CLI sets", { "X-Walkie-Under-Agent": "1" }, 403, "person_only"],
+    ["the orchestrator's token and nothing else", { [ORCHESTRATOR_TOKEN_HEADER]: "test-child-token" }, 403, "person_only"],
+    ["the orchestrator's token and the orchestrator's name", { [ORCHESTRATOR_TOKEN_HEADER]: "test-child-token", "X-Walkie-Agent": "orchestrator" }, 403, "person_only"],
+    ["the orchestrator's token and another agent's name", { [ORCHESTRATOR_TOKEN_HEADER]: "test-child-token", "X-Walkie-Agent": "helper" }, 403, "forbidden"],
+    ["a token that is not the orchestrator's", { [ORCHESTRATOR_TOKEN_HEADER]: "not-the-token" }, 403, "forbidden"],
+  ];
+  const outcome = async (path: string, headers: Record<string, string>, body: unknown): Promise<[number, string | null]> => {
+    const res = await fetch(`http://walkie${path}`, { unix: node.socket, method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) } as RequestInit);
+    const parsed = await res.json().catch(() => ({})) as { error?: { code?: string } };
+    return [res.status, parsed.error?.code ?? null];
+  };
+  let n = 0;
+  for (const [label, headers, status, code] of cases) {
+    const challenge = (++n).toString(16).padStart(2, "0").repeat(32); // a fresh 64-hex challenge each time: a registered one is not registered twice
+    const nonce = await outcome("/v1/auth/nonce", headers, {});
+    const registered = await outcome("/v1/desktop/challenge", headers, { challenge });
+    expect([label, ...nonce]).toEqual([label, status, code]);
+    expect([label, ...registered]).toEqual([label, status, code]);
+  }
+});

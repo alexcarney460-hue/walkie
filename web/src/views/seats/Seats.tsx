@@ -151,7 +151,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
                 {local.ephemeral ? (
                   <p><strong>This is remote code execution, on purpose.</strong> Each seat runs as a fresh OS user, made for it and removed after it, apart from your Walkie, your home and the other seats. Turn them off any time; that stops every running seat.</p>
                 ) : (
-                  <p><strong>This is remote code execution, on purpose, as your own user.</strong> A seat can read and change anything your user can on this machine, including acting as you in Walkie. Safer: give seats users of their own first (<span className="mono">walkie seats setup-user --apply</span>). Turn them off any time; that stops every running seat.</p>
+                  <p><strong>This is remote code execution, on purpose, as your own user.</strong> A seat can read and change anything your user can on this machine, including acting as you in Walkie. Only allow trusted launchers: Grok credential path denies and output checks cannot remove this access. Give seats users of their own first (<span className="mono">walkie seats setup-user --apply</span>). Turn them off any time; that stops every running seat.</p>
                 )}
                 {local.claude_login === "dedicated" ? (
                   <p>Claude seats use the token set for seats only; a running seat can read it.</p>
@@ -205,7 +205,8 @@ function LaunchForm({ hosts, onLaunched }: { hosts: SeatHostView[]; onLaunched: 
     try {
       // "Start N agents there" (as walkie seats start --count N): one request each, stopping at the first refusal.
       for (let i = 0; i < Math.min(10, Math.max(1, count)); i++) {
-        await api.seatRun({ machine, runtime, permission_mode: mode, prompt: prompt.trim(), timeout_s: Math.max(1, minutes) * 60, ...(model.trim() ? { model: model.trim() } : {}) });
+        await api.seatRun({ machine, runtime, permission_mode: mode, prompt: prompt.trim(), timeout_s: Math.max(1, minutes) * 60,
+          ...(runtime === "grok" ? { v: 2 as const } : {}), ...(model.trim() ? { model: model.trim() } : {}) });
         started++;
       }
       setPrompt("");
@@ -234,9 +235,9 @@ function LaunchForm({ hosts, onLaunched }: { hosts: SeatHostView[]; onLaunched: 
         <div className="field">
           <span className="field-label" id="seat-runtime-label">Runtime</span>
           <div className="seg" role="radiogroup" aria-labelledby="seat-runtime-label">
-            {(["claude", "codex"] as const).map((r) => (
+            {(["claude", "codex", "grok"] as const).map((r) => (
               <button key={r} type="button" role="radio" aria-checked={runtime === r} className={runtime === r ? `seg-btn rt-seg rt-${r} is-on` : `seg-btn rt-seg rt-${r}`} onClick={() => setRuntime(r)}>
-                {r === "claude" ? "Claude Code" : "Codex"}
+                {r === "claude" ? "Claude Code" : r === "codex" ? "Codex" : "Grok"}
               </button>
             ))}
           </div>
@@ -296,7 +297,7 @@ function SeatCard({ seat, onChange }: { seat: SeatView; onChange: () => void }) 
     <article className={`seat-card state-${seat.state} rt-${seat.runtime}`} aria-labelledby={`seat-${seat.id}`}>
       <header className="seat-head">
         <h3 className="seat-title" id={`seat-${seat.id}`}>
-          {seat.runtime === "claude" ? "Claude Code" : "Codex"}{seat.model ? <span className="mono muted"> {seat.model}</span> : null}
+          {seat.runtime === "claude" ? "Claude Code" : seat.runtime === "codex" ? "Codex" : seat.runtime === "kimi" ? "Kimi" : "Grok"}{seat.model ? <span className="mono muted"> {seat.model}</span> : null}
           <span className="muted"> on </span><span className="mono">{seat.host.hostname}</span>
         </h3>
         <span className={`seat-state is-${seat.state}`}>{STATE_LABEL[seat.state]}</span>

@@ -10,6 +10,7 @@ import { useStore } from "../state/store.tsx";
 import { CopyCommand, ErrorState, RuntimeBadge, SkeletonRows, StatePill } from "./primitives.tsx";
 import { TaskDetail } from "./TaskChip.tsx";
 import { subagentLabel } from "../../../src/protocol/subagents.ts";
+import { isCloudAgent } from "../../../src/protocol/guest-cloud.ts";
 
 interface Step { id: string; ts: number; state: StatusBody["state"]; title?: string; actions: number; lastActivity?: string }
 
@@ -78,12 +79,15 @@ function postLine(e: Event): string {
 }
 
 export function AgentDrawer({ id }: { id: string }) {
-  const { agents, archivedAgents, team } = useStore();
+  const { agents, archivedAgents, team, me } = useStore();
   const agent = agents.find((a) => a.id === id) ?? archivedAgents.find((a) => a.id === id);
   const now = useNow();
   const closeRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<Element | null>(null);
   const history = useAgentHistory(agent);
+  const [revoked, setRevoked] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const cloud = !!agent && isCloudAgent(agent);
   const close = () => {
     const { agent: _drop, ...rest } = getRoute();
     navigate(rest);
@@ -101,6 +105,7 @@ export function AgentDrawer({ id }: { id: string }) {
   }, []);
 
   const s = agent?.status;
+  const hermesViewOnly = s?.runtime === "other" && s.runtime_name === "hermes";
   return (
     <div className="drawer-layer">
       <div className="scrim" onClick={close} aria-hidden="true" />
@@ -128,12 +133,12 @@ export function AgentDrawer({ id }: { id: string }) {
               <StatePill state={agent.effective_state} />
               <span className="muted tnum">updated {ago(agent.updated_at, now)} ago</span>
             </div>
-            <p className="drawer-status-title">{s.title ?? (s.parent ? subagentLabel(s.subagent_type) : "No status title")}</p>
+            <p className="drawer-status-title">{s.title ?? (s.parent ? subagentLabel(s.subagent_type) : hermesViewOnly ? "View only" : "No status title")}</p>
             {s.activity && <p className="drawer-activity mono">{s.activity}</p>}
 
             <dl className="facts">
               <dt>Owner</dt><dd>{displayName(team?.members, agent.handle)} <span className="muted mono">@{agent.handle}</span></dd>
-              <dt>Machine</dt><dd className="mono">{agent.hostname}{!agent.machine_online && <span className="fact-warn"> offline</span>}</dd>
+              <dt>Location</dt><dd className="mono">{cloud ? "Cloud · self-reported" : agent.hostname}{!cloud && !agent.machine_online && <span className="fact-warn"> offline</span>}</dd>
               {s.parent && <><dt>Sub-agent of</dt><dd className="mono">{s.parent}{s.subagent_type && <span className="muted"> · {s.subagent_type}</span>}</dd></>}
               {agent.subagents && <><dt>Sub-agents</dt><dd className="tnum">{agent.subagents.working} working · {agent.subagents.live} live</dd></>}
               {s.task && <><dt>Task</dt><dd><TaskDetail task={s.task} /></dd></>}
@@ -141,10 +146,22 @@ export function AgentDrawer({ id }: { id: string }) {
               {s.cwd && <><dt>Directory</dt><dd className="mono truncate" title={s.cwd}>{s.cwd}</dd></>}
               {s.model && <><dt>Model</dt><dd className="mono">{s.model}</dd></>}
               {s.started_at && <><dt>Session</dt><dd><span className="tnum" title={fullTime(s.started_at)}>started {clock(s.started_at)}, {duration(now - s.started_at)} ago</span>{s.session && <span className="muted mono"> · {s.session}</span>}</dd></>}
-              <dt>Asks</dt><dd>{s.ask_policy === "human" ? "Routed to a person in the dashboard" : s.ask_policy === "off" ? "Not accepting asks" : "Answered by the agent"}</dd>
+              <dt>Asks</dt><dd>{hermesViewOnly ? "Unavailable — view only" : s.ask_policy === "human" ? "Routed to a person in the dashboard" : s.ask_policy === "off" ? "Not accepting asks" : "Answered by the agent"}</dd>
             </dl>
 
-            {!s.parent && (
+            {cloud && (
+              <div className="drawer-section">
+                <h3 className="drawer-h">Cloud access</h3>
+                <p className="muted">Walkie receives this agent's reports. Start, pause and stop are controlled in its own platform.</p>
+                {me?.node.id === agent.node && me.handle === agent.handle && (
+                  <button type="button" className="btn btn-sm" disabled={revoked} onClick={() => {
+                    void api.revokeGuest(agent.agent).then(() => setRevoked(true)).catch((error) => setRevokeError(friendlyError(error)));
+                  }}>{revoked ? "Walkie access revoked" : "Revoke Walkie access"}</button>
+                )}
+                {revokeError && <p role="alert">{revokeError}</p>}
+              </div>
+            )}
+            {!s.parent && !cloud && !hermesViewOnly && (
               // A sub-agent never reads asks (its session does): no ask command for it (WALKIE-MISSION-SUB-1).
               <div className="drawer-section">
                 <h3 className="drawer-h">Ask this agent</h3>

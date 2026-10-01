@@ -8,6 +8,7 @@ import { WalkieClient } from "../../src/client/index.ts";
 import { FakeIdentity, type Identity, type WhoisResult } from "../../src/daemon/identity.ts";
 import { startDaemon, type DaemonHandle } from "../../src/daemon/main.ts";
 import { admitJoin } from "../../src/daemon/requests.ts";
+import { setTestEnrollmentRoot } from "../../src/daemon/provision/root-marker.ts";
 import type { ComputeOptions } from "../../src/daemon/compute/service.ts";
 import { ComputeSite } from "../../src/daemon/compute/site.ts";
 import { DEFAULT_LIMITS, type RateLimits } from "../../src/daemon/ratelimit.ts";
@@ -32,6 +33,7 @@ export const TEST_SYNC: SyncOptions = { intervalMs: 1_000, livenessMs: 3_000, pu
 
 export interface NodeSpec {
   name: string; login: string; hostname?: string; limits?: RateLimits; sync?: SyncOptions;
+  sshUserHome?: string; sshPort?: number;
   localPort?: number | false; autoAdmit?: boolean;
   /** Connector options (fake HTTP layer, manual runs). */
   integrations?: ManagerOptions;
@@ -47,6 +49,8 @@ export interface NodeSpec {
   identity?: (fake: FakeIdentity) => Identity;
   /** AGENT-ADMIN-1: post the one-time upgrade notice at start (default off in tests). */
   adminNotice?: boolean;
+  /** Simulates a startup enrollment migration outcome without touching the host's marker. */
+  enrollmentBackfill?: (home: string) => boolean;
   /** Peer API host; null derives it from the identity like production (default "127.0.0.1"). */
   peerHost?: string | null;
   /** Peer API retry/watch timings (src/daemon/peer-link.ts). */
@@ -105,6 +109,7 @@ export class TestNode {
   client(agent?: string): WalkieClient { return new WalkieClient({ socket: this.socket, agent, timeoutMs: 15_000 }); }
 
   async start(): Promise<this> {
+    setTestEnrollmentRoot(this.home, join(this.cluster.root, "enrollment-root"));
     if (this.spec.autoAdmit === false && !existsSync(join(this.home, "config.json"))) {
       mkdirSync(this.home, { recursive: true, mode: 0o700 });
       writeFileSync(join(this.home, "config.json"), JSON.stringify({ auto_admit: false }));
@@ -117,10 +122,13 @@ export class TestNode {
     const peerHost = direct ? null : this.spec.peerHost === undefined ? "127.0.0.1" : this.spec.peerHost;
     this.daemon = await startDaemon({
       home: this.home, socket: this.socket, identity, ...(peerHost !== null ? { peerHost } : {}), peerPort: this.peerPort,
+      ...(this.spec.sshUserHome ? { sshUserHome: this.spec.sshUserHome } : {}),
+      ...(this.spec.sshPort ? { sshPort: this.spec.sshPort } : {}),
       localPort: this.spec.localPort ?? 0, hostname: this.hostname, sync: this.spec.sync ?? TEST_SYNC,
       limits: this.spec.limits ?? TEST_LIMITS, webDir: this.spec.webDir ?? join(this.home, "no-web"), env: false, heartbeatMs: 15_000,
       integrations: this.spec.integrations ?? { autoRun: false },
       licenseRenew: false, adminNotice: this.spec.adminNotice ?? false, discovery: this.spec.discovery ?? false, machineStats: this.spec.machineStats ?? false, accounts: this.spec.accounts ?? false, ...(this.spec.peerLink ? { peerLink: this.spec.peerLink } : {}),
+      ...(this.spec.enrollmentBackfill ? { enrollmentBackfill: this.spec.enrollmentBackfill } : {}),
       ...(this.spec.orchestrator ? { orchestrator: this.spec.orchestrator } : {}),
       ...(this.spec.seats ? { seats: this.spec.seats } : {}),
       ...(this.spec.licenseVerifier ? { licenseVerifier: this.spec.licenseVerifier } : {}),
