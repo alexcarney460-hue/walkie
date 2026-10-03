@@ -2,11 +2,13 @@
 // PLANS here, never applies) becomes recommendations: each move with the plan's evidence and one line of why. The curation adds
 // what the steward does not move: review bottlenecks (a card that has waited in review with nobody on it) and stalled pipelines
 // (an active card with nobody on it and no change for the stale window). Each recommendation goes to the audience that may see the
-// card (owners only for a private project or a card labelled `confidential`) and is said in plain English: a title, never a key.
+// card (owners only for a private project or a card labelled `confidential`). A team recommendation says the title. An
+// owners-only one, posted where a new owner can read it before they can see the card, says the card's id. The title, the
+// evidence and the block reason stay on the recommendation until createRec moves them onto a post in the project channel.
 import { isConfidential, safeText, utcMinute } from "../../protocol/projects/status-report.ts";
 import type { CardView, Column } from "../../protocol/projects/schema.ts";
 import { history, roleOf, type StewardCard, type StewardInput, type StewardMove, type StewardPlan } from "../../protocol/projects/steward.ts";
-import { REC_TTL_MS, recKey, recTitle, type NewRec } from "../../protocol/talkie-recs.ts";
+import { REC_TTL_MS, cardScheduleRef, recKey, recTitle, type NewRec } from "../../protocol/talkie-recs.ts";
 import { waited } from "./poll-plan.ts";
 
 /** A card has waited this long in review, with nobody on it, before the curation asks who will take it. */
@@ -32,6 +34,19 @@ export interface CurationPlan { recs: NewRec[]; held: number; ambiguous: number;
 
 const MAX_EVIDENCE = 6;
 
+/** An owners-only summary names the column's role, never the project's own name for it. */
+function columnPhrase(role: string): string {
+  switch (role) {
+    case "backlog": return "the backlog";
+    case "todo": return "to do";
+    case "active": return "in progress";
+    case "review": return "review";
+    case "done": return "done";
+    case "cancelled": return "cancelled";
+    default: return "another column";
+  }
+}
+
 function reasonOf(m: StewardMove, staleMs: number): string {
   if (m.blocked_reason) return "It stopped with an error.";
   if (m.rule === "done") return m.text_only ? "A recent update says it is finished." : m.evidence[0]?.startsWith("branch ") ? "Its work has been merged." : "It is marked as finished elsewhere.";
@@ -56,14 +71,17 @@ export function planCuration(i: CurationInput): CurationPlan {
     if (!card || m.rule === "duplicate") continue;
     const to = m.to ? colsOf(card).find((c) => c.id === m.to) : undefined;
     if (m.to && !to) continue;
-    const title = recTitle(card.title, project.prefixes);
-    const where = to ? safeText(to.name, 40) : "";
+    const aud = audienceOf(card);
+    const owners = aud.audience === "owners";
+    const subject = owners ? cardScheduleRef(card.id) : `“${recTitle(card.title, project.prefixes)}”`;
+    const where = to ? (owners ? columnPhrase(to.role) : safeText(to.name, 40)) : "";
+    const blocked = m.blocked_reason ? safeText(m.blocked_reason, 300) || "blocked" : undefined;
     recs.push({
-      key: recKey.move(m.card, m.to), group: m.rule === "stale" ? "stalled" : "moves", source: "curation", ...audienceOf(card),
-      action: { kind: "move_card", card: m.card, from: m.from, ...(m.to ? { to: m.to } : {}), ...(m.blocked_reason ? { blocked_reason: safeText(m.blocked_reason, 300) } : {}) },
-      summary: to ? `Move “${title}” ${m.rule === "stale" ? "back to" : "to"} ${where}` : `Mark “${title}” as blocked`,
+      key: recKey.move(m.card, m.to), group: m.rule === "stale" ? "stalled" : "moves", source: "curation", ...aud,
+      action: { kind: "move_card", card: m.card, from: m.from, ...(m.to ? { to: m.to } : {}), ...(blocked ? { blocked_reason: blocked } : {}) },
+      summary: to ? `Move ${subject} ${m.rule === "stale" ? "back to" : "to"} ${where}` : `Mark ${subject} as blocked`,
       reason: reasonOf(m, staleMs),
-      evidence: m.evidence.slice(0, MAX_EVIDENCE).map((line) => safeText(line, 200)),
+      evidence: m.evidence.slice(0, MAX_EVIDENCE).map((line) => safeText(line, 200)).filter((line) => line.length > 0),
       ttl_ms: REC_TTL_MS,
     });
   }
@@ -78,15 +96,16 @@ export function planCuration(i: CurationInput): CurationPlan {
     const h = history(ev.timeline, card, s.owners);
     const target = i.askTarget(card, role === "review" ? "review" : "status");
     if (!target) continue;
-    const title = recTitle(card.title, project.prefixes);
+    const aud = audienceOf(card);
+    const subject = aud.audience === "owners" ? cardScheduleRef(card.id) : `“${recTitle(card.title, project.prefixes)}”`;
     const who = safeText(target.label, 60);
     if (role === "review") {
       if (i.now - h.inColumnSince < REVIEW_WAIT_MS || i.seatCards.has(card.id)) continue;
       const age = waited(i.now - h.inColumnSince);
       recs.push({
-        key: recKey.ask(target.to, card.id, "review"), group: "reviews", source: "curation", ...audienceOf(card),
+        key: recKey.ask(target.to, card.id, "review"), group: "reviews", source: "curation", ...aud,
         action: { kind: "ask_orchestrator", to: target.to, topic: "review", card: card.id },
-        summary: `Ask ${who} to review “${title}”`, reason: `It has waited ${age} for review and nobody is on it.`,
+        summary: `Ask ${who} to review ${subject}`, reason: `It has waited ${age} for review and nobody is on it.`,
         evidence: [`in review since ${utcMinute(h.inColumnSince)}`, "no agent is working on it"], ttl_ms: REC_TTL_MS,
       });
       continue;
@@ -96,9 +115,9 @@ export function planCuration(i: CurationInput): CurationPlan {
     if (i.now - last < staleMs) continue;
     const age = waited(i.now - last);
     recs.push({
-      key: recKey.ask(target.to, card.id, "status"), group: "stalled", source: "curation", ...audienceOf(card),
+      key: recKey.ask(target.to, card.id, "status"), group: "stalled", source: "curation", ...aud,
       action: { kind: "ask_orchestrator", to: target.to, topic: "status", card: card.id },
-      summary: `Ask ${who} about “${title}”`, reason: `Nothing has changed for ${age} and nobody is working on it.`,
+      summary: `Ask ${who} about ${subject}`, reason: `Nothing has changed for ${age} and nobody is working on it.`,
       evidence: [`last change ${utcMinute(last)}`, "no agent is working on it"], ttl_ms: REC_TTL_MS,
     });
   }

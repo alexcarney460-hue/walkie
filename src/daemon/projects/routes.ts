@@ -12,6 +12,7 @@ import {
 import { HttpError, json, parseWith, readJson } from "../http.ts";
 import { LOCAL_BODY_MAX, limitWrite, refuseAgentJoinContent, requireTeam, route, type RouteCtx } from "../local-routes.ts";
 import { agentsView } from "../views.ts";
+import "./dispute.ts";
 import type { ProjectsIndex } from "./index.ts";
 import { BatchReq } from "../../protocol/projects/batch.ts";
 import { applyBatch, importBudgetKey } from "./batch.ts";
@@ -66,6 +67,7 @@ const UpdateProjectReq = z.object({
   automations: Automations.optional(), state: z.enum(["active", "archived", "deleted"]).optional(), private: z.boolean().optional(),
   steward: z.enum(["on", "off"]).optional(), steward_node: z.string().regex(/^(?:[0-9a-f]{16})?$/).optional(),
   status_report: z.enum(["hourly", "off"]).optional(),
+  escalation_contact: z.string().max(200).nullable().optional(),
 }).strict();
 const BoardReq = z.object({ name: Line(40), columns: Columns.optional() }).strict();
 const UpdateBoardReq = z.object({ name: Line(40).optional(), columns: Columns.optional(), state: z.enum(["active", "archived"]).optional() }).strict();
@@ -131,6 +133,8 @@ route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, async (c, [channel]) => {
   // (PROJECT-REPORTS-1): a report goes to the project's members under WalkieTalkie's name, and a person decides that.
   if ((b.steward !== undefined || b.steward_node !== undefined) && agentCaller(c)) requirePerson(w(c), "the board steward's switch and lease");
   if (b.status_report !== undefined && agentCaller(c)) requirePerson(w(c), "the project's status report switch");
+  // WALK-73: the same person-only lock. agent admin would otherwise sign this as the person (agent_admin defaults on).
+  if (b.escalation_contact !== undefined && agentCaller(c)) requirePerson(w(c), "the project's escalation contact");
   const ctx = adminW(c, `changed project ${channel}: ${Object.keys(b).join(", ") || "nothing"}`);
   limitWrite(c);
   c.noTimeout();

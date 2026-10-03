@@ -167,7 +167,7 @@ export function doctorLines(checks: Check[]): string[] {
 }
 
 async function readinessChecks(client: WalkieClient, local: SeatsLocalView, me: Awaited<ReturnType<WalkieClient["me"]>>): Promise<Check[]> {
-  let checks = doctorChecks(local, doctorFacts(local, me.team?.name ?? null));
+  let checks = doctorChecks(local, await doctorFacts(local, me.team?.name ?? null));
   try {
     const grant = readGrant(defaultHome());
     const enrolled = local.enrolled ?? enrollmentMode(defaultHome());

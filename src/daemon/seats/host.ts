@@ -19,8 +19,8 @@ import { redactSecrets } from "../../protocol/safety.ts";
 import type { BodyOf, Event } from "../../protocol/schemas.ts";
 import { HttpError } from "../http.ts";
 import {
-  DEFAULT_HOST_MAX, DEFAULT_SEAT_MODE, DEFAULT_SEAT_TIMEOUT_S, MAX_SEAT_BRIEF, SEATS_AGENT, SEATS_POOL_CODE, SEATS_POOL_CONFLICT, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SEAT_TASK_PROMPT, TURN_SEATS_OFF, hostText, isSeatAgent, isV2, seatAgentName, seatOf, seatsChannel, stateText,
-  type AnySeatRun, type HostAvailability, type SeatHost, type SeatRun, type SeatRunV2, type SeatRuntime, type SeatState, type SeatsLocalView,
+  DEFAULT_HOST_MAX, DEFAULT_SEAT_MODE, DEFAULT_SEAT_TIMEOUT_S, MAX_SEAT_BRIEF, SEATS_AGENT, SEATS_POOL_CODE, SEATS_POOL_CONFLICT, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SEAT_TASK_PROMPT, TERMINAL_STATES, TURN_SEATS_OFF, hostText, isSeatAgent, isV2, seatAgentName, seatOf, seatsChannel, stateText,
+  type AnySeatRun, type HostAvailability, type SeatHost, type SeatMode, type SeatRun, type SeatRunV2, type SeatRuntime, type SeatState, type SeatsLocalView,
 } from "../../protocol/seats.ts";
 import type { AccountView } from "../../protocol/accounts.ts";
 import { releaseLease, writeLease, type Lease } from "../../accounts/leases.ts";
@@ -72,6 +72,7 @@ import { ambiguousLaunchers, channelFit, decideRun, decideStop, desiredMembers, 
 import {
   KIMI_FULL_ACCESS_ONLY, claudeSeatArgs, claudeSeatParser, codexSeatArgs, codexSeatLine, findRuntime, grokCredentialOutput, grokGuardOutput, grokLoginPresent, grokSeatArgs, grokSeatHome, grokSeatParser, kimiSeatArgs, kimiSeatLine, loginEnv, ownLoginOnly, seatEnvFile, seatSystemPrompt, withBinDir, type SeatSignal,
 } from "./runtime.ts";
+import { grokLaunchVersionRefusal, readGrokVersion, seatToolPolicyActive, seatToolPolicyRefusal, toolPolicyKey } from "./tool-policy.ts";
 
 export interface SeatsOptions {
   /** Tests: how long a paused seat's resume may wait on the seats channel or the roster before it is stopped (default 30 min). */
@@ -187,6 +188,8 @@ interface Seat {
   final: { ok: boolean; text: string } | null;
   /** A v2 request refused while it prepared (a missing prerequisite, an account not usable): posted `refused`. */
   refusal: string | null;
+  /** The seats tool policy the seat's runtime arguments were built from (toolPolicyKey), checked again at the final gate. */
+  toolsAtLaunch?: string;
   /** `local`: the host's person stopped it on this machine (its post-run git is aborted, like a revoke's). */
   stop: { reason: "stopped" | "timeout" | "revoked" | "shutdown" | "unadmitted" | "reserve" | "account" | "launcher" | "held"; by?: string; local?: boolean; why?: string } | null;
   /** Aborted by a stop in any phase: preparing (env, clone), running, or the post-run git. */
@@ -205,6 +208,11 @@ export interface SavedSeat {
   instance?: string;
   /** Unique credential-root instance; absent in legacy saved seats. */
   root?: string;
+  /**
+   * WALK-105: an unstamped seat-user seat kept from a crash on the first pre.12 start (no seat-instance record yet).
+   * Local to seats.json. Never destroyed or killed here; only the registered daemon ends its card, once the user is gone or idle.
+   */
+  kept?: "foreign";
   /** FO-2: a same-user v2 seat's brief in the person's tree, removed at the next start if this daemon died first. */
   task?: { cwd: string; file: string; exclude?: string; hash?: string; tmp?: string };
   /** FO-2: a same-user v2 seat's lane branch, whose ownership record follows it at the next start after a crash. */
@@ -276,6 +284,8 @@ interface V2Seat {
  * plus a day): when this many are live, new requests are not acted on at all (fail closed) rather than forgetting one.
  */
 const HANDLED_CAP = 5_000;
+/** A run that was judged, then lost to the daemon's shutdown during its tool check, before any seat existed. */
+const SHUTDOWN_BEFORE_START = "the host shut down before this seat started; run it again";
 /** How long past its acceptance window a judged request is remembered; older stored requests are never judged. */
 const HANDLED_KEEP_MS = 24 * 3_600_000;
 const OUTPUT_CHUNK = 28_000;
@@ -295,6 +305,8 @@ const PUBLISH_MS = 100;
 /** An installed seat-user runner older than this Walkie (it starts the runtime without waiting for the go-ahead). */
 export const RUNNER_OUT_OF_DATE = "the seat users' runner on this machine is older than this Walkie and started without its go-ahead (it got no login): run walkie seats setup-user --apply";
 export const HELPER_WAY_OUT = "sudo can't reach the seat user helper: run walkie seats setup-user --apply (it reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed";
+/** WALK-105: a seat left running across the first pre.12 upgrade, posted once its user is gone or idle. */
+const KEPT_SEAT_END_REASON = "ended after an upgrade; its machine restarted";
 
 export interface SeatsDeps {
   core: Core; client: PeerClient; catchUp: CatchUp; log: Logger;
@@ -345,6 +357,22 @@ export class SeatsHost {
   private readonly foreignUsers = new Map<string, string>();
   /** Leftovers the helper won't remove while something of them still runs (`destroy <n> idle` answered `running`). */
   private readonly runningLeftovers = new Set<string>();
+  /**
+   * WALK-105: running seats kept in seats.json (not in `seats`, so stopAll and a later migration never treat them as live).
+   * `keptReady`: the registered daemon has seen that user gone or idle. `keptEnded`: this process already posted the end.
+   * `keptStatePosted`: the failed state landed in this process but the card end has not, so a retry does not post the state twice.
+   * A later process also checks the local store, so a crash between the post and the seats.json write does not post again.
+   */
+  private readonly keptSeats = new Map<string, SavedSeat>();
+  private readonly keptReady = new Set<string>();
+  private readonly keptEnded = new Set<string>();
+  private readonly keptStatePosted = new Set<string>();
+  /**
+   * Seat-user name → kept seat ids, until that user's destroy answer is handled.
+   * The pending list can end the card before destroy starts; the name stays so a
+   * "never made" answer is still recognized (WALK-105).
+   */
+  private readonly keptDestroyUsers = new Map<string, string[]>();
   private instanceIdCache: string | null = null;
   /** The helper's pending ids being (or last) reconciled (reconcileHelper). */
   private helperReconciled: Promise<void> = Promise.resolve();
@@ -398,6 +426,15 @@ export class SeatsHost {
   private launchOrder = 0;
   /** Launches waiting while the machine is busy (or for a free seat after it resumed), oldest first. */
   private queue: Queued[] = [];
+  /**
+   * Runs whose tool check has not finished. The check is async, so a stop that arrives during it must be remembered:
+   * the seat is not in {@link seats} or {@link queue} yet, and a judged stop is not delivered again.
+   */
+  private readonly deciding = new Map<string, string>();
+  /** Launcher who stopped a run while its tool check was in flight (`seat id` → who). */
+  private readonly stoppedWhileDeciding = new Map<string, string>();
+  /** Tool checks in flight, so shutdown can wait for them. Runs do not queue behind each other. */
+  private readonly decisions = new Set<Promise<void>>();
   /** Paused seats whose resume waits for a refusal that settles by itself (WALK-74, unpause), stopped after holdMaxMs. */
   private readonly held = new Map<string, { since: number; waiting: string; timer: ReturnType<typeof setTimeout> }>();
   /**
@@ -530,6 +567,231 @@ export class SeatsHost {
     this.log.warn("seats_foreign_user_kept", { user: name, why });
   }
 
+  /**
+   * WALK-105: a seat-user seat left running with no stamp of another daemon. Kept (not killed, not reported) unless
+   * this start is already the registered Walkie and the entry was not kept before — that case is the ordinary crash
+   * leftover and is still reported failed once its user is destroyed. A `kept: "foreign"` entry stays kept even after
+   * registration, until its user is gone or idle.
+   */
+  private foreignKeptSeat(r: SavedSeat, madeBy: Record<string, string> | undefined, scope: SeatScope): boolean {
+    if (r.runner !== true || r.user === undefined) return false;
+    if (r.instance !== undefined && r.instance !== this.instanceId) return false;
+    if (r.kept === "foreign") return true;
+    if (scope.state === "own") return false;
+    return madeBy?.[String(r.user)] !== this.instanceId;
+  }
+
+  /** Remember a kept seat without its instance stamp, so a later copy does not treat the entry as someone else's. */
+  private retainKept(r: SavedSeat): void {
+    if (this.keptSeats.has(r.id) || this.keptEnded.has(r.id)) return;
+    this.keptSeats.set(r.id, {
+      id: r.id, dir: r.dir, kept: "foreign",
+      ...(r.runtime ? { runtime: r.runtime } : {}),
+      ...(r.pid ? { pid: r.pid } : {}),
+      ...(r.started ? { started: r.started } : {}),
+      ...(r.runner ? { runner: true as const } : {}),
+      ...(r.user !== undefined ? { user: r.user } : {}),
+      ...(r.root ? { root: r.root } : {}),
+      ...(r.task ? { task: r.task } : {}),
+      ...(r.lane ? { lane: r.lane } : {}),
+    });
+    this.rememberKeptUser(r);
+  }
+
+  /** Remember a kept seat's user until its destroy answer is handled, even after the card is ended. */
+  private rememberKeptUser(r: SavedSeat): void {
+    if (r.user === undefined || !this.keptDestroyUsers) return;
+    const name = seatUserName(r.user);
+    const ids = this.keptDestroyUsers.get(name) ?? [];
+    if (!ids.includes(r.id)) this.keptDestroyUsers.set(name, [...ids, r.id]);
+  }
+
+  /** Kept seats as seats.json stores them: no instance stamp, and never a seat this process is actually running. */
+  private persistedKept(): SavedSeat[] {
+    const live = new Set(this.seats.keys());
+    return [...this.keptSeats.values()].filter((s) => !live.has(s.id)).map((s) => ({
+      id: s.id, dir: s.dir, kept: "foreign" as const,
+      ...(s.runtime ? { runtime: s.runtime } : {}),
+      ...(s.pid ? { pid: s.pid } : {}),
+      ...(s.started ? { started: s.started } : {}),
+      ...(s.runner ? { runner: true as const } : {}),
+      ...(s.user !== undefined ? { user: s.user } : {}),
+      ...(s.root ? { root: s.root } : {}),
+      ...(s.task ? { task: s.task } : {}),
+      ...(s.lane ? { lane: s.lane } : {}),
+    }));
+  }
+
+  /**
+   * The registered daemon's pending list. Gone: the id is absent from the full list. Idle: it is in `idleIds` and
+   * still held. A missing `idleIds` entry is not "still running" (that list can be cut to fit the helper's reply);
+   * a destroy that succeeds is the other way a user becomes ready.
+   */
+  private noteKeptUsers(ids: readonly number[], idleIds: readonly number[] | undefined): void {
+    // Nothing kept: do not read the root-owned record on every pending list (hand-built tests have no map either).
+    if (!this.keptSeats?.size) return;
+    if (this.seatScope().state !== "own") return;
+    const held = new Set(ids.filter((n) => Number.isInteger(n) && n >= 1));
+    const idle = new Set((idleIds ?? []).filter((n) => held.has(n)));
+    for (const seat of this.keptSeats.values()) {
+      if (seat.user === undefined || this.keptEnded.has(seat.id)) continue;
+      if (!held.has(seat.user) || idle.has(seat.user)) this.markKeptReady(seat.user);
+    }
+  }
+
+  /** Seat ids still kept for this user, read before an await: the pending list can drop the entry while destroy runs. */
+  private keptIdsForUser(n: number): string[] {
+    if (!this.keptSeats?.size) return [];
+    const ids: string[] = [];
+    for (const [id, seat] of this.keptSeats) {
+      if (seat.user === n && !this.keptEnded?.has(id)) ids.push(id);
+    }
+    return ids;
+  }
+
+  /** The registered daemon may end kept seats of this user. A copy or a legacy start never does. */
+  private markKeptReady(n: number): void {
+    // Nothing kept: do not read the root-owned record on every successful destroy.
+    if (!this.keptSeats?.size) return;
+    if (this.seatScope().state !== "own") return;
+    let any = false;
+    for (const [id, seat] of this.keptSeats) {
+      if (seat.user !== n || this.keptEnded.has(id)) continue;
+      this.keptReady.add(id);
+      any = true;
+    }
+    if (any) this.flushKeptEnds();
+  }
+
+  /** A kept seat's end can be posted: this daemon is up, in a team, and its seats channel is fit. */
+  private seatEndPostable(): boolean {
+    if (this.closed || this.closing) return false;
+    if (!this.core.teamId || !this.core.me()) return false;
+    const me = this.core.myHandle();
+    return !!me && this.fit(me);
+  }
+
+  /** Post kept seats that are ready, once, and only from the registered daemon. */
+  private flushKeptEnds(): void {
+    // Nothing ready: do not read the root-owned record on every channel or roster event.
+    if (!this.keptReady?.size || !this.keptSeats?.size) return;
+    if (this.seatScope().state !== "own" || !this.seatEndPostable()) return;
+    for (const id of [...this.keptReady]) {
+      if (!this.keptSeats.has(id) || this.keptEnded.has(id)) continue;
+      this.finishKeptSeat(id);
+    }
+  }
+
+  /**
+   * A failed, done, stopped, timeout or refused state for this seat is already in the local store.
+   * Newest posts first: the end is posted last, so it is on the first page unless later output buried it.
+   */
+  private keptTerminalAlreadyPosted(id: string): boolean {
+    let rows: { json: string }[];
+    try {
+      rows = this.core.store.queryEvents({ channel: this.channel, thread: id, kinds: ["msg.post"], agents: [SEATS_AGENT], limit: 50 });
+    } catch (err) {
+      this.log.warn("seats_leftover_end_lookup_failed", { id, err: scrub((err as Error).message) });
+      return false;
+    }
+    for (const row of rows) {
+      let ev: Event;
+      try { ev = JSON.parse(row.json) as Event; } catch { continue; }
+      if (ev.origin !== this.core.nodeId || ev.author.agent !== SEATS_AGENT) continue;
+      const seat = seatOf(ev.body);
+      if (seat?.op === "state" && seat.seat === id && TERMINAL_STATES.has(seat.state)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The seat's card was already signed offline (the end landed; seats.json may not have).
+   * The agent row is the current card. An older offline status does not count while that row
+   * says the agent is still up. With no row, an offline status among the latest ones still counts.
+   */
+  private keptCardOffline(id: string): boolean {
+    const agent = seatAgentName(id);
+    const offline = (body: { agent?: string; state?: string } | null): boolean => body?.agent === agent && body.state === "offline";
+    try {
+      const row = this.core.store.agent(this.core.nodeId, agent);
+      if (row) {
+        try { return offline(JSON.parse(row.body) as { agent?: string; state?: string }); }
+        catch (err) {
+          this.log.warn("seats_leftover_end_lookup_failed", { id, err: scrub((err as Error).message) });
+          return false;
+        }
+      }
+    } catch (err) {
+      this.log.warn("seats_leftover_end_lookup_failed", { id, err: scrub((err as Error).message) });
+    }
+    try {
+      const rows = this.core.store.queryEvents({ kinds: ["agent.status"], agents: [agent], limit: 20 });
+      for (const row of rows) {
+        let body: { agent?: string; state?: string };
+        try { body = (JSON.parse(row.json) as Event).body as { agent?: string; state?: string }; } catch { continue; }
+        if (offline(body)) return true;
+      }
+    } catch (err) {
+      this.log.warn("seats_leftover_end_lookup_failed", { id, err: scrub((err as Error).message) });
+    }
+    return false;
+  }
+
+  /**
+   * Post the failed state and end the card. The seats.json entry stays until both land, so a withheld post does not
+   * drop the seat. A terminal state already in the store (the process died after the post and before the write) is
+   * not posted again, and a card that is already offline is not ended again.
+   */
+  private finishKeptSeat(id: string): void {
+    if (this.seatScope().state !== "own" || !this.seatEndPostable()) return;
+    const r = this.keptSeats.get(id);
+    if (!r || this.keptEnded.has(id)) return;
+    if (this.keptTerminalAlreadyPosted(id)) {
+      if (this.keptCardOffline(id)) {
+        this.forgetKept(id, r, "skipped");
+        return;
+      }
+      this.log.warn("seats_leftover_end_retry", {
+        id, ...(r.user !== undefined ? { user: seatUserName(r.user) } : {}),
+        why: "a terminal state for this seat is already in the local store; retrying the card end",
+      });
+      if (!this.endSavedSeatCard(id, KEPT_SEAT_END_REASON)) return;
+      this.forgetKept(id, r, "ended");
+      return;
+    }
+    const posted = this.keptStatePosted.has(id) || this.postState(id, { state: "failed", dir: homeRelative(r.dir), reason: KEPT_SEAT_END_REASON });
+    if (!posted) return;
+    this.keptStatePosted.add(id);
+    if (!this.endSavedSeatCard(id, KEPT_SEAT_END_REASON)) return;
+    this.forgetKept(id, r, "ended");
+  }
+
+  /** The kept entry has been ended (or was already ended). seats.json drops it on the next save. */
+  private forgetKept(id: string, r: SavedSeat, outcome: "ended" | "skipped"): void {
+    const skipped = outcome === "skipped";
+    this.keptEnded.add(id);
+    this.keptSeats.delete(id);
+    this.keptReady.delete(id);
+    this.keptStatePosted.delete(id);
+    this.log.warn(skipped ? "seats_leftover_end_skipped" : "seats_leftover_ended", {
+      id, ...(r.user !== undefined ? { user: seatUserName(r.user) } : {}),
+      ...(skipped ? { why: "a terminal state for this seat is already in the local store" } : {}),
+    });
+    this.save();
+  }
+
+  /**
+   * The helper's own sentence when its ledger has no row for this user: admin.ts wraps the ledger's
+   * "never made by this helper" as `${name}: never made by this helper: not destroyed`, with no `left` and no `code`.
+   * A failure's `why` can also carry a seat-chosen path (a mount, a sweep sample), so a substring is not enough.
+   */
+  private helperNeverMade(name: string, r: AdminResult | null): boolean {
+    return !!r && r.ok !== true
+      && r.why === `${name}: never made by this helper: not destroyed`
+      && r.left === undefined
+      && r.code === undefined;
+  }
+
   /** The root helper: `sudo -n <admin> seat-admin <create|destroy> <n>` (admin.ts); tests pass a fake. */
   private adminOp(verb: AdminVerb, n: number, idle = false): Promise<AdminResult | null> {
     // A daemon whose home isn't the registered one never asks the helper to list, make or remove seat users (WALK-103).
@@ -621,6 +883,8 @@ export class SeatsHost {
       this.legacyNoted = true;
       this.log.warn("seats_pending_cleanup_refused", { count: unknown.length, users: unknown.slice(0, 10).map(seatUserName), why: scope.state === "own" ? null : scope.why });
     }
+    // WALK-105: only the registered daemon may end a kept seat, and only once its user is gone or idle.
+    if (scope.state === "own") this.noteKeptUsers(r.ids, r.idleIds);
     if (added || r.ids.length) this.save();
   }
 
@@ -689,6 +953,8 @@ export class SeatsHost {
 
   private async destroyOnce(n: number): Promise<CleanResult> {
     const name = seatUserName(n);
+    // Captured before the await. The pending list can end the kept seat while this destroy is in flight.
+    const keptIds = this.keptIdsForUser(n);
     let r: AdminResult | null;
     try { r = await this.adminOp("destroy", n, this.recoveredIdle.has(n)); }
     catch (err) { r = { ok: false, why: scrub((err as Error).message) }; }
@@ -700,13 +966,32 @@ export class SeatsHost {
       this.cleanupBusyAttempts = 0;
       this.cleanupBusySince = null;
     }
-    if (r?.ok) {
-      if (r.residueSummary) this.residueSummary = r.residueSummary;
-      for (const residue of r.leftoverDirs ?? []) this.log.info("seats_protected_residue", { user: name, residue: scrub(residue) });
+    // The helper's exact "never made" sentence will never succeed. Any other failure, including one whose
+    // text contains those words, is retried. The kept user is remembered even after its card has been ended.
+    const neverMade = (keptIds.length > 0 || this.keptDestroyUsers?.has(name) === true) && this.helperNeverMade(name, r);
+    if (r?.ok || neverMade) {
+      if (r?.ok) {
+        if (r.residueSummary) this.residueSummary = r.residueSummary;
+        for (const residue of r.leftoverDirs ?? []) this.log.info("seats_protected_residue", { user: name, residue: scrub(residue) });
+      }
       this.quarantine.delete(name);
       this.quarantineWhy.delete(name);
       this.liveUsers.delete(n);
       this.recoveredIdle.delete(n);
+      // A kept seat's user is gone. A `running` answer (or any other failure) leaves the card up.
+      this.markKeptReady(n);
+      if (neverMade) {
+        const remembered = this.keptDestroyUsers?.get(name) ?? [];
+        const seats = keptIds.length > 0 ? keptIds : remembered;
+        const still = seats.filter((id) => this.keptSeats?.has(id));
+        this.log.warn("seats_leftover_never_made", {
+          user: name, seats, dropped: still.length === 0,
+          why: still.length === 0
+            ? "the seat user helper never made this user; the kept seat is dropped and its idle destroy is not retried"
+            : "the seat user helper never made this user; its idle destroy is not retried; the kept seat stays until its end can be posted",
+        });
+      }
+      this.keptDestroyUsers?.delete(name);
       this.save();
       if (!this.closing) this.rebalance();
       return { ok: true };
@@ -818,15 +1103,30 @@ export class SeatsHost {
     for (const r of elsewhere) this.log.warn("seats_leftover_elsewhere", { id: r.id, ...(r.user !== undefined ? { user: seatUserName(r.user) } : {}) });
     const saved = elsewhere.length ? { ...loaded, running: loaded.running.filter((r) => !elsewhere.includes(r)) } : loaded;
     this.cleanupUnfinishedSince = saved.cleanup_unfinished_since ?? null;
+    // WALK-105: keep unstamped running seat-user seats before any save, sweep, or kill. A kept seat's worker root
+    // stays on disk too (not pending cleanup) until the card is ended and a later start sweeps it.
+    const keptScope = this.seatScope();
+    const keptIds = new Set<string>();
+    const keptRootKeys = new Set<string>();
+    for (const r of saved.running) {
+      if (!this.foreignKeptSeat(r, saved.made_by, keptScope)) continue;
+      this.retainKept(r);
+      keptIds.add(r.id);
+      const rootKey = r.root && WORKER_ROOT_KEY.test(r.root) ? r.root : r.id;
+      if (WORKER_ROOT_KEY.test(rootKey)) keptRootKeys.add(rootKey);
+    }
     for (const r of [...(saved.pending_roots ?? []), ...saved.running]) {
+      if (keptIds.has(r.id)) continue;
       const key = "root" in r && r.root ? r.root : r.id;
-      if (WORKER_ROOT_KEY.test(key)) this.pendingRoots.set(key, {
+      if (keptRootKeys.has(key) || !WORKER_ROOT_KEY.test(key)) continue;
+      this.pendingRoots.set(key, {
         id: key, ...(r.pid ? { pid: r.pid } : {}), ...(r.started ? { started: r.started } : {}),
         ...("uncertain" in r && r.uncertain ? { uncertain: true as const } : {}),
       });
     }
     try {
       for (const id of workerRootIds(this.home)) {
+        if (keptRootKeys.has(id)) continue;
         const savedRoot = this.pendingRoots.get(id);
         const process = readWorkerProcess(this.home, id);
         if (savedRoot) {
@@ -836,7 +1136,7 @@ export class SeatsHost {
         if (!saved.unreadable && !process) continue;
         this.pendingRoots.set(id, { id, ...(process ?? { uncertain: true as const }) });
       }
-      sweepWorkerRoots(this.home, new Set(this.pendingRoots.keys()), (id, err) => {
+      sweepWorkerRoots(this.home, new Set([...this.pendingRoots.keys(), ...keptRootKeys]), (id, err) => {
         this.pendingRoots.set(id, { id });
         this.log.warn("seats_worker_root_sweep", { id, err: scrub((err as Error).message) });
       });
@@ -851,13 +1151,13 @@ export class SeatsHost {
     const swept = sweepStaged(this.core.paths.home);
     if (swept) this.log.warn("seats_stage_swept", { files: swept });
     for (const r of saved.running) {
-      if (!r.task) continue;
+      if (keptIds.has(r.id) || !r.task) continue;
       removeTask(r.task.cwd, { file: r.task.file, prompt: "", ...(r.task.exclude ? { exclude: r.task.exclude } : {}), ...(r.task.hash ? { hash: r.task.hash } : {}), ...(r.task.tmp ? { tmp: r.task.tmp } : {}) });
       releaseExclude({ file: r.task.file, prompt: "", ...(r.task.exclude ? { exclude: r.task.exclude } : {}) });
       this.log.warn("seats_brief_removed", { id: r.id });
     }
     for (const r of saved.running) {
-      if (!r.lane) continue;
+      if (keptIds.has(r.id) || !r.lane) continue;
       const env = { PATH: this.env.PATH ?? "/usr/bin:/bin", HOME: this.home };
       // After a crash the seat's own result is unknown: nothing is claimed; a record whose branch is gone is dropped.
       void recordLaneTip(r.lane.clone, r.lane.branch, env).catch(() => undefined);
@@ -894,10 +1194,12 @@ export class SeatsHost {
         this.log.warn("seats_unknown_runtime_home_preserved", { id: r.id, dir: r.dir, home: unknownHome });
       }
       // A seat user's seat: said stopped only once its user's destroy is verified (Codex r5 MEDIUM 3), never assumed.
-      if (r.runner && r.user !== undefined && this.foreignUsers.has(seatUserName(r.user))) {
-        // Not this daemon's (WALK-103 review): its user is left as it is, and so is its seat. A copy of another home
-        // shares that home's node key, so a "failed" posted here could end the original's live seat for the team.
-        this.log.warn("seats_leftover_kept", { id: r.id, user: seatUserName(r.user) });
+      // WALK-105: a kept seat is never killed and never reported from this loop. A copy shares the original's node
+      // key, so a "failed" posted here could end the original's live seat. The registered daemon ends it later,
+      // once the user is gone or idle (noteKeptUsers / destroyOnce).
+      if (keptIds.has(r.id) || (r.runner === true && r.user !== undefined && this.foreignUsers.has(seatUserName(r.user)))) {
+        if (!this.keptSeats.has(r.id)) this.retainKept(r);
+        this.log.warn("seats_leftover_kept", { id: r.id, ...(r.user !== undefined ? { user: seatUserName(r.user) } : {}) });
         continue;
       }
       if (r.runner && r.user !== undefined) {
@@ -1019,6 +1321,9 @@ export class SeatsHost {
       } finally { if (timer) clearTimeout(timer); }
     };
     this.closing = true;
+    // A tool check still in flight must not launch after shutdown; it ends its seat as refused. The probe's own
+    // timeout bounds this wait.
+    await bounded(Promise.allSettled([...this.decisions]));
     this.seatStatuses.clearPending();
     for (const seat of this.seats.values()) {
       if (seat.statusTimer) clearInterval(seat.statusTimer);
@@ -1162,6 +1467,10 @@ export class SeatsHost {
       launcher_policy_empty: launcherPolicyEmpty(this.current.launchers),
       ambiguous_launchers: ambiguousLaunchers(this.core.roster, this.policy()), runtimes: this.runtimes(),
       max: this.hostMax, ...(this.current.env?.length ? { env: [...this.current.env] } : {}),
+      ...(this.current.tools ? { tools: {
+        ...(this.current.tools.allow !== undefined ? { allow: [...this.current.tools.allow] } : {}),
+        ...(this.current.tools.deny?.length ? { deny: [...this.current.tools.deny] } : {}),
+      } } : {}),
       ephemeral: this.current.ephemeral === true, same_user: this.iso.mode === "same_user", readable_home: this.current.accept_readable_home === true,
       enrolled,
       claude_login: this.claudeLogin(), codex_login: codexLogin, ...(codexLogin === "unavailable" && this.codexReadiness?.reason ? { codex_login_reason: this.codexReadiness.reason } : {}),
@@ -1586,7 +1895,12 @@ export class SeatsHost {
     const want = desiredMembers(this.core.roster, me, this.policy());
     const ch = this.core.roster.channels.get(this.channel);
     // Marked as a seats channel too (PRE4 RC Codex 5): a same-named ordinary channel is re-shaped and marked once.
-    if (ch?.members && !ch.archived && ch.seats && sameSet(ch.members, want)) { this.channelError = undefined; this.unmarked = null; return; }
+    if (ch?.members && !ch.archived && ch.seats && sameSet(ch.members, want)) {
+      this.channelError = undefined;
+      this.unmarked = null;
+      this.flushKeptEnds(); // a post withheld only because the channel was not fit yet
+      return;
+    }
     const key = want.join(",");
     const now = Date.now();
     // Shaped as asked but not marked: an older roster authority dropped the `seats` field (PRE4 delta, Opus 4). No
@@ -1630,6 +1944,7 @@ export class SeatsHost {
       this.scheduleReconcile();
       // A seat whose resume waits on the channel or the roster (WALK-74, unpause): judged again now.
       if (this.held.size) { this.recheckHeld(); this.rebalance(); }
+      this.flushKeptEnds();
       return;
     }
     if (ev.kind !== "msg.post" || ev.channel !== this.channel || this.handled.has(ev.id)) return;
@@ -1654,9 +1969,11 @@ export class SeatsHost {
       const seat = this.seats.get(d.stop.seat);
       const q = this.queue.find((x) => x.ev.id === d.stop.seat);
       const queued = !!q;
+      // A launch still in its tool check has no seat and no queue row yet. The launcher who started it owns that stop.
+      const decidingLauncher = this.deciding.get(d.stop.seat);
       // Only the seat's own launcher (the person, from any of their machines or allowed agents) or the host's person
       // may stop it (Opus r2 LOW 4): another launcher can't end someone else's work.
-      const owner = seat?.launcher ?? q?.launcher;
+      const owner = seat?.launcher ?? q?.launcher ?? decidingLauncher;
       if (owner !== undefined && owner !== d.launcher && !d.hostPerson) {
         this.log.info("seats_stop_refused", { seat: d.stop.seat, by: d.launcher, reason: "not_its_launcher" });
         return;
@@ -1664,6 +1981,7 @@ export class SeatsHost {
       this.log.info("seats_stop_requested", { seat: d.stop.seat, by: d.launcher, running: !!seat, queued });
       if (queued) this.dequeue(d.stop.seat, { reason: "stopped", by: d.launcher });
       else if (seat) void this.stopSeat(seat, { reason: "stopped", by: d.launcher });
+      else if (decidingLauncher !== undefined) this.stoppedWhileDeciding.set(d.stop.seat, d.launcher);
       return;
     }
     if (ev.author.agent === "orchestrator" && d.run.shell_user && !this.ephemeral) {
@@ -1685,23 +2003,70 @@ export class SeatsHost {
       this.postState(ev.id, { state: "refused", reason: v2why });
       return;
     }
-    const why = this.admit(d.launcher, prepared);
-    if (why === "queue") {
-      this.queue = [...this.queue, { ev, run: prepared, launcher: d.launcher, at: Date.now() }];
-      this.save();
-      this.log.info("seats_queued", { id: ev.id, from: d.launcher, queued: this.queue.length });
-      const until = this.busy?.until;
-      this.postState(ev.id, { state: "queued", reason: "host busy: its person is using the machine", ...(until !== undefined ? { until } : {}) });
-      this.status();
-      this.publish();
-      return;
-    }
-    if (why) {
-      this.log.info("seats_refused", { id: ev.id, reason: why, from: d.launcher });
-      this.postState(ev.id, { state: "refused", reason: why });
-      return;
-    }
-    void this.launch(ev, prepared, d.launcher);
+    // The tool check reads `grok --version` without blocking the event loop. Only a Grok launch with a tool policy
+    // waits for it. A stop during the check is recorded above.
+    this.finishRun(ev, prepared, d.launcher);
+  }
+
+  /**
+   * Tool check, then admit, then launch. Stops stay synchronous in onEvent: this only covers a run that has already
+   * passed the checks that do not need the version probe. Runs do not wait for each other. Nothing awaits between
+   * the check and `admit`, and `launch` takes its seat before its first await, so a second run's `admit` already
+   * counts the first.
+   */
+  private finishRun(ev: Event, prepared: AnySeatRun, launcher: string): void {
+    this.deciding.set(ev.id, launcher);
+    // The request is already recorded as judged, so a run that ends here must say so or its row stays "requested".
+    const endedBeforeLaunch = (): boolean => {
+      const by = this.stoppedWhileDeciding.get(ev.id);
+      if (by !== undefined) {
+        this.postState(ev.id, { state: "stopped", reason: `stopped by @${by}` });
+        return true;
+      }
+      if (this.closing) {
+        this.postState(ev.id, { state: "refused", reason: SHUTDOWN_BEFORE_START });
+        return true;
+      }
+      return false;
+    };
+    const step = async (): Promise<void> => {
+      try {
+        const toolWhy = await this.toolRefusal(prepared.runtime, prepared.permission_mode ?? DEFAULT_SEAT_MODE);
+        if (endedBeforeLaunch()) return;
+        if (toolWhy) {
+          this.log.info("seats_refused", { id: ev.id, reason: "tool_policy", from: launcher });
+          this.postState(ev.id, { state: "refused", reason: toolWhy });
+          return;
+        }
+        const why = this.admit(launcher, prepared);
+        if (why === "queue") {
+          this.queue = [...this.queue, { ev, run: prepared, launcher, at: Date.now() }];
+          this.save();
+          this.log.info("seats_queued", { id: ev.id, from: launcher, queued: this.queue.length });
+          const until = this.busy?.until;
+          this.postState(ev.id, { state: "queued", reason: "host busy: its person is using the machine", ...(until !== undefined ? { until } : {}) });
+          this.status();
+          this.publish();
+          return;
+        }
+        if (why) {
+          this.log.info("seats_refused", { id: ev.id, reason: why, from: launcher });
+          this.postState(ev.id, { state: "refused", reason: why });
+          return;
+        }
+        void this.launch(ev, prepared, launcher);
+      } catch (err) {
+        this.log.warn("seats_not_acted_on", { id: ev.id, reason: (err as Error).message.slice(0, 200) });
+        this.postState(ev.id, { state: "refused", reason: "this machine could not check the seat's tool policy. Retry, or run `walkie seats doctor`" });
+      } finally {
+        this.deciding.delete(ev.id);
+        this.stoppedWhileDeciding.delete(ev.id);
+      }
+    };
+    const flight: Promise<void> = step()
+      .catch((err: unknown) => { this.log.warn("seats_not_acted_on", { id: ev.id, reason: String((err as Error)?.message ?? err).slice(0, 200) }); })
+      .finally(() => { this.decisions.delete(flight); });
+    this.decisions.add(flight);
   }
 
   /**
@@ -1710,6 +2075,21 @@ export class SeatsHost {
    * min(max_concurrent, hostMax). While the machine is busy, a launch that can't start now (the busy limit, or
    * either cap) is queued instead ("queue"), up to QUEUE_CAP; otherwise it is refused.
    */
+  /**
+   * Why this launch cannot enforce the host tool policy, or null. A Grok policy is also refused when `grok --version`
+   * is missing or not one Walkie has checked. `grokBin` is the binary about to run; omitted, the lookup matches a
+   * same-user seat. A seat with no policy does not run `grok --version`.
+   */
+  private async toolRefusal(runtime: SeatRuntime, mode: SeatMode, grokBin?: string | null): Promise<string | null> {
+    const why = seatToolPolicyRefusal(runtime, this.current.tools, mode);
+    if (why) return why;
+    if (runtime !== "grok") return null;
+    return grokLaunchVersionRefusal(this.current.tools, () => {
+      const bin = grokBin === undefined ? findRuntime("grok", this.env.PATH, this.home) : grokBin;
+      return bin ? readGrokVersion(bin) : { kind: "missing" };
+    });
+  }
+
   /**
    * What refuses a v2 request here before anything runs (FO-2): Kimi as a seat user (its rotating login can't be
    * handed over), a workspace in a repo this machine has no clone of, an account this machine may not use.
@@ -1944,6 +2324,15 @@ export class SeatsHost {
     if (unsafe) {
       this.log.warn("seats_not_launched", { id: seat.id, reason: unsafe });
       seat.final = { ok: false, text: `seats are off on this machine: ${unsafe}` };
+      await this.conclude(seat, null, "");
+      return;
+    }
+    // Again at launch (a seat may have been queued before the policy was set). Before a directory or seat user exists.
+    const toolWhy = await this.toolRefusal(run.runtime, run.permission_mode ?? DEFAULT_SEAT_MODE);
+    if (toolWhy) {
+      this.log.warn("seats_not_launched", { id: seat.id, reason: "tool_policy" });
+      seat.refusal = toolWhy;
+      seat.final = { ok: false, text: toolWhy };
       await this.conclude(seat, null, "");
       return;
     }
@@ -2214,6 +2603,11 @@ export class SeatsHost {
   private finalRefusal(seat: Seat): string | null {
     const recheck = this.recheckLaunch(seat, "started");
     if (recheck?.kind === "lost") return recheck.why;
+    // The runtime's arguments were built from the tool policy read before the waits: a policy changed meanwhile (a
+    // tightened allow list) refuses the seat instead of starting it under the old one (Codex pre.13 audit SHOULD).
+    if (seat.toolsAtLaunch !== undefined && seat.toolsAtLaunch !== toolPolicyKey(this.current.tools)) {
+      return "this machine's seat tool policy changed while the seat was being prepared; start it again";
+    }
     if (!seat.v2) return null;
     return this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher) ?? this.boundAccountRefusal(seat.v2, seat.launcher);
   }
@@ -2375,6 +2769,11 @@ export class SeatsHost {
       if (accountProblem) throw new SeatRefusal(accountProblem);
     }
     const mode = run.permission_mode ?? DEFAULT_SEAT_MODE;
+    // Last moment: the policy may have changed while the brief or the seat user was prepared.
+    const toolWhy = await this.toolRefusal(run.runtime, mode, bin);
+    if (toolWhy) throw new SeatRefusal(toolWhy);
+    const tools = this.current.tools;
+    seat.toolsAtLaunch = toolPolicyKey(tools);
     // v2: the brief is TASK.md in the work tree; the prompt is only the fixed pointer to it (never the brief).
     const text = seat.v2 ? (seat.v2.task?.prompt ?? SEAT_TASK_PROMPT) : (run as SeatRun).prompt;
     // Ask, check again before anything is written, then check once more before the process. A hold drops the login
@@ -2409,15 +2808,18 @@ export class SeatsHost {
     } else if (run.runtime === "grok") {
       if (!seat.v2?.task) throw new Error("Grok seat brief is unavailable");
       grokHome = grokSeatHome(seat.dir, this.home);
+      const probed = seatToolPolicyActive(tools) ? await readGrokVersion(bin) : null;
+      const grokVersion = probed === null ? undefined : probed.kind === "version" ? probed.version : "";
       args = grokSeatArgs({ taskFile: seat.v2.task.file, cwd: seat.cwd, session: randomUUID(), mode,
-        home: this.home, seatHome: grokHome, env, ...(run.model ? { model: run.model } : {}) });
+        home: this.home, seatHome: grokHome, env, ...(tools ? { tools } : {}),
+        ...(grokVersion !== undefined ? { grokVersion } : {}), ...(run.model ? { model: run.model } : {}) });
       parse = grokSeatParser();
     } else if (run.runtime === "claude") {
       // A seat user's seat asks its runtime itself, as that user (the runner's probe): the daemon never runs a
       // binary a seat user could have written (Codex r4 MEDIUM 5). The same-user probe already ran, without a login.
       args = claudeSeatArgs({
         session: randomUUID(), mode, ...(run.model ? { model: run.model } : {}), permissionPrompts: !seat.user && this.permissionPrompts === true,
-        systemPrompt: seatSystemPrompt(seat.launcher, this.core.hostname),
+        systemPrompt: seatSystemPrompt(seat.launcher, this.core.hostname), ...(tools ? { tools } : {}),
       });
       parse = (line) => claudeSeatParser(seat.cwd)(line); // the seat user's directory is known once it runs
     } else {
@@ -3120,20 +3522,26 @@ export class SeatsHost {
 
   // ---- posting + status ----------------------------------------------------------------------------
 
-  /** A daemon restart ends persisted seats after their leftover processes have been handled. */
-  private endSavedSeatCard(id: string): void {
-    if (!this.core.teamId || !this.core.me()) return;
+  /**
+   * A daemon restart ends persisted seats after their leftover processes have been handled.
+   * `activity` is the card's line; the default is the ordinary crash. The team sees that text only when
+   * share_activity is on — otherwise the status projection replaces it with the offline phrase. The seat's failed
+   * state post is what carries a free-text reason. Returns false when the card was not signed.
+   */
+  private endSavedSeatCard(id: string, activity = "the host's Walkie daemon restarted while the seat ran"): boolean {
+    if (!this.core.teamId || !this.core.me()) return false;
     const agent = seatAgentName(id);
     try {
       const row = this.core.store.agent(this.core.nodeId, agent);
       const previous = row ? JSON.parse(row.body) as BodyOf<"agent.status"> : null;
       const { observed_at: _observed, ...fields } = previous ?? {};
-      this.core.statuses.submitFinal(agent, {
+      return this.core.statuses.submitFinal(agent, {
         ...fields, agent, parent: SEATS_AGENT, state: "offline", runtime: previous?.runtime ?? "other",
-        activity: "the host's Walkie daemon restarted while the seat ran",
-      }, { activity: "notification" });
+        activity,
+      }, { activity: "notification" }) !== null;
     } catch (err) {
       this.log.warn("seats_status_failed", { id, err: scrub((err as Error).message) });
+      return false;
     }
   }
 
@@ -3187,20 +3595,22 @@ export class SeatsHost {
    * A post by the host daemon in its seats channel (in a seat's thread, or not threaded for the host's own
    * availability), only while the channel is private to the host and launchers.
    */
-  private post(thread: string | undefined, text: string, seat: Record<string, unknown>): void {
-    if (this.closed) return;
+  private post(thread: string | undefined, text: string, seat: Record<string, unknown>): boolean {
+    if (this.closed) return false;
     const me = this.core.myHandle();
-    if (!me || !this.fit(me)) { this.log.warn("seats_post_withheld", { thread: thread ?? null, reason: "channel_not_fit" }); return; }
+    if (!me || !this.fit(me)) { this.log.warn("seats_post_withheld", { thread: thread ?? null, reason: "channel_not_fit" }); return false; }
     try {
       this.core.emit("msg.post", { text: text.trim() || "…", ...(thread ? { thread } : {}), seat } as unknown as BodyOf<"msg.post">, { channel: this.channel, agent: SEATS_AGENT });
+      return true;
     } catch (err) {
       this.log.warn("seats_post_failed", { err: (err as Error).message });
+      return false;
     }
   }
 
-  private postState(id: string, s: Omit<SeatState, "op" | "v" | "seat">): void {
+  private postState(id: string, s: Omit<SeatState, "op" | "v" | "seat">): boolean {
     const state: SeatState = { op: "state", v: 1, seat: id, ...s, ...(s.reason ? { reason: scrub(s.reason).slice(0, 300) } : {}) };
-    this.post(id, stateText(state), state as unknown as Record<string, unknown>);
+    return this.post(id, stateText(state), state as unknown as Record<string, unknown>);
   }
 
   /**
@@ -3261,6 +3671,7 @@ export class SeatsHost {
             ...(typeof x.started === "string" ? { started: x.started } : {}), ...(x.runner === true ? { runner: true as const } : {}),
             ...(Number.isInteger(x.user) ? { user: x.user } : {}),
             ...(typeof x.instance === "string" ? { instance: x.instance } : {}),
+            ...(x.kept === "foreign" ? { kept: "foreign" as const } : {}),
             ...(validTaskRecord(x.task) ? { task: x.task } : {}),
             ...(validLaneRecord(x.lane) ? { lane: x.lane } : {}),
           })) : [],
@@ -3287,7 +3698,7 @@ export class SeatsHost {
     const data: Persisted = {
       handled: Object.fromEntries(this.handled),
       ...(this.pendingRoots.size ? { pending_roots: [...this.pendingRoots.values()] } : {}),
-      running: [...this.seats.values()].map((s) => ({
+      running: [...[...this.seats.values()].map((s) => ({
         id: s.id, dir: s.dir, runtime: s.run.runtime, instance: this.instanceId, ...(s.workerRoot ? { root: s.workerRoot.key } : {}), ...(s.child ? { pid: s.child.pid } : {}), ...(s.childStarted ? { started: s.childStarted } : {}),
         ...(s.runner ? { runner: true as const } : {}), ...(s.userN !== null ? { user: s.userN } : {}),
         ...(s.v2?.clone && s.v2.dirs && s.v2.branch && !s.user ? { lane: { clone: s.v2.clone, branch: s.v2.branch } } : {}),
@@ -3295,7 +3706,7 @@ export class SeatsHost {
           task: { cwd: s.cwd, file: s.v2.task.file, ...(s.v2.task.exclude ? { exclude: s.v2.task.exclude } : {}), ...(s.v2.task.hash ? { hash: s.v2.task.hash } : {}),
             ...(s.v2.task.tmp ? { tmp: s.v2.task.tmp } : {}) },
         } : {}),
-      })),
+      })), ...this.persistedKept()],
       ...(this.busy ? { busy: this.busy } : {}),
       ...(this.queue.length ? { queued: this.queue.map((q) => q.ev.id) } : {}),
       users: [...this.liveUsers], user_high: this.userHigh,

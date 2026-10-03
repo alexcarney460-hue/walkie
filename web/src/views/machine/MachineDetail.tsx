@@ -5,8 +5,9 @@
 // titles follow the team's share settings because they come from the same /v1/agents roster as Mission Control.
 import { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, CircleHelp, Crown, Laptop, Server } from "lucide-react";
-import type { AccountView, AgentView, AskView, NodeView } from "../../api/types.ts";
+import type { AccountView, AgentView, AskView, NodeView, SeatsView } from "../../api/types.ts";
 import { AccountTile, accountForAgent } from "../../components/Accounts.tsx";
+import { FleetCapacityBadge, useSeatSnapshot } from "../../components/FleetCapacity.tsx";
 import { AskAnswer } from "../../components/AskAnswer.tsx";
 import { PickRow } from "../../components/LocalModels.tsx";
 import { useModels, type ModelsInput } from "../../lib/models.ts";
@@ -50,8 +51,8 @@ export function splitAgents(agents: readonly AgentView[], nodeId: string): { act
   return { active: mine.filter((a) => ACTIVE.has(a.effective_state)), idle: mine.filter((a) => !ACTIVE.has(a.effective_state)) };
 }
 
-function Header({ node }: { node: NodeView }) {
-  const { team, me, nodes } = useStore();
+function Header({ node, seats }: { node: NodeView; seats: SeatsView | null }) {
+  const { team, me, nodes, accounts } = useStore();
   const now = useNow();
   const sys = node.stats?.sys;
   const version = node.self ? me?.version : sys?.version;
@@ -74,6 +75,7 @@ function Header({ node }: { node: NodeView }) {
             {node.online ? "Online" : node.last_seen ? <>Offline · last seen {agoLong(node.last_seen, now)}</> : "Offline · never seen"}
             {node.self && <span className="chip">this machine</span>}
             {authority && <span className="chip mh-authority"><Crown size={11} strokeWidth={2} aria-hidden="true" />roster authority</span>}
+            <FleetCapacityBadge node={node} accounts={accounts} seats={seats} now={now} />
           </p>
         </div>
       </div>
@@ -239,6 +241,7 @@ function AsksSection({ list }: { list: AskView[] }) {
 export function MachineDetail() {
   const route = useRoute();
   const { nodes, team, accounts, asks } = useStore();
+  const seats = useSeatSnapshot();
   const now = useNow();
   const node = nodes.find((n) => n.node_id === route.node) ?? team?.nodes.find((n) => n.node_id === route.node);
   const myAccounts = useMemo(() => accounts.filter((a) => a.machines.some((m) => m.node_id === route.node)), [accounts, route.node]);
@@ -255,7 +258,7 @@ export function MachineDetail() {
   }
   return (
     <div className="page mdx">
-      <Header node={node} />
+      <Header node={node} seats={seats} />
       {!node.online && (
         <p className="mdx-offline" role="status">
           {node.hostname} is offline. Stats and agents are what it last reported{node.last_seen ? `, ${agoLong(node.last_seen, now)}` : ""}.

@@ -11,6 +11,8 @@ import {
 import { type BoardDelta, type CardView, type ProjectView } from "../../protocol/projects/schema.ts";
 import { currentVersion, foldRoom, type RoomFileState } from "../../protocol/projects/room.ts";
 import { foldPage, type PageState } from "../../protocol/projects/page.ts";
+import { foldDispute, type DisputeState } from "../../protocol/projects/dispute.ts";
+import { escalationContactOf } from "../../protocol/projects/escalation.ts";
 import type { Core } from "../core.ts";
 import { scrubPrivateKeys } from "../../protocol/projects/assoc.ts";
 import { cardRef } from "../../protocol/projects/short.ts";
@@ -21,7 +23,7 @@ import { ProjectsDb } from "./db.ts";
 import { trackOp } from "../watchdog.ts";
 
 /** Bumped when the fold's rules change: every project is re-folded once at startup. */
-export const FOLD_VERSION = "11"; // 11: `status_report` is a project setting (PROJECT-REPORTS-1); 10: the steward lease `steward_node` is a project setting (FO-6 r3); 9: the board steward may move a person's card (FO-6); 8: an agent's project and board roots count (AGENT-PROJECTS); 7: 8-hex short ids, oversize bodies aren't ops; 6: ranks from the parent chain only (board ops never evicted), card short ids
+export const FOLD_VERSION = "13"; // 13: `escalation_contact` is the contact on the settings head's own parent chain, not the last writer over every op (WALK-73); a stored view is re-folded once. 12: `escalation_contact` is a project setting (WALK-73); a view stored before the field is re-folded once. 11: `status_report` is a project setting (PROJECT-REPORTS-1); 10: the steward lease `steward_node` is a project setting (FO-6 r3); 9: the board steward may move a person's card (FO-6); 8: an agent's project and board roots count (AGENT-PROJECTS); 7: 8-hex short ids, oversize bodies aren't ops; 6: ranks from the parent chain only (board ops never evicted), card short ids
 const FOLD_META = "projects_fold";
 /**
  * Set while any re-fold work is queued, cleared when the queue drains (round-1 audit, Codex M8): a daemon stopped with
@@ -158,6 +160,8 @@ export class ProjectsIndex {
     // PROJECT-PAGES-1: a status page op (a reply in the project's thread, which must not re-fold the project) or a report post
     // (it carries the page's story): the page is read again; no card and no setting is re-folded.
     if (b.board?.op === "page" || (b.board === undefined && b.status_report !== undefined)) { this.markPage(ch); return; }
+    // WALK-73: a dispute lives in the card's thread and folds on read. It is not a card op, so it must not re-fold the card.
+    if (b.board?.op === "dispute") return;
     const thread = typeof b.thread === "string" ? b.thread : null;
     // A reply belongs to its root's entity; a root that was just hidden is still known as a card by its row.
     // Only a root of THIS channel counts (round-1 audit, Codex HIGH 1).
@@ -198,6 +202,29 @@ export class ProjectsIndex {
     this.pages.delete(channel);
     this.pageDirty.add(channel);
     this.schedule();
+  }
+
+  /**
+   * The card's dispute, folded from the log on each read (no cache: a dispute post does not mark the card). Empty when
+   * the card root isn't stored here.
+   */
+  disputeOf(channel: string, cardId: string): DisputeState {
+    const root = this.db.opEvent(cardId, channel);
+    if (!root) return { current: null, ignored: [], head: "", rev: 0 };
+    const project = this.settingsOf(channel).project;
+    const foldEnv = this.env(channel);
+    const owners = [...this.core.roster.members.values()].filter((m) => m.role === "owner").map((m) => m.handle);
+    return foldDispute(this.db.disputePosts(channel, cardId), root, {
+      ...foldEnv,
+      contact: project ? escalationContactOf(project) : "",
+      projectCreator: project?.creator ?? "",
+      owners,
+      roleNow: (handle) => memberByHandle(this.core.roster, handle)?.role ?? null,
+      roleAt: (ev, handle) => roleIn(this.core.rosterAt(ev.origin, ev.seq), handle),
+      // The contact at each resolve, from the settings posts every peer holds. Not the contact the project has now.
+      settingsPosts: this.db.settingsPosts(channel),
+      settingsEnv: foldEnv,
+    });
   }
 
   /** The facts of the project's status page, folded (cached until a page op marks it). Empty (and an empty head) for a channel with no project. */

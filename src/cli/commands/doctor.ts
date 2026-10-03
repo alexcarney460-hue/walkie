@@ -16,6 +16,7 @@ import { executorFor } from "../../daemon/provision/executor.ts";
 import { profile } from "../../daemon/provision/profiles.ts";
 import { REVOCATION_UNSAVED_MESSAGE, sshRevocationProblem } from "../../daemon/ssh/state.ts";
 import { join } from "node:path";
+import { recSealCheck } from "../../daemon/orchestrator/rec-seal.ts";
 
 type Level = "ok" | "warn" | "fail";
 interface Check { level: Level; name: string; detail: string }
@@ -90,6 +91,8 @@ async function localChecks(out: Check[]): Promise<void> {
     const mode = statSync(paths.key).mode & 0o777;
     out.push({ level: mode & 0o077 ? "fail" : "ok", name: "node key perms", detail: `mode ${mode.toString(8)}` });
   }
+  const seal = recSealCheck(paths.home);
+  if (seal) out.push(seal);
   if (existsSync(paths.db)) {
     try {
       const db = new Database(paths.db, { readonly: true });

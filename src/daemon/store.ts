@@ -1127,10 +1127,44 @@ export class Store {
   queuedRequests(limit = 100): QueuedRequest[] {
     return this.db.query<QueuedRequest, [number]>("SELECT * FROM roster_requests ORDER BY created_at, id LIMIT ?").all(limit);
   }
+  /** One queued row, or null when it was deleted. Read in a store transaction, same as a drop. */
+  queuedRequest(id: string): QueuedRequest | null {
+    return this.transaction(() => this.db.query<QueuedRequest, [string]>("SELECT * FROM roster_requests WHERE id = ?").get(id) ?? null);
+  }
   requestFailed(id: string, error: string): void {
     this.db.query("UPDATE roster_requests SET attempts = attempts + 1, last_error = ? WHERE id = ?").run(error.slice(0, 300), id);
   }
   dequeueRequest(id: string): void { this.db.query("DELETE FROM roster_requests WHERE id = ?").run(id); }
+
+  /**
+   * Drops this machine's queued `team.member` role requests for `login`.
+   * The read and the deletes commit together. That does not stop a flush that has already copied a row:
+   * the flush can still send that copy. `flushRequests` reads the row again, in a store transaction,
+   * immediately before each send and skips a row this call deleted. A send that has already started is
+   * not cancelled. A request another machine queued is not in this table. Returns how many rows were deleted.
+   */
+  dropQueuedMemberRoles(login: string): number {
+    if (!login) return 0;
+    return this.transaction(() => {
+      const rows = this.db.query<{ id: string; json: string }, []>("SELECT id, json FROM roster_requests").all();
+      const del = this.db.query("DELETE FROM roster_requests WHERE id = ?");
+      let dropped = 0;
+      for (const row of rows) {
+        let kind: unknown;
+        let bodyLogin: unknown;
+        try {
+          const parsed = JSON.parse(row.json) as { kind?: unknown; body?: { login?: unknown } };
+          kind = parsed.kind;
+          bodyLogin = parsed.body && typeof parsed.body === "object" ? parsed.body.login : undefined;
+        } catch {
+          continue;
+        }
+        if (kind !== "team.member" || bodyLogin !== login) continue;
+        dropped += del.run(row.id).changes;
+      }
+      return dropped;
+    });
+  }
 
   integrityCheck(): string {
     return this.db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get()?.integrity_check ?? "unknown";

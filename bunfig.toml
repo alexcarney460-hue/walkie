@@ -1,0 +1,2 @@
+[test]
+preload = ["./test/helpers/test-home.ts", "./test/helpers/fetch-guard.ts", "./test/helpers/keychain-guard.ts"]

@@ -142,6 +142,16 @@ export class ProjectsDb {
     ).all(rootId, channel).map((r) => opEventOf(r.json, r.status !== "ok"));
   }
 
+  /**
+   * The dispute ops in a card's thread (WALK-73): accepted or stored hidden (rank carriers), as the dispute fold reads
+   * them. A hidden open still carries rank and applies nothing.
+   */
+  disputePosts(channel: string, cardId: string): OpEvent[] {
+    return this.db.query<{ json: string; status: string }, [string, string]>(
+      `SELECT json, status FROM events WHERE thread = ? AND +channel = ? AND ${STORED} AND json_extract(body, '$.board.op') = 'dispute'`,
+    ).all(cardId, channel).map((r) => opEventOf(r.json, r.status !== "ok"));
+  }
+
   /** Whether `share` is an accepted artifact.share of `hash` in `channel` (a room version's bytes may be served). */
   shareAccepted(share: string, hash: string, channel: string): boolean {
     return !!this.db.query(

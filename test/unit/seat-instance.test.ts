@@ -209,8 +209,12 @@ test("the doctor names a record of another Walkie as a failure and a missing one
   const foreign = left.find((c) => c.what.startsWith("2 seat users here aren't this Walkie's to remove (walkie-s6, walkie-s7)"));
   expect(foreign?.ok).toBe("warn");
   expect(foreign?.fix).toContain("setup-user --apply, then restart");
+  expect(foreign?.fix).toContain("ends a seat card left running from before the update");
+  const otherForeign = doctorChecks({ ...base, seat_scope: { state: "other", why: "seat users on this machine are managed by another Walkie (x)" }, foreign_users: ["walkie-s6"] } as SeatsLocalView, facts);
+  expect(otherForeign.find((c) => c.what.includes("isn't this Walkie's"))?.fix).toBe("the Walkie that owns this machine's seat users removes them");
   const running = left.find((c) => c.what.startsWith("walkie-s3 is a leftover seat user that still runs processes"));
-  expect(running?.fix).toBe("to end them now: sudo pkill -KILL -u walkie-s3 (Walkie removes the user at its next retry)");
+  expect(running?.what).toContain("it holds a seat slot until those processes end, then Walkie removes it");
+  expect(running?.fix).toBe("to end it now: sudo pkill -KILL -u walkie-s3 (Walkie removes the user at its next retry)");
 });
 
 test("fdinfo: only a lock taken through that very open file, by the asking process, counts; never a waiter or a global line", () => {

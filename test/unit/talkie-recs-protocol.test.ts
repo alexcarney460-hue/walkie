@@ -30,11 +30,15 @@ describe("the actions a recommendation may carry", () => {
     const ok = [
       { kind: "move_card", card: CARD, from: "doing", to: "review" },
       { kind: "move_card", card: CARD, from: "doing", blocked_reason: "stalled: the build failed" },
+      // A block-only owners move carries this. A pre.12 action is strict and rejects it, so it neither shows nor applies the placeholder.
+      { kind: "move_card", card: CARD, from: "doing", blocked_reason: "blocked", seal: 1 },
       { kind: "start_seat", machine: NODE, runtime: "codex", role: "reviewer", card: CARD },
       { kind: "ask_orchestrator", to: "@maren/mbp/cc-2", topic: "review", card: CARD },
       { kind: "ask_orchestrator", to: "@maren", topic: "record" },
       { kind: "onboarding_step", machine: NODE, step: "seats_doctor" },
       { kind: "create_card", project: PROJECT, title: "Fix the login page" },
+      // Owners-only creates carry this. A team create omits it. A pre.12 action is strict and rejects it.
+      { kind: "create_card", project: PROJECT, title: "Fix the login page", seal: 1 },
     ];
     for (const action of ok) expect(RecAction.safeParse(action).success).toBe(true);
     expect(ok.map((a) => a.kind)).toEqual(expect.arrayContaining([...ACTION_KINDS]));
@@ -50,6 +54,8 @@ describe("the actions a recommendation may carry", () => {
       { kind: "ask_orchestrator", to: "@maren", topic: "chat" },
       { kind: "onboarding_step", machine: NODE, step: "rm -rf" },
       { kind: "create_card", project: "general", title: "x" },
+      { kind: "create_card", project: PROJECT, title: "Fix the login page", seal: 2 },
+      { kind: "move_card", card: CARD, from: "doing", blocked_reason: "blocked", seal: 2 },
       { kind: "delete_card", card: CARD },
     ];
     for (const action of bad) expect(RecAction.safeParse(action).success).toBe(false);

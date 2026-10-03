@@ -1875,7 +1875,9 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | 
 
 /** One host per daemon (routes look it up by the daemon's Core). */
 const hosts = new WeakMap<Core, OrchestratorHost>();
-export function registerHost(core: Core, host: OrchestratorHost): void { hosts.set(core, host); }
+export function registerHost(core: Core, host: OrchestratorHost): void {
+  hosts.set(core, host);
+}
 export function hostFor(core: Core): OrchestratorHost | undefined { return hosts.get(core); }
 
 /** `text` cut to at most MAX_REPLY_BYTES of UTF-8 (never mid-character), with REPLY_TRUNCATED_MARKER when cut. */

@@ -13,11 +13,11 @@ import { HttpError, json, parseWith, readJson } from "../http.ts";
 import { LOCAL_BODY_MAX, limitWrite, refuseAgentJoinContent, requireTeam, route, type RouteCtx } from "../local-routes.ts";
 import { ORCHESTRATOR_AGENT } from "../../protocol/orchestrator.ts";
 import { shortId } from "../../protocol/projects/short.ts";
-import { MAX_LIST, MAX_OPEN_LIST, MAX_TURN_RECS, isOpen, type Rec } from "../../protocol/talkie-recs.ts";
+import { MAX_LIST, MAX_OPEN_LIST, MAX_TURN_RECS, isOpen, titleRefId, type Rec } from "../../protocol/talkie-recs.ts";
 import { hostFor } from "./host.ts";
 import { fleetReader, outgoingNow, performRec, type FleetNow } from "./rec-act.ts";
 import { RecommendInput, buildRec } from "./rec-input.ts";
-import { answerRec, forgetRecs, holdWhileAnswering, mayAnswer, readRecs, recordRec, viewOf, type RecDeps, type Recorded } from "./recs.ts";
+import { answerRec, cardHiddenFrom, forgetRecs, holdWhileAnswering, mayAnswer, readRecs, recordRec, TITLE_UNREADABLE, viewOf, viewsOf, type RecDeps, type Recorded } from "./recs.ts";
 
 function deps(c: RouteCtx): RecDeps {
   requireTeam(c);
@@ -37,7 +37,7 @@ route("GET", "/v1/talkie/recs", (c) => {
   const fleet = fleetReader(d, c);
   const by = d.core.myHandle() ?? "you";
   const dashboard = fromDashboard(c);
-  const recs = [...open.slice(0, MAX_OPEN_LIST), ...history].map((r) => viewOf(d, r, { outgoing: shownOf(d, r, by, fleet), dashboard }));
+  const recs = viewsOf(d, [...open.slice(0, MAX_OPEN_LIST), ...history], (r) => ({ outgoing: shownOf(d, r, by, fleet), dashboard }));
   return json({ recs, now: (d.now ?? d.core.clock)(), more_open: Math.max(0, open.length - MAX_OPEN_LIST) });
 });
 
@@ -105,9 +105,13 @@ route("POST", new RegExp(`^/v1/talkie/recs/${ID}/approve$`), (c, [ref]) =>
     if (rec.kind === "onboarding_step" && fromDashboard(c)) {
       throw new HttpError(403, "forbidden", `setup steps are approved in a terminal: walkie talkie approve ${shortId(rec.id)}`);
     }
+    // Before the echo: someone who cannot see the card must not learn its title by being told the text changed, and must not approve it.
+    if (cardHiddenFrom(d, rec, by)) throw new HttpError(403, "forbidden", "you cannot approve this one: you cannot see this card's channel");
     // What it would do now, read from the same fleet the action uses, must be what the person was shown.
     const fleet = fleetReader(d, c);
     const now = outgoingNow(d, rec, by, fleet);
+    // A sealed create whose project post is not readable yet is not a gone card: say so, and do not tell them to dismiss it.
+    if (now === null && rec.action.kind === "create_card" && titleRefId(rec.action.title)) throw new HttpError(409, "rec_stale", TITLE_UNREADABLE);
     if (now === null) throw new HttpError(409, "rec_stale", "the card it is about is no longer open; dismiss this recommendation");
     if (now !== undefined && body.seen !== now) {
       throw new HttpError(409, "rec_changed", body.seen === undefined
@@ -115,12 +119,14 @@ route("POST", new RegExp(`^/v1/talkie/recs/${ID}/approve$`), (c, [ref]) =>
         : "this recommendation changed since you saw it (what it would send or do in your name is different now): review it again");
     }
     const result = await performRec(d, c, rec, by, fleet);
-    answerRec(d, rec, "approved", body.note ?? result);
+    answerRec(d, rec, "approved", body.note, result);
     return { status: "approved", result };
   }));
 
 route("POST", new RegExp(`^/v1/talkie/recs/${ID}/dismiss$`), (c, [ref]) =>
-  answering(c, ref as string, "dismiss", async (d, rec, _by, body) => {
+  answering(c, ref as string, "dismiss", async (d, rec, by, body) => {
+    // The same refusal as approve, in the same place: before any answer is written, and the same words for a card that exists and one that does not.
+    if (cardHiddenFrom(d, rec, by)) throw new HttpError(403, "forbidden", "you cannot dismiss this one: you cannot see this card's channel");
     answerRec(d, rec, "dismissed", body.note);
     return { status: "dismissed" };
   }));

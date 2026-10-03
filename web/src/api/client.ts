@@ -312,6 +312,11 @@ export const api = {
   updateBoard: (channel: string, board: string, b: Record<string, unknown>) => request<{ board: BoardView }>("POST", `/v1/projects/${encodeURIComponent(channel)}/boards/${encodeURIComponent(board)}`, b),
   exportProject: (channel: string, format: "csv" | "json" | "ndjson", name: string) => downloadPath(`/v1/projects/${encodeURIComponent(channel)}/export?format=${format}`, name),
   task: (ref: string) => request<CardDetail & { agents: AgentView[]; files?: RoomFileView[] }>("GET", `/v1/tasks/${encodeURIComponent(ref)}`),
+  /** Simple mode lists cards (GET /v1/tasks). The same route the CLI already uses. */
+  tasks: (p: { project?: string; board?: string; q?: string; assignee?: string; state?: string; role?: string; limit?: number } = {}) =>
+    request<TasksPayload>("GET", `/v1/tasks${qs(p)}`),
+  /** Simple mode's Approve posts to the existing done route. The path is written out so the dashboard allow-list check can see /done. */
+  taskDone: (ref: string) => request<{ task: CardView }>("POST", `/v1/tasks/${encodeURIComponent(ref)}/done`, {}),
   // ---- Data Room (DATA-ROOM-1) ----
   room: (channel: string, all = false) => request<{ files: RoomFileView[]; limits: { files: number; versions: number } }>("GET", `/v1/projects/${encodeURIComponent(channel)}/room${all ? "?all=1" : ""}`),
   roomFile: (channel: string, file: string) => request<RoomFileDetail>("GET", `/v1/projects/${encodeURIComponent(channel)}/room/${encodeURIComponent(file)}`),
@@ -335,6 +340,14 @@ export const api = {
   commentTask: (ref: string, text: string) => request<{ event: Event; task: CardView }>("POST", `/v1/tasks/${encodeURIComponent(ref)}/comment`, { text }),
   linearIssues: (keys: string[]) => request<{ enabled: boolean; issues: Record<string, LinearIssueInfo | null>; error?: string }>("GET", `/v1/linear/issues${qs({ keys: keys.join(",") })}`, undefined, 30_000),
 };
+
+/** GET /v1/tasks: cards across projects, newest change first. */
+export interface TasksPayload {
+  tasks: CardView[];
+  total: number;
+  truncated: boolean;
+  projects: Array<{ channel: string; name: string; prefix: string; boards: BoardView[] }>;
+}
 
 /** GET /v1/admin (AGENT-ADMIN-1): the switches and the newest audit entries of this machine. */
 export interface AdminView {

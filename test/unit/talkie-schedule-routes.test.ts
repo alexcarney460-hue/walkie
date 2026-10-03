@@ -68,29 +68,47 @@ describe("schedule routes", () => {
     expect(h.posts[0]?.text).toContain(link);
     expect(h.posts[0]?.text).not.toContain(otherSecret);
   });
-  test("the daemon permits only one due capacity summary post from a scheduled turn", async () => {
+  test("a scheduled turn cannot post the fleet summary to #general, due or not", async () => {
     const h = harness();
-    let due = false;
+    let decision: { turn: string; fingerprint: string; due: boolean } | null = { turn: "turn-1", fingerprint: "f".repeat(64), due: false };
     const recorded: string[] = [];
     registerHost(h.core, { acceptsToken: () => true,
-      capacitySummaryForCurrentTurn: () => ({ turn: "turn-1", fingerprint: "f".repeat(64), due }),
-      recordCapacitySummaryPost: () => { recorded.push("posted"); due = false; } } as unknown as OrchestratorHost);
+      capacitySummaryForCurrentTurn: () => decision,
+      recordCapacitySummaryPost: () => { recorded.push("posted"); } } as unknown as OrchestratorHost);
     Object.assign(h.core, { roster: { channels: new Map([["general", { name: "general" }]]) },
       visible: () => true, config: { redact: false }, limits: { agentWrite: {}, humanWrite: {} },
       limiter: { take: () => true }, store: { transaction: (fn: () => void) => fn() } });
     const body = { channel: "general", text: "Fleet capacity changed" };
     await expect(h.request("POST", "/v1/post", body, "orchestrator"))
-      .rejects.toMatchObject({ code: "capacity_summary_not_due" });
+      .rejects.toMatchObject({ status: 403, code: "forbidden" });
     const req = new Request("http://localhost/v1/post", { method: "POST", body: JSON.stringify(body) });
     await expect(dispatch({ core: h.core, req, url: new URL(req.url), agent: "helper", orchestratorToken: "valid",
       via: "cli", noTimeout: () => {} } as unknown as RouteCtx))
       .rejects.toMatchObject({ status: 403, code: "forbidden" });
-    due = true;
-    expect((await h.request("POST", "/v1/post", body, "orchestrator")).status).toBe(200);
+    decision = { turn: "turn-1", fingerprint: "f".repeat(64), due: true };
     await expect(h.request("POST", "/v1/post", body, "orchestrator"))
-      .rejects.toMatchObject({ code: "capacity_summary_not_due" });
-    expect(recorded).toEqual(["posted"]);
+      .rejects.toMatchObject({ status: 403, code: "forbidden" });
+    expect(recorded).toEqual([]);
+    expect(h.posts).toEqual([]);
+    // No fleet-summary decision on this turn: an ordinary post is not the summary and is not recorded as one.
+    decision = null;
+    expect((await h.request("POST", "/v1/post", body, "orchestrator")).status).toBe(200);
+    expect(recorded).toEqual([]);
     expect(h.posts).toHaveLength(1);
+  });
+  test("an orchestrator post of a due fleet summary to #general is refused and not recorded", async () => {
+    const h = harness();
+    const recorded: string[] = [];
+    registerHost(h.core, { acceptsToken: () => true,
+      capacitySummaryForCurrentTurn: () => ({ turn: "turn-1", fingerprint: "f".repeat(64), due: true }),
+      recordCapacitySummaryPost: () => { recorded.push("posted"); } } as unknown as OrchestratorHost);
+    Object.assign(h.core, { roster: { channels: new Map([["general", { name: "general" }]]) },
+      visible: () => true, config: { redact: false }, limits: { agentWrite: {}, humanWrite: {} },
+      limiter: { take: () => true }, store: { transaction: (fn: () => void) => fn() } });
+    const body = { channel: "general", text: "WalkieTalkie fleet capacity: mac-a 2 free" };
+    await expect(h.request("POST", "/v1/post", body, "orchestrator")).rejects.toMatchObject({ status: 403 });
+    expect(recorded).toEqual([]);
+    expect(h.posts).toEqual([]);
   });
   test("the post route refuses an agent's bare invite, one-click link and install command before emission", async () => {
     const h = harness();

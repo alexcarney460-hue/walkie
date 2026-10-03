@@ -1,5 +1,6 @@
 // A card's drawer (WALKIE-PROJECTS-1): every field editable, "Move to" (the phone's way to move a card), the agents on
-// it, open asks that name it, and its signed history: every op (ignored ones flagged, with why) and the comments.
+// it, open asks that name it, a read-only provenance panel (WALK-77: who signed the proposal, the edits and the move
+// to done), and its signed history: every op (ignored ones flagged, with why) and the comments.
 import { useEffect, useRef, useState } from "react";
 import { Ban, Download, Paperclip, Pin, Trash2, Unlink, Upload, X } from "lucide-react";
 import { api, friendlyError } from "../../api/client.ts";
@@ -15,6 +16,7 @@ import { hrefFor } from "../../lib/route.ts";
 import { draggedFiles, useRoomUpload } from "./RoomUpload.tsx";
 import { useStore } from "../../state/store.tsx";
 import { AgentFaces } from "./ProjectList.tsx";
+import { ProvenanceSection } from "./ProvenancePanel.tsx";
 
 const IGNORED: Record<string, string> = {
   person_only: "only a person can delete or restore a card",
@@ -54,8 +56,10 @@ export function CardDrawer({ card, project, onClose, byCard }: {
 }) {
   const { team, agents, asks, me } = useStore();
   const now = useNow();
-  const [detail, setDetail] = useState<{ timeline: TimelineEntry[]; agents: AgentView[] } | null>(null);
+  const [detail, setDetail] = useState<{ cardId: string; timeline: TimelineEntry[]; agents: AgentView[] } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [errorFor, setErrorFor] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [title, setTitle] = useState(card.title);
@@ -66,11 +70,25 @@ export function CardDrawer({ card, project, onClose, byCard }: {
   const closeRef = useRef<HTMLButtonElement>(null);
   const board = project.boards.find((b) => b.id === card.board) ?? project.boards[0];
 
-  const load = () => {
+  // The timeline is what provenance is allowed to read. A response for a card the drawer has already left must not
+  // land on the card now open (the same gate covers the history list, so the two cannot disagree).
+  useEffect(() => {
+    let live = true;
     setLoadError(null);
-    api.task(card.id).then((d) => setDetail({ timeline: d.timeline, agents: d.agents })).catch((err) => setLoadError(friendlyError(err)));
-  };
-  useEffect(load, [card.id, card.rev, card.comments]);
+    api.task(card.id).then((d) => {
+      if (!live) return;
+      setDetail({ cardId: card.id, timeline: d.timeline, agents: d.agents });
+      setErrorFor(null);
+      setLoadError(null);
+    }).catch((err) => {
+      if (!live) return;
+      setErrorFor(card.id);
+      setLoadError(friendlyError(err));
+    });
+    return () => { live = false; };
+  }, [card.id, card.rev, card.comments, reload]);
+  const shown = detail?.cardId === card.id ? detail : null;
+  const historyError = errorFor === card.id ? loadError : null;
   useEffect(() => { setTitle(card.title); setBody(card.body); setLabels(card.labels.join(", ")); setReason(card.blocked_reason ?? ""); }, [card.id, card.rev]);
   useEffect(() => {
     const prev = document.activeElement;
@@ -110,7 +128,8 @@ export function CardDrawer({ card, project, onClose, byCard }: {
 
   const people = assignees(team?.members ?? [], agents);
   const openAsks = asks.filter((a) => a.state === "open" && String((a.ask.body as { text?: string }).text ?? "").includes(card.key) && canAnswer(a, me?.handle ?? null, agents, now));
-  const onIt = detail?.agents.length ? detail.agents : byCard.get(card.key) ?? [];
+  const onIt = shown && !historyError && shown.agents.length ? shown.agents : byCard.get(card.key) ?? [];
+  const provColumns = project.boards.flatMap((b) => b.columns.map((c) => ({ id: c.id, name: c.name, role: c.role, board: b.id })));
 
   return (
     <div className="drawer-layer">
@@ -135,6 +154,7 @@ export function CardDrawer({ card, project, onClose, byCard }: {
         </header>
         <div className="drawer-body">
           {card.state !== "open" && <p className="card-state-note">This card is {card.state}.</p>}
+          <ProvenanceSection status={historyError ? "error" : shown ? "ready" : "loading"} timeline={shown?.timeline} columns={provColumns} />
           <div className="card-fields">
             <label className="field">
               <span className="field-label">Move to</span>
@@ -217,9 +237,9 @@ export function CardDrawer({ card, project, onClose, byCard }: {
 
           <div className="drawer-section">
             <h3 className="drawer-h">History and comments</h3>
-            {loadError ? <ErrorState compact message={loadError} onRetry={load} /> : !detail ? <SkeletonRows rows={3} /> : (
+            {historyError ? <ErrorState compact message={historyError} onRetry={() => setReload((n) => n + 1)} /> : !shown ? <SkeletonRows rows={3} /> : (
               <ol className="card-timeline">
-                {detail.timeline.map((t) => (
+                {shown.timeline.map((t) => (
                   <li key={t.id} className={`ctl ctl-${t.kind}${t.ignored ? " is-ignored" : ""}`}>
                     <div className="ctl-top">
                       <span className="mono">{who(t.author)}</span>

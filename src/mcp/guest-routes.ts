@@ -17,6 +17,8 @@ function offline(c: RouteCtx, agent: string, family: "dots" | "grokbot"): void {
 
 const registered = new WeakMap<Core, { registry: GuestRegistry; data: GuestData }>();
 export function registerGuests(core: Core, registry: GuestRegistry, data: GuestData): void { registered.set(core, { registry, data }); }
+/** The registry this daemon registered, if guest routes are on. History reads it; it does not create one. */
+export function guestRegistryFor(core: Core): GuestRegistry | undefined { return registered.get(core)?.registry; }
 function service(c: RouteCtx) {
   personOnly(c, "manage cloud guests");
   if (c.via === "phone") throw new HttpError(403, "forbidden", "guest credentials are managed on this machine");

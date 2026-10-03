@@ -27,11 +27,13 @@ import type { ConnectionView, InstallView, PoolLocalView, PoolModelsView, Prepar
 import type { MobileStatus, PairView } from "../daemon/mobile/manager.ts";
 import type { AddMachine } from "../protocol/add-machine.ts";
 import type { CreditBlock, LocalComputeState, LocalRentReq, Quotes, RentalView, RentResult } from "../protocol/compute.ts";
+import type { DisputeView } from "../protocol/projects/dispute.ts";
 import type { BoardView, CardDetail, CardView, ProjectsPayload, ProjectView, TimelineEntry } from "../protocol/projects/schema.ts";
 import type { RoomFileDetail, RoomFileView, TaskContext } from "../protocol/projects/room.ts";
 import type { StatusPagePayload } from "../protocol/projects/status-page.ts";
 import type { ScreenView, SetFactView } from "../protocol/projects/status-page.ts";
 import type { Schedule } from "../protocol/talkie-schedule.ts";
+import { historyPath, type HistoryQuery, type HistoryView } from "../history/facade.ts";
 
 /** GET /v1/tasks: cards across projects, newest change first, with the projects they belong to. */
 export interface TasksPayload {
@@ -77,6 +79,11 @@ export interface ClientOptions {
   seatToken?: string;
 }
 
+/** Bun's `AbortSignal.timeout` rejects with a DOMException named TimeoutError. A dead socket is a different error. */
+function isClientTimeout(err: unknown): boolean {
+  return !!err && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError";
+}
+
 function seatTokenFromFile(): string | undefined {
   const file = process.env.WALKIE_SEAT_TOKEN_FILE;
   if (!file) return undefined;
@@ -116,7 +123,7 @@ export class WalkieClient {
     return h;
   }
 
-  async request<T>(method: string, path: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<T> {
+  async request<T>(method: string, path: string, body?: unknown, timeoutMs = this.timeoutMs, timeoutMessage?: string): Promise<T> {
     let res: Response;
     try {
       res = await fetch(`http://walkie${path}`, {
@@ -127,6 +134,9 @@ export class WalkieClient {
         signal: AbortSignal.timeout(timeoutMs),
       } as RequestInit);
     } catch (err) {
+      // A connect failure is still "daemon not reachable". A caller that passes timeoutMessage (offboard apply)
+      // is told that a wait that ran out does not mean the daemon is down.
+      if (timeoutMessage && isClientTimeout(err)) throw new WalkieError("timeout", timeoutMessage, 0);
       throw new WalkieError("daemon_unreachable", `walkie daemon not reachable at ${this.socket} (run: walkie daemon start)`, 0);
     }
     const text = await res.text();
@@ -164,6 +174,8 @@ export class WalkieClient {
     return this.request<AddMachine>("POST", "/v1/team/add-machine", { handle }, Math.max(this.timeoutMs, 15_000));
   }
   team() { return this.request<TeamView>("GET", "/v1/team"); }
+  /** This machine's admin audit and guest audit, oldest first. Reads only; nothing is recorded. */
+  history(q: HistoryQuery = {}) { return this.request<HistoryView>("GET", historyPath(q)); }
   // ---- AGENT-ADMIN-1 ----
   admin(limit = 20) { return this.request<AdminView>("GET", `/v1/admin?limit=${limit}`); }
   adminSwitches(b: { agent_admin?: boolean; remote_admin?: boolean }) {
@@ -384,6 +396,14 @@ export class WalkieClient {
     return this.request<TasksPayload>("GET", `/v1/tasks${qs ? `?${qs}` : ""}`);
   }
   task(ref: string) { return this.request<CardDetail & { agents: AgentView[]; files?: RoomFileView[] }>("GET", `/v1/tasks/${encodeURIComponent(ref)}`); }
+  /** WALK-73: the card's dispute, or `{dispute: null}` when it has none. */
+  dispute(ref: string) { return this.request<{ dispute: DisputeView | null }>("GET", `/v1/tasks/${encodeURIComponent(ref)}/dispute`); }
+  raiseDispute(ref: string, summary: string) {
+    return this.request<{ dispute: DisputeView; asks: { id: string; to: string }[] }>("POST", `/v1/tasks/${encodeURIComponent(ref)}/dispute`, { summary });
+  }
+  resolveDispute(ref: string, reason: string) {
+    return this.request<{ dispute: DisputeView }>("POST", `/v1/tasks/${encodeURIComponent(ref)}/dispute/resolve`, { reason });
+  }
   /** The Data Room's part of an agent's context for a card: pinned documents (small text inline) and the card's files. */
   taskContext(ref: string, fetchMissing = false) {
     return this.request<TaskContext>("GET", `/v1/tasks/${encodeURIComponent(ref)}/context${fetchMissing ? "?fetch=1" : ""}`, undefined, fetchMissing ? Math.max(this.timeoutMs, 30_000) : this.timeoutMs);
@@ -499,6 +519,7 @@ export class WalkieClient {
     allow: boolean; mode?: "same_user" | "seat_users"; launchers?: string[] | null; max?: number | null; runtimes?: SeatRuntime[] | null; dir?: string | null; env?: string[] | null;
     ephemeral?: boolean | null; admin?: string | null; runner?: string | null; runtime_dir?: string | null; same_user?: boolean; accept_readable_home?: boolean;
     inherit_person_config?: boolean; migration_confirm?: "migrate same-user seats";
+    tools?: { allow?: string[]; deny?: string[] } | null;
   }) {
     return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/config", body, 60_000);
   }

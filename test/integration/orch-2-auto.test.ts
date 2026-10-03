@@ -20,11 +20,11 @@ const CLI = join(import.meta.dir, "../../src/cli/main.ts");
 const NONE: Logins = { found: [], claude: null };
 const CLAUDE: Logins = { found: ["claude"], claude: "cli" };
 
-function orchOpts(root: string, name: string, logins: () => Logins, auto = true) {
+function orchOpts(root: string, name: string, logins: () => Logins, auto = true, autoCheckMs = 150) {
   const state = join(root, `fake-state-${name}`);
   mkdirSync(state, { recursive: true });
   return {
-    restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, auto, autoCheckMs: 150, leadOfflineMs: 1_500,
+    restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, auto, autoCheckMs, leadOfflineMs: 1_500,
     logins: async () => logins(),
     env: { ...process.env, PATH: `${FAKE_DIR}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: join(root, `launches-${name}.jsonl`) },
   };
@@ -39,19 +39,22 @@ async function cli(n: TestNode, args: string[], tty = false) {
 }
 
 describe("one machine: auto-start, first run, crash, sticky stop, rename", () => {
+  // Authority TTL is twice autoCheckMs. A 300-ms TTL can expire in the child's 250-ms file-refresh gap
+  // even after the authority renewed it (WALK-115); this behavior fixture needs several heartbeats per lease.
+  const autoCheckMs = 500;
   let c: Cluster;
   let solo: TestNode;
   let logins = NONE;
   beforeAll(async () => {
     c = new Cluster();
-    solo = await c.add({ name: "solo", login: "solo@example.com", hostname: "solo-mbp", orchestrator: orchOpts(mkdtempSync(join(tmpdir(), "orch2-auto-")), "x", () => logins) });
+    solo = await c.add({ name: "solo", login: "solo@example.com", hostname: "solo-mbp", orchestrator: orchOpts(mkdtempSync(join(tmpdir(), "orch2-auto-")), "x", () => logins, true, autoCheckMs) });
   }, 60_000);
   afterAll(async () => { await c.close(); });
 
   test("no Claude login: it waits (needs a model login, the one step), and starts on its own once one appears", async () => {
     // The fake-claude log lives under the cluster root: rebuild the node's options with it.
     await solo.stop();
-    Object.assign(solo.spec, { orchestrator: orchOpts(c.root, "solo", () => logins) });
+    Object.assign(solo.spec, { orchestrator: orchOpts(c.root, "solo", () => logins, true, autoCheckMs) });
     await solo.start();
     await solo.client().init("acme", "solo");
     await waitFor(async () => (await view(solo)).state === "needs_login", { what: "needs_login" });
@@ -91,7 +94,8 @@ describe("one machine: auto-start, first run, crash, sticky stop, rename", () =>
     await waitFor(async () => launches(c.root, "solo") > n && (await view(solo)).state === "idle", { what: "restarted", timeoutMs: 30_000 });
     expect((await view(solo)).restarts).toBeGreaterThanOrEqual(1);
     const next = await solo.client("").orchestratorSay("hello again", message.thread);
-    await waitFor(async () => (await solo.client("").orchestratorMessages({ limit: 500 })).messages.some((m) => m.reply_to === next.message.id), { what: "a reply after the crash" });
+    const reply = await waitFor(async () => (await solo.client("").orchestratorMessages({ limit: 500 })).messages.find((m) => m.reply_to === next.message.id), { what: "a reply after the crash" });
+    expect(reply.text).toBe("pong: hello again"); // a failure notice is not a recovered answer
   }, 60_000);
 
   test("the rename: walkie talkie (and the alias walkie orchestrator) and who say WalkieTalkie", async () => {

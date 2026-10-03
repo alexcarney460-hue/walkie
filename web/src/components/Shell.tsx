@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Armchair, CircleHelp, FileText, FolderKanban, Gauge, LayoutGrid, MessagesSquare, Moon, Newspaper, Plug, Search, Sparkles, Sun, Users } from "lucide-react";
+import { Armchair, CircleHelp, FileText, FolderKanban, Gauge, LayoutGrid, ListChecks, MessagesSquare, Moon, Newspaper, Plug, Search, Sparkles, Sun, Users } from "lucide-react";
 import { canAnswer, machineHue } from "../lib/format.ts";
 import { hueVar } from "./primitives.tsx";
 import { MachineStatsLine } from "./MachineStats.tsx";
@@ -25,6 +25,8 @@ const NAV: Array<{ view: View; label: string; short: string; key: string; icon: 
   // Every reported project's plain-English status report (UPDATES-1); not a phone tab (six fit): the Projects page links to it there.
   { view: "updates", label: "Updates", short: "Updates", key: "r", icon: Newspaper, tab: false },
   { view: "projects", label: "Projects", short: "Projects", key: "p", icon: FolderKanban },
+  // Plain-language board (WALK-75). Not a phone tab: the six tabs stay Agents, Projects, Talkie, Channels, Asks, Team.
+  { view: "simple", label: "Simple", short: "Simple", key: "n", icon: ListChecks, tab: false },
   { view: "orchestrator", label: "WalkieTalkie", short: "Talkie", key: "o", icon: Sparkles },
   { view: "board", label: "Channels", short: "Channels", key: "b", icon: MessagesSquare },
   { view: "asks", label: "Asks", short: "Asks", key: "a", icon: CircleHelp },
@@ -161,7 +163,7 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
           const active = route.view === item.view;
           const badge = badges[item.view];
           return (
-            <a key={item.view} href={hrefFor({ view: item.view })} className={active ? "rail-link is-active" : "rail-link"} aria-current={active ? "page" : undefined}>
+            <a key={item.view} href={hrefFor({ view: item.view })} className={["rail-link", item.view === "simple" ? "simple-nav" : "", active ? "is-active" : ""].filter(Boolean).join(" ")} aria-current={active ? "page" : undefined}>
               <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
               <span className="rail-link-label">{item.label}</span>
               {badge ? (
@@ -184,11 +186,13 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
 }
 
 export function MobileBar({ onSearch }: { onSearch: () => void }) {
+  const route = useRoute();
   const { me } = useStore();
   return (
     <header className="mobilebar">
       <Logo size={20} />
       <span className="mobilebar-team truncate">{me?.team?.name ?? "Walkie"}</span>
+      <a href={hrefFor({ view: "simple" })} className="mobile-simple" aria-current={route.view === "simple" ? "page" : undefined}>Simple</a>
       <ConnectionIndicator compact />
       <span className="mobilebar-spacer" />
       <ThemeButton />

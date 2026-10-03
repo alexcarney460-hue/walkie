@@ -307,6 +307,33 @@
 .ctl-ignored { color: var(--amber); font-size: var(--fs-11); }
 .card-comment { display: grid; gap: 6px; justify-items: end; }
 .card-danger { display: flex; gap: 8px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.drawer-section.card-provenance { margin-top: 0; margin-bottom: 22px; }
+.card-provenance-note { margin: 0 0 12px; color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+.prov-status { margin: 0; color: var(--text-2); font-size: var(--fs-12); line-height: 1.45; }
+.prov-rows { display: grid; gap: 12px; }
+.prov-label { margin: 0 0 4px; color: var(--text-3); font-size: var(--fs-11); font-weight: 600; }
+.prov-empty { margin: 0; color: var(--text-3); font-size: var(--fs-12); }
+.prov-acts { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.prov-act {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+  font-size: var(--fs-12);
+}
+.prov-who { min-width: 0; max-width: 100%; color: var(--text); white-space: normal; overflow-wrap: anywhere; }
+.prov-mark { color: var(--text-3); }
+.prov-exact { color: var(--text-3); overflow-wrap: anywhere; }
+.prov-time { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.prov-standing { margin: 4px 0 0; color: var(--text-2); font-size: var(--fs-12); }
+.prov-what { flex: 1 1 12rem; min-width: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.prov-act time { margin-left: auto; color: var(--text-3); font-size: var(--fs-11); }
+@media (max-width: 860px) {
+  .prov-act { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .prov-what { flex-basis: auto; }
+  .prov-act time { margin-left: 0; }
+}
 
 /* ---- Data Room (DATA-ROOM-1): the project's files, a tab beside its boards ---- */
 .pboard-room-tab { gap: 5px; }

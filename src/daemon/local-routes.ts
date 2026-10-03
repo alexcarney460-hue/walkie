@@ -126,8 +126,12 @@ export function hasRoute(method: string, path: string): boolean {
  * A person's own conversation with WalkieTalkie (a new child) and a person at a terminal are not held back.
  */
 const SCHEDULED_TURN_WRITES: ReadonlySet<string> = new Set(["POST /v1/post", "POST /v1/talkie/recs"]);
-/** The request is WalkieTalkie's child while it is held to a scheduled turn's limits (host.ts scheduledChildActive). */
-function scheduledChild(c: RouteCtx): boolean {
+/**
+ * The request is WalkieTalkie's child while it is held to a scheduled turn's limits (host.ts scheduledChildActive).
+ * Dispatch refuses its writes. Personal memory also refuses its reads: the child can still post, so a read would
+ * let a scheduled turn copy this person's notes into the team.
+ */
+export function scheduledChild(c: RouteCtx): boolean {
   if (c.orchestratorToken === undefined) return false;
   const host = hostFor(c.core);
   return !!(host?.scheduledChildActive ? host.scheduledChildActive() : host?.scheduledTurnActive?.());
@@ -641,10 +645,10 @@ route("POST", "/v1/post", async (c) => {
   requireTeam(c);
   const b = parseWith(PostReq, await readJson(c.req, LOCAL_BODY_MAX));
   refuseAgentJoinContent(c, b.text);
-  const capacitySummary = c.agent === ORCHESTRATOR_AGENT && b.channel === "general"
-    ? hostFor(c.core)?.capacitySummaryForCurrentTurn?.() : null;
-  if (capacitySummary && !capacitySummary.due)
-    throw new HttpError(409, "capacity_summary_not_due", "no fleet summary is due for this scheduled turn");
+  // The daemon posts the fleet summary. While this scheduled turn is holding that decision, the orchestrator does not
+  // post it (or anything else) to #general: recording the post there used to publish per-machine counts to every member.
+  if (c.agent === ORCHESTRATOR_AGENT && b.channel === "general" && hostFor(c.core)?.capacitySummaryForCurrentTurn?.())
+    throw new HttpError(403, "forbidden", "the daemon posts the fleet summary; do not post it to #general");
   if (b.channel === SCHEDULE_CHANNEL || b.text.startsWith("walkie-talkie-schedule:v1:") || b.text.startsWith(CLAIM_PREFIX))
     throw new HttpError(403, "forbidden", "schedule and claim posts use the schedule manager");
   limitWrite(c);
@@ -658,14 +662,8 @@ route("POST", "/v1/post", async (c) => {
     text, ...(b.thread ? { thread: b.thread } : {}), ...(mentions.length ? { mentions } : {}),
     ...(b.artifacts?.length ? { artifacts: b.artifacts } : {}),
   };
-  let event: Event;
-  if (capacitySummary) {
-    c.core.store.transaction(() => {
-      event = c.core.emit("msg.post", body, { channel: b.channel, agent: c.agent });
-      hostFor(c.core)?.recordCapacitySummaryPost(capacitySummary.turn, capacitySummary.fingerprint, Date.now());
-    }, { durable: true });
-  } else event = c.core.emit("msg.post", body, { channel: b.channel, agent: c.agent });
-  return json({ event: event!, redactions });
+  const event = c.core.emit("msg.post", body, { channel: b.channel, agent: c.agent });
+  return json({ event, redactions });
 });
 
 // ---- asks ---------------------------------------------------------------------------

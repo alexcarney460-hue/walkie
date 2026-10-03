@@ -1,0 +1,78 @@
+/* Simple mode (WALK-75). Type stays at least 18px and controls at least 44px.
+   Disabled controls keep the same text colour: opacity would fail the contrast check. */
+.simple {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 40rem;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 16px;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.simple h1,
+.simple h2,
+.simple h3,
+.simple p,
+.simple li,
+.simple button,
+.simple input,
+.simple textarea,
+.simple a {
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.simple h1 { font-size: 1.6rem; font-weight: 650; letter-spacing: -0.02em; }
+.simple h2 { margin-top: 20px; font-weight: 650; }
+.simple h3 { margin-top: 12px; font-weight: 650; }
+
+.simple button,
+.simple input,
+.simple textarea {
+  box-sizing: border-box;
+  height: auto;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 10px 14px;
+  border: 2px solid var(--text);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.simple button:disabled {
+  opacity: 1;
+  color: var(--text);
+  background: var(--bg);
+  border-color: var(--text);
+  cursor: default;
+}
+
+.simple :focus-visible {
+  outline: 3px solid var(--text);
+  outline-offset: 2px;
+}
+
+.simple-block { margin-top: 8px; }
+.simple-items { display: grid; gap: 12px; margin-top: 12px; }
+.simple-item { display: grid; gap: 8px; }
+.simple-card { width: 100%; text-align: left; }
+.simple-moves { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.simple-moves button { flex: 1 1 8rem; }
+.simple-move-label,
+.simple-current {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 18px;
+  line-height: 1.45;
+}
+.simple-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.simple-form { display: grid; gap: 8px; margin-top: 12px; }
+.simple-form textarea { width: 100%; min-height: 6rem; }
+.simple-note { margin-top: 12px; }

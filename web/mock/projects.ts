@@ -87,6 +87,11 @@ export class MockProjects {
     }
     const room = await this.room.handle(req, path, (ref) => this.find(ref)?.id ?? null, json, fail);
     if (room) return room;
+    if (path === "/v1/tasks" && m === "GET") {
+      const open = this.cards.filter((c) => c.state === "open");
+      const project = this.project();
+      return json({ tasks: open, total: open.length, truncated: false, projects: [{ channel: CH, name: project.name, prefix: project.prefix, boards: project.boards }] });
+    }
     if (path === "/v1/tasks" && m === "POST") {
       const b = (await req.json().catch(() => ({}))) as { title?: string; column?: string };
       if (!b.title) return fail(400, "invalid", "title required");
@@ -94,19 +99,27 @@ export class MockProjects {
       this.cards.push(card);
       return json({ task: card });
     }
-    const t = /^\/v1\/tasks\/([^/]+?)(\/comment)?$/.exec(path);
+    const t = /^\/v1\/tasks\/([^/]+?)(?:\/(comment|start|review|done))?$/.exec(path);
     if (!t) return null;
     const card = this.find(t[1] as string);
     if (!card) return fail(404, "not_found", "no such card");
     if (m === "GET") return json({ card, project: this.project(), timeline: [{ id: card.id, ts: card.created_at, author, kind: "create", changes: {} }, ...(this.comments.get(card.id) ?? [])], agents: [], files: this.room.forCard(card.id) });
     const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    if (t[2]) {
+    const action = t[2];
+    if (action === "comment") {
       const list = this.comments.get(card.id) ?? [];
       this.comments.set(card.id, [...list, { id: `a1b2c3d4e5f60718:${this.seq++}`, ts: Date.now(), author, kind: "comment", text: String(b.text ?? "") }]);
     }
-    const { before: _b, after: _a, text: _t, ...fields } = b;
-    const next: CardView = { ...card, ...(t[2] ? {} : fields), comments: (this.comments.get(card.id) ?? []).length, updated_at: Date.now(), rev: card.rev + 1 } as CardView;
+    let patch: Partial<CardView> = {};
+    if (action === "done") patch = { column: "done", blocked: false, blocked_reason: null };
+    else if (action === "start") patch = { column: "doing" };
+    else if (action === "review") patch = { column: "review" };
+    else if (!action) {
+      const { before: _b, after: _a, text: _t, ...fields } = b;
+      patch = fields as Partial<CardView>;
+    }
+    const next: CardView = { ...card, ...patch, comments: (this.comments.get(card.id) ?? []).length, updated_at: Date.now(), rev: card.rev + 1 };
     this.cards.splice(this.cards.indexOf(card), 1, next);
-    return json({ task: next, ...(t[2] ? { event: null } : {}) });
+    return json({ task: next, ...(action === "comment" ? { event: null } : {}) });
   }
 }

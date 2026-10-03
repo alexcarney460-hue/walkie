@@ -432,6 +432,11 @@ export interface SeatsLocalView {
   max: number;
   /** Extra environment variable names seats get here (besides the allowlist). */
   env?: string[];
+  /**
+   * Host tool policy for every seat on this machine (WALK-76). Absent on older peers and when unset: each runtime's
+   * own tools. `allow: []` means no tools. Codex and Kimi launches are refused while this is set.
+   */
+  tools?: { allow?: string[]; deny?: string[] };
   dir: string;
   channel: string | null;
   /** The channel exists, is restricted and holds only this machine's person and the launchers. */

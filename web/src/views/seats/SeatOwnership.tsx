@@ -24,12 +24,14 @@ export function SeatOwnership({ local }: { local: SeatsLocalView }) {
       )}
       {foreign.length ? (
         <p className="field-hint">
-          {foreign.length} seat user{foreign.length === 1 ? "" : "s"} here {foreign.length === 1 ? "isn't" : "aren't"} this Walkie's to remove (made before this update, or by another Walkie on this machine): <span className="mono">{names(foreign)}</span>. Walkie leaves {foreign.length === 1 ? "it" : "them"} and every process of {foreign.length === 1 ? "it" : "them"} as they are{local.seat_scope?.state === "other" ? "" : <>; after <span className="mono">walkie seats setup-user --apply</span> and a restart of Walkie, it removes them once nothing of them runs</>}.
+          {foreign.length} seat user{foreign.length === 1 ? "" : "s"} here {foreign.length === 1 ? "isn't" : "aren't"} this Walkie's to remove (made before this update, or by another Walkie on this machine): <span className="mono">{names(foreign)}</span>. Walkie leaves {foreign.length === 1 ? "it" : "them"} and every process of {foreign.length === 1 ? "it" : "them"} as they are{local.seat_scope?.state === "other" ? "" : <>; after <span className="mono">walkie seats setup-user --apply</span>, then restart the Walkie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update</>}.
         </p>
       ) : null}
       {running.length ? (
         <p className="int-error" role="alert">
-          {running.length} leftover seat user{running.length === 1 ? "" : "s"} still {running.length === 1 ? "runs" : "run"} processes no current seat started (<span className="mono">{names(running)}</span>): each holds a seat slot until they end, then Walkie removes it. To end them now: <span className="mono">sudo pkill -KILL -u {running[0]}</span>.
+          {running.length} leftover seat user{running.length === 1 ? "" : "s"} still {running.length === 1 ? "runs" : "run"} processes no current seat started (<span className="mono">{names(running)}</span>): {running.length === 1
+            ? "it holds a seat slot until those processes end, then Walkie removes it. To end it now"
+            : "each holds a seat slot until those processes end, then Walkie removes that user. To end the first now"}: <span className="mono">sudo pkill -KILL -u {running[0]}</span>.
         </p>
       ) : null}
     </div>

@@ -198,3 +198,19 @@ test("a held login that expires while the seat user's runner prepares is not sen
     expect(rows().filter((r) => r.help === 0)).toEqual([]);
   } finally { core.vault = realVault; rmSync(`${gate}.armed`, { force: true }); await restore(); }
 }, 90_000);
+
+test("the seat tool policy tightened while the runner prepares: the seat is refused, the runtime never starts (Codex pre.13 audit)", async () => {
+  reset();
+  await person(olive).seatsConfig({ allow: true, ephemeral: true, same_user: false, runtimes: ["claude"], env: envNames, launchers: ["@noor"], tools: { allow: ["Read", "Grep"] } });
+  writeFileSync(`${gate}.armed`, "");
+  try {
+    const seat = (await person(noor).seatRun({ machine: "olive-mac", runtime: "claude", brief: "k5" })).seat;
+    await waitFor(() => rows().find((r) => r.help === 1) ?? null, { timeoutMs: 30_000, what: "the runner's help probe" });
+    await person(olive).seatsConfig({ allow: true, ephemeral: true, same_user: false, runtimes: ["claude"], env: envNames, launchers: ["@noor"], tools: { allow: ["Read"] } });
+    writeFileSync(gate, "");
+    const s = await ended(seat);
+    expect(s.state).toBe("refused");
+    expect(s.reason ?? "").toContain("seat tool policy changed while the seat was being prepared");
+    expect(rows().filter((r) => r.help === 0)).toEqual([]);
+  } finally { rmSync(`${gate}.armed`, { force: true }); await restore(); }
+}, 90_000);

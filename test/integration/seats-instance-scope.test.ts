@@ -7,12 +7,15 @@
 // the stamps) never makes a daemon destroy a seat user it didn't make.
 // The helper here is a recording fake over a real id ledger (no OS users, no sudo, no real helper).
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { Ledger } from "../../src/daemon/seats/admin-ledger.ts";
 import type { AdminResult, AdminVerb } from "../../src/daemon/seats/admin.ts";
 import type { RegistrationRead } from "../../src/daemon/seats/instance.ts";
+import type { BodyOf, Event } from "../../src/protocol/schemas.ts";
+import { seatAgentName, seatOf, seatsChannel, type SeatState } from "../../src/protocol/seats.ts";
 import { Cluster, TestNode, waitFor } from "../helpers/cluster.ts";
+import { noKeychainSeats } from "../helpers/no-keychain.ts";
 
 const ME = process.getuid?.() ?? 501;
 let c: Cluster;
@@ -61,7 +64,10 @@ async function node(name: string, admin: ReturnType<typeof fakeHelper>["admin"],
   if (seatsJson) writeFileSync(join(home, "seats.json"), JSON.stringify(seatsJson(socket)), { mode: 0o600 });
   const n = new TestNode(c, {
     name, login: `${name}@example.com`, hostname: `${name}-box`,
-    seats: { admin, seatRegistration: () => registration(socket), reconcileRetryMs: 100, cleanupRetryMs: 100 },
+    seats: noKeychainSeats(home, {
+      admin, seatRegistration: () => registration(socket), reconcileRetryMs: 100, cleanupRetryMs: 100,
+      env: { PATH: "/usr/bin:/bin" },
+    }),
   }, home, 0);
   c.nodes.push(n);
   return n.start();
@@ -171,3 +177,400 @@ test("a leftover the helper won't remove while it runs is shown as such and keep
   expect(saved.recovered).toEqual([2]);
   expect(saved.made_by).toEqual(madeBy(join(busy.home, "walkie.sock"), [6]));
 }, 60_000);
+
+// A real seat id (msg.post thread and SeatState.seat are event ids; "beef" would be rejected).
+const UPGRADE_SEAT = "0123456789abcdef:3";
+const UPGRADE_REASON = "ended after an upgrade; its machine restarted";
+
+interface SavedRunning { id: string; dir?: string; runner?: true; user?: number; instance?: string; kept?: string }
+interface SavedFile { running?: SavedRunning[]; users?: number[] }
+
+function readSeats(home: string): SavedFile {
+  return JSON.parse(readFileSync(join(home, "seats.json"), "utf8")) as SavedFile;
+}
+
+function daemonLog(home: string): { msg: string; id?: string; thread?: string; why?: string; dropped?: boolean; user?: string }[] {
+  return readFileSync(join(home, "logs", "daemon.log"), "utf8").split("\n").filter(Boolean)
+    .map((l) => JSON.parse(l) as { msg: string; id?: string; thread?: string; why?: string; dropped?: boolean });
+}
+
+/** Failed state posts for a seat (the reason the team reads; the card activity is a fixed phrase). */
+function failedStates(n: TestNode, seatId = UPGRADE_SEAT): SeatState[] {
+  const rows = n.d.core.store.queryEvents({ channel: seatsChannel(n.d.nodeId), thread: seatId, kinds: ["msg.post"], limit: 50 });
+  const out: SeatState[] = [];
+  for (const row of rows) {
+    const seat = seatOf((JSON.parse(row.json) as Event).body);
+    if (seat?.op === "state" && seat.state === "failed" && seat.seat === seatId) out.push(seat);
+  }
+  return out;
+}
+
+/** Offline cards for that seat. One submit is one event; a second end would add another. */
+function offlineCards(n: TestNode, seatId = UPGRADE_SEAT): { state?: string }[] {
+  const agent = seatAgentName(seatId);
+  return n.d.core.store.queryEvents({ kinds: ["agent.status"], agents: [agent], limit: 20 }).flatMap((row) => {
+    const body = (JSON.parse(row.json) as Event).body as { agent?: string; state?: string };
+    return body.agent === agent && body.state === "offline" ? [body] : [];
+  });
+}
+
+test("an unstamped running seat from the first upgrade is kept, and ended once only after this Walkie is registered and its user is idle", async () => {
+  const ledger = join(c.root, "upgrade-ledger.sqlite");
+  const helper = fakeHelper(ledger, [7]);
+  let mode: "legacy" | "copy" | "own" = "legacy";
+  let userBusy = false;
+  const elsewhere = join(c.root, "elsewhere", "walkie.sock");
+  const admin: typeof helper.admin = async (verb, n, o) => {
+    if (verb === "pending") {
+      const r = await helper.admin(verb, n, o);
+      if (!userBusy || !r.ok || !Array.isArray(r.ids)) return r;
+      return { ...r, idleIds: (r.idleIds ?? []).filter((id) => id !== 7) };
+    }
+    if (verb === "destroy" && n === 7 && userBusy) {
+      helper.calls.push({ verb, n, idle: o?.idle === true });
+      return { ok: false, code: "running", processesGone: false, name: "walkie-s7", why: "walkie-s7 still has 1 running process and isn't one of this Walkie's current seats: not removed while it runs (checked again later)" };
+    }
+    return helper.admin(verb, n, o);
+  };
+  const home = join(c.root, "upgrade");
+  const marker = join(home, ".walkie-workers", "seat-0123456789abcdef-3", "marker");
+  mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
+  writeFileSync(marker, "keep\n", { mode: 0o600 });
+  const upgrade = await node("upgrade", admin, (socket) => (
+    mode === "copy" ? present(elsewhere) : mode === "own" ? present(socket) : { state: "absent" }
+  ), () => ({ handled: {}, users: [7], user_high: 7, running: [{ id: UPGRADE_SEAT, dir: join(c.root, "s"), runner: true, user: 7 }] }));
+
+  // Legacy start (no seat-instance record): the entry stays, nothing is destroyed or posted, its worker root stays.
+  await waitFor(() => helper.calls.some((call) => call.verb === "pending"), { what: "the legacy start's pending list" });
+  await Bun.sleep(200);
+  const kept = readSeats(upgrade.home).running?.find((r) => r.id === UPGRADE_SEAT);
+  expect(kept?.kept).toBe("foreign");
+  expect(kept?.user).toBe(7);
+  expect(kept?.runner).toBe(true);
+  expect(kept?.instance).toBeUndefined();
+  expect(destroys(helper.calls)).toEqual([]);
+  const legacyLog = daemonLog(upgrade.home);
+  expect(legacyLog.some((l) => l.msg === "seats_leftover_kept" && l.id === UPGRADE_SEAT)).toBe(true);
+  expect(legacyLog.some((l) => l.msg === "seats_leftover" && l.id === UPGRADE_SEAT)).toBe(false);
+  expect(legacyLog.some((l) => l.msg.startsWith("seats_post") && l.thread === UPGRADE_SEAT)).toBe(false);
+  expect(existsSync(marker)).toBe(true);
+  const ledger1 = new Ledger(ledger);
+  try { expect(ledger1.pending(ME)).toEqual([7]); } finally { ledger1.close(); }
+
+  // Still legacy, but the seats channel is fit and the helper calls the user idle. A non-registered daemon must not end the card.
+  await upgrade.client().init("acme", "alex");
+  await upgrade.client("").seatsConfig({ allow: true, same_user: true });
+  await waitFor(async () => ((await upgrade.client().seats()).local.channel_ok ? true : null), { what: "the seats channel" });
+  await Bun.sleep(300);
+  expect(failedStates(upgrade)).toEqual([]);
+  expect(offlineCards(upgrade)).toEqual([]);
+  const afterAllow = readSeats(upgrade.home).running?.find((r) => r.id === UPGRADE_SEAT);
+  expect(afterAllow?.kept).toBe("foreign");
+  expect(afterAllow?.instance).toBeUndefined();
+  expect(destroys(helper.calls)).toEqual([]);
+  expect(existsSync(marker)).toBe(true);
+
+  // A copy (the record names another socket) shares this node's key and must not end the card either.
+  const callsAtCopy = helper.calls.length;
+  mode = "copy";
+  await upgrade.restart();
+  await Bun.sleep(400);
+  expect(helper.calls.length).toBe(callsAtCopy);
+  expect(destroys(helper.calls)).toEqual([]);
+  expect(failedStates(upgrade)).toEqual([]);
+  expect(offlineCards(upgrade)).toEqual([]);
+  const copied = readSeats(upgrade.home).running?.find((r) => r.id === UPGRADE_SEAT);
+  expect(copied?.kept).toBe("foreign");
+  expect(copied?.user).toBe(7);
+  expect(copied?.runner).toBe(true);
+  expect(copied?.instance).toBeUndefined();
+  const copyView = (await upgrade.client().seats()).local;
+  expect(copyView.foreign_users).toContain("walkie-s7");
+  expect(copyView.seat_scope).toMatchObject({ state: "other" });
+  expect(existsSync(marker)).toBe(true);
+
+  // Registered, while the seat user still has a process: keep the entry, never kill it, never post.
+  userBusy = true;
+  mode = "own";
+  await upgrade.restart();
+  await waitFor(() => destroys(helper.calls).some((call) => call.n === 7), { what: "an idle destroy of the leftover user" });
+  await Bun.sleep(400);
+  const busyDestroys = destroys(helper.calls).filter((call) => call.n === 7);
+  expect(busyDestroys.length).toBeGreaterThan(0);
+  expect(busyDestroys.every((call) => call.idle)).toBe(true);
+  expect(failedStates(upgrade)).toEqual([]);
+  expect(offlineCards(upgrade)).toEqual([]);
+  const busySaved = readSeats(upgrade.home).running?.find((r) => r.id === UPGRADE_SEAT);
+  expect(busySaved?.kept).toBe("foreign");
+  expect(busySaved?.user).toBe(7);
+  expect(busySaved?.instance).toBeUndefined();
+  expect(daemonLog(upgrade.home).some((l) => l.msg === "seats_leftover" && l.id === UPGRADE_SEAT)).toBe(false);
+  expect((await upgrade.client().seats()).local.foreign_users ?? []).not.toContain("walkie-s7");
+  const held = new Ledger(ledger);
+  try { expect(held.pending(ME)).toEqual([7]); } finally { held.close(); }
+  expect(existsSync(marker)).toBe(true);
+
+  // The user is idle (the cleanup retry's destroy succeeds): one failed state, one offline card, then the entry is gone.
+  userBusy = false;
+  await waitFor(() => failedStates(upgrade).length === 1, { timeoutMs: 8_000, what: "the leftover seat posted failed" });
+  expect(failedStates(upgrade)).toEqual([{ op: "state", v: 1, seat: UPGRADE_SEAT, state: "failed", reason: UPGRADE_REASON, dir: join(c.root, "s") }]);
+  const cards = offlineCards(upgrade);
+  expect(cards).toHaveLength(1);
+  expect(cards[0]?.state).toBe("offline");
+  expect(readSeats(upgrade.home).running?.some((r) => r.id === UPGRADE_SEAT)).toBe(false);
+  const gone = new Ledger(ledger);
+  try { expect(gone.pending(ME)).toEqual([]); } finally { gone.close(); }
+  expect(existsSync(marker)).toBe(true);
+
+  // The next start of the registered daemon does not post the end again.
+  await upgrade.restart();
+  await Bun.sleep(500);
+  expect(failedStates(upgrade)).toHaveLength(1);
+  expect(offlineCards(upgrade)).toHaveLength(1);
+
+  // Crash between the post and the seats.json write: the store has the end, the file is still the kept entry.
+  await upgrade.stop();
+  writeFileSync(join(upgrade.home, "seats.json"), JSON.stringify({
+    handled: {}, users: [7], user_high: 7,
+    running: [{ id: UPGRADE_SEAT, dir: join(c.root, "s"), runner: true, user: 7, kept: "foreign" }],
+  }), { mode: 0o600 });
+  await upgrade.start();
+  await waitFor(() => (readSeats(upgrade.home).running ?? []).some((r) => r.id === UPGRADE_SEAT) ? null : true, {
+    timeoutMs: 8_000, what: "the restored leftover entry dropped without a second end",
+  });
+  await Bun.sleep(400);
+  expect(failedStates(upgrade)).toHaveLength(1);
+  expect(offlineCards(upgrade)).toHaveLength(1);
+  expect(daemonLog(upgrade.home).some((l) => l.msg === "seats_leftover_end_skipped" && l.id === UPGRADE_SEAT)).toBe(true);
+}, 30_000);
+
+test("a kept seat the helper never made is dropped, and its idle destroy is not retried", async () => {
+  const ledger = join(c.root, "never-made-ledger.sqlite");
+  const helper = fakeHelper(ledger, []);
+  const seatId = "0123456789abcdef:4";
+  const neverMade = "walkie-s12: never made by this helper: not destroyed";
+  let mode: "legacy" | "own" = "legacy";
+  const admin: typeof helper.admin = async (verb, n, o) => {
+    if (verb === "destroy") {
+      helper.calls.push({ verb, n, idle: o?.idle === true });
+      return { ok: false, name: `walkie-s${n}`, why: neverMade };
+    }
+    return helper.admin(verb, n, o);
+  };
+  const home = join(c.root, "unmade");
+  const nodeUnder = await node("unmade", admin, (socket) => (
+    mode === "own" ? present(socket) : { state: "absent" }
+  ), () => ({ handled: {}, users: [12], user_high: 12, running: [{ id: seatId, dir: join(c.root, "unmade-seat"), runner: true, user: 12 }] }));
+
+  await waitFor(() => helper.calls.some((call) => call.verb === "pending"), { what: "the legacy start's pending list" });
+  await Bun.sleep(300);
+  expect(destroys(helper.calls)).toEqual([]);
+  expect(readSeats(home).running?.find((r) => r.id === seatId)?.kept).toBe("foreign");
+  expect(failedStates(nodeUnder, seatId)).toEqual([]);
+
+  await nodeUnder.client().init("acme", "maren");
+  await nodeUnder.client("").seatsConfig({ allow: true, same_user: true });
+  await waitFor(async () => ((await nodeUnder.client().seats()).local.channel_ok ? true : null), { what: "the seats channel" });
+  expect(failedStates(nodeUnder, seatId)).toEqual([]);
+  expect(destroys(helper.calls)).toEqual([]);
+
+  mode = "own";
+  await nodeUnder.restart();
+  await waitFor(() => failedStates(nodeUnder, seatId).length === 1, { timeoutMs: 8_000, what: "the never-made leftover posted failed once" });
+  await Bun.sleep(500);
+  const ends = destroys(helper.calls).filter((call) => call.n === 12);
+  expect(ends).toEqual([{ verb: "destroy", n: 12, idle: true }]);
+  expect(failedStates(nodeUnder, seatId).map((s) => s.reason)).toEqual([UPGRADE_REASON]);
+  expect(offlineCards(nodeUnder, seatId)).toHaveLength(1);
+  expect(readSeats(nodeUnder.home).running?.some((r) => r.id === seatId)).toBe(false);
+  const logged = daemonLog(nodeUnder.home).filter((l) => l.msg === "seats_leftover_never_made");
+  expect(logged.length).toBeGreaterThan(0);
+  expect(logged.every((l) => l.dropped === true && (l.why ?? "").includes("not retried") && (l.why ?? "").includes("dropped"))).toBe(true);
+  await Bun.sleep(400);
+  expect(destroys(helper.calls).filter((call) => call.n === 12)).toHaveLength(1);
+  expect(failedStates(nodeUnder, seatId)).toHaveLength(1);
+  expect(offlineCards(nodeUnder, seatId)).toHaveLength(1);
+}, 30_000);
+
+async function fitChannel(n: TestNode): Promise<void> {
+  await n.client().init("acme", "maren");
+  await n.client("").seatsConfig({ allow: true, same_user: true });
+  await waitFor(async () => ((await n.client().seats()).local.channel_ok ? true : null), { what: "the seats channel" });
+  await Bun.sleep(200);
+}
+
+const destroyCount = (calls: Call[], n: number) => calls.filter((call) => call.verb === "destroy" && call.n === n).length;
+
+test("a failure whose text merely contains the never-made words keeps retrying a user the ledger still holds", async () => {
+  const seats = [9, 10, 11].map((n) => ({ id: `0123456789abcdef:${40 + n}`, user: n }));
+  const ledger = join(c.root, "forged-never-made.sqlite");
+  const helper = fakeHelper(ledger, seats.map((s) => s.user));
+  let mode: "legacy" | "own" = "legacy";
+  const admin: typeof helper.admin = async (verb, n, o) => {
+    if (verb === "pending") {
+      const r = await helper.admin(verb, n, o);
+      // Held, and not idle: the card stays up, so every destroy is judged while the kept entry exists.
+      return r.ok ? { ...r, idleIds: [] } : r;
+    }
+    if (verb === "destroy") {
+      helper.calls.push({ verb, n, idle: o?.idle === true });
+      const name = `walkie-s${n}`;
+      if (n === 9) {
+        const why = "mounts of it remain: /tmp/never made by this helper";
+        return { ok: false, name, left: [why], why };
+      }
+      if (n === 10) return { ok: false, name, left: ["/tmp/kept"], why: `${name}: never made by this helper: not destroyed` };
+      return { ok: false, name, code: "failed", why: `${name}: never made by this helper: not destroyed` };
+    }
+    return helper.admin(verb, n, o);
+  };
+  const nodeUnder = await node("forged", admin, (socket) => (
+    mode === "own" ? present(socket) : { state: "absent" }
+  ), () => ({
+    handled: {}, users: seats.map((s) => s.user), user_high: 11,
+    running: seats.map((s) => ({ id: s.id, dir: join(c.root, `forged-${s.user}`), runner: true, user: s.user })),
+  }));
+  await waitFor(() => helper.calls.some((call) => call.verb === "pending"), { what: "the legacy pending list" });
+  mode = "own";
+  await nodeUnder.restart();
+  await waitFor(() => seats.every((s) => destroyCount(helper.calls, s.user) >= 2), { timeoutMs: 8_000, what: "each forged destroy retried" });
+  const held = new Ledger(ledger);
+  try { expect(held.pending(ME).sort((a, b) => a - b)).toEqual([9, 10, 11]); } finally { held.close(); }
+  const view = (await nodeUnder.client().seats()).local;
+  for (const n of [9, 10, 11]) expect(view.quarantined ?? []).toContain(`walkie-s${n}`);
+  expect(daemonLog(nodeUnder.home).some((l) => l.msg === "seats_leftover_never_made")).toBe(false);
+  for (const s of seats) expect(readSeats(nodeUnder.home).running?.some((r) => r.id === s.id)).toBe(true);
+}, 30_000);
+
+test("a never-made answer still drops the user when the pending list already ended the card", async () => {
+  const seatA = "0123456789abcdef:35";
+  const seatB = "0123456789abcdef:36";
+  const home = join(c.root, "ended-first");
+  const ledger = join(c.root, "ended-first.sqlite");
+  const helper = fakeHelper(ledger, []);
+  let mode: "legacy" | "own" = "legacy";
+  let sawCardsGone = false;
+  const admin: typeof helper.admin = async (verb, n, o) => {
+    if (verb === "destroy" && n === 12 && destroyCount(helper.calls, 12) === 0) {
+      helper.calls.push({ verb, n, idle: o?.idle === true });
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const running = readSeats(home).running ?? [];
+        if (!running.some((r) => r.id === seatA || r.id === seatB)) { sawCardsGone = true; break; }
+        await Bun.sleep(20);
+      }
+      return { ok: false, name: "walkie-s12", why: "walkie-s12: never made by this helper: not destroyed" };
+    }
+    if (verb === "destroy") {
+      helper.calls.push({ verb, n, idle: o?.idle === true });
+      return { ok: false, name: `walkie-s${n}`, why: `walkie-s${n}: never made by this helper: not destroyed` };
+    }
+    return helper.admin(verb, n, o);
+  };
+  const nodeUnder = await node("ended-first", admin, (socket) => (
+    mode === "own" ? present(socket) : { state: "absent" }
+  ), () => ({
+    handled: {}, users: [12, 13], user_high: 13, running: [
+      { id: seatA, dir: join(c.root, "ended-a"), runner: true, user: 12 },
+      { id: seatB, dir: join(c.root, "ended-b"), runner: true, user: 13 },
+    ],
+  }));
+  await fitChannel(nodeUnder);
+  expect(destroys(helper.calls)).toEqual([]);
+  mode = "own";
+  await nodeUnder.restart();
+  await waitFor(() => destroyCount(helper.calls, 12) >= 1 && destroyCount(helper.calls, 13) >= 1, {
+    timeoutMs: 8_000, what: "both never-made destroys answered",
+  });
+  await Bun.sleep(500);
+  expect(sawCardsGone).toBe(true);
+  expect(destroyCount(helper.calls, 12)).toBe(1);
+  expect(destroyCount(helper.calls, 13)).toBe(1);
+  expect(failedStates(nodeUnder, seatA)).toHaveLength(1);
+  expect(failedStates(nodeUnder, seatB)).toHaveLength(1);
+  expect(offlineCards(nodeUnder, seatA)).toHaveLength(1);
+  expect(offlineCards(nodeUnder, seatB)).toHaveLength(1);
+  const view = (await nodeUnder.client().seats()).local;
+  expect(view.quarantined ?? []).not.toContain("walkie-s12");
+  expect(view.quarantined ?? []).not.toContain("walkie-s13");
+  const logged = daemonLog(nodeUnder.home).filter((l) => l.msg === "seats_leftover_never_made");
+  expect(logged.map((l) => l.user).sort()).toEqual(["walkie-s12", "walkie-s13"]);
+  expect(readSeats(nodeUnder.home).users ?? []).not.toContain(12);
+  expect(readSeats(nodeUnder.home).users ?? []).not.toContain(13);
+}, 30_000);
+
+test("a planted terminal state retries the card end and does not log it as skipped", async () => {
+  const seatId = "0123456789abcdef:32";
+  const ledger = join(c.root, "retry-end.sqlite");
+  const helper = fakeHelper(ledger, []);
+  let mode: "legacy" | "own" = "legacy";
+  const admin: typeof helper.admin = async (verb, n, o) => {
+    if (verb === "destroy") {
+      helper.calls.push({ verb, n, idle: o?.idle === true });
+      return { ok: true };
+    }
+    return helper.admin(verb, n, o);
+  };
+  const nodeUnder = await node("retry-end", admin, (socket) => (
+    mode === "own" ? present(socket) : { state: "absent" }
+  ), () => ({ handled: {}, users: [8], user_high: 8, running: [{ id: seatId, dir: join(c.root, "retry-seat"), runner: true, user: 8 }] }));
+  await fitChannel(nodeUnder);
+  nodeUnder.d.core.emit("msg.post", {
+    text: "planted failed", thread: seatId,
+    seat: { op: "state", v: 1, seat: seatId, state: "failed", reason: "planted" },
+  } as BodyOf<"msg.post">, { channel: seatsChannel(nodeUnder.d.nodeId), agent: "seats" });
+  expect(failedStates(nodeUnder, seatId)).toHaveLength(1);
+  expect(offlineCards(nodeUnder, seatId)).toHaveLength(0);
+  mode = "own";
+  await nodeUnder.restart();
+  await waitFor(() => (readSeats(nodeUnder.home).running ?? []).some((r) => r.id === seatId) ? null : true, {
+    timeoutMs: 8_000, what: "the planted seat's entry dropped",
+  });
+  await Bun.sleep(300);
+  const log = daemonLog(nodeUnder.home);
+  expect(failedStates(nodeUnder, seatId)).toHaveLength(1);
+  expect(offlineCards(nodeUnder, seatId)).toHaveLength(1);
+  expect(log.some((l) => l.msg === "seats_leftover_end_retry" && l.id === seatId)).toBe(true);
+  expect(log.some((l) => l.msg === "seats_leftover_ended" && l.id === seatId)).toBe(true);
+  expect(log.some((l) => l.msg === "seats_leftover_end_skipped" && l.id === seatId)).toBe(false);
+}, 30_000);
+
+test("an agent row that is not offline is ended even when an older status event is offline", async () => {
+  const seatId = "0123456789abcdef:41";
+  const ledger = join(c.root, "row-offline.sqlite");
+  const helper = fakeHelper(ledger, [7]);
+  let mode: "legacy" | "own" = "legacy";
+  const nodeUnder = await node("row-offline", helper.admin, (socket) => (
+    mode === "own" ? present(socket) : { state: "absent" }
+  ), () => ({ handled: {}, users: [7], user_high: 7, running: [{ id: seatId, dir: join(c.root, "row-seat"), runner: true, user: 7 }] }));
+  await fitChannel(nodeUnder);
+  mode = "own";
+  await nodeUnder.restart();
+  await waitFor(() => offlineCards(nodeUnder, seatId).length === 1 && !(readSeats(nodeUnder.home).running ?? []).some((r) => r.id === seatId), {
+    timeoutMs: 8_000, what: "the first end",
+  });
+  const agent = seatAgentName(seatId);
+  nodeUnder.d.core.emit("agent.status", { agent, state: "working", runtime: "other", activity: "Seat running", parent: "seats" }, { agent });
+  const row = () => {
+    const stored = nodeUnder.d.core.store.agent(nodeUnder.d.nodeId, agent);
+    return stored ? (JSON.parse(stored.body) as { state?: string }).state ?? null : null;
+  };
+  expect(row()).toBe("working");
+  expect(offlineCards(nodeUnder, seatId)).toHaveLength(1);
+  await nodeUnder.stop();
+  writeFileSync(join(nodeUnder.home, "seats.json"), JSON.stringify({
+    handled: {}, users: [7], user_high: 7,
+    running: [{ id: seatId, dir: join(c.root, "row-seat"), runner: true, user: 7, kept: "foreign" }],
+  }), { mode: 0o600 });
+  await nodeUnder.start();
+  await waitFor(() => (readSeats(nodeUnder.home).running ?? []).some((r) => r.id === seatId) ? null : true, {
+    timeoutMs: 8_000, what: "the restored entry dropped",
+  });
+  await Bun.sleep(300);
+  expect(failedStates(nodeUnder, seatId)).toHaveLength(1);
+  expect(offlineCards(nodeUnder, seatId)).toHaveLength(2);
+  expect(row()).toBe("offline");
+  const log = daemonLog(nodeUnder.home);
+  expect(log.some((l) => l.msg === "seats_leftover_end_skipped" && l.id === seatId)).toBe(false);
+  expect(log.some((l) => l.msg === "seats_leftover_end_retry" && l.id === seatId)).toBe(true);
+}, 30_000);

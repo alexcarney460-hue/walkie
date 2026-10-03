@@ -3,6 +3,8 @@
 // windows, the agents) and each active project's waiting work, decides in poll-plan.ts which waiting work fits which free
 // seat, and reconciles the open recommendations with it. Nothing here asks a model or acts: the run ends in the prepare step
 // with a line saying what it found, and a poll that finds nothing new writes nothing.
+import { bestAccountRoom, fleetCapacity, type FleetSummaryRow } from "../../protocol/fleet-capacity.ts";
+import { loadUnknown } from "../../protocol/machine-stats.ts";
 import { ORCHESTRATOR_AGENT } from "../../protocol/orchestrator.ts";
 import { associate } from "../../protocol/projects/assoc.ts";
 import type { CardView, ColumnRole, ProjectView } from "../../protocol/projects/schema.ts";
@@ -11,9 +13,11 @@ import { CONFIDENTIAL_LABEL, isConfidential } from "../../protocol/projects/stat
 import type { AccountView } from "../../protocol/accounts.ts";
 import type { AgentView, NodeView } from "../../protocol/schemas.ts";
 import type { SeatHostView, SeatRuntime, SeatView } from "../../protocol/seats.ts";
+import { SCHEDULE_CHANNEL } from "../../protocol/talkie-schedule.ts";
 import { visibleProjects } from "../projects/service.ts";
 import type { SkippedTurn } from "./prepared.ts";
 import { PER_PROJECT_CAP, machineCapacity, planPoll, usableRuntimes, type PollMachine, type WaitingWork } from "./poll-plan.ts";
+import { lastPostedSummary, postFleetCapacitySummary, type PostedSummary } from "./capacity-summary.ts";
 import { reconcile, type Desired, type RecDeps } from "./recs.ts";
 
 export interface PollDeps extends RecDeps {
@@ -138,5 +142,45 @@ export async function prepareOrchestrationPoll(d: PollDeps, canAct: () => boolea
     ...(done.suppressed ? [`${done.suppressed} not repeated`] : []), ...(done.capped ? [`${done.capped} over the limits`] : []),
   ];
   const line = `Orchestration poll: ${fleetLine(machines)}, ${waiting.length} card${waiting.length === 1 ? "" : "s"} waiting, ${plan.unplaced} without a seat; recommendations ${parts.join(", ")}.${held}`;
-  return { skip: line.slice(0, 1_900) };
+  // Information only, and only after the recommendations are already written. An unknown load limits the score; it does
+  // not change what this poll recommends. A failed post leaves the poll's result in place and tries again next time.
+  let posted = false;
+  if (canAct()) {
+    try {
+      const previous = lastPostedSummary(d.core);
+      posted = postFleetCapacitySummary(d.core, capacityRows(d, machines, now, previous), now, previous) === "posted";
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      d.core.log.warn("fleet_capacity_summary_failed", { err: message.slice(0, 200) });
+    }
+  }
+  const note = posted ? ` Fleet capacity summary posted to #${SCHEDULE_CHANNEL}.` : "";
+  return { skip: `${line}${note}`.slice(0, 1_900) };
+}
+
+/** The score for each machine, holding a limit the last summary posted while its reading is still in the release band. */
+function capacityRows(d: PollDeps, machines: readonly PollMachine[], now: number, previous: PostedSummary | null): FleetSummaryRow[] {
+  const prior = new Map((previous?.machines ?? []).map((m) => [m.node, m.factor] as const));
+  const stats = new Map(d.nodes().map((n) => [n.node_id, n.stats]));
+  const accounts = d.accounts();
+  // member is false only when the host is listed and the lead's person is not on its seats channel.
+  const hosts = new Map(d.seatHosts().map((h) => [h.node, h]));
+  return machines.map((m) => {
+    const host = hosts.get(m.node);
+    const seatsHidden = !!host && host.member !== true;
+    const cap = fleetCapacity({
+      online: m.online,
+      // A cap the lead cannot see is not a reading. Passing it would print someone else's free seats.
+      seats: seatsHidden ? null : m.seats,
+      mem: m.mem ?? null,
+      cpuBusyPct: m.cpuBusyPct ?? null,
+      loadUnknown: loadUnknown(stats.get(m.node)),
+      accountRoomPct: bestAccountRoom(accounts, m.node, now),
+    }, prior.get(m.node));
+    if (seatsHidden) {
+      // The cap was not passed in, so the free-seat count is not a reading. Keep the limit (CPU, memory, offline) and mark the row hidden.
+      return { node: m.node, hostname: m.hostname, free_slots: 0, limiting_factor: cap.limiting_factor, score: 0, seats_hidden: true };
+    }
+    return { node: m.node, hostname: m.hostname, free_slots: cap.free_slots, limiting_factor: cap.limiting_factor, score: cap.score };
+  });
 }

@@ -129,6 +129,79 @@ describe("LoopWatchdog", () => {
     expect(w.stallTotalMs()).toBe(90_000 + 200_000);
   });
 
+  test("a step back of under a second is credited against the next step forward", () => {
+    const { w, clock, lines } = manual();
+    // Older than the ten-minute credit lifetime, clocks agreeing. The 0.9 s loss still has to be credited on the
+    // following tick, after that lifetime has already run out.
+    for (let i = 0; i < 2_440; i++) { clock.t += 250; clock.wall += 250; w.check(); }
+    const wall0 = clock.wall;
+    for (let n = 0; n < 90; n++) { // 90 pairs: 45 s on the monotonic clock
+      clock.t += 250; clock.wall += 250 - 900; w.check(); // back 0.9 s
+      clock.t += 250; clock.wall += 250 + 1_100; w.check(); // forward 1.1 s
+    }
+    // Each pair gains a net 0.2 s, under the 0.5 s stall line, so none of it is sleep. The discount must not grow.
+    expect(w.stallTotalMs()).toBe(0);
+    expect(lines.filter((l) => l.msg === "sleep_resume")).toEqual([]);
+    expect(clock.wall - wall0).toBe(90 * 700); // the presence clock did move; a zero discount ages a peer on it
+    // The credit from the last pair was spent. A real sleep after the pattern still counts in full.
+    clock.t += 250;
+    clock.wall += 250 + 60_000;
+    expect(w.stallTotalMs()).toBe(60_000);
+    expect(lines).toEqual([{ level: "info", msg: "sleep_resume", fields: { slept_ms: 60_000 } }]);
+  });
+
+  test("a backward step of exactly one second is credited against the next forward step", () => {
+    const { w, clock } = manual();
+    clock.t += 250;
+    clock.wall += 250 - 1_000; // exactly the old threshold, which used to credit nothing
+    w.check();
+    clock.t += 250;
+    clock.wall += 250 + 1_600;
+    expect(w.stallTotalMs()).toBe(600); // 1.6 s gained, 1 s credited
+  });
+
+  test("losses of under a second cannot credit more than an hour", () => {
+    const { w, clock } = manual();
+    for (let i = 0; i < 5_000; i++) { clock.t += 250; clock.wall += 250 - 900; w.check(); } // 4_500 s of losses
+    clock.t += 250;
+    clock.wall += 250 + 7_200_000; // two hours forward: the hour cap still bounds the credit
+    expect(w.stallTotalMs()).toBe(7_200_000 - 3_600_000);
+  });
+
+  test("one-millisecond residuals do not keep a backward step alive past ten minutes", () => {
+    const { w, clock, busy } = manual();
+    busy(250);
+    clock.wall -= 200_000;
+    busy(250);
+    w.check();
+    // An integer wall clock against a fractional monotonic clock leaves about a millisecond. That must not renew the credit.
+    for (let i = 0; i < 2_400; i++) {
+      clock.t += 250;
+      clock.wall += 250 + (i % 2 === 0 ? -1 : 1);
+      w.check();
+    }
+    busy(250); // crosses the ten minutes; both clocks move, so this tick itself is not a residual
+    clock.wall += 200_000;
+    expect(w.stallTotalMs()).toBe(200_000);
+  });
+
+  test("a one-millisecond loss every other tick does not eat a later sleep", () => {
+    const { w, clock } = manual();
+    // Long enough that renewed credit would survive the ten-minute lapse. Gains of 1 ms must spend what the losses added.
+    for (let i = 0; i < 4_000; i++) {
+      clock.t += 250;
+      clock.wall += 250 + (i % 2 === 0 ? -1 : 1);
+      w.check();
+    }
+    clock.t += 250;
+    clock.wall += 250 + 60_000;
+    expect(w.stallTotalMs()).toBe(60_000);
+    // A gain of exactly one second is still not a sleep.
+    clock.t += 250;
+    clock.wall += 250 + 1_000;
+    expect(w.stallTotalMs()).toBe(60_000);
+  });
+
   test("track returns what the operation returns and rethrows what it throws", () => {
     const { w } = manual();
     expect(w.track("x", () => 7)).toBe(7);

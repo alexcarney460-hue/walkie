@@ -18,6 +18,7 @@ import { LOCAL_BODY_MAX, limitWrite, requireTeam, route, type RouteCtx } from ".
 import { activeNodes, canSeeChannel } from "../roster.ts";
 import { seatsFor } from "./host.ts";
 import { KIMI_FULL_ACCESS_ONLY, seatEnvNameProblem } from "./runtime.ts";
+import { SeatToolPolicySchema, toolPolicyPhrase } from "./tool-policy.ts";
 import { hostAvailability, seatHosts, seatsList } from "./view.ts";
 import { TALKIE_SHELL_HEADER } from "../orchestrator/os-user.ts";
 import { hostFor } from "../orchestrator/host.ts";
@@ -88,6 +89,8 @@ const ConfigReq = z.object({
   migration_confirm: z.literal("migrate same-user seats").optional(),
   /** Seat users may read the person's home (it is open to other users): accepted knowingly. */
   accept_readable_home: z.boolean().optional(),
+  /** null clears the host tool policy. Omitted leaves it as stored. */
+  tools: SeatToolPolicySchema.nullable().optional(),
 }).strict();
 
 /** The audit line of a seats config change ("allowed seats: same-user, max 12, launchers @alex"). */
@@ -96,6 +99,7 @@ function seatsAction(b: z.infer<typeof ConfigReq>): string {
     b.mode ?? (b.same_user ? "same-user" : b.ephemeral ? "a fresh OS user per seat" : null), b.max ? `max ${b.max}` : null,
     b.launchers?.length ? `launchers ${b.launchers.join(",")}` : b.launchers === null ? "launchers: the owners" : null,
     b.runtimes?.length ? `runtimes ${b.runtimes.join(",")}` : null, b.dir ? `dir ${b.dir}` : null, b.env?.length ? `env ${b.env.join(",")}` : null,
+    b.tools === null ? "tools: each runtime's own" : b.tools ? toolPolicyPhrase({ tools: b.tools }) : null,
   ].filter(Boolean);
   return `${b.allow ? "allowed" : "turned off"} seats on this machine${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
@@ -175,6 +179,7 @@ function checkSeatsConfig(c: RouteCtx, b: z.infer<typeof ConfigReq>): { h: Retur
     ...pick("env", b.env === null ? null : b.env ? [...new Set(b.env)] : undefined),
     ...pick("ephemeral", b.ephemeral), ...pick("admin", b.admin), ...pick("runner", b.runner), ...pick("runtime_dir", b.runtime_dir), ...pick("same_user", b.same_user),
     ...pick("accept_readable_home", b.accept_readable_home), ...pick("inherit_person_config", b.inherit_person_config),
+    ...pick("tools", b.tools),
     ...pick("env_file", undefined), // config.json only: never set through the API
   };
   const requestedMode = b.mode ?? (b.same_user === true || b.ephemeral === false ? "same_user" : b.ephemeral === true ? "seat_users" : undefined)

@@ -23,6 +23,17 @@ const SANDBOX = "/usr/bin/sandbox-exec";
 export const canSandbox = process.platform === "darwin" && existsSync(SANDBOX);
 const SEATS_GID = 599_999;
 
+/** The fake machine is macOS even on Linux (its protected-home retirement is exercised on both). */
+function fakeMacAcl(path: string): string | null {
+  const listing = listAcl(path);
+  if (listing === null || process.platform === "darwin") return listing;
+  // getfacl's three base entries are the mode bits, not extended ACLs. Keep every other entry, including
+  // unknown/default entries, so the real helper still refuses them after the synthetic macOS mode line.
+  const entries = listing.split("\n").map((line) => line.trim())
+    .filter((line) => line && !/^(user|group|other)::[r-][w-][x-]$/.test(line));
+  return [`synthetic macOS mode line for ${path}`, ...entries.map((entry, i) => `${i}: ${entry}`)].join("\n");
+}
+
 export interface FakeSeatWorld {
   root: string;
   homes: string;
@@ -171,7 +182,7 @@ export function fakeSeatWorld(root: string, walkieHome: string): FakeSeatWorld {
         const why = check(home, lstatSync(home).dev);
         return why ?? (evidence.size ? "runner proof did not match a root-observed entry" : null);
       },
-      acl: listAcl,
+      acl: fakeMacAcl,
       // A seat user's home is that user's; root's marker is root's (the test runs as one user).
       stat: (path) => {
         let st: ReturnType<typeof lstatSync>;

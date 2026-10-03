@@ -12,6 +12,8 @@ import type { TransportControl } from "../direct/link.ts";
 import { HttpError } from "../http.ts";
 import { mintInviteCode, type MintedInvite } from "../invite-mint.ts";
 import type { Logger } from "../logger.ts";
+import { submitRequest } from "../requests.ts";
+import { inviteSpendsRemaining, transportFields } from "../roster.ts";
 import { VERSION } from "../version.ts";
 import { loadAccount, loadAccounts, loadRentals, loadPending, savePending, newRecord, saveAccounts, saveRentals, needsAccountScan,
   markAccountsScanned, RentalsFileError, type Rentals, type RentalRecord, type StoredAccount } from "./files.ts";
@@ -252,6 +254,13 @@ export class ComputeService {
       ...(req.idle_minutes !== undefined ? { idle_minutes: req.idle_minutes } : {}),
     };
     await this.serial(async () => savePending(this.home, [...loadPending(this.home), { body, invite_ids: minted.map(m => m.id), account_id: acc.account_id }]));
+    // Minting and the pending save can outlive the role (WALK-107). Re-check with no await before the site call.
+    // A refusal drops this pending rent: unlike a lost answer, these codes were never sent, and must not be sent later.
+    const refused = this.cannotStart();
+    if (refused) {
+      await this.abandonMinted(body.idempotency_key, minted, refused);
+      throw new HttpError(403, "forbidden", refused);
+    }
     let res: RentResult;
     try {
       res = await this.site.rent(acc.token, body);
@@ -374,12 +383,13 @@ export class ComputeService {
     const accounts = this.accounts().filter(a => !a.handover_pending_until || this.d.core.clock() >= a.handover_pending_until);
     if (!accounts.length) return; // poll funded idle accounts for signed handover notices
     loadRentals(this.home); // throws on a file this version can't read: nothing below may run on it and then write it back
-    const notOwner = this.notOwner();
-    if (!notOwner) this.refused.clear(); // an owner again: a later loss of the role is said again
+    if (!this.notOwner()) this.refused.clear(); // an owner again: a later loss of the role is said again
     for (const pending of loadPending(this.home)) {
       // A rent this machine's person asked for as an owner is sent again only while they still are one (WALK-74): kept,
-      // not dropped, so it is recovered (same key) if the role comes back.
-      if (notOwner) { this.refuseOnce(`pending:${pending.body.idempotency_key}`, "compute_rent_refused", { reason: notOwner }); continue; }
+      // not dropped, so it is recovered (same key) if the role comes back. Read again immediately before each send
+      // (WALK-107): an earlier replay in this round can outlive the role. Its codes stay with the pending rent.
+      const reason = this.notOwner();
+      if (reason) { this.refuseOnce(`pending:${pending.body.idempotency_key}`, "compute_rent_refused", { reason }); continue; }
       try {
         const acc = this.account(pending.account_id);
         if (!acc) throw new Error('pending compute account unavailable');
@@ -472,6 +482,11 @@ export class ComputeService {
     return me.role === "owner" ? null : `@${me.handle} is no longer a team owner (renting compute is an owner's), so this machine's rentals are not started`;
   }
 
+  /** The same bar as the check before a queued start's mint: not an owner, or not in the team at all (WALK-107). */
+  private cannotStart(): string | null {
+    return this.notOwner() ?? (this.d.core.myHandle() ? null : "this machine is not in the team");
+  }
+
   private refuseOnce(key: string, event: string, fields: Record<string, unknown>): void {
     if (this.refused.has(key)) return;
     if (this.refused.size >= 1024) this.refused.clear();
@@ -480,19 +495,113 @@ export class ComputeService {
   }
 
   private async supplyCode(acc: StoredAccount, r: RentalView): Promise<void> {
-    const handle = this.d.core.myHandle();
-    const notOwner = this.notOwner();
+    const refused = this.cannotStart();
     // The rental waits on the site for a code: it is left there (never started here) and said once in the log.
-    if (!handle || notOwner) { this.refuseOnce(`rental:${r.id}`, "compute_start_refused", { rental: r.id, reason: notOwner ?? "this machine is not in the team" }); return; }
+    if (refused) { this.refuseOnce(`rental:${r.id}`, "compute_start_refused", { rental: r.id, reason: refused }); return; }
+    const handle = this.d.core.myHandle()!;
     const inv = await this.mint(handle);
     await this.record([r], { [r.id]: 0 }, [inv]);
+    // The person can be removed or demoted during the mint or the record (WALK-107). Do not start, and do not leave
+    // the code usable: a re-promotion within the hour would otherwise admit a machine with it.
+    const again = this.cannotStart();
+    if (again) {
+      await this.withdrawMinted(inv.id, inv.code);
+      this.refuseOnce(`rental:${r.id}`, "compute_start_refused", { rental: r.id, reason: again });
+      return;
+    }
     try {
       const res = await this.site.start(acc.token, r.id, inv.code);
       await this.record([res.rental], { [r.id]: 0 }, [inv]);
       this.d.log.info("compute_started_from_queue", { rental: r.id, invite: inv.id });
     } catch (err) {
       // The site may have moved it back to the queue meanwhile: the next round tries again with a new code.
+      // The code is not voided here: the start may have landed and the machine may still join with it.
       this.d.log.warn("compute_start_failed", { rental: r.id, err: err instanceof ComputeSiteError ? err.code : (err as Error).message });
+    }
+  }
+
+  /**
+   * An interactive rent was refused after its codes were minted and the pending rent saved. Drop that pending
+   * rent, refuse every code locally, and return: the caller is answered before any roster request goes out.
+   * The asks then run in the background, at most as many as this demotion still allows, and stop at the first
+   * `not_owner` (a pre.12 authority, or a budget this machine's roster has not caught up with).
+   */
+  private async abandonMinted(idempotencyKey: string, minted: readonly MintedInvite[], reason: string): Promise<void> {
+    await this.serial(async () => {
+      savePending(this.home, loadPending(this.home).filter((p) => p.body.idempotency_key !== idempotencyKey));
+    });
+    for (const inv of minted) this.d.core.retireInvite(inv.id);
+    await this.stripInvites(minted.map((inv) => inv.id));
+    this.d.log.warn("compute_rent_refused", { reason });
+    const me = this.d.core.me();
+    const left = me ? inviteSpendsRemaining(me, this.d.core.clock()) : 0;
+    const batch = minted.slice(0, Number.isFinite(left) ? left : minted.length);
+    if (batch.length === 0) return;
+    void this.spendAbandoned(batch).catch((err: unknown) => {
+      this.d.log.warn("compute_invite_spend_failed", { err: err instanceof Error ? err.message : "spend_failed" });
+    });
+  }
+
+  /** Ask the authority to mark each code used. Stops at the first `not_owner` and never throws. */
+  private async spendAbandoned(batch: readonly MintedInvite[]): Promise<void> {
+    for (const inv of batch) {
+      if (await this.spendMintedInvite(inv.id, inv.code) === "not_owner") return;
+    }
+  }
+
+  /**
+   * The start was refused after `id` was minted. Drop it from every rental record first (a later settle must not
+   * treat this machine as the one that joined on it), remember it locally, then ask the authority to mark it used.
+   * `code` goes on the request only, so the authority can check this node minted it; it is not logged.
+   * A failed ask is logged and does not throw: the poller still settles the other rentals, and this daemon already
+   * refuses the code. Lost-rent codes are not passed here.
+   */
+  private async withdrawMinted(id: string, code: string): Promise<void> {
+    this.d.core.retireInvite(id);
+    await this.stripInvites([id]);
+    await this.spendMintedInvite(id, code);
+  }
+
+  /** Take these invite ids off every local rental record (a later settle must not treat them as a join). */
+  private stripInvites(ids: readonly string[]): Promise<void> {
+    const drop = new Set(ids);
+    return this.serial(async () => {
+      const recs: Record<string, RentalRecord> = { ...loadRentals(this.home) };
+      let changed = false;
+      for (const [rid, rec] of Object.entries(recs)) {
+        const next = rec.invite_ids.filter((x) => !drop.has(x));
+        if (next.length === rec.invite_ids.length) continue;
+        recs[rid] = { ...rec, invite_ids: next };
+        changed = true;
+      }
+      if (changed) saveRentals(this.home, recs);
+    });
+  }
+
+  /**
+   * Ask the authority to restate this machine's own node with `id`, which marks that invite used.
+   * Never throws. `not_owner` is the authority refusing the restate (including a pre.12 authority).
+   */
+  private async spendMintedInvite(id: string, code: string): Promise<"ok" | "queued" | "not_owner" | "failed" | "skipped"> {
+    const me = this.d.core.me();
+    const n = this.d.core.roster.nodes.get(this.d.core.nodeId);
+    if (!me || !n || n.revoked) return "skipped";
+    const body: Record<string, unknown> = {
+      node_id: n.node_id, login: n.login, hostname: n.hostname, pubkey: n.pubkey, ip: n.ip, port: n.port,
+      ...transportFields(n), ...(n.peer_sig_v1 ? { peer_sig_v1: true } : {}), invite: id, invite_code: code,
+    };
+    try {
+      const res = await submitRequest(this.d.core, this.d.client, this.d.catchUp, "team.node", body);
+      if ("queued" in res) {
+        this.d.log.info("compute_invite_spend_queued", { invite: id });
+        return "queued";
+      }
+      this.d.log.info("compute_invite_spent", { invite: id });
+      return "ok";
+    } catch (err) {
+      const notOwner = err instanceof HttpError && /not_owner/.test(err.message);
+      this.d.log.warn("compute_invite_spend_failed", { invite: id, err: err instanceof HttpError ? err.code : "spend_failed" });
+      return notOwner ? "not_owner" : "failed";
     }
   }
 

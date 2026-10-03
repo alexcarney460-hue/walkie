@@ -22,6 +22,7 @@ import { RemoteRunRes } from "../protocol/admin.ts";
 import type { NodeKeys } from "./keys.ts";
 import { nodeIdFromPubkey } from "../protocol/ids.ts";
 import { newPeerNonce, signPeerRequest, verifyPeerVv } from "./peer-sig.ts";
+import { PEER_PULL_TIMEOUT_MS, PEER_ROSTER_REQUEST_TIMEOUT_MS, PEER_VV_TIMEOUT_MS } from "./peer-timeouts.ts";
 import type { SshCaller } from "./ssh/caller.ts";
 import type { SshRevocationPacket } from "./ssh/team-revocation.ts";
 
@@ -221,7 +222,7 @@ export class PeerClient {
     return this.call(addr, "POST", "/peer/v1/join", PeerJoinResSchema, body, addr.pubkey ? 30_000 : 10_000);
   }
   vv(addr: PeerAddr, pubkey?: string): Promise<PeerVv & { verified?: boolean; envelope?: PeerVvRelay }> {
-    return this.call(addr, "GET", "/peer/v1/vv", PeerVvRes, undefined, 5_000, (vv, headers, raw) => {
+    return this.call(addr, "GET", "/peer/v1/vv", PeerVvRes, undefined, PEER_VV_TIMEOUT_MS, (vv, headers, raw) => {
       if (!pubkey) return vv;
       const wire = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
       const { proof: _proof, ...body } = wire;
@@ -237,12 +238,12 @@ export class PeerClient {
   pull(addr: PeerAddr, origin: string, after: number, limit = 500): Promise<{ events: unknown[] }> {
     // status_stubs=1: this node accepts superseded agent.status events as stubs (MISSION-1 fix round 3).
     const qs = new URLSearchParams({ origin, after: String(after), limit: String(limit), status_stubs: "1" });
-    return this.call(addr, "GET", `/peer/v1/events?${qs}`, PeerEventsRes, undefined, 10_000);
+    return this.call(addr, "GET", `/peer/v1/events?${qs}`, PeerEventsRes, undefined, PEER_PULL_TIMEOUT_MS);
   }
   /** Fetches specific events (stub fill, PROTOCOL §3); the peer applies the same visibility rules. */
   pullIds(addr: PeerAddr, ids: readonly string[]): Promise<{ events: unknown[] }> {
     const qs = new URLSearchParams({ ids: ids.slice(0, MAX_IDS_PER_FETCH).join(","), status_stubs: "1" });
-    return this.call(addr, "GET", `/peer/v1/events?${qs}`, PeerEventsRes, undefined, 10_000);
+    return this.call(addr, "GET", `/peer/v1/events?${qs}`, PeerEventsRes, undefined, PEER_PULL_TIMEOUT_MS);
   }
   push(addr: PeerAddr, events: unknown[], timeoutMs = 2_000): Promise<PeerPushRes> {
     return this.call(addr, "POST", "/peer/v1/events", PeerPushResSchema, { events }, timeoutMs);
@@ -275,7 +276,7 @@ export class PeerClient {
   }
   /** Asks the roster authority to append a roster event (PROTOCOL §4); `event` is the authority's. */
   rosterRequest(addr: PeerAddr, req: RosterRequest): Promise<{ event?: unknown }> {
-    return this.call(addr, "POST", "/peer/v1/roster-request", RosterRequestRes, req, 10_000);
+    return this.call(addr, "POST", "/peer/v1/roster-request", RosterRequestRes, req, PEER_ROSTER_REQUEST_TIMEOUT_MS);
   }
   reportPeerProof(addr: PeerAddr, proof: PeerVvRelay): Promise<{ recorded: boolean }> {
     return this.call(addr, "POST", "/peer/v1/peer-proof", PeerVvRelayRes, proof, 5_000);

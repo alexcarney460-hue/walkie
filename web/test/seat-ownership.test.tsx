@@ -21,12 +21,25 @@ test("another Walkie's record, the unreadable list, users left alone and running
   expect(html).toContain("2 seat users here aren&#x27;t this Walkie&#x27;s to remove");
   expect(html).toContain("walkie-s6, walkie-s7");
   expect(html).toContain("sudo pkill -KILL -u walkie-s3");
-  expect(html).not.toContain("setup-user --apply</span> and a restart");
+  expect(html).toContain("it holds a seat slot until those processes end, then Walkie removes it. To end it now:");
+  expect(html).not.toContain("until they end");
+  expect(html).not.toContain("To end them now");
+  expect(html).not.toContain("setup-user --apply</span>, then restart");
+  expect(html).not.toContain("ends a seat card left running from before the update");
+});
+
+test("several running leftovers name one user in the command and keep the slot sentence in agreement", () => {
+  const html = renderToStaticMarkup(<SeatOwnership local={{ ...base, leftovers_running: ["walkie-s3", "walkie-s4"] }} />);
+  expect(html).toContain("2 leftover seat users still run");
+  expect(html).toContain("each holds a seat slot until those processes end, then Walkie removes that user. To end the first now:");
+  expect(html).toContain("sudo pkill -KILL -u walkie-s3");
+  expect(html).not.toContain("until they end");
+  expect(html).not.toContain("To end them now");
 });
 
 test("without a record (an earlier setup), the way out is setup-user and a restart", () => {
   const html = renderToStaticMarkup(<SeatOwnership local={{ ...base, seat_scope: { state: "legacy", why: "this machine's seat users were set up by an earlier Walkie" }, foreign_users: ["walkie-s6"] }} />);
   expect(html).toContain("field-hint");
   expect(html).toContain("1 seat user here isn&#x27;t this Walkie&#x27;s to remove");
-  expect(html).toContain("walkie seats setup-user --apply</span> and a restart of Walkie");
+  expect(html).toContain("walkie seats setup-user --apply</span>, then restart the Walkie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update");
 });

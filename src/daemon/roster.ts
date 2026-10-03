@@ -6,8 +6,9 @@ import { eventHeader } from "../protocol/header.ts";
 import { deriveTeamId, nodeIdFromPubkey } from "../protocol/ids.ts";
 import { Bodies, Event as EventSchema, TransportKind as TransportKindSchema, type BodyOf, type Event, type Role, type TransportKind } from "../protocol/schemas.ts";
 import { decodeLicense, licenseForTeam, verifyLicense, type LicenseVerifier } from "../license/format.ts";
-import type { LicenseState } from "../license/plans.ts";
-import { isValidPubkey, verifyEvent, verifyHeader } from "./keys.ts";
+import { FUTURE_SKEW_MS, type LicenseState } from "../license/plans.ts";
+import { isValidPubkey, verifyEvent, verifyHeader, verifySig } from "./keys.ts";
+import { decodeInvite, INVITE_MAX_CHARS } from "./invite.ts";
 
 export const DEFAULT_PEER_PORT = 7458;
 const TRANSPORTS: readonly TransportKind[] = TransportKindSchema.options;
@@ -20,6 +21,14 @@ export interface MemberRec {
    * back (invite.ts), whatever their role is now.
    */
   readonly removed_pos?: number;
+  /**
+   * When this member last stopped being an owner (the demoting event's `ts`). Local, derived from the chain: a
+   * member or observer may mark an invite used only within an hour of it. Absent for someone who was never demoted
+   * from owner, and cleared again on promotion back to owner.
+   */
+  readonly demoted_ts?: number;
+  /** Invite-spend restates applied since `demoted_ts` (that demotion's budget). Owners are not counted. */
+  readonly invite_spends?: number;
 }
 
 /**
@@ -316,16 +325,100 @@ function validateAnswer(ev: Event, b: BodyOf<"answer">, r: Roster, author: Membe
   return OK;
 }
 
+/** How many invite-spend restates one demotion allows a member or an observer. Owners are not counted. */
+const INVITE_SPEND_LIMIT = 8;
+/** An hour, the life of a rental code. Not imported from compute: roster stays free of that module. */
+const INVITE_SPEND_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * How many more invite-spend restates `member` may make at `now` (the authority's clock). An owner is not
+ * counted (no finite budget). Anyone else is zero unless they are a member or an observer still inside the
+ * hour after the demotion that took owner away, and still under {@link INVITE_SPEND_LIMIT}.
+ */
+export function inviteSpendsRemaining(member: MemberRec, now: number): number {
+  if (member.role === "owner") return Number.POSITIVE_INFINITY;
+  if (member.role !== "member" && member.role !== "observer") return 0;
+  if (member.demoted_ts === undefined) return 0;
+  const age = now - member.demoted_ts;
+  if (age < -FUTURE_SKEW_MS || age > INVITE_SPEND_WINDOW_MS) return 0;
+  return Math.max(0, INVITE_SPEND_LIMIT - (member.invite_spends ?? 0));
+}
+
+/**
+ * A `team.node` that does nothing but restate the requester's own admitted node and name one invite id.
+ * An owner may ask for this with the id alone. A member or an observer may ask for it only to mark a code used
+ * after they were demoted: within an hour of that demotion (the authority's clock, `now`), only a code their own
+ * node minted (`invite_code` on the request, never on the chain), and at most {@link INVITE_SPEND_LIMIT} times for
+ * that demotion. Anything else is refused `not_owner`. Null when it isn't this shape: the caller keeps its
+ * ordinary rule. `requesterNode` absent is never this (the caller didn't say which machine asked).
+ */
+function inviteSpend(kind: string, body: Record<string, unknown>, r: Roster, requester: MemberRec, requesterNode?: string, now?: number): Verdict | null {
+  if (kind !== "team.node" || !requesterNode) return null;
+  if (requester.role !== "owner" && requester.role !== "member" && requester.role !== "observer") return null;
+  const b = parseBody("team.node", body);
+  if (!b || !b.invite || b.revoked === true || b.peer_sig_strict !== undefined) return null;
+  if (b.node_id !== requesterNode) return null;
+  const existing = r.nodes.get(b.node_id);
+  if (!existing || existing.revoked) return null;
+  if (existing.login !== requester.login || b.login !== requester.login) return null;
+  if (b.hostname !== existing.hostname || b.pubkey !== existing.pubkey || b.ip !== existing.ip) return null;
+  if ((b.port ?? DEFAULT_PEER_PORT) !== existing.port) return null;
+  const want = existing.transports;
+  const got = b.transports;
+  if (want) {
+    if (!got || got.length !== want.length || got.some((t, i) => t !== want[i])) return null;
+  } else if (got !== undefined) return null;
+  if (servesDirect(existing)) {
+    if (b.endpoint !== endpointHex(existing.pubkey)) return null;
+  } else if (b.endpoint !== undefined) return null;
+  if (existing.peer_sig_v1) {
+    if (b.peer_sig_v1 !== true) return null;
+  } else if (b.peer_sig_v1 !== undefined) return null;
+  if (requester.role === "owner") return OK;
+  return formerOwnerSpend(body, r, requester, requesterNode, b.invite, now);
+}
+
+/**
+ * The narrow member/observer allowance. Every miss is `not_owner` (no new reason, and nothing about the code):
+ * a pre.12 authority refuses the whole request the same way. `now` is the authority's clock; the request's own
+ * `ts` is not used.
+ */
+function formerOwnerSpend(raw: Record<string, unknown>, r: Roster, requester: MemberRec, requesterNode: string, inviteId: string, now: number | undefined): Verdict {
+  if (now === undefined || requester.demoted_ts === undefined) return reject("not_owner");
+  const age = now - requester.demoted_ts;
+  if (age < -FUTURE_SKEW_MS || age > INVITE_SPEND_WINDOW_MS) return reject("not_owner");
+  if ((requester.invite_spends ?? 0) >= INVITE_SPEND_LIMIT) return reject("not_owner");
+  if (!codeMintedByNode(raw.invite_code, r, requesterNode, inviteId)) return reject("not_owner");
+  return OK;
+}
+
+/**
+ * Whether `code` is an invite this node minted for `id`. The code is the only proof of who minted it: a demoted
+ * owner still holds their node key, so a signature over a bare id would not. Expiry, current role and the used-set
+ * are not checked here (the caller is marking it used, which a current owner would fail). Never throws, never logs.
+ */
+function codeMintedByNode(code: unknown, r: Roster, nodeId: string, id: string): boolean {
+  if (typeof code !== "string" || code.length === 0 || code.length > INVITE_MAX_CHARS) return false;
+  const d = decodeInvite(code);
+  if ("error" in d) return false;
+  if (!r.team || d.team !== r.team.id || d.id !== id || d.issuer !== nodeId) return false;
+  const issuer = r.nodes.get(d.issuer);
+  if (!issuer || nodeIdFromPubkey(issuer.pubkey) !== d.issuer) return false;
+  return verifySig(issuer.pubkey, d.signed, d.sig);
+}
+
 /**
  * What a requester may ask the authority for (PROTOCOL §2 "Roster requests"): owners anything, other
  * non-observers only a NEW public channel, and any non-observer a `team.integration` for the node the
- * request came from (`requesterNode`; owners too, F3). The authority then validates the event itself
+ * request came from (`requesterNode`; owners too, F3). A member or an observer may also restate their own
+ * unchanged node with one invite id, only for a code their node minted within an hour of being demoted, and
+ * only a few times (`inviteSpend`). The authority then validates the event itself
  * as usual. An owner's `team.node` request may bind a key only to the owner's OWN login (F4): another
  * member's machine is admitted only through the whois-bound join (`/peer/v1/join`, optionally approved
  * with `team.admit`). Revoking any node, or re-admitting a node with the login and key it already has
  * in the roster (a binding its member's join made), stays allowed.
  */
-export function requestAllowed(kind: string, body: Record<string, unknown>, r: Roster, requester: MemberRec, requesterNode?: string): Verdict {
+export function requestAllowed(kind: string, body: Record<string, unknown>, r: Roster, requester: MemberRec, requesterNode?: string, now?: number): Verdict {
   if (kind === "team.integration") {
     if (requester.role === "observer") return reject("not_owner");
     const b = parseBody("team.integration", body);
@@ -338,6 +431,8 @@ export function requestAllowed(kind: string, body: Record<string, unknown>, r: R
   const seats = up ? seatsChannelRule(up, r, requester.handle) : null;
   if (seats && seats.status !== "ok") return seats;
   if (up?.seats === true && !seats) return reject("reserved_name"); // the seats marker only on a machine's seats channel
+  const spent = inviteSpend(kind, body, r, requester, requesterNode, now);
+  if (spent) return spent;
   if (requester.role === "owner") return kind === "team.node" ? ownNodeRequest(body, r, requester) : OK;
   if (requester.role !== "member" || !up) return reject("not_owner");
   if (seats) return OK; // a member's own machine's seats channel: created or re-shaped by them
@@ -622,16 +717,130 @@ export function voidBefore(r: Roster, handle: string): VoidBefore | undefined {
   return r.voids?.get(handle);
 }
 
+/** A generator plus `Symbol.dispose`, which `SetIterator` requires. Closing it ends the walk. */
+function iteratorOf<T>(gen: Generator<T>): SetIterator<T> {
+  const iter = gen as Generator<T> & { [Symbol.dispose]?: () => void };
+  iter[Symbol.dispose] = () => { gen.return(undefined); };
+  return iter as unknown as SetIterator<T>;
+}
+
+/**
+ * Two neighbouring segments are joined when neither is more than this many times as long as the other.
+ * After balancing, each older segment is more than twice the next newer one, so a lookup walks O(log n) segments
+ * and a checkpoint keeps sharing the segments it already held.
+ */
+const SEGMENT_FACTOR = 2;
+
+/**
+ * Used invite ids, shared by the roster checkpoints that contain them. Each node holds only its own segment
+ * and points at the previous segment. Adding an id links a one-id segment and then joins it with the segment
+ * before it while the two lengths are within {@link SEGMENT_FACTOR}. Joining copies those two segments
+ * and leaves the tail behind them in place, so a later checkpoint still points at that tail. The ids kept
+ * for every checkpoint therefore grow like N log N, not like a fresh copy of the whole set each time.
+ * `prev` is absent on the oldest segment (a one-id segment, or a plain set this one wraps).
+ */
+export class InviteSet implements ReadonlySet<string> {
+  readonly size: number;
+  readonly prev?: InviteSet;
+  /** Ids in this segment only. A string is a one-id segment; a set is never mutated. */
+  private readonly segment: ReadonlySet<string> | string;
+  /** How many ids this segment holds, not counting `prev`. */
+  readonly span: number;
+
+  private constructor(size: number, segment: ReadonlySet<string> | string, span: number, prev?: InviteSet) {
+    this.size = size;
+    this.segment = segment;
+    this.span = span;
+    this.prev = prev;
+  }
+
+  /** The set plus `id`, or `prev` itself when `id` is already in it. */
+  static of(prev: ReadonlySet<string> | undefined, id: string): InviteSet {
+    if (prev instanceof InviteSet) {
+      if (prev.has(id)) return prev;
+      return InviteSet.balance(new InviteSet(prev.size + 1, id, 1, prev));
+    }
+    if (prev && prev.size > 0) {
+      if (prev.has(id)) return new InviteSet(prev.size, prev, prev.size);
+      return InviteSet.balance(new InviteSet(prev.size + 1, id, 1, new InviteSet(prev.size, prev, prev.size)));
+    }
+    return new InviteSet(1, id, 1);
+  }
+
+  /** Join `node` with the segment before it while their lengths are within a factor of {@link SEGMENT_FACTOR}. */
+  private static balance(node: InviteSet): InviteSet {
+    const prev = node.prev;
+    if (!prev) return node;
+    const a = node.span;
+    const b = prev.span;
+    if (a > SEGMENT_FACTOR * b || b > SEGMENT_FACTOR * a) return node;
+    const merged = new Set<string>();
+    node.writeInto(merged);
+    prev.writeInto(merged);
+    return InviteSet.balance(new InviteSet(node.size, merged, merged.size, prev.prev));
+  }
+
+  private writeInto(into: Set<string>): void {
+    if (typeof this.segment === "string") into.add(this.segment);
+    else for (const id of this.segment) into.add(id);
+  }
+
+  private holds(id: string): boolean {
+    return typeof this.segment === "string" ? this.segment === id : this.segment.has(id);
+  }
+
+  has(id: string): boolean {
+    let n: InviteSet | undefined = this;
+    while (n) {
+      if (n.holds(id)) return true;
+      n = n.prev;
+    }
+    return false;
+  }
+
+  private *walk(): Generator<string> {
+    let n: InviteSet | undefined = this;
+    while (n) {
+      if (typeof n.segment === "string") yield n.segment;
+      else yield* n.segment;
+      n = n.prev;
+    }
+  }
+
+  values(): SetIterator<string> { return iteratorOf(this.walk()); }
+  keys(): SetIterator<string> { return this.values(); }
+  entries(): SetIterator<[string, string]> {
+    const gen = function* (set: InviteSet): Generator<[string, string]> { for (const id of set.walk()) yield [id, id]; };
+    return iteratorOf(gen(this));
+  }
+  [Symbol.iterator](): SetIterator<string> { return this.values(); }
+  forEach(fn: (value: string, key: string, set: ReadonlySet<string>) => void, thisArg?: unknown): void {
+    for (const id of this) fn.call(thisArg, id, id, this);
+  }
+  readonly [Symbol.toStringTag] = "Set";
+}
+
 /** Applies an already-validated roster event (the chain's next entry), returning a new Roster. */
 export function applyRosterEvent(r: Roster, ev: Event): Roster {
   return { ...applyKind(r, ev), pos: (r.pos ?? 0) + 1 };
 }
 
-/** A member record after `team.member`: a removal records its cut-off; a re-admission keeps the previous one. */
-function memberAfter(prev: MemberRec | undefined, b: BodyOf<"team.member">, pos: number): MemberRec {
+/**
+ * A member record after `team.member`: a removal records its cut-off; a re-admission keeps the previous one.
+ * Leaving owner records `ts` (that demotion's invite-spend window). A later non-owner role keeps the window and
+ * the spend count. Promotion back to owner clears both, so the next demotion starts a new budget.
+ */
+function memberAfter(prev: MemberRec | undefined, b: BodyOf<"team.member">, pos: number, ts: number): MemberRec {
   const rec = memberRecOf(b);
-  if (b.role === "removed") return { ...rec, removed_pos: pos };
-  return { ...rec, ...(prev?.removed_pos !== undefined ? { removed_pos: prev.removed_pos } : {}) };
+  const removed = b.role === "removed"
+    ? { removed_pos: pos }
+    : (prev?.removed_pos !== undefined ? { removed_pos: prev.removed_pos } : {});
+  const demoted = prev?.role === "owner" && b.role !== "owner"
+    ? { demoted_ts: ts }
+    : b.role !== "owner" && prev?.demoted_ts !== undefined
+      ? { demoted_ts: prev.demoted_ts, ...(prev.invite_spends ? { invite_spends: prev.invite_spends } : {}) }
+      : {};
+  return { ...rec, ...removed, ...demoted };
 }
 
 function applyKind(r: Roster, ev: Event): Roster {
@@ -647,7 +856,7 @@ function applyKind(r: Roster, ev: Event): Roster {
     case "team.member": {
       const b = ev.body as BodyOf<"team.member">;
       const pos = r.pos ?? 0;
-      const members = new Map(r.members).set(b.login, memberAfter(r.members.get(b.login), b, pos));
+      const members = new Map(r.members).set(b.login, memberAfter(r.members.get(b.login), b, pos, ev.ts));
       if (b.role !== "removed") return { ...r, members };
       const nodes = new Map(r.nodes);
       for (const n of r.nodes.values()) if (n.login === b.login) nodes.set(n.node_id, revokeForRemoval(n));
@@ -660,12 +869,22 @@ function applyKind(r: Roster, ev: Event): Roster {
     }
     case "team.node": {
       const b = ev.body as BodyOf<"team.node">;
-      const invites = typeof b.invite === "string" ? new Set(r.invites ?? []).add(b.invite) : r.invites;
+      const prior = r.nodes.get(b.node_id);
+      const invites = typeof b.invite === "string" ? InviteSet.of(r.invites, b.invite) : r.invites;
+      // The body is the node record, the same way a pre.12 replica folds it. A queued invite spend is
+      // rebuilt from the sender's current record before it is signed again (requests.ts), so this fold
+      // does not special-case it.
       // An explicit owner waiver admits a legacy machine. Consume the waiver in the signed chain so
       // automatic strict mode resumes when that machine later proves possession of its key.
-      const prior = r.nodes.get(b.node_id);
       const legacyAdmitted = r.peer_sig_strict === false && (!prior || prior.revoked) && !b.peer_sig_v1;
-      return { ...r, nodes: new Map(r.nodes).set(b.node_id, nodeRecOf(b, r.nodes.get(b.node_id))),
+      const nodes = new Map(r.nodes).set(b.node_id, nodeRecOf(b, prior));
+      let members = r.members;
+      const by = typeof b.requested_by === "string" ? memberByHandle(r, b.requested_by) : undefined;
+      if (by && by.role !== "owner" && by.demoted_ts !== undefined && typeof b.invite === "string"
+          && prior && !prior.revoked && prior.login === by.login) {
+        members = new Map(r.members).set(by.login, { ...by, invite_spends: (by.invite_spends ?? 0) + 1 });
+      }
+      return { ...r, nodes, members,
         ...(invites ? { invites } : {}),
         ...(b.peer_sig_strict !== undefined ? { peer_sig_strict: b.peer_sig_strict }
           : legacyAdmitted ? { peer_sig_strict: undefined } : {}) };

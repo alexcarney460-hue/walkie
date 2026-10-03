@@ -11,19 +11,27 @@
 // forward). A sleeping daemon is as unaware of its peers as a stalled one, so the time its peers' last contact is
 // measured in (sync.ts, wall clock) is discounted by the sleep too (`stallTotalMs`), or every machine would look offline
 // for a moment after the lid opens; but it is logged as `sleep_resume` and never shown as a lagging daemon (`recentLag`).
-// A wall clock set BACK and later forward again (a correction) must not read as a sleep: what it lost is credited
-// against what it gains later, so only time gained beyond that counts.
+// A wall clock set BACK and later forward again (a correction) must not read as a sleep: every loss, including one
+// under a second, is credited against what it gains later, so only time gained beyond that counts. Crediting only a
+// loss past a second lets a repeated step back of 0.9 s and forward of 1.1 s count the whole forward step, and the
+// discount then grows faster than the clock, so a dead peer stays online (WALK-102). The credit is capped and lapses.
 import type { Logger } from "./logger.ts";
 
 /** A tick this late is a stall. */
 export const STALL_MS = 500;
 /** How often the loop is checked. */
 export const WATCH_INTERVAL_MS = 250;
-/** A wall clock that gains or loses more than this against the monotonic clock in one tick was slept through or set. */
+/** A wall-clock gain past this against the monotonic clock in one tick counts as sleep, after credit (below). */
 export const CLOCK_STEP_MS = 1_000;
-/** The most a backward step of the wall clock may later cancel from the time it gains, and for how long (monotonic ms). */
+/** The most backward drift may later cancel from the time the wall clock gains, and for how long (monotonic ms). */
 export const MAX_STEP_CREDIT_MS = 3_600_000;
 export const STEP_CREDIT_TTL_MS = 600_000;
+/**
+ * A loss of at least this renews the credit's lifetime. Anything smaller is still credited (so a step under a second
+ * offsets the next gain) but must not renew it: a one-millisecond residual on an integer wall clock would otherwise
+ * keep an old correction in force until the hour cap ran out, and a real sleep would no longer discount presence.
+ */
+const STEP_CREDIT_RENEW_MS = 50;
 
 export interface WatchdogOptions {
   stallMs?: number;
@@ -40,9 +48,9 @@ export class LoopWatchdog {
   private timer: ReturnType<typeof setInterval> | null = null;
   private last = 0;
   private lastWall = 0;
-  /** What the wall clock lost against the monotonic one (stepped back), not yet made up by a forward step. */
+  /** What the wall clock lost against the monotonic one, not yet made up by a later gain. */
   private stepCredit = 0;
-  /** When (monotonic) the credit was last added to: it lapses after STEP_CREDIT_TTL_MS. */
+  /** When (monotonic) the credit's lifetime was last renewed: it lapses after STEP_CREDIT_TTL_MS. */
   private stepCreditAt = 0;
   private readonly stack: string[] = [];
   private slowest: Slow | null = null;
@@ -100,19 +108,26 @@ export class LoopWatchdog {
 
   /**
    * How late the tick due now is, and how much the wall clock gained on the monotonic one since the last tick (slept):
-   * `stall` is the event loop's own lateness, `slept` what remains of the gain after a recent backward step is credited.
+   * `stall` is the event loop's own lateness, `slept` what remains of a gain past CLOCK_STEP_MS after backward drift is
+   * credited. Every loss is credited. A gain of a second or less is not a sleep; it only spends that credit.
    */
   private measure(t = this.now(), wall = this.wallNow()): { stall: number; slept: number; credit: number; creditAt: number } {
     const monotonic = t - this.last;
     const drift = wall - this.lastWall - monotonic;
-    let credit = t - this.stepCreditAt > STEP_CREDIT_TTL_MS ? 0 : this.stepCredit;
+    const expired = t - this.stepCreditAt > STEP_CREDIT_TTL_MS;
+    let credit = expired ? 0 : this.stepCredit;
     let creditAt = this.stepCreditAt;
     let slept = 0;
-    if (drift < -CLOCK_STEP_MS) { credit = Math.min(MAX_STEP_CREDIT_MS, credit - drift); creditAt = t; }
-    else if (drift > CLOCK_STEP_MS) {
+    if (drift < 0) {
+      credit = Math.min(MAX_STEP_CREDIT_MS, credit - drift);
+      // A loss of STEP_CREDIT_RENEW_MS or more renews the lifetime. The first loss after a lapse renews it
+      // too, once the old credit has been discarded, so that loss can meet the next tick's gain. A
+      // one-millisecond residual does not renew a credit that is still live.
+      if (drift <= -STEP_CREDIT_RENEW_MS || expired) creditAt = t;
+    } else if (drift > 0) {
       const made = Math.min(drift, credit);
       credit -= made;
-      slept = drift - made;
+      if (drift > CLOCK_STEP_MS) slept = drift - made;
     }
     return { stall: monotonic - this.intervalMs, slept, credit, creditAt };
   }

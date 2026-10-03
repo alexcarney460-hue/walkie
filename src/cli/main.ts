@@ -25,12 +25,15 @@ import { agentsCmd } from "./commands/archive.ts";
 import { mobile } from "./commands/mobile.ts";
 import { compute } from "./commands/compute.ts";
 import { RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION } from "../protocol/compute-release.ts";
+import { disputeCmd } from "./commands/dispute.ts";
 import { projectsCmd, taskCmd, tasksCmd } from "./commands/projects.ts";
 import { importCmd } from "./commands/import.ts";
 import { roomCmd } from "./commands/room.ts";
+import { memory } from "./commands/memory.ts";
 import { boardCmd } from "./commands/steward.ts";
 import { wrap } from "./commands/wrap.ts";
 import { admin, runRemote, splitRemote } from "./commands/admin.ts";
+import { historyCommand } from "./commands/history.ts";
 import { provision } from "./commands/provision.ts";
 import { profileArgvProblem } from "../daemon/provision/profiles.ts";
 import { sshCommand, sshTunnelCommand } from "./commands/ssh.ts";
@@ -107,6 +110,8 @@ switching accounts at usage limits (your own logins, in this machine's encrypted
   accounts lease-limit [10..256]           local owner: owner-launched hand-outs/node/hour (default 10); teammate seats stay at 10
   team authority <machine>                 move roster authority to another owner machine
   team role <handle> <role>                owner: change a member's role (owner|member|observer|removed)
+  team offboard <handle> --plan|--apply    what removal will and will not do (--plan), or suspend then remove
+             [--reassign-to @handle]       (--apply, person-only; cards move with ordinary signed card ops)
   team revoke <machine>                    revoke one machine (owner); the member keeps their others
   team peer-sig-strict                      owner: require signed peer requests team-wide
   direct enable                            a Tailscale machine also serves Walkie Direct (mixed teams: run it on
@@ -128,7 +133,8 @@ projects (kanban boards; every change is a signed post in the project's channel)
   projects create <name…> [--prefix WEB] [--folder f] [--private] [--path ~/dir] [--repo r] [--points] [--description t]
                                            (a person, or a named agent for its person; --private = the team's owners; Free plan: 1 project)
   projects show <project>                  its boards, columns and open cards
-  projects set <project> [--name n] [--folder f] [--prefix P] [--private|--public] [--path p]   (people only)
+  projects set <project> [--name n] [--folder f] [--prefix P] [--private|--public] [--path p] [--contact @handle|none]
+                                           (people only; --contact names who resolves a dispute, none clears it)
   projects archive|restore|delete <project>          (the project's creator or an owner)
   projects board <project> add <name…>     another board (3 per project included; more are a paid add-on)
   projects report <project> [on|off]       WalkieTalkie's hourly plain-English status report for it, posted in the project's
@@ -150,6 +156,12 @@ projects (kanban boards; every change is a signed post in the project's channel)
   task edit <KEY> [--title t] [--body t] [--label a,b] [--estimate n] [--due YYYY-MM-DD]
   task start|review|done|unblock <KEY> · task block <KEY> [reason…] · task comment <KEY> <text…|->
   task archive|restore|delete <KEY>        (delete / restore: people only)
+  dispute raise <KEY> <summary…|->         ask someone to resolve a one-line dispute on the card (posted in its thread;
+                                           asks the escalation contact, else the creator, else up to five owners)
+  dispute show <KEY>                       the card's open or resolved dispute (nothing escalates on its own)
+  dispute resolve <KEY> <reason…|->        the escalation contact (or the project's creator, when there is no contact) or an owner closes it
+                                           (people only; not the card's creator, and not the person who raised it unless they are an owner;
+                                           upgrade to this release — an older Walkie has no resolve command)
   board steward run [--project P | P] [--dry-run] [--repo dir,dir] [--stale-hours n]   the board steward: moves cards
                                            to the column their evidence says (live agents, branches, Linear, comments), each with a comment
   board steward on|off [--project P | P]   the project's steward switch (its admins, people only)
@@ -177,11 +189,21 @@ import (switch from Linear: projects, cards, history; one signed batch per 200 w
   import linear --schedule 10m|1h|10|off [--two-way|--one-way] [--key-file f]   keep syncing in the background (people only)
                                            key: the Linear integration's, else LINEAR_API_KEY, else --key-file <path>
                                            (--schedule takes --key-file only, not LINEAR_API_KEY)
+personal memory (this machine only; never sent to the team)
+  memory add [--kind fact|preference|decision|procedure|contact|warning] [--source ref,ref] <text…|->
+                                           remember a note (a secret is redacted; a join code is refused)
+  memory list [--all] [--limit n]          notes on this machine (--all includes retracted)
+  memory search <words…> [--limit n]       search them
+  memory retract <id>                      mark one retracted (the text is cleared; the row stays and shows as (retracted); it leaves search and stops counting toward the cap)
 asks
   ask <@handle[/machine[/agent]]> <text…|-> [--timeout 300] [--channel c]
                                            block until answered (exit 2 on timeout/decline)
   inbox [--all]                            open asks addressed to you
   answer <ask-id> [text…|-] [--decline]    (text optional when declining)
+history (this machine only; nothing is recorded)
+  history [--since <ms|YYYY-MM-DD|ISO>] [--tool <name>] [--q <text>] [--limit n] [--json]
+                                           admin audit and your guest audit, oldest first. A person sees both;
+                                           an agent sees the admin audit only. Not other machines, not a phone.
 admin (agents set Walkie up: audited in #general; the machine's person keeps the switches)
   admin [status [--limit n]] · admin log [--limit n]   this machine's switches and recent agent / remote admin actions
   admin machines [--json]                  team machines and whether you may administer each (owners: any; others: own)
@@ -246,8 +268,18 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
                                            start n agents on a teammate's machine
   seats allow [--launchers @alex,@alex/alex-mac,@alex/alex-mac/orchestrator] [--max n (default 3)] [--runtimes claude,codex,kimi]
               [--dir path] [--env NAME,NAME (extra variables seats get)] [--same-user] [--accept-readable-home]
+              [--allowed-tools Read,Grep] [--disallowed-tools WebFetch] [--clear-tool-policy]
                                            person entries cover their agents (on named machines, if any); exact agents
-                                           cover only themselves. Default: the team's owners and their agents
+                                           cover only themselves. Default: the team's owners and their agents.
+                                           A tool list applies to every seat here. Names are plain tool names
+                                           such as Read or Grep. A pattern is not supported, and default is rejected
+                                           (it would mean every tool). Claude and Grok enforce the list. An empty
+                                           Grok list, a name grok would not narrow, or a Grok deny name this host
+                                           cannot map, refuses the launch. Codex and
+                                           Kimi launches are refused until you clear it. --allowed-tools with an
+                                           empty value allows no Claude tools. A value of - on either list clears
+                                           that side. Running and paused seats keep the flags they started with
+                                           until they are restarted.
   seats deny                               turn seats off here and stop every running seat
   seats busy [--max 1] [--for 2h]          "I'm using this computer": at most --max seats keep running here (0 = none;
                                            the newest are paused, new launches queue) until you resume or --for passes
@@ -303,7 +335,7 @@ agents: pass --for-agent whenever the output goes to a model. Every read (get, s
         command's parent processes (claude, codex, kimi, aider, hermes, …); configuration variables never count.
 admin commands (invite, team add-machine|role|revoke, seats, accounts, pool, hooks, …): a person at a terminal
         confirms (or passes --yes); an agent, or a run with no terminal, goes ahead while agent admin is on, audited.
-person-only: team authority, team role … removed, revoking another member's machine, dashboard and mobile pair ask
+person-only: team authority, team role … removed, team offboard --apply, revoking another member's machine, dashboard and mobile pair ask
         you to type the handle, machine or "yes" at a terminal; agents are refused.
 exit codes: 0 ok · 1 error · 2 timeout/declined · 3 daemon unreachable`;
 
@@ -313,13 +345,40 @@ const computeUnavailable: Command = async (ctx) => {
 };
 
 export const COMMANDS: Record<string, Command> = {
-  init, invite, join, channel, team: teamCmd, who: whoCmd, pool: poolCmd, direct: directCmd, post, get, reply, subscribe, ask, inbox, answer, status,
+  init, invite, join, channel, team: teamCmd, who: whoCmd, pool: poolCmd, direct: directCmd, post, get, reply, subscribe, ask, inbox, answer, status, memory,
   share, fetch: fetchCmd, accounts, agents: agentsCmd, projects: projectsCmd, tasks: tasksCmd, task: taskCmd, import: importCmd, room: roomCmd, mobile, dashboard, token, doctor, daemon, mcp, hook, hooks, setup, update, integrations, linear, license, upgrade,
-  orchestrator, talkie: orchestrator, seats, seat, admin, provision, stale: staleCmd, discover, board: boardCmd,
+  orchestrator, talkie: orchestrator, seats, seat, admin, history: historyCommand, provision, stale: staleCmd, discover, board: boardCmd, dispute: disputeCmd,
   compute: RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION ? compute : computeUnavailable,
 };
 
 const BOOLEANS = CLI_BOOLEANS;
+
+/** First positional of a `team` argv, skipping switches and valued flags that precede it (`team --json offboard`). */
+function firstTeamSubcommand(rest: readonly string[]): string | null {
+  const short: Record<string, string> = { o: "output", n: "limit", h: "help", j: "json", t: "timeout" };
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i] ?? "";
+    if (a === "--") return null;
+    if (a.startsWith("--") && a.length > 2) {
+      const eq = a.indexOf("=");
+      const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
+      if (eq > 0) continue;
+      if (BOOLEANS.has(name)) continue;
+      const next = rest[i + 1];
+      if (next !== undefined && !next.startsWith("-")) i++;
+      continue;
+    }
+    if (/^-[a-z]$/.test(a)) {
+      const name = short[a.slice(1)] ?? a.slice(1);
+      if (BOOLEANS.has(name)) continue;
+      const next = rest[i + 1];
+      if (next !== undefined && !next.startsWith("-")) i++;
+      continue;
+    }
+    return a;
+  }
+  return null;
+}
 
 export async function main(argv: string[]): Promise<number> {
   adoptRemoteRun(); // AGENT-ADMIN-1: a remote admin run's token never reaches what this walkie spawns
@@ -395,8 +454,14 @@ export async function main(argv: string[]): Promise<number> {
       if (problem) throw new UsageError(problem);
     }
     // `profile` is a value in `provision`, and `status` a value in `projects screen` (--status works|partial|empty|not-built); a switch everywhere else.
+    // `plan` is a value for `import linear --plan` and `upgrade --plan`. It is a switch only for `team offboard`,
+    // including when flags precede the subcommand (`team --json offboard <handle> --plan`).
     const without = (name: string) => new Set([...BOOLEANS].filter((x) => x !== name));
-    const args = parseArgs(rest, cmd === "provision" ? without("profile") : cmd === "projects" && rest[0] === "screen" ? without("status") : BOOLEANS);
+    const booleans = cmd === "provision" ? without("profile")
+      : cmd === "projects" && rest[0] === "screen" ? without("status")
+      : cmd === "team" && firstTeamSubcommand(rest) === "offboard" ? new Set([...BOOLEANS, "plan"])
+      : BOOLEANS;
+    const args = parseArgs(rest, booleans);
     if (args.flags.get("help") === true) { writeOut(USAGE + "\n"); return EXIT.ok; }
     ctx = makeCtx(args);
     return await run(ctx);
@@ -420,7 +485,10 @@ export async function main(argv: string[]): Promise<number> {
     }
     if (err instanceof WalkieError) {
       writeErr(`${c.red("walkie:")} ${msg(err.message, err.code)}${err.code && err.code !== "daemon_unreachable" ? c.dim(` [${plain(err.code)}]`) : ""}\n`);
-      return err.code === "daemon_unreachable" ? EXIT.unreachable : EXIT.error;
+      if (err.code === "daemon_unreachable") return EXIT.unreachable;
+      // Client-side apply wait only (status 0). A daemon HTTP 408 whose code is "timeout" stays exit 1.
+      if (err.code === "timeout" && err.status === 0) return EXIT.timeout;
+      return EXIT.error;
     }
     writeErr(`${c.red("walkie:")} ${msg((err as Error).message)}\n`);
     return EXIT.error;

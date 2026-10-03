@@ -98,11 +98,11 @@ function markPosted(core: Core): void {
   catch (err) { core.log.warn("join_status_mark_failed", { error: (err as Error).message }); }
 }
 
-function gatherFacts(core: Core): JoinStatusFacts | null {
+async function gatherFacts(core: Core): Promise<JoinStatusFacts | null> {
   const handle = core.myHandle();
   const local = seatsFor(core)?.view();
   if (!handle || !local) return null; // not admitted yet, or the seats host isn't wired: retried on the next roster change
-  const facts = doctorFacts(local, core.roster.team?.name ?? null);
+  const facts = await doctorFacts(local, core.roster.team?.name ?? null);
   const { claude, codex } = runtimeReadiness(local, facts);
   return {
     handle, machine: core.hostname, version: VERSION, seats: { running: local.running, max: local.max },
@@ -130,15 +130,23 @@ function tryPost(core: Core, text: string): boolean {
  */
 export class JoinStatusReporter {
   private posted: boolean;
+  /** One attempt at a time. A failed read is retried on the next roster change, and two changes cannot double-post. */
+  private attempt: Promise<void> = Promise.resolve();
 
   constructor(private readonly core: Core, private readonly log: Logger) {
     this.posted = alreadyPosted(core);
   }
 
   rosterChanged(): void {
+    this.attempt = this.attempt.then(() => this.publish()).catch((err) => {
+      this.log.warn("join_status_post_failed", { error: (err as Error).message });
+    });
+  }
+
+  private async publish(): Promise<void> {
     if (this.posted || !this.core.teamId || !this.core.roster.channels.has(AUDIT_CHANNEL)) return;
-    const facts = gatherFacts(this.core);
-    if (!facts) return;
+    const facts = await gatherFacts(this.core);
+    if (!facts || this.posted || !this.core.teamId || !this.core.roster.channels.has(AUDIT_CHANNEL)) return;
     if (!tryPost(this.core, joinStatusText(facts))) return;
     this.posted = true;
     markPosted(this.core);

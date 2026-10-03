@@ -17,10 +17,10 @@ important — each teammate's **agents**, which hold real credentials and can ac
 |---|---|---|
 | Peer port (Tailscale IP only; Tailscale and dual machines) | any device on the tailnet, including shared-in nodes or another OS user on a member machine | `tailscale whois` on every request → login must be a current member (a `direct:` login, which only invites create, is refused outright); the node must be admitted with a matching login, its record must serve Tailscale (a Direct-only machine is never let in over the tailnet) and its pinned address must be the source IP; team header must match; node-key request signatures are required on privileged routes and on replication/read routes after verified node-key evidence or strict mode (PROTOCOL §4) |
 | Walkie Direct endpoint (v0.2; iroh QUIC, ALPN `walkie/1`) | **anyone on the internet** who knows or guesses the node's endpoint id (its public key), directly or through a relay | QUIC/TLS authenticates the caller's ed25519 key before any request is read; the gate is that key ∈ the roster's admitted, non-revoked nodes of current members whose record serves Direct (a Tailscale-only machine's key is refused until it proves the key with a Direct `/join`, see "Mixed teams"; `403 not_member` otherwise, `hello` and every data endpoint included; `X-Walkie-Node` must match the key or be absent). Only `/join` accepts an unknown key, and only with a valid invite (below), admitting exactly the connection's key. Admitted nodes keep a per-endpoint rate limit (60 req/s) on the main limiter. Keys that are not admitted nodes share one separate pre-auth limiter (a burst of 20, then 5 req/s; keys are free to mint) and do not take a per-key slot on the main limiter, so a flood cannot evict an admitted peer's bucket; at most 16 connections from unadmitted keys at once, each closed after 30 s and limited to 4 concurrent streams (lifted when the key is admitted on that connection); at most 4 connections per authenticated key (a member at 4 replaces its least recently active idle one; with all 4 busy the 5th is refused); 512 connections total, running native handshakes included. Pending handshakes are budgeted before `accept()` starts any native work, by what iroh names without a handshake: the **source** (an IPv4 address, an IPv6 /64, or on the relay path the sender's relay-authenticated endpoint id), its **network** (IPv4 /24, IPv6 /48) and, on the relay path, the **member** owning an admitted endpoint id. Native budgets are given back only when the native handshake really ends (iroh 1.1's binding can't cancel one): at most **128 native handshakes alive in total**, whatever their lifetime; of those at most 64 from the direct path and 16 from relay-path strangers (whose ids are free to mint), so members arriving through a relay always have at least 48; at most 4 per source, 8 per /24 or /48, and 8 per member across all of that member's machines. Lanes bound handshakes in progress: at most 32 from sources not known to be members, of which the direct path takes at most 24 (the other 8 only relay-path joiners can take); a relay-path sender whose endpoint id is an admitted node's has its own 32-slot lane (a handshake is abandoned after 15 s and closed if it completes late; its lane slot comes back when the native handshake ends or at 60 s, while its native budgets wait for the native end); above 8 pending, an unvalidated UDP source is sent a QUIC Retry first, so a spoofed or reply-blind sender never starts a handshake, and an unvalidated source over a limit is ignored rather than answered; when a node is revoked or its member removed, its open connections are closed at once, idle ones included; request heads ≤ 16 KiB, bodies ≤ 1 MB, 30 s to arrive. PROTOCOL §2 is unchanged: everything that arrives is still verified event by event |
-| Walkie Direct invites | whoever holds the code (a bearer credential until used) | `wk1…` code signed by an owner node's key (checked against that node's key on the roster, and the node must still be an admitted owner's when the code is used), naming the team; 7-day expiry (the authority refuses an expiry further out than that); single use: redeemed only by the roster authority, which records `sha256(secret)` on the chain in the admitting `team.node`, so no replica and no later authority accepts it again; a code for a handle that has ever been removed is refused unless it was minted after the latest removal (`invite_predates_removal`), whatever the handle's member is now (removed, or re-invited since): the code carries the issuer's signed roster chain position, which must be past the removing entry's chain index. That position is the only removal test (no clock is compared, so an authority clock that ran ahead when it removed someone can't block their later re-invite). So a removed member can't come back, with their old role or their old machine, on a code they held before, not after a re-invite and not through clock skew; the code and its secret are never logged (only the chain id), and no error echoes a pasted code. Anyone holding an unused code can join as its handle once, which is the point of it: send it privately |
+| Walkie Direct invites | whoever holds the code (a bearer credential until used) | `wk1…` code signed by an owner node's key (checked against that node's key on the roster, and the node must still be an admitted owner's when the code is used), naming the team; 7-day expiry (the authority refuses an expiry further out than that); single use: redeemed only by the roster authority, which records `sha256(secret)` on the chain in the admitting `team.node`, so no replica and no later authority accepts it again; the renting daemon may also ask the authority to record an id used without admitting a machine, by restating its own unchanged node with that id (PROTOCOL §12). An owner may do that with the id. A member or an observer may do it only within an hour of the demotion that took owner away, only for a code their own node minted (the request carries the code; the authority checks it and does not put it on the chain or log it), and at most 8 times for that demotion. Any other request from a member or an observer is refused (`not_owner`), which is what a pre.12 authority does for all of them; the refusal does not stall. The appended `team.node` is folded like any other, including on a pre.12 replica. This machine rebuilds a queued restate from its current node record before sending it, after the authority's own record in a sync that is already running has been pulled (not every other machine's record), and only once that pull has caught up; in any round where this machine is not caught up with the authority (its version vector call timed out or was refused, the pull did not finish, or no round was running) the restate stays queued, and the other queued requests are still sent. The authority refuses a restate whose invite id the chain already records as used (an id noted only locally does not count), so a rebuilt request cannot mark the same code twice; an identical signed request still returns the entry already written. The restate is dropped when the record is gone or is no longer the same login and key. A member or an observer who knows only the id cannot burn the code; a code for a handle that has ever been removed is refused unless it was minted after the latest removal (`invite_predates_removal`), whatever the handle's member is now (removed, or re-invited since): the code carries the issuer's signed roster chain position, which must be past the removing entry's chain index. That position is the only removal test (no clock is compared, so an authority clock that ran ahead when it removed someone can't block their later re-invite). So a removed member can't come back, with their old role or their old machine, on a code they held before, not after a re-invite and not through clock skew; the code and its secret are never logged (only the chain id), and no error echoes a pasted code. Anyone holding an unused code can join as its handle once, which is the point of it: send it privately |
 | Relays (Walkie Direct) | n0's public relays by default, or the ones in `config.json` `relays` | a relay forwards QUIC packets it can't read: every connection is end-to-end encrypted and authenticated between the two node keys (TLS 1.3 inside QUIC), so a relay sees only ciphertext, packet sizes and timing, and which endpoint ids talk to which. The n0 preset also publishes each endpoint's relay URL (not its IP addresses: iroh's publisher defaults to the relay only) to n0's address-lookup service, keyed by endpoint id and publicly resolvable by anyone who has that id, so peers can dial by key alone; n0 sees the source IP addresses of those publishes, of lookups and of relay connections; set your own `relays` to keep relay traffic on your infrastructure (address lookup still uses n0's service in v0.2) |
 | Event ingest (push or pull, relayed) | a member's daemon, possibly relaying others' events | ed25519 signature and header signature by the origin node (stubs too), author ↔ node ↔ login binding, roster changes only from the single roster authority's chain (each entry carrying the authority's signed watermark; events are judged by the roster in force when the authority first saw them), restricted-channel membership, answer ↔ ask addressee binding (PROTOCOL §2) |
-| Roster requests (`/peer/v1/roster-request`) | an admitted member's daemon asking the authority for a roster change | peer gate + requester node signature (canonical base64 only); the authority re-checks the requester's role in the current roster and every roster rule before appending, and an owner's `team.node` request may bind a key only to the owner's own login; the appended event carries the hash of the signed payload (independent of the signature's encoding), so a replay (also after a transfer, or re-encoded) returns the original entry or is refused |
+| Roster requests (`/peer/v1/roster-request`) | an admitted member's daemon asking the authority for a roster change | peer gate + requester node signature (canonical base64 only); the authority re-checks the requester's role in the current roster and every roster rule before appending. A member or an observer may restate their own unchanged node to mark one invite used only within an hour of being demoted from owner, only for a code that same node minted (the code is on the request, checked, and neither chained nor logged), and at most 8 times for that demotion; anything else from them is `not_owner`, as a pre.12 authority answers every such request. An owner's `team.node` request may bind a key only to the owner's own login; the appended event carries the hash of the signed payload (independent of the signature's encoding), so a replay (also after a transfer, or re-encoded) returns the original entry or is refused. A different signing of an invite the chain already records as used is refused (`invite_used`) and is not appended again; an id this machine has only retired locally is not that set |
 | Peer responses (our client) | a member's daemon answering our calls | streaming byte caps (1 MB JSON, 25 MB blobs), zod shape validation, depth limit |
 | Unix socket | processes of the same OS user | file mode 0600 in a 0700 directory; an unmarked request is the owner's own process and has the owner's authority |
 | Loopback dashboard port | any local process (including other OS users' and containers' forwarded ports on 127.0.0.1), and any website in a browser | the durable token as a bearer (scripts), or a dashboard **session** in the `X-Walkie-Session` header; **no cookie authorizes anything**. Exact Host check (DNS rebinding), Origin check on mutations (CSRF), CSP `default-src 'self'`, and a cross-origin page can't send the header (it needs a CORS preflight that is never granted). The session is obtained through `GET /auth?nonce=…`: a 60 s single-use nonce that `walkie dashboard` mints over the unix socket (`POST /v1/auth/nonce`, refused on loopback); `/auth` hands the value to the page in the redirect's URL fragment (never sent to a server), and the page keeps it in its own origin's `localStorage`, which other ports can't read. The session is not the token: 256 random bits kept only as a hash (in memory, and in the store's `meta` so a daemon restart or upgrade doesn't sign dashboards out), bound to its Host, 12 h idle / 7 days absolute across restarts, revocable (`POST /auth/logout`, `walkie dashboard logout`, `walkie token rotate`; each also clears the saved hashes), accepted only in that header and only on the dashboard's routes (PROTOCOL §5), never as a bearer or cookie. The durable token is never set as a cookie; old cookies are cleared |
@@ -33,17 +33,18 @@ important — each teammate's **agents**, which hold real credentials and can ac
 | Rented machines (RENT-2) | the renting team's agents, running as seat users on a VM in our provider account | boots from user-data that installs the **pinned, signed** release through the official installer and joins with a single-use **1-hour** add-machine code (the site passes it to the provider and never stores or logs it); bootstrap passes `--seat-users`, so rentals retain seat users (never `--same-user`); the instance metadata endpoint (which re-serves the user-data) is blocked for every user but root and the user-data copies are deleted after the install; the bootstrap sudo rule is removed; no SSH keys, no provider agent, no logins of its own (seats lease the team's accounts only through the existing vault lease path when the team turns the pool on). The owner's daemon revokes the node when the rental ends. Stop = terminate + wipe (disks deleted with the droplet) |
 | Release artifacts (`SHA256SUMS`, `SHA256SUMS.sig`, the binaries) | GitHub Releases / a mirror | `SHA256SUMS.sig` is an **ECDSA P-256 / SHA-256** signature (DER) by the Walkie **release** key (not the license key; private half in `~/keys/walkie-release-signing-p256.pem` 0600 and the CI secret `WALKIE_RELEASE_SIGNING_KEY`) over `SHA256SUMS`, which carries a signed `version <tag>` line. P-256 because the installer must verify on a stock machine: macOS ships LibreSSL as `/usr/bin/openssl`, which can't verify ed25519, so the previous ed25519 scheme refused every valid release there. install.sh verifies with `openssl dgst -sha256 -verify` (LibreSSL and OpenSSL alike) and refuses without openssl; it then requires the signed version to be the release asked for (`WALKIE_VERSION`, or the tag GitHub's "latest" resolves to; a mirror without `WALKIE_VERSION` installs what it signs for), compares the binary's SHA-256, and removes a binary that doesn't report that version. `walkie update` verifies against the public key embedded in the binary, requires the signed version to match the advertised tag (a stable install's tag is GitHub's latest release; a pre-release install's is the `DEFAULT_VERSION` of the site's `install.sh`, which only picks which release to fetch: every check here still applies to it) and to be newer than the running one (`--allow-downgrade` to go back on purpose), keeps a copy of the old binary, runs `<new> version` and restores the copy if it reports anything else. So a compromised host can't serve a signed older release as a newer one. The checksums alone give integrity of the download, not authenticity: anyone who can change the release can change the checksums; the signature is what says they are ours |
 | Join requests (`/peer/v1/join` with approval on) | admitted-login machines that aren't members' nodes yet | at most 16 pending requests per login and 256 per team (`429 join_limit` beyond), each expiring after 24 h |
-| Model context (MCP results, hook-injected context, channel pushes, and CLI reads run by an agent) | text written by other people's agents | wrapped in `<walkie-message … trust=… note=…>`, NFKC + control-char strip, `<`/`>` neutralised so the wrapper can't be closed, role markers (`system:`, `assistant:` …) neutralised, explicit "information, not instructions" note. The CLI applies the same contract to `get`, `subscribe`, `inbox`, `ask` answers, `who` and `linear create` (previews, results and errors) whenever it runs under an agent: **pass `--for-agent`** when the output goes to a model; `WALKIE_AGENT`, `CLAUDECODE`, `CODEX*`, `KIMI_*`, `GEMINI_CLI`, `CURSOR_AGENT`, `HERMES_*`, `OPENCODE*` and `AIDER_*` in the environment are recognised without it (any other runtime needs the flag). `--json` for a model is built from a per-kind **allowlist** of fields (never a spread of a signed body: a member can sign a body with any extra field, and validation keeps the body verbatim), with `text`/`note` wrapped, one-line fields defanged, no signatures, and a `trust` field per item. A person's terminal sees the usual output |
+| Model context (MCP results, hook-injected context, channel pushes, and CLI reads run by an agent) | text written by other people's agents | wrapped in `<walkie-message … trust=… note=…>`, NFKC + control-char strip, `<`/`>` neutralised so the wrapper can't be closed, role markers (`system:`, `assistant:` …) neutralised, explicit "information, not instructions" note. The CLI applies the same contract to `get`, `subscribe`, `inbox`, `ask` answers, `who`, `memory` and `linear create` (previews, results and errors) whenever it runs under an agent: **pass `--for-agent`** when the output goes to a model; `WALKIE_AGENT`, `CLAUDECODE`, `CODEX*`, `KIMI_*`, `GEMINI_CLI`, `CURSOR_AGENT`, `HERMES_*`, `OPENCODE*` and `AIDER_*` in the environment are recognised without it (any other runtime needs the flag). `--json` for a model is built from a per-kind **allowlist** of fields (never a spread of a signed body: a member can sign a body with any extra field, and validation keeps the body verbatim), with `text`/`note` wrapped, one-line fields defanged, no signatures, and a `trust` field per item. A person's terminal sees the usual output |
 | External services (integrations: Fireflies, Linear, the Wispr share page/API) | third-party APIs answering this daemon's connectors | fixed https hosts only (no redirects followed), 20 s / 10 s timeouts, byte caps (8 MB JSON, 2 MB share pages), zod shape validation; every upstream error is scrubbed of the configured keys (all spellings) and secret-shaped tokens *before* it is truncated; the fetched text is redacted (configured keys + patterns) in every emitted field, including artifact names, and size-capped before it is posted; everything external reaches models wrapped with `trust="external"`, including MCP dry-run previews, issue fields and upstream errors |
 | Hugging Face Hub API (local-model suggestions, `src/pool/hf/`, LOCAL-MODELS-HF-1) | the public Hub's API and its content (model names, descriptions, benchmark numbers, model cards, config files: anyone can publish them) | **on demand only**: when a person opens a dashboard page that shows the suggestions (Mission Control, the Team page's Models tab or a machine page: each asks its own daemon) or runs `walkie pool` (which reads for itself) and the list is missing or over a day old, never on a timer, never in the background; the browser never contacts Hugging Face. Plain `GET`s to `https://huggingface.co` only (same-origin redirects, such as the Hub's `resolve/main/<file>` one, are followed by hand up to three hops, a redirect to any other origin is refused), **no login, token or cookie, a fixed User-Agent, and nothing about the team, its members or their machines**; 6 requests at once, 15 s each, 120 s and 450 requests per refresh (406 measured), a 15-minute memory of a failure, a manual refresh at least a minute after the previous read ended, one read at a time across processes (a lock file in the pool folder), and a stop before the Hub's anonymous request windows run out (its `ratelimit` header); body caps (4 MiB lists, 2 MiB per-repository file listings, 1 MiB records, 64 KiB organisation overviews, 256 KiB configs and cards) and zod validation of every JSON response (a `config.json` and a model card are not JSON-validated: their numbers are read by hand within fixed bounds, and a model whose numbers fall outside them is skipped). Everything from the Hub is untrusted text: repository ids and names pass strict character allow-lists, a maker's name is cut to plain characters, links are built by Walkie from validated ids and the catalog schema allows model pages on `huggingface.co` only, model cards are only searched for numbers, a catalog read back from the cache file is re-validated, and the output for a model is wrapped like other external text. Only the maker and four known quantizers (unsloth, bartowski, lmstudio-community, ggml-org) size a model, a maker must be an organisation with 1,000 followers, and benchmark results are self-reported (`verified` is false on every one seen), so ranking is advice. **A live suggestion never starts a download or a run**: `walkie pool run|serve|prepare` still take only the pinned, sha256-checked list (`src/pool/gguf.json`). The cache file `<home>/pool/hf-catalog.json` is 0600 in a 0700 folder, written atomically, and holds no secret. |
 | Local files read by integrations (Wispr Flow meeting store, key files) | the user's own disk | the Wispr directory is polled read-only (20 MB per transcript file); a `key_path` is opened (non-blocking) and checked on the descriptor (`fstat`): a regular file owned by the daemon's user with no group/other permission bits (`mode & 077 == 0`), at most 4 KB, one token, and no ACL entry granting anyone but the owner access (macOS: `ls -le`, refused with the `chmod -N` fix; Linux: `getfacl` when installed, `setfacl -b`; the ACL tools are run on the **real path** of the opened descriptor, symlinks resolved and the inode re-checked, so a link can't point the check at a clean file; the path is passed as an argument, never through a shell; the verdict is cached per inode + ctime, so any chmod/ACL change is re-checked); anything else is refused with the fix, and the file's content never appears in errors |
 | Local secrets (`~/.walkie/secrets/<connector>`, `key_path` files) | any process of the same OS user | 0600 files in a 0700 directory (checked like a `key_path` on every read); never replicated, logged, or returned by any API (status shows only the key's source and path); one central scrubber (`src/integrations/scrub.ts`) removes every configured key and secret-shaped strings from errors, route responses (success bodies too, patterns included even with no configured key), MCP results, log lines and emitted events. Every operation captures the credentials it used (its key as read at the start, the configured keys, and the keys used recently on this daemon) and passes them to every scrubber of its outputs, so a key file rotated while a request is in flight is still scrubbed from what that request produces; external fields (Linear issues, Fireflies transcripts, Wispr notes and speaker names) are scrubbed in every string as soon as they are parsed, before they are cached, formatted, truncated or turned into a filename |
+| Personal memory (`~/.walkie/memory.db`) | any process of the same OS user | mode 0600 in a 0700 directory (an existing directory with group or other bits is changed to 0700; that directory only, parents are not, a symlink is refused), separate from `walkie.db`, journal mode DELETE, created on first use. A 3 second busy timeout is set before the journal mode, so a brief lock does not fail another open. When the full-text index is already in the file, opening uses it with a read, including while another connection holds a write lock. A lock that stops the index from being created the first time leaves that connection on a substring search until a later write, which updates the index when the table is there. `walkie memory` and the local routes `GET /v1/memory`, `POST /v1/memory` and `POST /v1/memory/retract`. This person and their own agents can read and write. A scheduled WalkieTalkie turn cannot read or write (it can still post, so a read would copy notes into the team). A dashboard session is not on the allow-list for these routes, and a dashboard read or write is refused even if one reached the handler. Not on the phone, not a remote-admin command, never replicated, never an event, so older peers are unaffected. Secrets are redacted on write and a join code is refused. At most 5000 active notes and 16 MiB of UTF-8 bytes of their stored text and source lists. An unpaired surrogate is stored as U+FFFD and counted as those bytes. A further write is `409` and tells the person to retract old notes. A retracted note stays in the file with its text and sources cleared, and those bytes are overwritten in the file (`PRAGMA secure_delete`, and the FTS5 secure-delete option when this SQLite has it). The FTS5 secure-delete option needs SQLite 3.42.0, and turning it on moves the FTS index to format version 5, which FTS5 older than 3.42 cannot read or write; memory.db stays on one machine. The note text and its source string are not left in the file. An older SQLite that rejects either setting still opens and still clears the columns. The file is not compacted. The note stops counting toward that cap, leaves search, and is shown as (retracted). A note retracted by an older build keeps its text until it is retracted again. A search containing NUL is refused. `--json` under an agent defangs each source and includes `trust` on each note. Mode 0600 does not stop another process of the same OS user from reading the file or calling the socket |
 | Phone link: the relay (`walkie-relay`, WALKIE-PWA-1) | anyone on the internet, and the relay's operator | end-to-end encryption between the phone and the daemon (P-256 ECDH + PSK handshake, AES-256-GCM with strict counters, docs/PWA.md): the relay forwards frames it can't read or forge, and a frame it alters, replays, drops or reorders ends the session. A room is claimed only by the holder of its key (room id = hash of the key). The daemon connects out only while a phone is paired or a pairing is open; no listener is added on the computer. The relay limits sockets and new connections per address (IPv6 by /64), messages and bytes per socket (computer sockets 16×), frame size (1 MiB), phones per room (4) and per computer connection (64); it stores and logs nothing about frames, rooms or addresses. What it does see: room ids, handshake device ids, connection times, sizes and addresses (the phone's IP, the computer's IP). The daemon treats it as hostile: controls are shape-checked and budgeted, and a violation drops the link (threat 14) |
 | Phone link: a paired phone | the owner's phone (or whoever holds it) | a device key (256-bit PSK; on the phone a non-extractable CryptoKey in IndexedDB, on the daemon `~/.walkie/mobile/devices.json` 0600) proves the phone in every handshake, and the daemon drops a link that hasn't sent a valid encrypted frame within 10 s; requests run as the person (never an agent) on an allow-list: Mission Control reads, `post` (existing channels, no `raw`, no `artifacts`), `answer`, and the live stream; answers are projected for the phone (posts, asks and answers only; no plan, license, account, login, address or signature). Per device, across all its connections: 20 req/s, 8 in flight, 2 streams, 1 MiB/s of responses, 256 KB per response, 100 events per list, and its own write bucket. Ends 30 days unused, 90 days after pairing, on revocation or eviction (open links end at once), and when this machine stops belonging to a member |
 | Phone link: pairing | whoever sees the QR code or the code under it within 10 minutes | 128-bit secret in the URL **fragment** (no server receives it); the pairing's relay room is claimed with a random key only the daemon holds and the relay never hands a held room to a second claimant, so a code lets its holder pair a phone but never stand in for the computer; one use; five unregistered attempts void it; `walkie mobile pair` refuses to run under an agent and the route refuses `X-Walkie-Agent` |
 | The `claude` summarizer (Wispr, opt-in) | the user's own CLI, fed an external transcript | the transcript is redacted (configured keys + patterns) before it is written to the CLI's stdin; the CLI runs in its own process group with no tools or MCP servers; stdout is capped at 64 KB while streaming; on timeout, cap, failure or exit the whole group is SIGKILLed and reaped |
 | The orchestrator (PROTOCOL §9, opt-in: `walkie orchestrator start`) | the person's own `claude` CLI with tools on this machine, fed the person's messages; shell-capable access runs as the dedicated `walkie-talkie` OS user | local only: the conversation is stored in this machine's database and shown only on its dashboard and CLI; never an event, never replicated, never served to a peer or a paired phone (no route, and its stream never carries it); only the person drives its conversation; only a person can grant shell access or elevated permissions; WSL leadership needs a local person's opt-in and all other owner machines offline; each queued message is authorised again when it runs (signed out, past its session's deadline or token rotated: refused); replies are redacted and capped at 256 KiB; its team-wide status is generic; the child excludes inherited Claude setting sources, never inherits `ANTHROPIC_*` or a parent session's `CLAUDE_CODE_*` (subscription, not API billing), and its stderr is scrubbed before anything is cut, logged or shown; a separate monitor checks wall and monotonic lease deadlines and invokes the existing `talkie-destroy` sudo verb if the daemon disappears; the root helper checks its ownership record before destroying the dedicated uid; long turns using a locally read token with a known expiry are interrupted and resumed with a refreshed login before expiry |
-| Remote seats (PROTOCOL §11, opt-in per machine: `walkie seats enable`) | launchers (the team's owners and their agents by default) starting `claude`/`codex` with tools on the host, as the host's OS user by default on company machines | nothing runs on a machine whose person hasn't opted in locally (`config.json`, people only; `deny` stops every seat); the host judges each request itself: signed launch/stop posts in `seats-<node>`, the author an allowed launcher at request time (`@h` covers h and their agents on admitted machines; `@h/<machine>` limits them to that machine; an exact agent entry covers only that agent), fresh (10 min), judged once, within the launcher's cap, the host's `max` and 10 launches/min; the channel must be private to the host's person and the launchers' people (the authority lets only the host's person shape it, owners included); the prompt is stdin data, never argv or a shell; the child drops API keys and parent-session markers, runs in its own process group with a wall-clock limit, and its output is scrubbed before it is posted |
+| Remote seats (PROTOCOL §11, opt-in per machine: `walkie seats enable`) | launchers (the team's owners and their agents by default) starting `claude`/`codex` with tools on the host, as the host's OS user by default on company machines | nothing runs on a machine whose person hasn't opted in locally (`config.json`, people only; `deny` stops every seat); the host judges each request itself: signed launch/stop posts in `seats-<node>`, the author an allowed launcher at request time (`@h` covers h and their agents on admitted machines; `@h/<machine>` limits them to that machine; an exact agent entry covers only that agent), fresh (10 min), judged once, within the launcher's cap, the host's `max` and 10 launches/min; the channel must be private to the host's person and the launchers' people (the authority lets only the host's person shape it, owners included); the prompt is stdin data, never argv or a shell; the child drops API keys and parent-session markers, runs in its own process group with a wall-clock limit, and its output is scrubbed before it is posted. An optional host tool allow-list (`seats.tools`) is per-launch flags (Claude `--tools` as the ceiling, Grok `--tools`/`--deny`) or a refusal when that runtime has no such flags. It is not an OS network fence |
 
 ## Threats and mitigations
 
@@ -128,7 +129,7 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    A later grant (a re-invite, a widened channel) never re-validates what the authority had seen before it.
    Re-inviting the login does not re-arm old machines: a node revoked at chain position q stays revoked unless a
    **later** admission re-arms it (each machine must `walkie join` again). Data they already synced stays on their
-   machine (inherent to any replicated system).
+   machine (inherent to any replicated system). `walkie team offboard --plan` only reads, and it names only restricted channels the caller can see. `--apply` suspends them to observer and then uses that same removal. A follower reads the authority's roster before it decides. Offboard decides from the roster it has just caught up. A removal that arrives after that read can still be followed by offboard's observer write until the authority checks a precondition (tracked on WALK-109). Offboard then removes the person again, and if that removal fails the 409 tells the owner to re-run. Before the first roster write it waits for a flush that is already sending (bounded by one roster request and one catch-up pull), then drops this machine's queued role requests for that login (a role request queued on another owner's machine is not dropped). The flush re-reads each row in a store transaction immediately before the send and skips a deleted row. A send that has already passed that re-read is not cancelled and can still deliver the row. When the wait ends while a flush is still sending that person's row, the reply says a roster send for them was still in flight and to re-run `--plan` to confirm. A flush that starts after the drop does not see that row. It does not leave a role request queued if the roster authority is down. If that read fails before a send, the error says they were not changed. A local roster that already shows them removed is not confirmation when that read did not reach the authority: `409 offboard_unreachable`, nothing was signed or queued, and the error says their removal is not confirmed. A send that fails says the change may or may not have been applied and that re-running is safe. The plan says apply will be refused, and marks no step as going to happen, when that person owns the roster-authority machine (`walkie team authority` moves it first). When the step posts the receipt and removes no key line (already gone or never installed), it says no key line for that person was installed here. It does not erase synced data and does not apply a memory or thread policy. It does not delete guest tokens: a token issued on their own machine stops authenticating once that machine applies the removal (its guest gate requires that machine's own current member), and tokens on other machines are not touched. From this machine it removes the SSH key of the owner who minted this machine's grant, never the caller's own key, and retries the team receipt if that key was denied locally but the receipt was never posted. SSH grants on other machines are not revoked from here. A seat that is already running on someone else's machine is not stopped. A seat paused there is stopped if that machine tries to resume it after the launcher was removed, made an observer, or had their machine revoked. A seat only queued there is not started. Seats on their own machines stop when that machine applies the change (observer, or its node revoked). Cards in a private project the caller cannot see are neither listed nor reassigned; a private project channel is kept to the team's owners.
 5. **Restricted channel leak**: events are never served or pushed to non-members (recipients and payloads are decided
    at send time), who get signed-header stubs so replication stays contiguous. A channel update that leaves
    `members` out keeps the list (the authority signs it explicitly); only `public: true` opens a channel. Local API reads are filtered too. Blob
@@ -421,6 +422,21 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    using a different socket refuses shell access while the first owns the dedicated uid. An account from an older
    helper with no daemon owner requires `walkie talkie cleanup --repair`; install the current helper with
    `walkie seats setup-user --apply` before enabling shell access.
+   The first claim of that dedicated user used to trust the socket hash the caller sent, so any daemon of the same
+   person that held a socket of its own could take the user. When `/usr/local/libexec/walkie/seat-instance` is
+   present, the helper accepts the claim only from the nearest process of that person that holds the recorded
+   socket's listening fd and its lock; a hash of a different socket is refused, and a record that is missing fields,
+   not root's alone, or names another uid fails the claim closed. A same-user process between sudo and the daemon
+   does not stand in for a daemon further up. On macOS that check accepts one or more unix sockets whose NAME is
+   the registered path: lsof names the listening socket and each accepted connection that way (no inode), and a
+   connected peer is `->0x` plus a kernel address, never the path, so a connected client does not hide the daemon.
+   On Linux only a socket the kernel reports as listening counts (its reply for the process's own socket inodes,
+   as for the seat helper below; the text of `/proc/net/unix` only on a kernel that cannot answer that query),
+   including a path of 108 bytes or more, which the kernel lists as `/proc/self/fd/<n>/<name>` or
+   `/proc/<pid>/fd/<n>/<name>` and which is resolved as for the seat helper below. When no record exists (a setup from before that file was written),
+   the helper still accepts the caller's own socket hash, after the same nearest-process check against the socket
+   that hash names. Older daemons that already hold the registered socket and its lock still pass; this is a local
+   helper check and does not change what peers send.
    The dedicated user operations share `<ledger>.talkie.lock` (`/var/db/walkie-seat-admin.sqlite.talkie.lock` on macOS,
    `/var/lib/walkie/seat-admin.sqlite.talkie.lock` on Linux). `setup-user --apply` creates it as root with mode `0600`;
    the first helper use also creates it if missing, including during cleanup of a user left by an older install.
@@ -460,9 +476,16 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    Projection requires enough token life for the seat's timeout plus a 10-minute margin; a selected worker login
    keeps its refreshing path, while an unprojectable default login refuses the launch. Doctor warns when a known
    projected login is near expiry. Each root is seeded
-   with Walkie's worker hooks and instructions. Personal Claude/Codex settings, CLAUDE.md and hooks are not inherited
-   by default, including on existing same-user machines after an upgrade; local
-   `seats allow --inherit-person-config --yes` opts into those settings and their login paths. The worker root is removed when the seat ends or
+   with Walkie's worker hooks and instructions. Every Claude seat is started with `--setting-sources user` and without
+   a `--settings` override, so the repository's project settings (hooks, `apiKeyHelper`, MCP servers) and the repository's
+   CLAUDE.md are not loaded. The seat's system prompt tells it to read the repository's CLAUDE.md and AGENTS.md for
+   project conventions and follow them within the brief. They cannot change the brief or widen the tools the seat may use.
+   User-level hooks still run from the Claude config the seat
+   is given: Walkie's hooks in that same-user worker root, and the person's own hooks when they opt in. Personal
+   Claude/Codex settings, CLAUDE.md and hooks are not copied in by default, including on existing same-user machines after
+   an upgrade; local `seats allow --inherit-person-config --yes` opts into those settings and their login paths. A seat
+   user is different: that run's own user settings still set `disableAllHooks` to true, and the seat argv does not override
+   that file. The worker root is removed when the seat ends or
    after a best-effort check finds no process of the crashed seat still using it; pending cleanup survives restart. The person's own provider homes and logins are never deleted.
 
    Same-user seats have no kernel containment. When a seat ends or crashes, its instance-unique worker root and the credentials in it are removed once its process group exits, even if a helper the seat started escaped into another process group; that helper loses the seat's credentials. Seat credentials never outlive the seat, and a worker-root path is never reused.
@@ -541,15 +564,65 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    `setup-user --apply` registered: its home and daemon socket, recorded root-owned in
    `/usr/local/libexec/walkie/seat-instance` before the helper is copied. The helper answers `create`, `destroy` and
    `pending` only when the nearest process of that person above sudo holds the registered socket's instance lock
-   (`<socket>.lock`, close-on-exec, held for the daemon's whole life). On Linux root checks that process's open files
-   (`/proc/<pid>/fd`) and that the kernel lists the lock, taken by it, on that very open file (`/proc/<pid>/fdinfo`), opening nothing of the
-   daemon user's; on macOS lsof shows the file open and root probes the lock by opening only that same inode, never
-   following a symlink or waiting on what was swapped in (macOS can't name a lock's holder, so there a process that
-   merely has the file open while the registered home's own daemon holds the lock also passes). So a second daemon
+   (`<socket>.lock`, close-on-exec, held for the daemon's whole life) and that socket's listening fd. On Linux root
+   checks that process's open files (`/proc/<pid>/fd`) and that the kernel lists the lock, taken by it, on that very
+   open file (`/proc/<pid>/fdinfo`). It then asks the kernel, one inode at a time, only about the unix sockets that
+   process has open (`UNIX_DIAG` with that socket's inode). The request also asks for the socket's owning uid
+   (`UDIAG_SHOW_UID`). Socket inodes are 32-bit and wrap, so a lookup with no cookie can return another user's
+   socket that reused the number. When the reply carries a uid it has to be the calling process's uid, and a
+   mismatch is "busy, ask again". A kernel that does not send the uid is checked as before. The reply's state and
+   bind path are fields, not a line of the text table, so a newline in some other process's bind path cannot forge a
+   listening record, and how many sockets anyone else holds does not change the cost or the answer. A decoy whose
+   name is `/proc/self/fd/<n>/walkie.sock` does not count unless this process has that socket open.
+   **A kernel with no unix diag handler** answers `ENOENT` for every inode, the same code it gives for an inode that
+   is not a unix socket. So before trusting any answer the helper opens a unix socket of its own (a name the kernel
+   picks, no file) and asks about that inode. `ENOENT`, `EINVAL` or `EOPNOTSUPP` on it means the query is
+   unavailable, and `/proc/net/unix` is read instead, only for this process's socket inodes. A genuine daemon with a
+   short socket path is accepted that way. The text cannot decide every case, and what it cannot decide is "busy, ask
+   again", never "another Walkie": the table is split on newlines, so a bind path that contains one makes a second
+   line, and the same inode on two lines is undecidable; a path that contains a carriage return is skipped; a unix
+   line that names an inode which `/proc/net/tcp`, `tcp6`, `udp` or `udp6` also lists is undecidable (those tables
+   are world-readable, so a forged line can name one of the process's own TCP or UDP sockets, and that inode is on no
+   other unix line; the daemon's real TCP and UDP sockets have no unix line and do not matter); and a path of 108
+   bytes or more whose directory fd is closed has no file identity in the text, so a listener of that kind that is
+   named like a socket whose lock the process holds is undecidable too (below; a long listener with any other name is
+   simply not the registered socket). The
+   fallback does not look at raw, packet or netlink sockets, or at another network namespace's: a forged line that
+   names one of those is accepted as before. The caller is a same-user process by construction, and this check guards
+   against mistakes, not against the person. The path bytes are not collapsed, so two spaces in a row still
+   match. A path of 108 bytes or more is not listed as itself: the kernel records `/proc/self/fd/<n>/<name>`
+   or `/proc/<pid>/fd/<n>/<name>` (Bun binds a long socket that way, then closes `<n>`). The helper does not follow
+   that string, which would be its own `/proc/self`. It resolves fd `<n>` of the calling process: the directory
+   `readlink` of `/proc/<pid>/fd/<n>` joined with `<name>` must be the registered socket. When that fd is already
+   closed, or has been reused onto something other than that directory, the listening inode counts only when `<name>`
+   is the socket's name and the kernel's record of that socket's file is the registered socket file: the inode, and
+   the device of the mount that holds the path (`/proc/self/mountinfo`), which is the device the kernel reports.
+   When several mounts share a mount point, the last matching line is the one on top and is the one used.
+   `stat`'s device is not used there; on a btrfs subvolume the two differ. That file record exists only in the diag
+   reply. In the text-table fallback the directory fd is the only way to name a path of 108 bytes or more, so when
+   that fd is already closed, or no longer leads to a socket file of that name, the check is "busy, ask again", not
+   "another Walkie"; the runtime closes that fd after binding, so on such a kernel a Walkie whose socket path is 108
+   bytes or more stays busy (keep its home path shorter there). In the fallback any local user who can read the
+   daemon's listener inode can also hold a forged line open and keep the check busy for that long. A file inode that does not fit in 32 bits
+   is not accepted once the directory fd is closed. A listener bound the same way in another directory does not match,
+   except the readlink residual below. A bind recorded as `/proc/<pid>/cwd/…` is ignored: that string is not the
+   socket's directory, and following it would use whatever directory that process had moved to. Being unable to ask the kernel is "busy, ask again", not "another Walkie".
+   On macOS lsof shows the lock file open and the bound socket path in the unix socket's NAME
+   column. A connected peer is `->0x` plus a kernel address, never the path, so a path-named socket belongs to the
+   process that bound it; lsof also names each accepted connection with that path and no inode, and one or more of
+   those counts. Linux does not use lsof for this socket: lsof 4.95 cuts a name at the first space. It uses the same
+   kernel reply, and an accepted connection is that path with a state that is not listening, so one client does not
+   hide the daemon. On Linux, other holders of the lock file are read from `/proc/<pid>/fd`, not from `lsof -u`:
+   lsof reads every unix socket on the machine and the check's time limit runs out once there are hundreds of
+   thousands. A holder counts when its fd is that lock inode, or is named `<socket>.lock` (a lock file that was
+   unlinked or replaced stays open on its first daemon as `<socket>.lock (deleted)`). macOS still uses lsof. Root probes the lock by opening only that
+   same inode, never following a symlink or waiting on what was swapped in. macOS can't name a lock's holder, so
+   the listening socket is what stops a process that merely has the lock file open while the registered daemon
+   holds the lock. So a second daemon
    of the same person (a smoke test, another `HOME` or `WALKIE_HOME`, a copied `~/.walkie`, even one started by the
    registered daemon's own seat or shell) gets nothing listed and removes nothing; such a daemon also never asks,
    and says the seat users are managed by another Walkie. A check that fails for a passing reason (ps or lsof timing
-   out) is answered "busy, ask again", not "another Walkie". Before WALK-103 such a daemon listed the person's seat
+   out, or the kernel socket query failing) is answered "busy, ask again", not "another Walkie". Before WALK-103 such a daemon listed the person's seat
    users and destroyed every one, live seats included, whenever sudo let it through (passwordless sudo, or a cached
    sudo timestamp in the same terminal). Ids the registered daemon holds but didn't make itself (found only in the
    helper's list, or in a `seats.json` it didn't write) are removed with `destroy <n> idle`, which the helper refuses
@@ -559,10 +632,37 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    no check of its own; the daemon then removes only the seat users it made itself since the update (each seat user
    in `seats.json` is stamped with the socket of the daemon that made it) and leaves every other one, and every
    process of it, alone: one named in a copied `seats.json` or one from before the stamps, as well as ids found only
-   in the helper's list; the Seats view and the doctor list them. What stays open until then: an older Walkie
+   in the helper's list; the Seats view and the doctor list them. An unstamped running seat from that first start is
+   kept in `seats.json` (marked foreign) and is neither destroyed nor killed. Its card stays up until this Walkie is
+   the registered instance and that seat user is gone or idle; then the daemon posts the seat `failed` once ("ended
+   after an upgrade; its machine restarted") and ends the card. A restart that still finds the entry does not post
+   again when that failed or other terminal state is already in the local store. A card already offline (its agent
+   row says offline; an older offline status does not count while that row says the agent is still up) is not ended
+   again; if only the state landed, the card is ended once, and the entry is dropped. The log
+   `seats_leftover_end_skipped` is only the already-offline case; a stored state whose card is still up is
+   `seats_leftover_end_retry` until that end lands. If the helper's answer is exactly `<user>: never made by this
+   helper: not destroyed`, with no `left` list and no `code`, the idle destroy is not retried and the entry is
+   dropped, including when the card was already ended. Any other failure is retried and the user stays quarantined.
+   A seat a pre.12 daemon already removed from `seats.json` is not ended by a later start. Its old card stays listed
+   as running and does not use a seat slot, and no command in this build clears it. A future release may clear it.
+   A daemon the record does not name never posts that,
+   so a copy of `~/.walkie` cannot end the original's live seat. What stays open until then: an older Walkie
    started with another home has no such rule and could still remove them through that helper. This guards against
    mistakes, not against the person: their own uid can still stop the registered daemon and start another on its
-   socket. **What that protects**, with the person's home closed to other users (`chmod 700 ~`, required
+   socket. On macOS that uid can also pass without stopping it. A same-user process that opens the lock, unlinks
+   the registered socket and binds its own listener at that path is still accepted: lsof only shows the lock open
+   and the path bound, and the lock probe only checks that someone holds it. The same is true of a process that
+   bound that path before the daemon started and then unlinked its own socket file: it keeps a path-named fd, and
+   while it holds the lock the check passes. The same is true of a process that only has the lock file open while
+   the genuine daemon holds the flock, if that process also has a path-named socket at the registered path: lsof
+   cannot name the flock's holder, and the check only requires the lock file to be open, the lock to be held by
+   someone, and a path-named socket. That is the same uid, and it is out of scope. Linux refuses the
+   unlink-and-rebind, because fdinfo names the flock's holder and the new listener is not that holder; there is no
+   separate unlink check, and the kernel record of an unlinked socket is that unlinked file, not the daemon's new
+   socket. Linux still accepts one same-user case: a process that bound in another directory through a
+   `/proc/<pid>/fd/<n>/<name>` path, then replaced fd `<n>` with the registered socket's directory. `readlink` of
+   that fd is then the registered directory, and the helper trusts it. The socket was not bound at the registered path.
+   **What that protects**, with the person's home closed to other users (`chmod 700 ~`, required
    unless `--accept-readable-home`): the person's Walkie (the daemon's socket and `local.token` are in its `0700` home:
    before seat users, a seat connected to that socket by path and acted as the person, Opus r2), the person's home and
    files in it, **other seats** (their homes, tokens and processes belong to other users, Codex r3), **later seats**
@@ -718,6 +818,49 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    credential directories. Credential-shaped Grok output stops the seat before that output is posted, with an audit
    event. These checks are defense in depth: a same-user seat still has the person's file access and can evade tool
    rules through other paths or transformations. Only trusted launchers should be allowed for same-user seats.
+   **Tool allow-list** (WALK-76 Phase 0, `seats.tools`). The host person stores one allow list, one deny list, or
+   both. Names are plain tool names (`Read`, `Grep`, `Glob`). A pattern is not a supported tool name, and `default`
+   is rejected on the allow list because Claude's `--tools=default` means every tool. A name with a space is
+   rejected because Claude splits it into two tools. Claude's `Read` and `Grep` map to Grok's `read_file` and `grep`.
+   `Glob`, `LS` and `ListDir` map to `list_dir`, which is narrower than Claude's Glob, not the same tool. The only Grok `--tools`
+   ids Walkie emits are those verified on grok 1.0.46 (2026-10-02) to narrow: `read_file`, `grep`, `list_dir`,
+   `web_search`, and `search_replace` only together with `read_file`. Any other allow name refuses the launch and the
+   reason names it, because that CLI treats an unknown `--tools` id as every tool.
+   Before a Grok launch with a tool policy, Walkie reads `grok --version` with a bounded timeout. The line may end with a channel tag such as `[stable]`; only the X.Y.Z number is compared, so a beta channel with a verified number is accepted and extra trailing text is not a version. The answer is cached by the resolved real path, device, inode, size, mtime and change time. A failed or timed-out read is not cached, and that refusal says to retry or run `walkie seats doctor`. The read does not freeze the daemon, and it keeps at most 4 KB of each output stream: a flooding binary is killed with its process group and refused as unparseable. Only a Grok launch with a tool policy waits for it. A stop or a daemon shutdown during the read ends that seat before it starts (stopped, or refused with a plain reason). The launch is refused unless that version is one whose ids were checked (verified tool ids only on grok 1.0.46). The reason names the version that was found. A Grok seat with no tool policy does not run that check. `walkie seats doctor` uses the same grok lookup as a launch and shows the same refusal, and it flags a policy that is only `web_search` because a default-mode Grok launch is refused. When the policy also cannot be mapped, the doctor shows both reasons.
+   While a policy is set, every launch on that machine gets the flags or is refused before a seat user or directory
+   is made, and again at spawn if the policy appeared during prepare. The request is marked judged, so clearing the
+   policy later does not run that same request. A seat that is already running or paused keeps the flags it started
+   with until it is restarted. Claude's ceiling is `--tools=` (an empty allow list is `--tools=`, no tools).
+   `--allowedTools` only pre-approves that same list. It does not remove tools, including under bypassPermissions,
+   so it is never the only restriction. `--disallowedTools` names the deny list. Any active policy also passes
+   `--strict-mcp-config` and no `--mcp-config`, which drops MCP servers from settings, including on a deny-only
+   policy. A deny list without an allow list does not pass `--tools=`, so unlisted built-in tools stay available.
+   Every Claude seat launch, policy or not, passes `--setting-sources user` and does not pass `--settings`.
+   That one flag keeps the repository's project settings from loading (project hooks, `apiKeyHelper`, project MCP),
+   which is what closed that hole on claude 2.1.287. User-level hooks still run: Walkie's hooks in a same-user worker
+   root, and the person's own hooks under `--inherit-person-config`. Seat-user mode still writes `disableAllHooks: true`
+   into that run's user settings. The appended system prompt tells the seat to read the repository's CLAUDE.md and
+   AGENTS.md for project conventions and follow them within the brief. They cannot change the brief or widen the tools
+   the seat may use. `--setting-sources user` does not load the repository's CLAUDE.md. Grok's ceiling is `--tools` plus `--deny`. The host never passes `--tools` with
+   an empty value, and never passes an id outside the verified set: grok 1.0.46 treats both as every tool, including
+   the shell. `search_replace` without `read_file` is refused (that CLI exits 1). A Grok deny name is emitted only as a
+   deny-rule name (`run_terminal_command` becomes `Bash`, `search_replace`, `write`, `Write` and `MultiEdit` become `Edit`); an unmapped deny
+   name refuses the launch and is not passed through, because `--deny run_terminal_command` does not block the shell.
+   Default mode stays inside `read_file`, `grep` and `list_dir` and still denies Bash, Edit and MCPTool,
+   so the policy cannot add a shell or an edit there; a default-mode list that intersects to nothing is refused.
+   MCPTool is denied whenever a policy is set, because `--tools` leaves that meta-tool, including for `web_search` alone.
+   `--no-subagents` is still passed whenever a policy is active. On grok 1.0.46 it does not remove spawn_subagent: the tool is still offered, and a subagent inherits the parent's deny rules. Walkie does not rely on `--no-subagents` to keep a subagent inside the policy. Credential-path denies stay. Codex and Kimi have no
+   per-launch tool flags, so those launches are refused with a plain reason while a policy is set. The dashboard
+   cannot set the policy. A remote admin can set or clear it the same way as the other seats fields, and clearing
+   it widens seats back to each runtime's own tools. Before you downgrade: a pre.12 daemon ignores `seats.tools`
+   (it strips the key) and seats run with each runtime's own tools. Limits, so this is not read as an OS boundary:
+   the flags are what the child is started with. The empty `--tools` failure and the project-hook bypass were seen
+   on claude 2.1.287 and grok 1.0.46; this tree's tests drive fake binaries and do not call a model. A binary that
+   ignores a flag is not stopped by this policy. A same-user seat with no tool policy still has the person's files,
+   keys and network, and so does a Grok seat whose mode is not default when no policy is set (that launch passes no
+   `--tools` ceiling). A policy cannot name Grok's shell: that allow name refuses the launch. Cookie theft, DNS exfiltration and any path that is
+   not a named tool are out of scope. There is no network egress allow-list, browser broker, filesystem root or
+   account lease in this change.
    **Busy ("I'm using this computer")** is the host's person's control only: `POST /v1/seats/busy`/`resume` refuse
    `X-Walkie-Agent`, the CLI refuses under an agent's session marker, and nothing in the seats channel sets it (the
    host acts only on `run`/`stop` requests; readers trust a host's `op: "host"` availability post only from that
@@ -945,10 +1088,73 @@ person can see the card's channel, so a private project's card and name never go
 machine (409 `no_free_seat` when none can). Cooldowns count an answer only for its own recommendation's key.
 
 Creates count only from an owner's WalkieTalkie. Team-project records inherit project-channel visibility;
-private-project, confidential-card and machine records use owners-only `talkie-schedules`. Poll candidates exclude
-confidential cards. Evidence is signed channel content, and older peers can display ordinary posts. Later label
-changes do not retract previous posts. Text sanitization, templates and bounds do not guarantee sensitive-data
-removal from arbitrary evidence. No stronger privacy claim is made here.
+private-project, confidential-card and machine records use owners-only `talkie-schedules`. That channel is repaired
+to the current owners before a private project's own channel admits a newly added owner, so an owners-only record
+about a card does not contain the card's title, its human key, the project's name, the evidence, the real block
+reason, or the model's reason, note and evidence when it has a project channel to put them in. A duty's own reason
+sentence stays. The summary names an existing card by its id. An owners-only move names the column by its role, not
+by the project's name for that column. The title, the evidence, the block reason and the model text are on a post in
+the project channel (`talkie_title` on an ordinary `msg.post` whose text is only `A recommendation's private detail is held in this project.`), written by the same
+node's WalkieTalkie. The schedules record for a create stores only `card-title:<event id>` and `seal: 1`. A block that
+does not also move the card stores the fixed word `blocked` and `seal: 1`. A move that changes the column does not
+carry `seal`. A card-less ask has no project post, so its scrubbed model text stays on the schedules record, which
+every owner can read. A post a person wrote, or one from another node, is not read as that title, and a model-supplied
+`card-title:<id>` is stored as the title itself and is not followed. The dashboard, the CLI and the text an approval
+must echo fill the human key, the title and the model text in only for a viewer who can see the card's channel. A
+viewer who cannot is shown one fixed sentence (`A recommendation about a project you cannot see`), no evidence, no
+block reason, no model context, no approval note and an opaque key, and both approving and dismissing are refused
+(403) before any echo or any answer is written. The refusal is the same whether or not the card exists. The card id
+and the project channel id can still be on that view. An approve or a dismiss signed by someone who cannot see the
+project is not counted and does not hold the recommendation back. Every answer is judged against the project's
+membership in the roster just before the first authority entry that had seen it (the chain's anchor, the same on every
+replica), never by the answer's own timestamp or by any field its author added: a self-asserted "judged" mark is not
+read, and a back-dated answer from someone who has left is not counted. An answer written while its author could see
+the project still counts if they later leave, so the action does not run a second time. An answer the authority has
+not seen yet is judged against the roster now. Two edges follow from judging at the anchor: an answer written by
+someone outside the project who is added before the authority sees it counts (and, being the earliest, can replace
+the shown outcome after an action already ran; the action is not run again or undone), and an approval from someone
+removed before the authority sees it does not count, so the recommendation is open again and approving it again runs
+its action again. For an owners-only recommendation that has a project, the
+person's approval note and the result line are not on the schedules record. They are on a project-channel post
+(`talkie_answer: { v: 1, for, note?, result? }`) whose text is `A recommendation's answer is held in this project.`,
+written by that person with no agent. The schedules record says `Approved.` or `Dismissed.`. The list shows the note
+only to someone who can see the project. A machine still on pre.12 writes the note, or the result line when it has no
+note, raw onto the schedules record when it approves (66ccde8e `rec-routes.ts`), readable by every owner in that channel,
+until it is updated; this version cannot keep it off that record. A confidential card's title is still never repeated
+in the ask an approval sends. Poll candidates exclude confidential cards. An owners-only create's dedup key is an HMAC
+of the channel id and the normalised title under a random secret in the daemon's home (`rec-seal.key`, mode 0600), so
+the title cannot be guessed back from the key and the same title in another project is a different key. The file is
+written whole (a private temporary file linked into place). The first run creates it. If it is later missing, empty or
+not a file, Walkie does not write a new one: a private create is refused and `walkie doctor` says so. A key others can
+read is reported separately: `walkie doctor` says to run `chmod 600` on that file and does not say to delete it. The
+daemon sets mode 0600 when it reads the key, and if it cannot, the refusal says the same chmod step. Doctor does not
+change the file and does not mint a key. There is no
+`walkie doctor --fix`. To mint a new secret on purpose, stop Walkie and delete both `rec-seal.key` and `rec-seal.stamp`,
+then start again. Open private creates then get new keys, and dismissing one does not hold the other back. The same
+happens when WalkieTalkie leadership moves to another owner's machine, which has its own secret. Before model text is
+stored, these phrases are removed, and only as a whole phrase after the
+same normalisation (Unicode NFKC, combining marks and format characters dropped, common Cyrillic and Greek look-alike
+letters mapped to Latin, a run of punctuation, underscores or whitespace read as one gap, and the phrase with those gaps removed):
+each private project's name; the title and the key of each open or archived card on a private project; the title and
+the key of each open or archived confidential card. A team create whose title that removal would change is refused
+with `this title matches a private card or project name` and is not stored shortened. A stored title that ends in `…`
+or `...` is still removed. Only a shortened form this code produced is not used as a phrase. The phrase list is built
+again for every recommendation; the matcher for one set is cached. A fragment inside a longer word is left (`seeding`, `keys2`). A
+shorter piece of a title is left. A paraphrase is not removed. A title this daemon has never stored is not removed.
+The scrub does not cover leetspeak, letters with spaces between them, rare look-alike scripts, `%20` encoding, or a
+phrase joined into a longer word.
+When the project post cannot be read yet, approving says to try again shortly and does not say to dismiss, and a
+block-only move is not applied with the placeholder `blocked`. A pre.12 peer's action is strict, so it does not fold
+an owners-only create or a block-only move that carries `seal`, cannot approve the create, and does not apply the
+placeholder; it still folds the other records, shows the ordinary schedule post (whose text has no title) and does
+not stall. If the schedules post fails after the project post was written, that project post can be left behind with
+nothing pointing at it. Later label changes do not retract previous posts, and a schedule post already replicated with
+a title is not rewritten (the list and the CLI hide it from a viewer who cannot see the channel; the stored post is
+unchanged). Retiring an older schedules record can repeat a title that record already made public. No stronger privacy
+claim is made here. Unanchored posts in a channel this member cannot see are still stored in full and never shown, as
+for any restricted channel, and a body already stored stays on the machine.
+
+The fleet capacity summary the poll posts is information only, and it is posted only in the owner-only schedule channel `#talkie-schedules`. In that channel, owners can read, and derive, every host's free seats and score as far as the lead can see them, from that post: each machine's free seats, limiting factor and score. A member who is not in that channel does not receive the post. The seat cap and the in-flight seat posts for a host are written in that host's `seats-<node>` channel, readable by that channel's members; the summary does not copy them into `#general`. A host the lead cannot see is listed as "seats hidden" when seats are the limit, and as "seats hidden, limited by" that other factor otherwise, with no count and no score. On a first look the other factor is CPU, memory, load unknown, or offline. The marker stores that factor and that the seats are hidden, plus free seats 0 and score 0; those zeros are not a reading. It does not launch seats, send asks, or change caps. It names machines by the hostname the roster already shows, and it is redacted like any other post. It is not gated on the per-orchestrator ask cooldown. It is skipped when free seats have not moved by two or more, the limiting factor is unchanged, the online state is unchanged, the set of machines is unchanged, and whether seats are hidden is unchanged, and for an hour after the previous one. It is also skipped when this daemon has no schedule channel, when the text is empty after redaction, and when the clock is bad (not a safe whole-millisecond time, or negative). A move of one free seat does not post. The first look at a fleet with no machines posts nothing. A marker with no per-machine list is compared by the banded fingerprint. A marker whose time is more than ten minutes ahead of the earlier of this clock and when this daemon stored it, and a local copy whose time is more than ten minutes ahead of this clock, are ignored and do not hold the next summary back. The machine that wrote a marker stored it on the same clock, so receipt alone does not keep that stamp honest after the clock is corrected. A lead skips a marker it signed itself with a later time than its own copy (it writes the copy with every marker it posts, so such a marker predates its clock's correction) and reads on to the next valid marker. Residual: any other lead cannot tell a once-fast marker apart, and once real time reaches its stamp takes it as the last summary until the picture changes; the summary is information only. While a scheduled turn holds a fleet-summary decision, the orchestrator must not post one to `#general`: the post is refused and is not recorded, due or not, whatever the text says. The prompt says the daemon posts the fleet summary itself and the agent must not post one. When that decision is absent, an ordinary `#general` post still works. The same channel holds a marker of the posted picture; that marker is not a recommendation and does not authorize an action. The dashboard badge, for a viewer outside a host's seats channel, says "Seats hidden" with no score, in the neutral text colour, when seats are the limit. When the limit is offline the badge says Offline and shows its score, in the offline style (`is-offline`, colour `--text-3`). When the limit is anything else the badge names that limit and shows its score, in the blocked colour, and the accessible name says seats hidden instead of a free-seat count. It does not show a free-seat number.
 
 Approval is serialized per recommendation on one daemon only, and no poll or curation run on that daemon retires,
 replaces or remakes it while the approval runs (two seats for one card). Side effect, evidence comment and resolve are
@@ -1037,6 +1243,14 @@ limits. What the Projects layer adds:
 - **agents_can_close is a guardrail, not a boundary.** The local API refuses an agent's move into (or card created
   in) a done column while it is off; a member's machine could sign the same op without an agent name, so the fold
   doesn't pretend to enforce it (and never re-judges an accepted op when the setting changes).
+- **Card provenance is a view of authors already on the timeline.** The dashboard panel (proposed / shaped / decided)
+  reads the signed author of each applied card op the member can already see on `GET /v1/tasks/:ref`. It does not read
+  a name out of a title, description, comment or any other field, it does not show ops the fold ignored, and it writes
+  nothing and grants nothing. The list follows the fold's order, so a backdated, future-dated or unusable `ts` cannot
+  drop a row, reorder it, or change who signed; it can only change the time shown, or leave that time unshown. An
+  agent's move into a done column is shown as the agent's move, not as a person deciding. A move that only changes
+  the board is a placement in that same order: if the card shows in a done column on the board it lands on, that
+  move is the standing decision, and if the card does not show in a done column after it, no decision stands.
 - **Secrets.** Titles, descriptions, labels, comments, block reasons and project names are redacted before they are
   signed (the post redactor, config `redact`); card text reaching a model is wrapped (§6 wrapper) by the MCP tools and
   by the CLI under an agent. A card assignment to an agent is a wrapped mention: information, never an instruction;
@@ -1194,6 +1408,70 @@ says about access, replication and removal holds for them too. What they add:
   is not news); writes take the existing human or agent write limit; the page folds only its own ops and counts from
   one narrow query; the browser keeps at most 64 images and fetches one only as it comes near the screen.
 
+## Disputes (WALK-73)
+
+A dispute is an ordinary post in the card's thread plus ordinary asks in the project channel (PROTOCOL §10 "Disputes").
+It adds no authority and no event kind.
+
+- **Who can see it.** Whoever can see the project channel can see the post and the asks. A private project's dispute
+  stays in that channel, stubbed for everyone else the same way the channel's other posts are. There is no dashboard
+  route for it in this phase: the CLI and the local API use the same credential as any other board write.
+- **Who can write it.** A member of the project, or their named agent, may raise one. Who may resolve is derived when the
+  dispute is folded, in one place: the escalation contact in effect at that resolve, otherwise the project's creator,
+  plus project owners always. The card's creator is not a resolver unless they are one of those, and the raiser is not
+  a resolver of their own dispute unless they are an owner. That rule is pending Alex's D11 decision; changing it after
+  release re-judges resolved disputes, because the fold is not stored. The resolver list on the open op is who was asked.
+  The fold does not trust it, and it does not trust `routed`: a member's modified build can sign a dispute that names
+  only themselves, and that does not let them close it. An owner may always resolve, judged by the roster at the resolve
+  op. A removed member never does, so a dispute does not stay open after its only contact leaves: a contact who can no
+  longer post is not in effect, and the project's creator and the owners can close it. There is one contact for a project
+  and every place reads it from the same place: the project view, the routing of a raise, the resolver list, the daemon's
+  `403` gate and the fold all use the contact on the parent chain of the settings head the daemon stamps (the project's
+  head), so a contact change that lost the order to a concurrent settings edit takes effect nowhere and the owner sees
+  the contact that is actually in effect. The fold judges a resolve by the contact along the parent chain of the settings
+  head that resolve names, not the contact the project holds now. Every settings op
+  names exactly one parent, and the signature hash is checked, so a concurrent or later settings op that is not an
+  ancestor cannot change the contact or the verdict. The chain has to end at the canonical
+  project root, not a second project root the channel's creator posted. A head
+  this fold does not know (missing, a bad hash, hidden, or ignored), or one that is a strict ancestor of the open's head
+  or of lower rank on its own chain, grants no contact authority. An owner does not need a known head. The same head, a
+  later head, and a concurrent head that is not a lower rank are judged by the contact on the resolve's own chain.
+  Origin is not a tiebreak. An open or a resolve that does not name a head grants the contact and the project's creator
+  no authority when the settings log is present. Timestamps are not consulted, so a backdated or future-dated timestamp
+  does not choose the contact. This daemon writes the head on every new open and resolve. Citing the open's own head
+  after a later contact change still grants the contact at that head, which is how a modified client can close an open
+  dispute as a previous contact. A raiser who names a head nobody has locks the contact out; an owner can still resolve.
+  Resolving is people only, on any of their machines. An agent is refused before anything is signed (`403`, the
+  same "people only" refusal as other person-only actions). An observer is refused with a reason. The project's
+  escalation contact is a person-only setting with the same extra lock as the board steward's switch and the
+  status-report switch: an agent is refused before the agent-admin gate, because that gate would otherwise sign the op
+  as the person. The fold ignores an agent-signed project op for this field anyway. The contact has to be a person on
+  the project who can see it; a cloud guest, an observer, a removed member, a stranger, and a machine that is not in
+  the roster are refused (`400`).
+- **What is validated.** The summary (500) and the reason (200) are one plain line, redacted with the post redactor
+  before they are signed, the same detectors as any other post. The ask that delivers the dispute expires after a day.
+  That expiry does not close the dispute and does not escalate it. Nothing escalates on its own. One open dispute per
+  card; a second is refused. Another raise within 10 minutes of a resolve is refused (`409`). That wait runs from the
+  earlier of the time on the resolve and the time this machine received it, so a resolve stamped ahead cannot stretch
+  it past 10 minutes after it arrived, and checking again does not start those 10 minutes over. A time behind can
+  shorten it, or make it already over. It is a local API rule, not a fold rule: the time shown stays the signed time,
+  and a peer that signs a raise during the wait still folds it. At exactly 10 minutes the raise is allowed. If this
+  machine has not received the settings head the open names (or an ancestor of it), a non-owner resolve is refused with
+  `409` before anything is signed (a resolve signed elsewhere is held by the fold as waiting for settings, not refused;
+  that state is not shown yet); if that head is here and cannot be used (hidden, ignored or forged) it is a `403` that
+  says an owner has to resolve it, and so is an open that names no settings head in a project that has settings. An
+  owner can still resolve in all these cases. A contact in effect who raises it is not asked, and neither is the project's creator, who could
+  not resolve it: the owners are. One raise asks at most 5
+  owners. The person who raised it is left out of those five when another owner can be asked, so the cap does not drop
+  a real owner to ask the raiser. The raise spends one write-limit token for the post plus one per ask (the same bucket as `POST /v1/ask`); if the
+  transaction fails, the tokens are put back and nothing is signed. The post and its asks are one transaction.
+- **Older peers.** A pre.12 daemon stores the `msg.post` and relays it. It has no `dispute` arm, so it shows the text
+  and folds nothing, and it does not stall (no new event kind). It also has no `walkie dispute resolve`: a resolver on
+  that version upgrades, or an owner on this version resolves it. Hidden dispute posts use the board-op bounds on this
+  version and the general hidden cap on an older one. Under an agent, dispute JSON wraps the summary as the raiser's
+  words and the reason as the resolver's, the same way as other board text, with `trust` `team-member`. The optional
+  `settings` head on a dispute op is ignored by a pre.12 peer (it has no `dispute` arm).
+
 ## Agent admin and remote admin (AGENT-ADMIN-1)
 
 Walkie no longer makes a person do its setup. **A local agent can now administer Walkie on its person's machine**, and
@@ -1210,7 +1488,9 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   is recorded.
 - **What stays a person's.** A dashboard login link and a phone pairing code (credentials shown in plain text),
   removing a member and revoking another member's machine, moving the roster authority, turning an admin switch
-  back on, and a project's board steward switch and lease (FO-6: an agent may only dry-run the steward). Talking to the local orchestrator and reading its conversation also stay a person's (an agent's words would
+  back on, a project's board steward switch and lease (FO-6: an agent may only dry-run the steward), a project's
+  status-report switch, and a project's escalation contact (WALK-73: who resolves a dispute; people only, like those
+  two switches, not like a project's name or prefix). Talking to the local orchestrator and reading its conversation also stay a person's (an agent's words would
   be read as the person's). There is no "delete the team" command.
 - **Remote admin is not a shell.** One peer route (`POST /peer/v1/admin/run`) runs one allow-listed `walkie`
   subcommand (src/protocol/admin.ts), as the target machine's OS user, with stdin closed, a timeout (default 300 s,
@@ -1261,6 +1541,14 @@ teammates' agents run there (seats). A member or observer, and their agents, adm
   naming the actor as `@handle/machine/agent` (an unnamed agent: its runtime, "claude-code (unnamed)"). A remote
   action is posted once, with its command line (secrets redacted) and exit code, and mentions the target machine's
   person. Refusals are logged locally only. The dashboard's Seats page shows the newest entries.
+  `walkie history` and `GET /v1/history` only read that file's tail and this machine's guest-registry audit, merged
+  oldest first. They record nothing, do not read another machine, and do not change how long either log is kept.
+  A person on this machine sees both, including the whole admin tail. An agent sees only the newest 200 admin lines
+  (the same cap as `GET /v1/admin`). Any `X-Walkie-Under-Agent` value, or a valid `X-Walkie-Agent` name, counts as an agent. An empty or invalid
+  `X-Walkie-Agent` is `400 invalid` and does not reach this route. A phone is refused. A dashboard session cannot call this path. A JSON line that is not an object is
+  skipped. Redaction is the same best-effort pass as the admin log, not a guarantee that every secret is gone; free
+  text over 8192 UTF-8 bytes is replaced rather than cut. The same-user header limit below still applies: an agent
+  that calls the socket without the agent headers is treated as the person.
 - **Kill switches (per machine, the person's).** `walkie agents admin off` refuses agent admin on this machine (and
   remote admin with it, since a remote command runs there as an agent); `walkie admin remote off` refuses remote admin
   to this machine. Both are also toggles on the dashboard's Seats page. Default ON for new and existing installs
@@ -1333,7 +1621,12 @@ terms allow resale) and that join the team like any other machine. The control p
   call (`site/test/compute-paid.test.ts`: no create call without paid credit). FakeCloud is the only driver tests and
   demos use; the real driver has only been exercised with read-only GETs.
 - **Capacity.** Beyond the provider account's limits machines are queued (FIFO per quota group), never refused; a
-  queued machine starts when the owner's daemon supplies a fresh 1-hour code (the site keeps none).
+  queued machine starts when the owner's daemon supplies a fresh 1-hour code (the site keeps none), and only after
+  that daemon checks again, immediately before sending the code, that the person is still an owner. If they were
+  removed or demoted while the code was minted, the start is not sent and the code is marked used (PROTOCOL §12).
+  A pre.12 roster authority refuses that mark and does not stall; the code stays unusable while the issuer is not
+  an owner, and this daemon keeps refusing it after a re-promotion. An old authority would accept it again until
+  the hour is up.
 - **Abuse.** Mining heuristic: a GPU at 95 % or more with no busy seat and no pool job for 10 minutes stops the machine
   and puts the account under review (no new rentals). Egress: shaped with `tc` on the machine (rate from the private
   config), 1 TiB included then billed per GiB, and a hard stop at the private cap (5 TB default). Idle (no busy seat

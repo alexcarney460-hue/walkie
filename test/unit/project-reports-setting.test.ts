@@ -167,7 +167,7 @@ describe("the service", () => {
 
 describe("a view stored before the field existed", () => {
   test("it reads as off, and the fold-version bump re-folds the log so a setting made meanwhile shows", async () => {
-    expect(FOLD_VERSION).toBe("11");
+    expect(FOLD_VERSION).toBe("13");
     const { w, core, idx } = world();
     await updateProject(w, CH, { status_report: "hourly" });
     idx.flushAll();

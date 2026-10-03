@@ -1,6 +1,6 @@
 // ACCOUNTS-2 round 1 (Codex + Opus audits): unit tests per finding.
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileKeyStore, type KeyStore } from "../../src/accounts/vault/keystore.ts";
 import { Vault } from "../../src/accounts/vault/vault.ts";
@@ -109,7 +109,7 @@ describe("own accounts first; borrowed only when all own are out (Opus 4)", () =
 describe("trusted CLI (Codex 1)", () => {
   function place(root: string, rel: string): string {
     const p = join(root, rel);
-    mkdirSync(join(p, ".."), { recursive: true });
+    mkdirSync(join(p, ".."), { recursive: true, mode: 0o755 });
     writeFileSync(p, NATIVE, { mode: 0o755 }); // a native executable's magic (round 3: only native binaries are trusted)
     return p;
   }
@@ -117,7 +117,7 @@ describe("trusted CLI (Codex 1)", () => {
     const root = tmp();
     chmodSync(root, 0o755);
     const o = { cwd: join(root, "work"), stopAt: root, adminGroup: null };
-    mkdirSync(o.cwd, { recursive: true });
+    mkdirSync(o.cwd, { recursive: true, mode: 0o755 });
     const good = place(root, "home/.local/bin/claude");
     expect(trustProblem(good, o)).toBeNull();
     const repo = place(root, "proj/tools/claude");
@@ -157,7 +157,7 @@ describe("trusted CLI (Codex 1)", () => {
       expect(projectRoot(home, { stopAt: root })).toBeNull();
       expect(trustProblem(good, { cwd: home, stopAt: root, adminGroup: null })).toBeNull();
       const proj = join(home, "proj");
-      mkdirSync(join(proj, "sub"), { recursive: true });
+      mkdirSync(join(proj, "sub"), { recursive: true, mode: 0o755 });
       writeFileSync(join(proj, "Cargo.toml"), "");
       expect(realpathSync(projectRoot(join(proj, "sub"), { stopAt: root }) as string)).toBe(realpathSync(proj));
       expect(trustProblem(place(root, "home/proj/bin/claude"), { cwd: join(proj, "sub"), stopAt: root, adminGroup: null })).toMatch(/project you are running from/);
@@ -171,7 +171,7 @@ describe("trusted CLI (Codex 1)", () => {
     const root = tmp();
     chmodSync(root, 0o755);
     const o = { cwd: join(root, "work"), stopAt: root, user: "alex" };
-    mkdirSync(o.cwd);
+    mkdirSync(o.cwd, { mode: 0o755 });
     const brew = place(root, "brewbin/claude");
     chmodSync(join(root, "brewbin"), 0o775); // group-writable, like /opt/homebrew/bin (the fixture's own group stands in for admin)
     expect(trustProblem(brew, { ...o, adminGroup: { gid, members: ["root", "alex"], nested: false } })).toBeNull();
@@ -196,17 +196,18 @@ describe("trusted CLI (Codex 1)", () => {
     const root = tmp();
     chmodSync(root, 0o755);
     const walkie = join(root, "walkiehome");
-    mkdirSync(walkie);
+    mkdirSync(walkie, { mode: 0o755 });
     const o = { cwd: join(root, "work"), stopAt: root, adminGroup: null };
-    mkdirSync(o.cwd);
+    mkdirSync(o.cwd, { mode: 0o755 });
     const good = place(root, "home/.local/bin/claude");
     recordTrusted(walkie, "claude", good, o);
     expect(checkTrusted(walkie, "claude", good, o)).toMatchObject({ ok: true, refreshed: false });
     const other = place(root, "elsewhere/claude");
     expect(checkTrusted(walkie, "claude", other, o)).toMatchObject({ ok: false });
     expect(checkTrusted(walkie, "codex", good, o)).toMatchObject({ ok: false, why: expect.stringMatching(/no trusted codex/) });
-    rmSync(good);
-    place(root, "home/.local/bin/claude"); // an update replaced the file in the same trusted place
+    // Keep the original alive until its replacement exists, so the filesystem cannot reuse its inode.
+    const updated = place(root, "home/.local/bin/claude-update");
+    renameSync(updated, good); // an update replaced the file in the same trusted place
     expect(checkTrusted(walkie, "claude", good, o)).toMatchObject({ ok: true, refreshed: true });
     chmodSync(good, 0o777);
     expect(checkTrusted(walkie, "claude", good, o)).toMatchObject({ ok: false });

@@ -2,6 +2,7 @@
 // status, join-status.ts): pure fact-gathering and checks, kept out of the CLI layer so the daemon can run the
 // same doctor in-process (no HTTP round trip) right after a machine joins a team.
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { RELEASE_BUILD } from "../../license/service.ts";
 import type { SeatRuntime, SeatsLocalView } from "../../protocol/seats.ts";
@@ -10,6 +11,8 @@ import { DEFAULT_ADMIN, DEFAULT_RUNNER, RUNTIMES_DIR, SEAT_ROOTS_FILE, runnerPat
 import { VERSION } from "../version.ts";
 import { redactSecrets } from "../../protocol/safety.ts";
 import { safeTerm } from "../../cli/format.ts";
+import { findRuntime } from "./runtime.ts";
+import { readGrokVersion, seatToolPolicyActive, toolPolicyCheck, type GrokVersionProbe } from "./tool-policy.ts";
 
 export type Check = { ok: boolean | "warn"; what: string; fix?: string };
 
@@ -25,12 +28,16 @@ export interface DoctorFacts {
   runtimes: Record<"claude" | "codex", string | null>;
   /** The installed runner and helper's versions against this walkie (release builds with seat users; else absent). */
   helperVersion?: HelperVersion | null;
+  /** `grok --version` when a tool policy is set and grok is enabled. Absent when there is nothing to enforce. */
+  grokCli?: GrokVersionProbe;
 }
 
 export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
   const out: Check[] = [];
   out.push(f.team ? { ok: true, what: `in the team ${f.team}` } : { ok: false, what: "not in a team", fix: "walkie setup (or walkie join <invite>)" });
   out.push(local.allow ? { ok: true, what: "seats allowed" } : { ok: false, what: "seats are off here", fix: "walkie seats enable" });
+  const tools = toolPolicyCheck(local, f.grokCli);
+  if (tools) out.push(tools);
   if (local.disabled_reason) out.push({ ok: false, what: `seats don't run: ${local.disabled_reason}` });
   for (const entry of local.ambiguous_launchers ?? []) {
     out.push({ ok: "warn", what: `${entry} matches multiple admitted machines and allows none of them`, fix: `rename one machine or use @${entry.slice(1).split("/")[0]}` });
@@ -80,11 +87,11 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
   if (local.foreign_users?.length) {
     const users = local.foreign_users;
     out.push({ ok: "warn", what: `${users.length} seat user${users.length === 1 ? "" : "s"} here ${users.length === 1 ? "isn't" : "aren't"} this Walkie's to remove (${users.slice(0, 5).join(", ")}${users.length > 5 ? " …" : ""}): made before this update, or by another Walkie on this machine; Walkie leaves ${users.length === 1 ? "it" : "them"} and every process of ${users.length === 1 ? "it" : "them"} as they are`,
-      fix: local.seat_scope?.state === "other" ? "the Walkie that owns this machine's seat users removes them" : "walkie seats setup-user --apply, then restart the Walkie daemon: it removes them once nothing of them runs" });
+      fix: local.seat_scope?.state === "other" ? "the Walkie that owns this machine's seat users removes them" : "walkie seats setup-user --apply, then restart the Walkie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update" });
   }
   for (const user of local.leftovers_running ?? []) {
-    out.push({ ok: "warn", what: `${user} is a leftover seat user that still runs processes no current seat of this Walkie started: it holds a seat slot until they end, then Walkie removes it`,
-      fix: `to end them now: sudo pkill -KILL -u ${user} (Walkie removes the user at its next retry)` });
+    out.push({ ok: "warn", what: `${user} is a leftover seat user that still runs processes no current seat of this Walkie started: it holds a seat slot until those processes end, then Walkie removes it`,
+      fix: `to end it now: sudo pkill -KILL -u ${user} (Walkie removes the user at its next retry)` });
   }
   if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed" });
   if (local.cleanup_in_flight && Date.now() - local.cleanup_in_flight.since >= 60_000) {
@@ -143,7 +150,7 @@ export function pendingProbeProblem(out: string): string | null {
 }
 
 /** The facts the doctor needs, read from this machine (`versionDeps`: tests, a fake `version` run). */
-export function doctorFacts(local: SeatsLocalView, team: string | null, versionDeps?: HelperVersionDeps): DoctorFacts {
+export async function doctorFacts(local: SeatsLocalView, team: string | null, versionDeps?: HelperVersionDeps): Promise<DoctorFacts> {
   // A source build runs its own runner and helper (never the installed ones): those aren't checked.
   const installed = local.ephemeral && RELEASE_BUILD;
   const runner = DEFAULT_RUNNER;
@@ -170,6 +177,14 @@ export function doctorFacts(local: SeatsLocalView, team: string | null, versionD
     return null;
   };
   const helperVersionFact = installed && !runnerProblem ? helperVersion([runner, DEFAULT_ADMIN], VERSION, versionDeps) : null;
+  // findRuntime is what a same-user launch uses (executable bit, then the usual install directories). A file that
+  // is not executable is not grok. A Grok seat does not use the seat-user runtime dir. A Grok seat with no tool
+  // policy does not run `grok --version`.
+  let grokCli: GrokVersionProbe | undefined;
+  if (seatToolPolicyActive(local.tools) && (local.runtimes ?? []).includes("grok")) {
+    const bin = findRuntime("grok", process.env.PATH, process.env.HOME || homedir());
+    grokCli = bin ? await readGrokVersion(bin) : { kind: "missing" };
+  }
   return { team, release: RELEASE_BUILD, runnerProblem, helper, rootsFile, runtimes: { claude: found("claude"), codex: found("codex") },
-    helperVersion: helperVersionFact };
+    helperVersion: helperVersionFact, ...(grokCli !== undefined ? { grokCli } : {}) };
 }

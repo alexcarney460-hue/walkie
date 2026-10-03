@@ -7,7 +7,7 @@
 // `seat-admin destroy <n>` (n an integer; the user is `walkie-s<n>`, uid 600000+n), or `seat-admin pending` (the
 // ids of the calling person's that may still have something of them, for the daemon's restart). Those three answer
 // only the Walkie that setup-user registered for this machine's seat users (WALK-103, instance.ts): root binds the
-// daemon that ran sudo to the registered socket's instance lock first. The system calls sit behind
+// daemon that ran sudo to the registered socket's instance lock and its listening socket first. The system calls sit behind
 // AdminSys, so the grammar and every verification here are tested with fakes (test/unit/seats-fix5.test.ts,
 // seats-fix6.test.ts); the real one is admin-sys.ts.
 //
@@ -95,7 +95,7 @@ export interface AdminSys {
   /**
    * WALK-103: whether the daemon that ran this helper is the Walkie setup-user registered for this machine's seat users
    * (admin-sys.ts checkSeatInstance: the record in SEAT_INSTANCE_FILE, and that daemon holding the recorded socket's
-   * instance lock). `create`, `destroy` and `pending` answer only `registered`.
+   * instance lock and its listening socket). `create`, `destroy` and `pending` answer only `registered`.
    */
   seatInstance(owner: number): SeatInstanceCheck;
   /** This helper process as an operation (its pid and start time). */

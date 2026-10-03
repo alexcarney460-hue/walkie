@@ -18,6 +18,7 @@ import { Board } from "./views/board/Board.tsx";
 import { MissionControl } from "./views/mission/MissionControl.tsx";
 import { Orchestrator } from "./views/orchestrator/Orchestrator.tsx";
 import { Projects } from "./views/projects/Projects.tsx";
+import { SimpleBoard } from "./views/simple/SimpleBoard.tsx";
 import { Seats } from "./views/seats/Seats.tsx";
 import { Updates } from "./views/updates/Updates.tsx";
 
@@ -32,7 +33,7 @@ function Loading() {
 
 /** What a view's boundary calls it (the same words as the navigation). */
 const VIEW_NAME: Record<View, string> = {
-  mission: "Mission Control", updates: "Updates", orchestrator: "WalkieTalkie", projects: "Projects", board: "Channels", asks: "Asks", artifacts: "Artifacts",
+  mission: "Mission Control", updates: "Updates", orchestrator: "WalkieTalkie", projects: "Projects", simple: "Simple", board: "Channels", asks: "Asks", artifacts: "Artifacts",
   team: "Team", integrations: "Integrations", accounts: "Accounts", seats: "Seats", machine: "Machine",
 };
 
@@ -43,6 +44,7 @@ function ViewOutlet({ route }: { route: Route }) {
     case "updates": return <Updates />;
     case "orchestrator": return <Orchestrator />;
     case "projects": return <Projects />;
+    case "simple": return <SimpleBoard />;
     case "board": return <Board />;
     case "asks": return <Asks />;
     case "artifacts": return <Artifacts />;
