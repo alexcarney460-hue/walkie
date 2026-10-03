@@ -30,4 +30,7 @@ test("every path in the web API sources accepts a dashboard session", () => {
   expect(dashboardRoute("POST", "/v1/talkie/recs/abcd1234/dismiss")).toBe(true);
   expect(dashboardRoute("POST", "/v1/talkie/recs")).toBe(false);
   expect(dashboardRoute("POST", "/v1/talkie/recs/abcd1234/anything")).toBe(false);
+  // WALK-70: no dashboard page calls GET /v1/history, so a session must not reach it.
+  expect(dashboardRoute("GET", "/v1/history")).toBe(false);
+  expect(dashboardRoute("POST", "/v1/history")).toBe(false);
 });

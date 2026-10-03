@@ -11,13 +11,26 @@ if pid == 0:
     os.execvp(argv[0], argv)
 out = b""
 typed = not after
-while True:
+status = None
+
+def reaped():
+    global status
+    if status is not None:
+        return True
+    wpid, st = os.waitpid(pid, os.WNOHANG)
+    if wpid == 0:
+        return False
+    status = st
+    return True
+
+while not reaped():
     try:
         r, _, _ = select.select([fd], [], [], 30)
     except InterruptedError:
         continue
     if not r:
-        break
+        # A silent stretch is not the end. Offboard --apply can sit on a hung daemon and then print.
+        continue
     try:
         chunk = os.read(fd, 4096)
     except OSError:
@@ -29,7 +42,24 @@ while True:
         time.sleep(float(os.environ.get("PTY_TYPE_DELAY_S") or 0))
         os.write(fd, text.encode() + b"\n")
         typed = True
-_, status = os.waitpid(pid, 0)
+
+while True:
+    try:
+        r, _, _ = select.select([fd], [], [], 0)
+    except InterruptedError:
+        continue
+    if not r:
+        break
+    try:
+        chunk = os.read(fd, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    out += chunk
+
+if status is None:
+    _, status = os.waitpid(pid, 0)
 sys.stdout.write(out.decode("utf-8", "replace"))
 sys.stdout.flush()
 sys.exit(os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else (status >> 8))

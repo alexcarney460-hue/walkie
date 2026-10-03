@@ -107,6 +107,12 @@ export const ProjectOp = z.object({
    * op's others.
    */
   status_report: z.enum(["hourly", "off"]).optional(),
+  /**
+   * WALK-73: who resolves a dispute on this project (`@handle` or `@handle/machine`), or null to clear. Not an Address
+   * on purpose: a value this build cannot use is dropped by the fold and the op's other fields still apply. Pre.12
+   * peers drop the field (ProjectOp is not strict). People only, same rule as `status_report`.
+   */
+  escalation_contact: z.string().max(200).nullable().optional(),
 });
 export const BoardOp = z.object({
   ...Base, op: z.literal("board"),
@@ -180,6 +186,29 @@ export const PageOp = z.object({
   fact: z.object({ label: FactLabel, value: FactValue.nullable() }).optional(),
 });
 
+/**
+ * WALK-73 Phase 0: a dispute on a card, posted in the card's thread. `open` names the summary and the resolvers recorded
+ * at raise time; `resolved` names the one-line reason. Optional fields so a later phase can add kind, parties or
+ * positions without a new op. A pre.12 peer's union has no `dispute` arm: `msg.post` still accepts the post (no new
+ * event kind) and that fold ignores it.
+ */
+export const DisputeOp = z.object({
+  ...Base, op: z.literal("dispute"),
+  summary: z.string().min(1).max(500).regex(PLAIN).optional(),
+  state: z.enum(["open", "resolved"]).optional(),
+  resolvers: z.array(Address).min(1).max(20).optional(),
+  routed: z.enum(["contact", "creator", "owners"]).optional(),
+  reason: z.string().min(1).max(200).regex(PLAIN).optional(),
+  /**
+   * The project settings head (`id#hash`) the signer names. Optional so an older op still parses. When the settings
+   * log is present, an open or a resolve that omits it grants the contact and the project's creator no authority
+   * (an owner may still resolve). A named head is judged on that head's own parent chain, not by a timestamp and not
+   * by the global fold order. A pre.12 peer has no `dispute` arm, so it never reads this field.
+   */
+  settings: z.string().regex(/^[0-9a-f]{16}:[1-9][0-9]*#[0-9a-f]{16}$/).optional(),
+});
+export type DisputeOpT = z.infer<typeof DisputeOp>;
+
 /** What a screenshot of the page can say about itself, and how big it may be (page-limits.ts). */
 export { MAX_SCREEN_GROUPS, MAX_SCREENS, SCREEN_IMAGE_TYPES, SCREEN_MAX_BYTES, SCREEN_MAX_PIXELS, SCREEN_MAX_SIDE, SCREEN_STATUSES };
 export const ScreenMeta = z.object({
@@ -196,7 +225,7 @@ export const ScreenMeta = z.object({
 });
 export type ScreenMetaT = z.infer<typeof ScreenMeta>;
 export type ScreenStatus = ScreenMetaT["status"];
-export const BoardOpSchema = z.discriminatedUnion("op", [ProjectOp, BoardOp, CardOp, FileOp, PageOp]);
+export const BoardOpSchema = z.discriminatedUnion("op", [ProjectOp, BoardOp, CardOp, FileOp, PageOp, DisputeOp]);
 
 /**
  * The largest post body (text + board op, as serialised JSON) that counts as a board op (round-6 audit, Opus M3): a
@@ -229,7 +258,7 @@ export type PageOpT = z.infer<typeof PageOp>;
 export const CARD_FIELDS = [
   "title", "body", "board", "column", "pos", "assignee", "reviewer", "labels", "estimate", "due", "blocked", "blocked_reason", "state",
 ] as const;
-export const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node", "status_report"] as const;
+export const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node", "status_report", "escalation_contact"] as const;
 export const BOARD_FIELDS = ["name", "columns", "state"] as const;
 
 export const DEFAULT_COLUMNS: readonly Column[] = [
@@ -279,6 +308,11 @@ export interface ProjectView {
    * setting). A view stored before the field existed reads as "off" (status-report.ts reportMode).
    */
   status_report: "hourly" | "off";
+  /**
+   * WALK-73: who resolves a dispute here (`@handle` or `@handle/machine`), or "" when unset. Optional on the type so a
+   * view stored before the field existed still typechecks; `escalationContactOf` reads a missing one as unset.
+   */
+  escalation_contact?: string;
   /** Restricted channel: the team's owners only (Alex 2026-09-26). */
   private: boolean;
   /** Owners and the creator: who may change settings. */

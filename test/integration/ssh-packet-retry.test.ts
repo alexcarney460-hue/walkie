@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { Cluster } from "../helpers/cluster.ts";
 import { echoServer, isolatedTeam, profile, publicKey, type IsolatedTeam } from "../helpers/ssh-team.ts";
 import { consentText } from "../../src/daemon/provision/consent.ts";
-import { readGrant, type Grant } from "../../src/daemon/provision/grant.ts";
+import { readGrant } from "../../src/daemon/provision/grant.ts";
 import * as realMarker from "../../src/daemon/provision/root-marker.ts";
 import * as realEnrollment from "../../src/daemon/ssh/enrollment.ts";
 import { hasOwnerKey } from "../../src/daemon/ssh/authorized-keys.ts";
@@ -37,10 +37,14 @@ mock.module("../../src/daemon/provision/root-marker.ts", () => ({
 }));
 mock.module("../../src/daemon/ssh/enrollment.ts", () => ({
   ...realEnrollment,
-  installSshGrant: (home: string, sshHome: string, input: Grant) =>
-    realInstall(home, sshHome, input, (step) => {
+  installSshGrant: (...args: Parameters<typeof realInstall>) => {
+    // This module mock remains installed for later files; preserve their callbacks and dependencies.
+    const [home, sshHome, input, afterWrite, revoke, ...dependencies] = args;
+    return realInstall(home, sshHome, input, inject.at === null ? afterWrite : (step) => {
+      afterWrite?.(step);
       if (inject.at === step) throw new Error(`injected failure at ${step}`);
-    }, inject.dirtyRollback ? () => { throw new Error("injected revoke failure"); } : undefined),
+    }, inject.dirtyRollback ? () => { throw new Error("injected revoke failure"); } : revoke, ...dependencies);
+  },
 }));
 
 function reset(): void { markerMissing = false; inject.at = null; inject.dirtyRollback = false; }

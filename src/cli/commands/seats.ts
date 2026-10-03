@@ -13,6 +13,7 @@ import { parseDuration } from "../../daemon/seats/busy.ts";
 import { setupUser } from "./seat-user.ts";
 import { doctorCommand, enableCommand, startCommand } from "./seats-enable.ts";
 import { doctorFacts } from "../../daemon/seats/doctor.ts";
+import { SeatToolPolicySchema, resolveSeatTools, seatToolPolicyActive, toolPolicyPhrase, toolPolicyRestartLine, type SeatToolPolicy } from "../../daemon/seats/tool-policy.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, requirePerson, type Ctx } from "../context.ts";
 import { ago, c, safeTerm } from "../format.ts";
@@ -21,7 +22,9 @@ const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user|--seat-use
   + " | seats start <machine> [--count n] [--provider claude|codex] (--prompt \"…\" | --brief file|-)"
   + " | seats setup-user [--apply] [--accept-readable-home] [--codex-release] | seats allow [--same-user]"
   + " [--accept-readable-home] [--inherit-person-config] [--launchers @a,@a/machine,@a/machine/agent] [--max n]"
-  + " [--runtimes claude,codex,kimi,grok] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
+  + " [--runtimes claude,codex,kimi,grok] [--dir path] [--env NAME,NAME]"
+  + " [--allowed-tools Read,Grep] [--disallowed-tools WebFetch] [--clear-tool-policy]"
+  + " | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
   + " | seats repo [list] | seats repo add <id> <path> | seats repo rm <id>";
 const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi|grok] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
   + " [--repo <bundle|git dir|artifact hash>] [--timeout 3600] [--max-concurrent 9] [--wait] -- <prompt…|->"
@@ -154,7 +157,7 @@ export function isolationLines(l: SeatsLocalView): string[] {
 async function migrationPreflight(ctx: Ctx): Promise<number> {
   const { local, seats: all } = await ctx.client().seats();
   const me = await ctx.client().me();
-  const facts = doctorFacts(local, me.team?.name ?? null);
+  const facts = await doctorFacts(local, me.team?.name ?? null);
   const live = all.filter((s) => s.host.node === me.node.id && !TERMINAL_STATES.has(s.state));
   const inventory = {
     mode: local.ephemeral ? "seat_users" : local.same_user ? "same_user" : "unconfigured",
@@ -192,12 +195,15 @@ async function migrate(ctx: Ctx): Promise<number> {
   return EXIT.ok;
 }
 
-function localLine(l: SeatsLocalView): string {
-  if (!l.allow) return `this machine: ${c.dim("seats off")} (turn on: walkie seats allow)`;
+export function localLine(l: SeatsLocalView): string {
+  if (!l.allow) {
+    const policy = seatToolPolicyActive(l.tools) ? ` · ${toolPolicyPhrase(l)} (applies when seats are on)` : "";
+    return `this machine: ${c.dim("seats off")}${policy} (turn on: walkie seats allow)`;
+  }
   const who = launcherPolicyLabel(l);
   const channel = l.channel_ok ? c.dim(`#${l.channel}`) : c.yellow(`#${l.channel}: ${l.channel_error ?? "not ready"}`);
   const as = l.disabled_reason ? c.red("but not running (see below)") : l.ephemeral ? "as fresh seat users" : c.yellow("as your own user");
-  return `this machine: ${c.green("seats allowed")} ${as} · ${availabilityLine(l.availability)} · launchers ${who} (person entries cover their agents) · ${l.runtimes.join("+")} · ${l.running} running`
+  return `this machine: ${c.green("seats allowed")} ${as} · ${availabilityLine(l.availability)} · launchers ${who} (person entries cover their agents) · ${l.runtimes.join("+")} · ${toolPolicyPhrase(l)} · ${l.running} running`
     + `${l.max ? ` (max ${l.max})` : ""} · dir ${l.dir}${l.env?.length ? ` · env +${l.env.join(",")}` : ""} · ${channel}`;
 }
 
@@ -262,7 +268,7 @@ async function resume(ctx: Ctx): Promise<number> {
 /** Applies the opt-in helper for `walkie join … --allow-seats` too. */
 export async function allowSeats(client: WalkieClient, opts: {
   launchers?: string[]; max?: number; runtimes?: SeatRuntime[]; dir?: string; env?: string[]; sameUser?: boolean;
-  acceptReadableHome?: boolean; inheritPersonConfig?: boolean;
+  acceptReadableHome?: boolean; inheritPersonConfig?: boolean; tools?: SeatToolPolicy | null;
 } = {}): Promise<SeatsLocalView> {
   const res = await client.seatsConfig({
     allow: true, ...(opts.sameUser ? { same_user: true } : {}),
@@ -270,8 +276,15 @@ export async function allowSeats(client: WalkieClient, opts: {
     ...(opts.acceptReadableHome ? { accept_readable_home: true } : {}),
     ...(opts.launchers ? { launchers: opts.launchers } : {}), ...(opts.max ? { max: opts.max } : {}),
     ...(opts.runtimes ? { runtimes: opts.runtimes } : {}), ...(opts.dir ? { dir: opts.dir } : {}), ...(opts.env ? { env: opts.env } : {}),
+    ...(opts.tools !== undefined ? { tools: opts.tools } : {}),
   });
   return res.local;
+}
+
+/** `--allowed-tools a,b` → names. `-` clears that side. An empty value is an empty allow list (no tools). */
+function toolListArg(v: string): string[] | null {
+  if (v.trim() === "-") return null;
+  return v.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
 /**
@@ -306,13 +319,34 @@ async function configure(ctx: Ctx, allow: boolean): Promise<number> {
       await requirePerson(ctx, "let the team run agents as your OS user with access to your files, keys and Walkie daemon", "yes");
     }
     const acceptReadableHome = bool(ctx.args, "accept-readable-home");
+    const clearTools = bool(ctx.args, "clear-tool-policy");
+    const allowedTools = str(ctx.args, "allowed-tools");
+    const disallowedTools = str(ctx.args, "disallowed-tools");
+    if (clearTools && (allowedTools !== undefined || disallowedTools !== undefined)) {
+      throw new UsageError("--clear-tool-policy removes the tool policy; leave out --allowed-tools and --disallowed-tools");
+    }
+    const resolved = resolveSeatTools(before.tools, {
+      ...(clearTools ? { clear: true } : {}),
+      ...(allowedTools !== undefined ? { allow: toolListArg(allowedTools) } : {}),
+      ...(disallowedTools !== undefined ? { deny: toolListArg(disallowedTools) } : {}),
+    });
+    let tools: SeatToolPolicy | null | undefined = resolved;
+    if (resolved) {
+      const parsed = SeatToolPolicySchema.safeParse(resolved);
+      if (!parsed.success) throw new UsageError(parsed.error.issues.map((issue) => issue.message).join("; "));
+      tools = parsed.data;
+    }
     local = await allowSeats(client, {
       ...(launchers ? { launchers } : {}), ...(max ? { max } : {}), ...(runtimes ? { runtimes: runtimes as SeatRuntime[] } : {}),
       ...(dir ? { dir: seatsDirArg(dir) } : {}), ...(env ? { env } : {}), ...(sameUser ? { sameUser } : {}),
       ...(acceptReadableHome ? { acceptReadableHome } : {}),
       ...(inheritPersonConfig !== undefined ? { inheritPersonConfig } : {}),
+      ...(tools !== undefined ? { tools } : {}),
     });
   } else {
+    if (bool(ctx.args, "clear-tool-policy") || str(ctx.args, "allowed-tools") !== undefined || str(ctx.args, "disallowed-tools") !== undefined) {
+      throw new UsageError("set the tool policy with walkie seats allow, not walkie seats deny");
+    }
     local = (await client.seatsConfig({ allow: false, ...(inheritPersonConfig !== undefined ? { inherit_person_config: inheritPersonConfig } : {}) })).local;
   }
   if (ctx.json) { ctx.out(JSON.stringify({ local })); return EXIT.ok; }
@@ -320,6 +354,10 @@ async function configure(ctx: Ctx, allow: boolean): Promise<number> {
   if (allow) {
     for (const line of isolationLines(local)) ctx.out(line);
     for (const line of loginLines(local)) ctx.out(line);
+    // Deny already stops seats. A tool-policy change does not: say so instead of stopping a seat mid-run.
+    const touchedTools = bool(ctx.args, "clear-tool-policy") || str(ctx.args, "allowed-tools") !== undefined || str(ctx.args, "disallowed-tools") !== undefined;
+    const restart = touchedTools ? toolPolicyRestartLine(local.running, local.paused) : null;
+    if (restart) ctx.out(c.dim(restart));
     ctx.out(c.dim("Turn them off (and stop every running seat) any time: walkie seats deny"));
   } else {
     // Never "every seat was stopped" when a seat user's removal isn't verified (Codex r7 MEDIUM 6).

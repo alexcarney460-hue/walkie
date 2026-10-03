@@ -136,13 +136,18 @@ export class MiniElement extends MiniNode {
   removeAttribute(name: string): void { this.attributes.delete(name); }
   removeAttributeNS(_ns: string | null, name: string): void { this.removeAttribute(name); }
 
-  /** The elements below this one that match a simple selector (see `matches`), in document order. */
+  /** The elements below this one that match a simple selector (see `matches`), in document order.
+   *  One descendant combinator is allowed: `[data-block="my-work"] button.simple-card`. */
   all(selector: string): MiniElement[] {
+    const parts = splitSelector(selector);
+    const last = parts[parts.length - 1];
+    if (!last) return [];
+    const ancestors = parts.slice(0, -1);
     const out: MiniElement[] = [];
     const walk = (n: MiniNode) => {
       for (const c of n.childNodes) {
         if (c instanceof MiniElement) {
-          if (matches(c, selector)) out.push(c);
+          if (matches(c, last) && hasAncestors(c, ancestors)) out.push(c);
           walk(c);
         }
       }
@@ -166,22 +171,59 @@ function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 }
 
-/** Supports `tag`, `.class`, `[attr]`, `[attr="value"]` and combinations such as `button.btn[aria-label="Close"]`. */
+/** Splits a descendant selector on whitespace that is outside quotes. */
+function splitSelector(selector: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let quote = false;
+  for (const ch of selector.trim()) {
+    if (ch === '"') quote = !quote;
+    if (!quote && /\s/.test(ch)) {
+      if (cur) parts.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
+/** `parts` are ancestor selectors, closest last, as in CSS `a b c`. */
+function hasAncestors(el: MiniElement, parts: string[]): boolean {
+  let node: MiniNode | null = el.parentNode;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i] ?? "";
+    let found = false;
+    while (node) {
+      if (node instanceof MiniElement && matches(node, part)) {
+        found = true;
+        node = node.parentNode;
+        break;
+      }
+      node = node.parentNode;
+    }
+    if (!found) return false;
+  }
+  return true;
+}
+
+/** Supports `tag`, `.class`, `[attr]`, `[attr=value]`, `[attr="value"]`, one descendant combinator, and combinations such as `button.btn[aria-label="Close"]`. */
 function matches(el: MiniElement, selector: string): boolean {
-  const re = /^([a-zA-Z][a-zA-Z0-9-]*)?((?:\.[\w-]+|\[[\w:-]+(?:="[^"]*")?\])*)$/;
+  const attr = String.raw`\[[\w:-]+(?:=(?:"[^"]*"|[\w-]+))?\]`;
+  const re = new RegExp(`^([a-zA-Z][a-zA-Z0-9-]*)?((?:\\.[\\w-]+|${attr})*)$`);
   const m = re.exec(selector.trim());
   if (!m) throw new Error(`mini-dom: unsupported selector ${selector}`);
   const [, tag, rest = ""] = m;
   if (tag && el.localName !== tag.toLowerCase()) return false;
   const classes = el.className.split(/\s+/);
-  for (const part of rest.match(/\.[\w-]+|\[[\w:-]+(?:="[^"]*")?\]/g) ?? []) {
+  for (const part of rest.match(new RegExp(`\\.[\\w-]+|${attr}`, "g")) ?? []) {
     if (part.startsWith(".")) {
       if (!classes.includes(part.slice(1))) return false;
       continue;
     }
-    const a = /^\[([\w:-]+)(?:="([^"]*)")?\]$/.exec(part);
+    const a = /^\[([\w:-]+)(?:=(?:"([^"]*)"|([\w-]+)))?\]$/.exec(part);
     if (!a) return false;
-    const [, name = "", value] = a;
+    const name = a[1] ?? "";
+    const value = a[2] !== undefined ? a[2] : a[3];
     const have = el.getAttribute(name);
     if (have === null || (value !== undefined && have !== value)) return false;
   }

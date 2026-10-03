@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Lock, Plus } from "lucide-react";
 import type { NodeView } from "../api/types.ts";
+import { FleetCapacityBadge, useSeatSnapshot } from "../components/FleetCapacity.tsx";
 import { LocalModelsSection } from "../components/LocalModels.tsx";
 import { MachineStatsLine } from "../components/MachineStats.tsx";
 import { PageHeader } from "../components/Shell.tsx";
 import { Avatar, RelTime, Section, hueVar } from "../components/primitives.tsx";
 import { displayName, machineHue } from "../lib/format.ts";
 import { hrefFor, useRoute } from "../lib/route.ts";
+import { useCoarseNow } from "../lib/time.ts";
 import { useStore } from "../state/store.tsx";
 import { BillingPanel } from "./Billing.tsx";
 import { AddMachineSheet } from "./AddMachineSheet.tsx";
@@ -38,7 +40,9 @@ function SyncCell({ n }: { n: NodeView }) {
 }
 
 export function Team() {
-  const { team, me, agents, nodes } = useStore();
+  const { team, me, agents, nodes, accounts } = useStore();
+  const seats = useSeatSnapshot();
+  const now = useCoarseNow();
   const route = useRoute();
   const plan = team?.plan ?? me?.plan ?? null;
   useEffect(() => {
@@ -122,6 +126,7 @@ export function Team() {
                           {(() => { const r = rentalForNode(compute.state, n.node_id); return r ? <RentedChip rental={r} quotes={compute.quotes} canStop={owner} /> : null; })()}
                         </span>
                         <MachineStatsLine node={n} part="cell" />
+                        <div className="cap-host"><FleetCapacityBadge node={n} accounts={accounts} seats={seats} now={now} /></div>
                       </td>
                       <td data-label="Owner">{displayName(team.members, n.handle)}</td>
                       <td data-label="Network"><NetworkCell n={n} /></td>

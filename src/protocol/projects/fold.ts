@@ -31,6 +31,7 @@
 // `agents_can_close` is a guardrail the local API applies to agent requests, not a fold rule: any member's machine can
 // sign an op without an agent name, and a fold rule keyed on a setting's history would re-judge accepted ops.)
 import type { Author, Role } from "../schemas.ts";
+import { isEscalationContact } from "./escalation.ts";
 import { cardRef, shortId } from "./short.ts";
 import {
   BoardOp, CardOp, ProjectOp, DEFAULT_COLUMNS, type Automations, type BoardOpT, type BoardView, type CardOpT, type CardView,
@@ -175,6 +176,8 @@ export interface ProjectState {
   prefixes: string[];
   meter: "count" | "points"; automations: Required<Automations>; state: "active" | "archived" | "deleted";
   steward: "on" | "off"; steward_node: string; status_report: "hourly" | "off";
+  /** Who resolves a dispute (`@handle` or `@handle/machine`), or "" when unset (WALK-73). */
+  escalation_contact: string;
   creator: string; created_at: number; updated_at: number;
   /** Highest applied rank, and the op new settings changes name as their parent. */
   rev: number; head: string;
@@ -182,7 +185,17 @@ export interface ProjectState {
 }
 
 const DEFAULT_AUTOMATIONS: Required<Automations> = { pr_opened: true, pr_merged: false, agents_can_close: true };
-const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node", "status_report"] as const;
+const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node", "status_report", "escalation_contact"] as const;
+
+/**
+ * What an `escalation_contact` field does to the setting. Undefined: the op doesn't carry one. Null or "": clear it.
+ * A person address: set it. Anything else (an agent address, a word): drop just that field; the op's other fields stand.
+ */
+function appliedContact(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (v === null || v === "") return "";
+  return typeof v === "string" && isEscalationContact(v) ? v : undefined;
+}
 
 function isAdmin(ev: OpEvent, env: FoldEnv, creator: string): boolean {
   if (!isPerson(ev)) return false;
@@ -192,11 +205,10 @@ function isAdmin(ev: OpEvent, env: FoldEnv, creator: string): boolean {
 }
 
 /**
- * The project: the earliest (ts, origin, seq) project root by the member who created the channel (the person, or one of
- * the person's agents: fold 8), then its settings ops. Other roots are ignored (a second "project" in the same channel
- * can't take it over).
+ * The canonical project root of a channel's posts: the earliest (ts, origin, seq) valid project root by the member who
+ * created the channel. Any other root the creator posts is ignored, here and in the dispute fold's settings chains.
  */
-export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectState | null {
+function canonicalRoot(posts: readonly OpEvent[], env: FoldEnv): Parsed<ProjectOpT> | undefined {
   const roots: Parsed<ProjectOpT>[] = [];
   for (const ev of posts) {
     if (ev.thread || ev.hidden) continue;
@@ -205,7 +217,48 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
     if (env.creator !== null && ev.author.handle !== env.creator) continue;
     roots.push({ ev, op });
   }
-  const root = roots.sort((a, b) => byTs(a.ev, b.ev))[0];
+  return roots.sort((a, b) => byTs(a.ev, b.ev))[0];
+}
+
+/** The id of the post `foldProject` takes as this channel's project root, or null when there is none. */
+export function projectRootId(posts: readonly OpEvent[], env: FoldEnv): string | null {
+  return canonicalRoot(posts, env)?.ev.id ?? null;
+}
+
+/**
+ * The escalation contact on one applied op's own parent chain: the nearest op, walking from `head` up to the root, that
+ * set one (an admin's op that carried a valid value; null and "" set it to empty), otherwise the root's. A concurrent
+ * settings op that is not an ancestor of `head` is not on that chain, so it changes nothing here.
+ */
+function contactOnChain(
+  root: Parsed<ProjectOpT>, replies: ReadonlyMap<string, Parsed<ProjectOpT>>, head: string, set: ReadonlyMap<string, string>, rootContact: string,
+): string {
+  const seen = new Set<string>();
+  let cur = replies.get(head);
+  while (cur && !seen.has(cur.ev.id)) {
+    seen.add(cur.ev.id);
+    const own = set.get(cur.ev.id);
+    if (own !== undefined) return own;
+    const after = cur.op.after === undefined ? null : AFTER_RE.exec(cur.op.after);
+    // No parent named: the root. An applied op's parent chain was checked (hash and all) when it was ranked.
+    cur = after && after[1] !== root.ev.id ? replies.get(after[1] as string) : undefined;
+  }
+  return rootContact;
+}
+
+/**
+ * The project: the canonical project root (the earliest by the member who created the channel, a person or one of the
+ * person's agents: fold 8), then its settings ops. Other roots are ignored (a second "project" in the same channel
+ * can't take it over).
+ *
+ * `escalation_contact` is the contact on the parent chain of the head (`head`: the op a new settings change, dispute
+ * open or dispute resolve names as its parent), not the last writer over every applied op. Every other setting is
+ * last-writer-wins over the whole order, but a contact set by an op that is not an ancestor of the head (it lost the
+ * order to a concurrent edit that did not carry one) does not take effect, so the view, the routing and the dispute
+ * fold all read one contact (WALK-73). The owner sees the contact that is in effect and can set it again.
+ */
+export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectState | null {
+  const root = canonicalRoot(posts, env);
   if (!root) return null;
   const replies: Parsed<ProjectOpT>[] = [];
   for (const ev of posts) {
@@ -215,11 +268,16 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
   }
   const creator = root.ev.author.handle;
   const r = root.op;
+  // An agent-signed root never carries the contact (same rule as status_report): the person sets it afterwards.
+  const rootContact = isPerson(root.ev) ? (appliedContact(r.escalation_contact) ?? "") : "";
   let s: ProjectState = {
     id: root.ev.id, name: r.name as string, folder: r.folder ?? "", description: r.description ?? "", prefix: r.prefix as string, prefixes: [r.prefix as string],
     paths: r.paths ?? [], meter: r.meter ?? "count", automations: { ...DEFAULT_AUTOMATIONS, ...(r.automations ?? {}) },
-    state: r.state ?? "active", steward: r.steward ?? "on", steward_node: r.steward_node ?? "", status_report: isPerson(root.ev) ? r.status_report ?? "off" : "off", creator, created_at: root.ev.ts, updated_at: root.ev.ts, rev: 0, head: refOf(root.ev), timeline: [],
+    state: r.state ?? "active", steward: r.steward ?? "on", steward_node: r.steward_node ?? "", status_report: isPerson(root.ev) ? r.status_report ?? "off" : "off",
+    escalation_contact: rootContact, creator, created_at: root.ev.ts, updated_at: root.ev.ts, rev: 0, head: refOf(root.ev), timeline: [],
   };
+  // Op id -> the contact an applied settings op set (null or "" set it to empty). Read once the head is known.
+  const contactSet = new Map<string, string>();
   const { applied, waiting } = order(root, replies);
   const timeline: TimelineEntry[] = waitingEntries(waiting, PROJECT_FIELDS);
   for (const o of applied) {
@@ -228,25 +286,29 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
     if (!o.root && !isAdmin(o.ev, env, creator)) { timeline.push({ ...entry, ignored: "not_admin" }); continue; }
     timeline.push(entry);
     s = { ...s, head: refOf(o.ev), rev: o.rank };
-    if (o.root) continue;
-    const p = o.op;
-    s = {
-      ...s,
-      ...(p.name !== undefined ? { name: p.name } : {}),
-      ...(p.folder !== undefined ? { folder: p.folder } : {}),
-      ...(p.description !== undefined ? { description: p.description } : {}),
-      ...(p.prefix !== undefined ? { prefix: p.prefix, prefixes: s.prefixes.includes(p.prefix) ? s.prefixes : [...s.prefixes, p.prefix] } : {}),
-      ...(p.paths !== undefined ? { paths: p.paths } : {}),
-      ...(p.meter !== undefined ? { meter: p.meter } : {}),
-      ...(p.automations !== undefined ? { automations: { ...s.automations, ...p.automations } } : {}),
-      ...(p.state !== undefined ? { state: p.state } : {}),
-      ...(p.steward !== undefined ? { steward: p.steward } : {}),
-      ...(p.steward_node !== undefined ? { steward_node: p.steward_node } : {}),
-      ...(p.status_report !== undefined ? { status_report: p.status_report } : {}),
-      updated_at: Math.max(s.updated_at, o.ev.ts),
-    };
+    if (!o.root) {
+      const p = o.op;
+      const contact = appliedContact(p.escalation_contact);
+      s = {
+        ...s,
+        ...(p.name !== undefined ? { name: p.name } : {}),
+        ...(p.folder !== undefined ? { folder: p.folder } : {}),
+        ...(p.description !== undefined ? { description: p.description } : {}),
+        ...(p.prefix !== undefined ? { prefix: p.prefix, prefixes: s.prefixes.includes(p.prefix) ? s.prefixes : [...s.prefixes, p.prefix] } : {}),
+        ...(p.paths !== undefined ? { paths: p.paths } : {}),
+        ...(p.meter !== undefined ? { meter: p.meter } : {}),
+        ...(p.automations !== undefined ? { automations: { ...s.automations, ...p.automations } } : {}),
+        ...(p.state !== undefined ? { state: p.state } : {}),
+        ...(p.steward !== undefined ? { steward: p.steward } : {}),
+        ...(p.steward_node !== undefined ? { steward_node: p.steward_node } : {}),
+        ...(p.status_report !== undefined ? { status_report: p.status_report } : {}),
+        updated_at: Math.max(s.updated_at, o.ev.ts),
+      };
+      if (contact !== undefined) contactSet.set(o.ev.id, contact);
+    }
   }
-  return { ...s, timeline: timeline.sort(byTsEntry) };
+  const escalation_contact = contactOnChain(root, new Map(replies.map((x) => [x.ev.id, x])), s.head.split("#")[0] as string, contactSet, rootContact);
+  return { ...s, escalation_contact, timeline: timeline.sort(byTsEntry) };
 }
 
 // ---- boards -------------------------------------------------------------------------------------------------------
@@ -544,7 +606,7 @@ export function projectView(
   return {
     channel, id: p.id, name: p.name, folder: p.folder, description: p.description, prefix: p.prefix, paths: p.paths,
     ...(p.prefixes.length > 1 ? { prior_prefixes: p.prefixes.filter((x) => x !== p.prefix) } : {}),
-    meter_mode: p.meter, automations: p.automations, state: p.state, steward: p.steward, steward_node: p.steward_node, status_report: p.status_report, private: opts.private, admins, creator: p.creator,
+    meter_mode: p.meter, automations: p.automations, state: p.state, steward: p.steward, steward_node: p.steward_node, status_report: p.status_report, escalation_contact: p.escalation_contact, private: opts.private, admins, creator: p.creator,
     created_at: p.created_at, boards: boardViews,
     meter: sumMeters(boardViews.filter((b) => b.state === "active").map((b) => b.meter), p.meter),
     cards, last_activity: Math.max(opts.lastActivity, p.updated_at),

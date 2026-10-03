@@ -11,7 +11,7 @@
 import type { CardView, ColumnRole, ProjectView } from "../../protocol/projects/schema.ts";
 import { isConfidential, safeText } from "../../protocol/projects/status-report.ts";
 import { TERMINAL_STATES, type SeatView } from "../../protocol/seats.ts";
-import { ONBOARDING_ARGV, cardDataTitle, recMarker, type Rec, type RecActionT } from "../../protocol/talkie-recs.ts";
+import { ONBOARDING_ARGV, cardDataTitle, recMarker, titleRefId, type Rec, type RecActionT } from "../../protocol/talkie-recs.ts";
 import { HttpError } from "../http.ts";
 import { dispatch, type RouteCtx } from "../local-routes.ts";
 import { seatHosts, seatsList } from "../seats/view.ts";
@@ -19,7 +19,7 @@ import { accountsView, agentsView, nodesView } from "../views.ts";
 import { visibleProjects } from "../projects/service.ts";
 import { fleetNow, seatHold } from "./poll.ts";
 import { seatTarget, type PollMachine } from "./poll-plan.ts";
-import { outgoingOf, type RecDeps } from "./recs.ts";
+import { blockReasonUnread, BLOCK_UNREADABLE, cardHiddenFrom, createTitleFor, overlayHeld, TITLE_UNREADABLE, outgoingOf, type RecDeps } from "./recs.ts";
 import { canSeeChannel } from "../roster.ts";
 import type { Core } from "../core.ts";
 
@@ -62,6 +62,7 @@ const noSeat = (restricted: boolean): string =>
  * now differs from what the person saw (a card renamed, another machine chosen), the approval is refused.
  */
 export function outgoingNow(d: RecDeps, rec: Rec, by: string, fleet: () => FleetNow): string | null | undefined {
+  if (cardHiddenFrom(d, rec, by)) return undefined;
   const a = rec.action;
   if (a.kind !== "start_seat") return outgoingOf(d, rec, by);
   const plan = seatPlan(d, fleet(), a);
@@ -199,10 +200,12 @@ async function createCard(d: RecDeps, c: RouteCtx, rec: Rec, a: Extract<RecActio
   d.idx.flushAll();
   const project = d.idx.project(a.project);
   if (!project || project.state !== "active") throw stale("the project is not active");
-  const title = norm(a.title);
+  const raw = createTitleFor(d, rec, by);
+  if (!raw) throw titleRefId(a.title) ? new HttpError(409, "rec_stale", TITLE_UNREADABLE) : stale("the card it would create can no longer be read");
+  const title = norm(raw);
   if (d.idx.db.cards(a.project, { states: ["open"], limit: 20_000 }).some((card) => norm(card.title) === title)) return "A card with that title is already there.";
   const body = `${markerOf(rec)}\nCreated from a WalkieTalkie recommendation approved by @${by}.${daemonWhy(rec)}`;
-  const res = await call(c, "POST", "/v1/tasks", { project: a.project, title: a.title, body, ...(a.column ? { column: a.column } : {}) });
+  const res = await call(c, "POST", "/v1/tasks", { project: a.project, title: raw, body, ...(a.column ? { column: a.column } : {}) });
   const made = (res as { task?: { board?: string; column?: string } }).task;
   return `Created a card in “${made?.board && made.column ? named(project, made.board, made.column) : "the project"}”.`;
 }
@@ -217,12 +220,16 @@ async function onboardingStep(c: RouteCtx, a: Extract<RecActionT, { kind: "onboa
 
 /** Does what the recommendation says, as `by`, through the existing routes; returns one plain line of what was done. Throws the route's own error when it cannot. */
 export async function performRec(d: RecDeps, c: RouteCtx, rec: Rec, by: string, fleet: () => FleetNow = fleetReader(d, c)): Promise<string> {
-  const a = rec.action;
+  if (cardHiddenFrom(d, rec, by)) throw new HttpError(403, "forbidden", "you cannot approve this one: you cannot see this card's channel");
+  if (blockReasonUnread(d, rec)) throw new HttpError(409, "rec_stale", BLOCK_UNREADABLE);
+  // The schedules record has a placeholder block reason and no evidence. The project post has the real ones, for this person who can see it.
+  const acted = overlayHeld(d, rec);
+  const a = acted.action;
   switch (a.kind) {
-    case "move_card": return moveCard(d, c, rec, a, by);
-    case "start_seat": return startSeat(d, c, rec, a, by, fleet);
-    case "ask_orchestrator": return askOrchestrator(d, c, rec, a, by);
-    case "create_card": return createCard(d, c, rec, a, by);
+    case "move_card": return moveCard(d, c, acted, a, by);
+    case "start_seat": return startSeat(d, c, acted, a, by, fleet);
+    case "ask_orchestrator": return askOrchestrator(d, c, acted, a, by);
+    case "create_card": return createCard(d, c, acted, a, by);
     case "onboarding_step": return onboardingStep(c, a);
   }
 }

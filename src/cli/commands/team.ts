@@ -10,6 +10,7 @@ import { agentDisplayName, ORCHESTRATOR_AGENT } from "../../protocol/orchestrato
 import { agentViewJson, teamViewJson, WHO_NOTE } from "../agent-output.ts";
 import { bool, channelArg, need, str, UsageError } from "../args.ts";
 import { agentFrom, EXIT, requirePerson, type Ctx } from "../context.ts";
+import { OFFBOARD_APPLY_TIMEOUT_MS } from "../../daemon/peer-timeouts.ts";
 import { ago, c, pad, safeTerm } from "../format.ts";
 import { planLine } from "./license.ts";
 import { isInviteCode, INVITE_MAX_CHARS } from "../../daemon/invite.ts";
@@ -258,7 +259,8 @@ export function renderWho(team: TeamView, agents: AgentView[], now = Date.now(),
 const ROLES = ["owner", "member", "observer", "removed"];
 
 export async function teamCmd(ctx: Ctx): Promise<number> {
-  const sub = need(ctx.args, 0, "subcommand (add-machine | authority | revoke | role | peer-sig-strict)");
+  const sub = need(ctx.args, 0, "subcommand (add-machine | authority | offboard | revoke | role | peer-sig-strict)");
+  if (sub === "offboard") return teamOffboard(ctx);
   if (sub === "role") return teamRole(ctx);
   if (sub === "add-machine") return addMachine(ctx);
   if (sub === "peer-sig-strict") {
@@ -284,6 +286,74 @@ export async function teamCmd(ctx: Ctx): Promise<number> {
   const res = await ctx.client().setAuthority(node);
   if (ctx.json) { ctx.out(JSON.stringify(res)); return EXIT.ok; }
   ctx.out("queued" in res ? c.yellow("queued: the roster authority is offline; it moves when the authority comes back") : `${c.green("roster authority")} → ${node}`);
+  return EXIT.ok;
+}
+
+interface OffboardPlanView {
+  handle: string; role: string; facts?: string[];
+  will?: { revoke_nodes?: { hostname: string }[]; drop_restricted_channels?: string[]; hidden_restricted_channels?: number; revoke_ssh_grant?: boolean };
+  found?: { cards?: { key: string; matches: string[] }[]; asks?: unknown[]; schedules?: { name: string }[]; integrations?: { connector: string; hostname: string }[]; seats?: unknown[]; files?: { name: string; why: string }[]; vault_shares?: { id: string }[] };
+  limits?: string[];
+}
+interface OffboardApplyView { handle: string; role: string; steps: { step: string; status: string; detail: string }[] }
+
+/** Plain-English plan. The facts already include what removal does and does not do. */
+function renderOffboardPlan(plan: OffboardPlanView): string {
+  const will = plan.will ?? {};
+  const found = plan.found ?? {};
+  const hidden = will.hidden_restricted_channels ?? 0;
+  const hiddenNote = hidden > 0 ? ` ${hidden} more restricted channel(s) are hidden from this caller and not listed.` : "";
+  const lines = [
+    `Offboard @${plan.handle} (${plan.role}) — read only, this machine.`,
+    ...(plan.facts ?? []),
+    `Nodes removal revokes: ${(will.revoke_nodes ?? []).map((n) => n.hostname).join(", ") || "none"}.`,
+    `Restricted channels they leave: ${(will.drop_restricted_channels ?? []).join(", ") || "none"}.${hiddenNote}`,
+    `SSH grant on this machine: ${will.revoke_ssh_grant ? "this machine's grant was minted by that owner, so their key line is removed" : "not revoked from here"}.`,
+    `Cards: ${(found.cards ?? []).map((card) => `${card.key} (${card.matches.join("+")})`).join(", ") || "none"}.`,
+    `Open asks: ${(found.asks ?? []).length}. Schedules: ${(found.schedules ?? []).map((s) => s.name).join(", ") || "none"}.`,
+    `Integrations: ${(found.integrations ?? []).map((i) => `${i.connector} on ${i.hostname}`).join(", ") || "none"}. Seats: ${(found.seats ?? []).length}.`,
+    `Files: ${(found.files ?? []).map((f) => `${f.name} (${f.why})`).join(", ") || "none"}.`,
+    `Vault shares on this machine: ${(found.vault_shares ?? []).map((v) => v.id).join(", ") || "none"}.`,
+    ...(plan.limits ?? []).map((line) => `Limit: ${line}`),
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * What to print when `--apply` waits out its budget. The daemon may still be finishing; a dead daemon is a
+ * different error (`daemon not reachable`) and does not use this text.
+ */
+export function offboardApplyTimeoutMessage(handle: string): string {
+  const bare = handle.replace(/^@/, "");
+  return `offboard may still be running; re-run \`walkie team offboard @${bare} --plan\` to see the result`;
+}
+
+/**
+ * `walkie team offboard <handle> --plan` reads. `--apply` suspends (observer), then the existing removal,
+ * then this machine's SSH key for the owner who minted the grant, then optional card reassignment. A person
+ * types the handle for --apply. --plan does not prompt; the daemon still refuses an agent-marked request.
+ * `--apply` waits for the flush, the catch-up, both role sends, and the SSH receipt (`OFFBOARD_APPLY_TIMEOUT_MS`).
+ */
+async function teamOffboard(ctx: Ctx): Promise<number> {
+  const handle = need(ctx.args, 1, "handle").replace(/^@/, "");
+  const plan = bool(ctx.args, "plan");
+  const apply = bool(ctx.args, "apply");
+  if (plan === apply) throw new UsageError("pass exactly one of --plan or --apply");
+  const reassign = str(ctx.args, "reassign-to");
+  if (reassign && !apply) throw new UsageError("--reassign-to is only valid with --apply");
+  if (plan) {
+    const res = await ctx.client().request<OffboardPlanView>("GET", `/v1/team/offboard/plan?handle=${encodeURIComponent(handle)}`);
+    ctx.out(ctx.json ? JSON.stringify(res) : renderOffboardPlan(res));
+    return EXIT.ok;
+  }
+  await requirePerson(ctx, `offboard @${handle}`, handle);
+  const res = await ctx.client().request<OffboardApplyView>(
+    "POST", "/v1/team/offboard",
+    { handle, ...(reassign ? { reassign_to: reassign } : {}) },
+    OFFBOARD_APPLY_TIMEOUT_MS,
+    offboardApplyTimeoutMessage(handle),
+  );
+  ctx.out(ctx.json ? JSON.stringify(res) : res.steps.map((s) => `${s.status} ${s.step}: ${s.detail}`).join("\n"));
   return EXIT.ok;
 }
 

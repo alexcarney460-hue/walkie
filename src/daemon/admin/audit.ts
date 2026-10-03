@@ -106,6 +106,9 @@ export function postAudit(core: Core, text: string, notify?: string): boolean {
   }
 }
 
+/** Newest entries `GET /v1/admin` will return, and the most an agent sees from `GET /v1/history`. */
+export const ADMIN_AUDIT_MAX = 200;
+
 /** The newest `limit` entries of this machine's audit log, newest first. */
 export function readAudit(home: string, limit = 50): Record<string, unknown>[] {
   const p = auditPath(home);

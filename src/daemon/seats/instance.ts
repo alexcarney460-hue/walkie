@@ -10,7 +10,14 @@
 // Walkie. A setup from before this record existed is "legacy": the helper and daemon then keep the person's own seats
 // working but never remove a seat user the daemon did not make itself, until setup-user --apply runs again: each seat
 // user in seats.json is stamped with the socket of the daemon that made it (host.ts `made_by`), so a copied
-// seats.json, or one from before the stamps, names no seat user this daemon destroys.
+// seats.json, or one from before the stamps, names no seat user this daemon destroys. A running seat left
+// unstamped from that first start is kept in seats.json; only the registered daemon ends its card, and only once
+// the seat user is gone or idle (host.ts, WALK-105). A terminal state already in the local store is not posted
+// again, and a card whose agent row is already offline is not ended again. An older offline status does not count
+// while that row says the agent is still up. If the helper answers exactly `<user>: never made by this helper:
+// not destroyed`, with no `left` and no `code`, the kept entry is dropped and that idle destroy is not retried,
+// including when the card was already ended. Any other failure is retried.
+// A copy never posts that end.
 import { lstatSync, readFileSync, realpathSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { SEAT_INSTANCE_FILE } from "./seat-user.ts";

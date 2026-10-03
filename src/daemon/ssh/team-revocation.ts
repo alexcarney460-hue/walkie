@@ -6,6 +6,7 @@ import type { Core } from "../core.ts";
 import { HttpError } from "../http.ts";
 import { verifySig } from "../keys.ts";
 import { PeerCallError, type PeerClient } from "../peer-client.ts";
+import { RECEIPT_PEER_TIMEOUT_MS } from "../peer-timeouts.ts";
 import { GRANT_DAYS, type Grant } from "../provision/grant.ts";
 import { nodeMember } from "../roster.ts";
 
@@ -14,8 +15,8 @@ const ADMIN_AGENT = "walkie-admin";
 export const SSH_REVOCATION_CAP = "ssh_revocation_v1";
 /** What a person is told when the only answers were 404s: released pre.10 / pre.10.1 daemons have no receipt route. */
 const OLDER_PEERS_MESSAGE = "SSH revocation is recorded on this machine only: the team machines asked run an older Walkie that cannot hold its receipt (update the roster authority first)";
-/** How long one team peer gets to store a receipt before the revocation goes on without it. */
-export const RECEIPT_PEER_TIMEOUT_MS = 3_000;
+/** Defined in peer-timeouts so the offboard apply budget can add it without importing this module. */
+export { RECEIPT_PEER_TIMEOUT_MS };
 /** A receipt names a grant created in the last 91 days: a grant lives at most GRANT_DAYS (90), plus a day of clock slack. */
 export const RECEIPT_WINDOW_MS = (GRANT_DAYS + 1) * 86_400_000;
 /** The most receipts one node may have stored inside that window. Only its own signing key can make them. */

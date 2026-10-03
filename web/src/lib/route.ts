@@ -6,11 +6,12 @@ import { useSyncExternalStore } from "react";
 //   #/updates            every reported project's latest status report (UPDATES-1)
 //   #/artifacts          #/team     #/integrations   #/accounts   #/orchestrator[/<conversationId>]   #/seats
 //   #/projects           #/projects/<channel>[/<board id>][?card=<card id>]   (WALKIE-PROJECTS-1)
+//   #/simple[?card=<card id>|?ask=<ask id>]   plain-language board (WALK-75)
 //   #/projects/<channel>/room   the project's Data Room (DATA-ROOM-1)
 //   #/projects/<channel>/page[?group=<slug>]   the project's status page (PROJECT-PAGES-1), at a group of its screens
 //   any + ?agent=<id>
 
-export type View = "mission" | "updates" | "projects" | "orchestrator" | "board" | "asks" | "artifacts" | "team" | "integrations" | "accounts" | "machine" | "seats";
+export type View = "mission" | "updates" | "projects" | "simple" | "orchestrator" | "board" | "asks" | "artifacts" | "team" | "integrations" | "accounts" | "machine" | "seats";
 
 export interface Route {
   view: View;
@@ -25,6 +26,8 @@ export interface Route {
   /** Projects: the board shown (its root event id) and the open card (its root event id). */
   board?: string;
   card?: string;
+  /** Simple mode: an ask open on the page. A card, when both are present, wins. */
+  ask?: string;
   /** Projects: the project's Data Room tab instead of a board. */
   room?: boolean;
   /** Projects: the project's status page instead of a board, and the group of screens it scrolls to. */
@@ -32,7 +35,7 @@ export interface Route {
   group?: string;
 }
 
-const VIEWS: View[] = ["mission", "updates", "projects", "orchestrator", "board", "asks", "artifacts", "team", "integrations", "accounts", "seats"];
+const VIEWS: View[] = ["mission", "updates", "projects", "simple", "orchestrator", "board", "asks", "artifacts", "team", "integrations", "accounts", "seats"];
 
 export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -65,6 +68,14 @@ export function parseHash(hash: string): Route {
     const group = params.get("group");
     if (group && route.page) route.group = group;
   }
+  if (view === "simple") {
+    const card = params.get("card");
+    if (card) route.card = card;
+    else {
+      const ask = params.get("ask");
+      if (ask) route.ask = ask;
+    }
+  }
   const agent = params.get("agent");
   if (agent) route.agent = agent;
   const tab = params.get("tab");
@@ -88,7 +99,8 @@ export function hrefFor(r: Route): string {
     else if (r.board) path += `/${encodeURIComponent(r.board)}`;
   }
   const params = new URLSearchParams();
-  if (r.view === "projects" && r.card) params.set("card", r.card);
+  if ((r.view === "projects" || r.view === "simple") && r.card) params.set("card", r.card);
+  else if (r.view === "simple" && r.ask) params.set("ask", r.ask);
   if (r.view === "projects" && r.page && r.group) params.set("group", r.group);
   if (r.tab) params.set("tab", r.tab);
   if (r.machine) params.set("machine", r.machine);

@@ -24,11 +24,15 @@ function hostFor(path: string, adminOp: (verb: string, n: number) => Promise<unk
   Object.assign(host, {
     opts: { reconcileCloseWaitMs: waitMs }, adminOp, closing: false, closed: false,
     seats: new Map(), seatStatuses: { clearPending: () => undefined, stop: () => undefined },
+    // The real constructor initializes this set; this fixture has no tool checks in flight.
+    decisions: new Set<Promise<void>>(),
     stopAll: async () => undefined, reaping: new Set(), api: { stop: () => undefined }, socketDir: null,
     log: { warn: () => undefined }, reconcileTimer: null, busyTimer: null, publishTimer: null,
     busyReapply: null, reconcileRetry: null, helperReconciled: Promise.resolve(), listingHelper: false,
     reconciled: false, reconcileError: null, liveUsers: new Set<number>(), recoveredIdle: new Set<number>(), userHigh: 0,
     seatScope: () => ({ state: "own" }),
+    // WALK-105 maps the real constructor creates. This fixture never keeps a seat; the maps must still exist.
+    keptSeats: new Map(), keptReady: new Set(), keptEnded: new Set(), keptStatePosted: new Set(),
     quarantine: new Set<string>(), quarantineFileOnly: new Set<string>(), quarantineWhy: new Map(),
     save: () => true,
   });

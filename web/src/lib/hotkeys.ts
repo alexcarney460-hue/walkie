@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { getRoute, navigate, type View } from "./route.ts";
 
-const G_MAP: Record<string, View> = { m: "mission", r: "updates", p: "projects", o: "orchestrator", b: "board", a: "asks", f: "artifacts", t: "team", i: "integrations", u: "accounts", s: "seats" };
+const G_MAP: Record<string, View> = { m: "mission", r: "updates", p: "projects", n: "simple", o: "orchestrator", b: "board", a: "asks", f: "artifacts", t: "team", i: "integrations", u: "accounts", s: "seats" };
 
 export const SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["g", "m"], label: "Mission Control" },
   { keys: ["g", "r"], label: "Updates (project status reports)" },
   { keys: ["g", "p"], label: "Projects" },
+  { keys: ["g", "n"], label: "Simple" },
   { keys: ["g", "o"], label: "WalkieTalkie" },
   { keys: ["g", "b"], label: "Channels" },
   { keys: ["g", "a"], label: "Asks" },

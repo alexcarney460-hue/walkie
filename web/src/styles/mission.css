@@ -330,6 +330,49 @@ button.summary-stat:hover { background: var(--surface-2); }
 .machine-stat.is-warn { color: var(--amber); }
 .machine-stat.is-bad { color: var(--red); }
 .machine-head .dot { margin-left: 4px; }
+/* Fleet capacity (WALK-65). Theme tokens only, so the light and dark themes both read it. */
+.cap-host {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.cap-badge {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.cap-badge.is-open {
+  background: color-mix(in oklch, var(--signal) 14%, transparent);
+  /* 11px on the 14% tint. --signal is about 4.2:1 in the light theme; --signal-strong clears 4.5:1 in both. */
+  color: var(--signal-strong);
+  border-color: color-mix(in oklch, var(--signal) 36%, var(--line));
+}
+.cap-badge.is-blocked {
+  background: color-mix(in oklch, var(--amber) 14%, transparent);
+  /* No --amber-strong. 80% amber with --text darkens it on light and lightens it on dark, both at least 4.5:1. */
+  color: color-mix(in oklch, var(--amber) 80%, var(--text));
+  border-color: color-mix(in oklch, var(--amber) 36%, var(--line));
+}
+.cap-badge.is-muted {
+  /* Seats hidden is not a block. --text-2 on --surface-2 is about 8.9:1 in the dark theme and 8.1:1 in the light one. */
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--line);
+}
+.cap-badge.is-offline { color: var(--text-3); }
 .machine-empty {
   display: flex;
   flex-wrap: wrap;
@@ -519,6 +562,9 @@ button.summary-stat:hover { background: var(--surface-2); }
   .agent-grid { grid-template-columns: minmax(0, 1fr); }
   .feed-rail-head,
   .ticker-btn { padding-left: 16px; padding-right: 16px; }
+  /* 860px is the dashboard phone width, so a 390px screen gets the same wrapping. */
+  .cap-badge { white-space: normal; }
+  .machine-head .cap-badge { flex: 1 1 auto; }
 }
 
 /* ---- live roster vs archive (WALKIE-MISSION-1) ---- */

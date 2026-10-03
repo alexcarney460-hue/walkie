@@ -10,7 +10,9 @@
 // A team project's recommendations are posted in the project's channel (its members get exactly them); owners-only ones (a
 // private project, a card labelled `confidential`, a machine) in the owner-only schedule channel. Older peers show the posts as
 // ordinary messages and ignore the field.
+import { createHmac } from "node:crypto";
 import { z } from "zod";
+import { scrubPhrases } from "./phrase-scrub.ts";
 import { Address, EventId, NodeId } from "./schemas.ts";
 import { ORCHESTRATOR_AGENT } from "./orchestrator.ts";
 import { SEAT_RUNTIMES } from "./seats.ts";
@@ -78,6 +80,12 @@ export const MoveCardAction = z.object({
   /** The column to move it to; absent when it is only to be marked blocked. */
   to: ColumnRef.optional(),
   blocked_reason: z.string().min(1).max(300).optional(),
+  /**
+   * Set on an owners-only block (no `to`). A pre.12 action is strict and has no such field, so it does not fold the
+   * record and does not mark the card blocked with the placeholder. A move that names a column omits it, and an older
+   * peer still folds that move.
+   */
+  seal: z.literal(1).optional(),
 }).strict();
 export const StartSeatAction = z.object({
   kind: z.literal("start_seat"),
@@ -120,6 +128,11 @@ export const CreateCardAction = z.object({
   project: ProjectRef,
   title: z.string().min(1).max(200),
   column: ColumnRef.optional(),
+  /**
+   * Set on an owners-only create. A pre.12 peer's action is strict and has no such field, so it does not fold the
+   * record and cannot approve it. Absent on a team create, which an older peer still folds.
+   */
+  seal: z.literal(1).optional(),
 }).strict();
 
 export const RecAction = z.discriminatedUnion("kind", [MoveCardAction, StartSeatAction, AskOrchestratorAction, OnboardingStepAction, CreateCardAction])
@@ -183,6 +196,108 @@ export const recKey = {
   create: (project: string, title: string): string => `card|${project}|${norm(title)}`,
 };
 
+/**
+ * Dedup key for a card that does not exist yet when the recommendation is owners-only. An HMAC of the channel id and
+ * the normalized title, keyed by this daemon's local secret, so the schedule record does not carry the title and the
+ * same title in another project is a different key. `secret` is 32 random bytes from the daemon's home, not a hash of
+ * the title.
+ */
+export function sealedCreateKey(project: string, title: string, secret: Uint8Array): string {
+  const digest = createHmac("sha256", secret).update(`${project}\0${norm(title)}`).digest("hex").slice(0, 32);
+  return `card|${project}|h:${digest}`;
+}
+
+/** `action.title` of an owners-only create points at the project-channel post that holds the real title. */
+export const TITLE_REF_PREFIX = "card-title:";
+const TITLE_REF_ID = /^[0-9a-f]{16}:[1-9][0-9]*$/;
+export function titleRef(eventId: string): string { return `${TITLE_REF_PREFIX}${eventId}`; }
+export function titleRefId(title: string): string | null {
+  if (!title.startsWith(TITLE_REF_PREFIX)) return null;
+  const id = title.slice(TITLE_REF_PREFIX.length);
+  return TITLE_REF_ID.test(id) ? id : null;
+}
+
+/** How an owners-only recommendation names a card that already exists: its id, never its key or its title. */
+export function cardScheduleRef(cardId: string): string {
+  return `card ${cardId}`;
+}
+
+function sentenceForm(title: string, prefixes: readonly string[]): string[] {
+  // A form this function itself shortened ends in "…". That shortening is not a stored title, and using it would match
+  // a fragment. A stored title that already ends in "…" is added by the caller and is not skipped here.
+  const forms = [recTitle(title, prefixes), cardDataTitle(title, prefixes)];
+  return forms.filter((s) => s.length > 0 && s !== "(untitled)" && !s.endsWith("…"));
+}
+
+/**
+ * Removes each phrase only where it stands as a whole phrase after the same normalisation on both sides (NFKC, marks
+ * and format characters dropped, Cyrillic and Greek look-alikes mapped to Latin, a run of punctuation, underscores or
+ * whitespace read as one gap, and the phrase with those gaps removed). A shorter piece of a phrase is left, and so is
+ * a fragment inside a longer token ("seeding", "keys2"). One matcher is built for the phrase set and reused.
+ */
+export function withoutPhrases(text: string, phrases: readonly string[]): string {
+  return scrubPhrases(text, phrases);
+}
+
+/**
+ * Takes a card's title, and the sentence forms of that whole title, out of text. Only the whole phrase, at a word
+ * boundary: a fragment of the title, however long, is left. A truncated sentence form is not used (it would be a fragment).
+ */
+export function withoutCardTitle(text: string, title: string, prefixes: readonly string[]): string {
+  return withoutPhrases(text, [title, ...sentenceForm(title, prefixes)]);
+}
+
+/** A card key standing in a title. Not global: callers test many titles. */
+const KEY_IN_TITLE = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]{1,9}-\d{1,7}(?:-[0-9a-fA-F]{8})?(?![A-Za-z0-9])/;
+/** The whole phrase is only a card key, so its sentence form is empty and is not a phrase of its own. */
+const KEY_ONLY = /^[A-Z][A-Z0-9]{1,9}-\d{1,7}(?:-[0-9a-fA-F]{8})?$/;
+const MARKUP_ASCII = new Uint8Array(128);
+for (const code of [34, 39, 96, 42, 95, 91, 93, 123, 125, 60, 62, 92, 64]) MARKUP_ASCII[code] = 1;
+
+/**
+ * Sentence forms of a phrase, when they are not the phrase itself. A plain title at most 80 characters long, and a
+ * longer title with no card key (its shortened form would end in an ellipsis and is not used), add nothing. A phrase
+ * that is only a card key adds nothing either: stripping the key leaves no words.
+ */
+function extraForms(phrase: string, prefixes: readonly string[]): string[] {
+  let markup = false;
+  let hyphen = false;
+  for (let i = 0; i < phrase.length; i++) {
+    const c = phrase.charCodeAt(i);
+    if (c === 45) hyphen = true;
+    else if (c < 128 && MARKUP_ASCII[c] === 1) markup = true;
+  }
+  if (!hyphen && !markup) return [];
+  const keyed = hyphen && KEY_IN_TITLE.test(phrase);
+  if (!keyed && (phrase.length > 80 || !markup)) return [];
+  if (keyed && KEY_ONLY.test(phrase)) return [];
+  return sentenceForm(phrase, prefixes);
+}
+
+/**
+ * The same, for every private phrase the caller passes: a private project's name, and the title and the key of an
+ * open or archived card on a private project or of a confidential card. A truncated sentence form this code produced
+ * is not used. A stored title is, including one that already ends in an ellipsis. An underscore is a gap.
+ */
+export function withoutPrivatePhrases(text: string, phrases: readonly string[], prefixes: readonly string[]): string {
+  const forms: string[] = [];
+  for (const phrase of phrases) {
+    forms.push(phrase);
+    for (const extra of extraForms(phrase, prefixes)) forms.push(extra);
+  }
+  return withoutPhrases(text, forms);
+}
+
+/** Puts the title a viewer may see back into a stored owners-only summary. A `$` in the title stays a `$`. */
+export function summaryWithTitle(summary: string, displayTitle: string, projectName: string | null, cardKey?: string | null): string {
+  const created = /^Create a card in (p-[0-9a-f]{8})$/.exec(summary);
+  if (created) return `Create a card “${displayTitle}” in ${projectName ?? created[1]}`;
+  const shown = cardKey ? `card ${cardKey} “${displayTitle}”` : `“${displayTitle}”`;
+  return summary
+    .replace(/card [0-9a-f]{16}:[1-9][0-9]*/g, () => shown)
+    .replace(/card [A-Z][A-Z0-9]{1,9}-\d{1,7}(?:-[0-9a-fA-F]{8})? \(p-[0-9a-f]{8}\)/g, () => shown);
+}
+
 /** A card key from anywhere (cards imported from other tools carry their old ids): capitals, a hyphen and digits, so an agent's name like `cc-9` is not one. */
 const KEY_SHAPE = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]{1,9}-\d{1,7}(?:-[0-9a-fA-F]{8})?(?![A-Za-z0-9])/g;
 
@@ -244,11 +359,16 @@ export function resolveText(status: RecResolveT["status"], summary: string, by: 
 
 // ---- folding ------------------------------------------------------------------------------------------------------
 
-/** One event of a channel that carries a `talkie_rec` field: `rec` is the field as signed, `ts` the earlier of its stamp and its receipt. */
+/**
+ * One event of a channel that carries a `talkie_rec` field: `rec` is the field as signed, `ts` the earlier of its stamp and its receipt.
+ * `origin` and `seq` are the event's place in its node's log: they are what the roster chain anchors an event by, so a caller
+ * judging who could see a project when it was answered reads the membership in force at that anchor, never the author's clock.
+ */
 export interface RecEvent {
   id: string; ts: number; channel: string;
   author: { handle: string; agent?: string };
   rec: unknown;
+  origin?: string; seq?: number;
 }
 
 export interface RecResolution { status: RecResolveT["status"]; by: string; at: number; agent?: string; note?: string }
@@ -267,7 +387,16 @@ export interface Rec {
   resolved?: RecResolution;
 }
 
-export interface FoldContext { owners: ReadonlySet<string>; now: number }
+export interface FoldContext {
+  owners: ReadonlySet<string>;
+  now: number;
+  /**
+   * A person's approve or dismiss counts only when this returns true. Absent: every person's answer counts.
+   * An owner's WalkieTalkie supersede is not asked. Every person's answer is asked, however it is marked: nothing
+   * the author wrote on it is believed. `e` is the answer, so the callback can judge it where it stands in the log.
+   */
+  canAnswer?: (handle: string, rec: Rec, e: RecEvent) => boolean;
+}
 
 export function scheduleChannelRec(channel: string): boolean { return channel === SCHEDULE_CHANNEL; }
 
@@ -313,6 +442,7 @@ export function foldRecs(events: readonly RecEvent[], ctx: FoldContext): Rec[] {
     const byWalkieTalkie = ownersWalkieTalkie(e, ctx.owners);
     const byPerson = !e.author.agent;
     if (parsed.data.status === "superseded" ? !byWalkieTalkie : !byPerson) continue;
+    if (parsed.data.status !== "superseded" && ctx.canAnswer && !ctx.canAnswer(e.author.handle, target, e)) continue;
     const answer = { id: e.id, status: parsed.data.status, by: e.author.handle, at: e.ts,
       ...(e.author.agent ? { agent: e.author.agent } : {}), ...(parsed.data.note ? { note: parsed.data.note } : {}) };
     const first = answers.get(target.id);

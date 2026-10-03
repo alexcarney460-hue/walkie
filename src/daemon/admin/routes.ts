@@ -5,7 +5,7 @@ import { HttpError, json, parseWith, readJson } from "../http.ts";
 import { LOCAL_BODY_MAX, requireTeam, route, type RouteCtx } from "../local-routes.ts";
 import { PeerCallError } from "../peer-client.ts";
 import { nodeMember, type NodeRec } from "../roster.ts";
-import { appendAudit, readAudit, recordAdmin } from "./audit.ts";
+import { ADMIN_AUDIT_MAX, appendAudit, readAudit, recordAdmin } from "./audit.ts";
 import { admit, agentCaller, AGENT_ADMIN_OFF, localActor, personOnly } from "./gate.ts";
 import { mayAdminister, resolveMachines, servePeerAdmin } from "./remote.ts";
 import { readSwitches, writeSwitch } from "./switches.ts";
@@ -27,7 +27,7 @@ function actorOf(c: RouteCtx): string {
 }
 
 route("GET", "/v1/admin", (c) => {
-  const limit = Math.min(Math.max(Number(c.url.searchParams.get("limit") ?? "20") || 20, 1), 200);
+  const limit = Math.min(Math.max(Number(c.url.searchParams.get("limit") ?? "20") || 20, 1), ADMIN_AUDIT_MAX);
   return json({ ...readSwitches(c.core.paths.config), machine: c.core.hostname, audit: readAudit(c.core.paths.home, limit) });
 });
 

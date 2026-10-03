@@ -359,3 +359,29 @@
 .plan-badge-signal .plan-badge-dot { background: var(--signal); }
 .plan-badge-amber { border-color: var(--amber-line); color: var(--amber); }
 .plan-badge-amber .plan-badge-dot { background: var(--amber); }
+
+/* Simple (WALK-75): the sidebar row and the phone header link are 44px. The other rail links stay 34px. */
+.rail-link.simple-nav {
+  height: auto;
+  min-height: 44px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-size: 18px;
+  color: var(--text);
+}
+.rail-link.simple-nav svg { color: var(--text); }
+a.mobile-simple { display: none; }
+@media (max-width: 860px) {
+  a.mobile-simple {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 18px;
+    font-weight: 650;
+    color: var(--text);
+  }
+}

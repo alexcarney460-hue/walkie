@@ -31,7 +31,7 @@ import type { Paths } from "./paths.ts";
 import { DEFAULT_LIMITS, RateLimiter, SUBAGENT_STATUS_LIMIT, type RateLimits } from "./ratelimit.ts";
 import { HIDDEN_PER_ORIGIN_CAP, Revalidator, jobsFor } from "./revalidate.ts";
 import {
-  CHANNEL_KINDS, MAX_NODES_PER_LOGIN, MAX_NODES_PER_TEAM, PERMANENT_REASONS, ROSTER_KINDS, canSeeChannel,
+  CHANNEL_KINDS, InviteSet, MAX_NODES_PER_LOGIN, MAX_NODES_PER_TEAM, PERMANENT_REASONS, ROSTER_KINDS, canSeeChannel,
   completeChannelUpsert, nodeCapacity, nodeMember, validate,
   type AskRef, type MemberRec, type Roster, type Verdict,
 } from "./roster.ts";
@@ -86,8 +86,8 @@ const DRAIN_PAGE = 500;
  * marked (PROJECTS round 6); 7: team.integration is a roster kind (LICENSE-FIX-2 F3).
  */
 const VALIDITY_VERSION = "11";
-/** Which shapes `isBoardOp` counts (3: status page ops too, PROJECT-PAGES-1; 2: Data Room file ops too, DATA-ROOM-1): a change re-examines stored rows once. */
-const BOARD_OPS_CLASS = "3";
+/** Which shapes `isBoardOp` counts (4: dispute ops too, WALK-73; 3: status page ops too, PROJECT-PAGES-1; 2: Data Room file ops too, DATA-ROOM-1): a change re-examines stored rows once. */
+const BOARD_OPS_CLASS = "4";
 /**
  * Store meta key of the plan-clock floor (Core.planNow, audit M4; FINAL Fable 1): raised only by this
  * node's own clock and by the roster chain's entries (clamped). The key before this fix
@@ -207,6 +207,10 @@ export class Core {
   private floor: number;
 
   private chain: Chain;
+  /** Invite ids this daemon must not honour, even before the chain records them (WALK-107). Null until first read. */
+  private retiredInvites: Set<string> | null = null;
+  /** `chain.roster` plus those ids. Kept until the chain roster object or the set changes (projects caches the reference). */
+  private rosterView: { base: Roster; roster: Roster } | null = null;
   private readonly reval: Revalidator;
   private readonly source: RosterSource = {
     rows: (o, after, upto) => this.store.rosterRows(o, after, upto),
@@ -315,7 +319,14 @@ export class Core {
     // that emitted inside it leaves the cursor where the database is.
     this.store.onTransaction<{ chain: Chain; snap: ReturnType<Chain["snapshot"]>; floor: number }>({
       snapshot: () => ({ chain: this.chain, snap: this.chain.snapshot(), floor: this.floor }),
-      restore: (s) => { this.chain = s.chain; s.chain.restore(s.snap); this.floor = s.floor; },
+      restore: (s) => {
+        this.chain = s.chain;
+        s.chain.restore(s.snap);
+        this.floor = s.floor;
+        // The invites overlay was built from the roster this rollback just undid.
+        this.rosterView = null;
+        this.retiredInvites = null;
+      },
     });
     // Board-op rows not examined yet (stored before the columns existed, or by an older build after a rollback: its
     // inserts leave bop at 0) are classified at every start (PRE4 RC Opus 3), only those above the examined mark, in
@@ -323,6 +334,7 @@ export class Core {
     // DATA-ROOM-1: `isBoardOp` also counts Data Room file ops (op "file") since this classification version, so every
     // stored `p-` post is examined once more (no honest older build signed one; a crafted one is re-judged below).
     // PROJECT-PAGES-1: and status page ops (op "page"), the same way.
+    // WALK-73: and dispute ops (op "dispute"), the same way. A pre.12 peer has no such arm and keeps the post as a message.
     if (this.store.getMeta("board_ops_class") !== BOARD_OPS_CLASS) this.store.deleteMeta("board_ops_rowid");
     const newlyMarked = this.store.classifyBoardOps(isBoardOp).marked;
     this.store.setMeta("board_ops_class", BOARD_OPS_CLASS);
@@ -338,11 +350,61 @@ export class Core {
 
   get nodeId(): string { return this.keys.nodeId; }
   get teamId(): string | null { return this.store.getMeta("team"); }
-  get roster(): Roster { return this.chain.roster; }
+
+  private retiredInviteIds(): ReadonlySet<string> {
+    if (this.retiredInvites) return this.retiredInvites;
+    const ids = new Set<string>();
+    const raw = this.store.getMeta("retired_invites");
+    if (raw) {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const id of parsed) if (typeof id === "string" && /^[0-9a-f]{32}$/.test(id)) ids.add(id);
+        }
+      } catch { /* damaged meta: the next retire rewrites it */ }
+    }
+    this.retiredInvites = ids;
+    return ids;
+  }
+
+  /**
+   * The code for `id` must not admit a machine through this daemon, even before the chain records it used (WALK-107).
+   * A non-id is ignored. The newest 256 are kept.
+   */
+  retireInvite(id: string): void {
+    if (!/^[0-9a-f]{32}$/.test(id)) return;
+    const ids = this.retiredInviteIds();
+    if (ids.has(id)) return;
+    const next = [...ids, id].slice(-256);
+    this.retiredInvites = new Set(next);
+    this.rosterView = null;
+    this.store.setMeta("retired_invites", JSON.stringify(next));
+  }
+
+  get roster(): Roster {
+    const base = this.chain.roster;
+    const ids = this.retiredInviteIds();
+    if (ids.size === 0) return base;
+    if (this.rosterView?.base === base) return this.rosterView.roster;
+    let invites: ReadonlySet<string> | undefined = base.invites;
+    for (const id of ids) invites = InviteSet.of(invites, id);
+    const roster: Roster = { ...base, invites };
+    this.rosterView = { base, roster };
+    return roster;
+  }
   /** The roster authority's node id (PROTOCOL §2); null before the team exists. */
   get authority(): string | null { return this.chain.authority; }
   /** Ordered authority transfers give each lease authority a disjoint, increasing epoch range. */
-  get authorityLeaseTerm(): number { return this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").length; }
+  get authorityLeaseTerm(): number {
+    // Counted once per chain state (its length and last entry), not on every call: a flush checks it per queued spend.
+    const len = this.chain.length;
+    const last = len ? this.chain.entriesFrom(len - 1)[0]?.ev.id ?? "" : "";
+    if (this.termCache && this.termCache.len === len && this.termCache.last === last) return this.termCache.term;
+    const term = this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").length;
+    this.termCache = { len, last, term };
+    return term;
+  }
+  private termCache: { len: number; last: string; term: number } | null = null;
   /** Signed roster timestamp of the transfer that began this authority term. */
   get authorityTransferTimestamp(): number | null {
     return this.chain.entriesFrom(0).filter((e) => e.ev.kind === "team.authority").at(-1)?.ev.ts ?? null;
@@ -383,6 +445,11 @@ export class Core {
   myHandle(): string | null { return this.me()?.handle ?? null; }
   /** Id of the chain entry that applied roster request `requestId` (C5), if any. */
   requestEvent(requestId: string): string | undefined { return this.chain.requestEvent(requestId); }
+  /**
+   * Invite ids the chain has recorded. `roster.invites` also includes ids this daemon retired locally and has not
+   * yet had the authority write down; a spend of one of those still has to be appended, so it is not in this set.
+   */
+  recordedInvites(): ReadonlySet<string> | undefined { return this.chain.roster.invites; }
   /** Who created `channel` (the chain's first channel.upsert for it: its requester, else the authority's member). */
   channelCreator(channel: string): string | null { return this.chain.creatorOf(channel); }
   /**
@@ -1259,7 +1326,8 @@ export class Core {
    * version vector now, PROTOCOL §2 "Anchoring"); a channel.upsert states its members/archived (F4).
    */
   private chainBody(kind: Kind, body: Record<string, unknown>, requestId: string | undefined): Record<string, unknown> {
-    const { wm: _wm, after: _after, request_id: _rid, ...rest } = body;
+    // invite_code proves who minted an id. It stays on the request and never on the chain.
+    const { wm: _wm, after: _after, request_id: _rid, invite_code: _inviteCode, ...rest } = body;
     this.checkPlan(kind, rest);
     let b = rest;
     if (kind === "channel.upsert") {

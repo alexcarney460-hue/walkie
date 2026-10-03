@@ -23,8 +23,29 @@ function subscribe(fn: () => void): () => void {
   };
 }
 
+// A static render never subscribes, so the interval never moves `now`. Serving that import-time value
+// makes "12m ago" read "11m" once the import was more than half a second earlier. React also calls
+// getServerSnapshot twice in one mount and requires the same result, so a bare Date.now() is not safe.
+let serverSnap = 0;
+function serverNow(): number {
+  const t = Date.now();
+  if (serverSnap !== 0 && t - serverSnap < 400) return serverSnap;
+  serverSnap = t;
+  return serverSnap;
+}
+
 export function useNow(): number {
-  return useSyncExternalStore(subscribe, () => now, () => now);
+  return useSyncExternalStore(subscribe, () => now, serverNow);
+}
+
+/**
+ * Same clock, read in steps of `stepMs` (30s). The snapshot stays the same until the step changes, so a badge
+ * does not redraw its page every second. Callers that need the second (a lag banner, a relative time) keep useNow.
+ */
+export function useCoarseNow(stepMs = 30_000): number {
+  const step = Number.isFinite(stepMs) && stepMs >= 1_000 ? Math.floor(stepMs) : 30_000;
+  const read = () => Math.floor(now / step) * step;
+  return useSyncExternalStore(subscribe, read, read);
 }
 
 export function ago(ts: number, at: number): string {

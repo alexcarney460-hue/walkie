@@ -218,6 +218,7 @@ export class ClaudeChild<S = ClaudeSignal> {
   private readonly runMarker: string;
   private stderr = "";
   private stderrCut = false;
+  private readonly stdoutFinished: Promise<void>;
   private readonly stderrFinished: Promise<void>;
   /** Key blocks in all of stderr, so a window that starts inside one is known (ORCH-FIX-4). */
   private closed = false;
@@ -280,12 +281,13 @@ export class ClaudeChild<S = ClaudeSignal> {
       if (heartbeat) clearInterval(heartbeat);
       if (file) { rmSync(file, { force: true }); rmSync(`${file}.tmp`, { force: true }); }
     });
-    void this.readStdout();
+    this.stdoutFinished = this.readStdout();
     this.stderrFinished = this.readStderr();
     this.exited = this.proc.exited.then(async (code) => {
-      // Bun reports process exit before its piped stderr reader necessarily sees EOF.
-      // A descendant may retain the pipe; bound the wait rather than delaying restart forever.
-      await Promise.race([this.stderrFinished, Bun.sleep(1_000)]);
+      // Bun may report exit before either pipe has drained. Deliver queued init/result signals before
+      // onExit clears the host's current child; otherwise a successful resume can be retried as a failure.
+      // A descendant may retain either pipe, so both readers share one bounded wait.
+      await Promise.race([Promise.all([this.stdoutFinished, this.stderrFinished]), Bun.sleep(1_000)]);
       this.closed = true;
       this.h.onExit(code, stderrDiagnostic(this.stderr, this.stderrCut));
       return code;
@@ -381,6 +383,7 @@ export class ClaudeChild<S = ClaudeSignal> {
     try {
       for (;;) {
         const { value, done } = await reader.read();
+        if (this.closed) return; // the bounded drain ended; terminal children never emit later signals
         if (done) break;
         buf += dec.decode(value, { stream: true });
         let i: number;

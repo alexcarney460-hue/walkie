@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive as ArchiveIcon, ArrowUpRight, ChevronRight, Laptop, Server } from "lucide-react";
-import type { AgentState, AgentView, ArchiveCount, NodeView, TeamView } from "../../api/types.ts";
+import type { AgentState, AgentView, ArchiveCount, NodeView, SeatsView, TeamView } from "../../api/types.ts";
 import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { PageHeader } from "../../components/Shell.tsx";
 import { LocalModelsCard } from "../../components/LocalModels.tsx";
@@ -8,7 +8,7 @@ import { ModelServerLoad } from "../../components/MachineStats.tsx";
 import { Avatar, CopyCommand, EmptyState, StatePill, hueVar } from "../../components/primitives.tsx";
 import { STATE_LABEL, STATE_RANK, askBody, canAnswer, displayName, hueFor, machineHue, needsAttention } from "../../lib/format.ts";
 import { getRoute, hrefFor, navigate } from "../../lib/route.ts";
-import { ago, useNow } from "../../lib/time.ts";
+import { ago, useCoarseNow, useNow } from "../../lib/time.ts";
 import { useStore } from "../../state/store.tsx";
 import { archiveCountText, hiddenByNode, isArchived, shownByDefault } from "../../../../src/protocol/agent-roster.ts";
 import { ActivityFeed } from "./ActivityFeed.tsx";
@@ -26,6 +26,7 @@ import { api } from "../../api/client.ts";
 import { LocalLagBanner, type LocalLag } from "./LocalLagBanner.tsx";
 import { UnreachedNotice } from "./UnreachedBanner.tsx";
 import { isCloudAgent } from "../../../../src/protocol/guest-cloud.ts";
+import { FleetCapacityBadge, useSeatSnapshot } from "../../components/FleetCapacity.tsx";
 
 /** Mission Control shows working agents and those needing a person; the strip narrows it to one of those. */
 type StateFilter = "all" | "working" | "waiting" | "blocked";
@@ -205,9 +206,9 @@ function ArchiveLink({ node, count }: { node: NodeView; count: ArchiveCount | un
   );
 }
 
-function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered, compute, owner }: {
+function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered, compute, owner, seats, now }: {
   node: NodeView; agents: AgentView[]; hidden: ArchiveCount | undefined; accounts: AccountView[]; onOpen: (id: string) => void; filtered: boolean;
-  compute: ComputeSnapshot; owner: boolean;
+  compute: ComputeSnapshot; owner: boolean; seats: SeatsView | null; now: number;
 }) {
   const rental = rentalForNode(compute.state, node.node_id);
   const Icon = /mbp|air|x1|laptop|studio|macbook/.test(node.hostname) ? Laptop : Server;
@@ -225,6 +226,7 @@ function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered, comput
         <span className={`dot ${node.online ? "dot-on" : "dot-off"}`} aria-hidden="true" />
         <span className="machine-stat tnum">{node.online ? (node.self ? "local" : `${node.rtt_ms ?? "?"} ms`) : "offline"}</span>
         <span className={`machine-stat ${node.online && node.sync.behind > 0 ? "is-warn" : ""} ${!node.online ? "is-bad" : ""}`}>{sync}</span>
+        <FleetCapacityBadge node={node} accounts={accounts} seats={seats} now={now} />
       </div>
       {!!node.stats?.model_servers?.length && <p className="machine-quiet"><ModelServerLoad stats={node.stats} /></p>}
       {agents.length > 0 && (
@@ -304,6 +306,8 @@ export function MissionControl() {
 
 function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentView[]; hidden: ArchiveCount[] }) {
   const { team, nodes, me, accounts } = useStore();
+  const seats = useSeatSnapshot();
+  const now = useCoarseNow();
   const [guestRegistry, setGuestRegistry] = useState<Awaited<ReturnType<typeof api.guests>> | null>(null);
   const [guestControlError, setGuestControlError] = useState(false);
   const refreshGuests = useCallback(() => { void api.guests().then(setGuestRegistry).catch(() => setGuestRegistry(null)); }, []);
@@ -415,7 +419,7 @@ function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentVi
             {machines.length ? (
               machines.map(({ node, agents: list, hidden: h }) => (
                 <ErrorBoundary key={node.node_id} scope="item" name={`machine ${node.hostname}`} resetKeys={[node, h, accounts, compute, owner, filtering, ...list]}>
-                  <MachineBlock node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} compute={compute} owner={owner} />
+                  <MachineBlock node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} compute={compute} owner={owner} seats={seats} now={now} />
                 </ErrorBoundary>
               ))
             ) : (

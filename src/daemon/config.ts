@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { HermesActivityProfiles } from "../protocol/hermes-activity.ts";
 import { SEAT_RUNTIMES_V1, SeatRepoId } from "../protocol/seats.ts";
+import { SeatToolPolicySchema } from "./seats/tool-policy.ts";
 import { DEFAULT_LEASE_LIMIT, MAX_OWN_LEASE_LIMIT } from "./vault-lease-policy.ts";
 
 /**
@@ -52,6 +53,12 @@ export const SeatsConfig = z.object({
   inherit_person_config: z.boolean().optional(),
   /** The person accepted that seat users can read their home (`--accept-readable-home`). */
   accept_readable_home: z.boolean().optional(),
+  /**
+   * Which tools a seat on this machine may use (WALK-76). Absent: each runtime's own tools, as before.
+   * Applied at every launch, or the launch is refused when that runtime has no tool flags. Older daemons strip
+   * this key (the object is not strict) and drop it if they rewrite `seats`. Not a replicated field.
+   */
+  tools: SeatToolPolicySchema.optional(),
 });
 export type SeatsConfig = z.infer<typeof SeatsConfig>;
 

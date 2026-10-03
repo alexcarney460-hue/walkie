@@ -7,7 +7,7 @@ import { freshRoomOf, PERSONAL_RESERVE_PCT } from "../../accounts/select.ts";
 import type { AccountView } from "../../protocol/accounts.ts";
 import { utcMinute } from "../../protocol/projects/status-report.ts";
 import { SEAT_RUNTIMES_V1, type SeatRuntime } from "../../protocol/seats.ts";
-import { REC_TTL_MS, recKey, recTitle, type NewRec } from "../../protocol/talkie-recs.ts";
+import { REC_TTL_MS, cardScheduleRef, recKey, recTitle, withoutCardTitle, type NewRec } from "../../protocol/talkie-recs.ts";
 
 /** A machine with less than this free takes no new seat, and nor does one whose processor is busier than this. */
 export const FREE_MEM_MIN_BYTES = 2 * 1024 ** 3;
@@ -131,17 +131,25 @@ export function planPoll(input: { machines: readonly PollMachine[]; waiting: rea
     const age = waited(input.now - w.since);
     const title = recTitle(w.title, w.prefixes);
     const role = reviewer ? "reviewer" as const : "builder" as const;
+    const owners = w.audience === "owners";
+    const subject = owners ? cardScheduleRef(w.card) : `“${title}”`;
+    // An owners-only record is readable before the reader can see the project, so it names the channel id, never the project name.
+    const place = owners ? w.channel : w.project;
+    const lines = [
+      `when recommended, ${pick.m.hostname} had ${pick.cap.slots} free seat${pick.cap.slots === 1 ? "" : "s"} of ${pick.m.seats?.max ?? "?"} (the machine is chosen again on approval)`,
+      `runtime ${runtime}: an account with room beyond the ${PERSONAL_RESERVE_PCT}% reserve`,
+      `in ${place} since ${utcMinute(w.since)}`,
+    ];
     recs.push({
       key: recKey.seat(w.card, role), group: reviewer ? "reviews" : "work", source: "poll", audience: w.audience,
-      ...(w.audience === "owners" ? { project: w.channel } : {}),
+      ...(owners ? { project: w.channel } : {}),
       action: { kind: "start_seat", machine: pick.m.node, runtime, role, card: w.card },
-      summary: `Start a ${role} for “${title}”`,
+      summary: `Start a ${role} for ${subject}`,
       reason: reviewer ? `It has waited ${age} for review and a machine has a free seat.` : `A machine has a free seat and the work has waited ${age}.`,
-      evidence: [
-        `when recommended, ${pick.m.hostname} had ${pick.cap.slots} free seat${pick.cap.slots === 1 ? "" : "s"} of ${pick.m.seats?.max ?? "?"} (the machine is chosen again on approval)`,
-        `runtime ${runtime}: an account with room beyond the ${PERSONAL_RESERVE_PCT}% reserve`,
-        `in ${w.project} since ${utcMinute(w.since)}`,
-      ],
+      evidence: lines.flatMap((line) => {
+        const next = owners ? withoutCardTitle(line, w.title, w.prefixes) : line;
+        return next ? [next] : [];
+      }),
       ttl_ms: REC_TTL_MS,
     });
   }

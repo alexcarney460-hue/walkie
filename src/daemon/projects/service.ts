@@ -7,12 +7,13 @@
 // changes and export stay people-only.
 import { randomBytes } from "node:crypto";
 import { redactSecrets } from "../../protocol/safety.ts";
-import type { BodyOf, Event } from "../../protocol/schemas.ts";
+import { Address, type BodyOf, type Event } from "../../protocol/schemas.ts";
 import { effectiveFor, PlanLimitError, peopleUsed } from "../../license/enforce.ts";
 import { upgradeUrl } from "../../license/plans.ts";
 import { boardAddonUrl } from "../../license/site.ts";
 import { isPersonAddress } from "../../protocol/projects/fold.ts";
 import { cardOpText } from "../../protocol/projects/format.ts";
+import { escalationContactDenial, escalationContactOf, isEscalationContact } from "../../protocol/projects/escalation.ts";
 import { statusReportDenial } from "../../protocol/projects/status-report.ts";
 import { keyBetween } from "../../protocol/projects/position.ts";
 import {
@@ -22,7 +23,9 @@ import {
 } from "../../protocol/projects/schema.ts";
 import type { Ext } from "../../protocol/projects/batch.ts";
 import type { Core } from "../core.ts";
+import { parseAddress } from "../asks.ts";
 import { HttpError } from "../http.ts";
+import { canSeeChannel, memberByHandle } from "../roster.ts";
 import { submitRequest, type CatchUp } from "../requests.ts";
 import type { PeerClient } from "../peer-client.ts";
 import type { ProjectsIndex } from "./index.ts";
@@ -41,6 +44,8 @@ export interface WriteCtx {
    * the agent name). It may move any card, a person's included, and close cards whatever agents_can_close says.
    */
   readonly steward?: true;
+  /** The write-limit key, when it is not the agent name (`RouteCtx.rateKey`). Absent: the agent, or `human`. */
+  readonly rateKey?: string;
 }
 
 /** An agent is calling, named or not. */
@@ -313,6 +318,32 @@ export interface UpdateProject {
   steward?: "on" | "off"; steward_node?: string;
   /** PROJECT-REPORTS-1: WalkieTalkie's hourly status report for this project, on or off. */
   status_report?: "hourly" | "off";
+  /** WALK-73: who resolves a dispute (`@handle` or `@handle/machine`); null or "" clears it. */
+  escalation_contact?: string | null;
+}
+
+/**
+ * The contact to store, or null to clear. A bad address, an agent, a cloud guest, and anyone who is not a posting
+ * member that can see the project are refused here; the fold also drops a value it cannot use.
+ */
+function normalizeEscalationContact(w: WriteCtx, channel: string, raw: string | null): string | null {
+  if (raw === null) return null;
+  const v = raw.trim();
+  if (v === "") return null;
+  if (!isEscalationContact(v) || !Address.safeParse(v).success) {
+    throw new HttpError(400, "invalid", "escalation contact must be a person (@handle or @handle/machine)");
+  }
+  const parsed = parseAddress(v);
+  if (parsed.machine === "cloud") throw new HttpError(400, "invalid", "cloud guests can't be an escalation contact");
+  const member = memberByHandle(w.core.roster, parsed.handle);
+  if (!member || member.role === "removed") throw new HttpError(400, "invalid", `no member @${parsed.handle}`);
+  if (parsed.machine) {
+    const known = [...w.core.roster.nodes.values()].some((n) => n.login === member.login && n.hostname === parsed.machine);
+    if (!known) throw new HttpError(400, "invalid", `no machine ${parsed.machine} for @${parsed.handle}`);
+  }
+  if (member.role === "observer") throw new HttpError(400, "invalid", "observers can't resolve a dispute");
+  if (!canSeeChannel(w.core.roster, channel, parsed.handle)) throw new HttpError(400, "invalid", `@${parsed.handle} can't see this project`);
+  return v;
 }
 
 /** Settings, archive / delete, visibility: the project's admins (owners and its creator), people only. */
@@ -322,10 +353,17 @@ export function updateProject(w: WriteCtx, channel: string, req: UpdateProject):
 }
 
 async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject): Promise<ProjectView> {
+  // The "same contact again" check below compares with the folded view: fold what has arrived first (WALK-73 r5 review LOW-a).
+  w.idx.flushAll();
   const p = visibleProject(w, channel);
   if (req.status_report !== undefined) {
     // The status report's switch says why it refuses (an observer's reason differs from another member's).
     const why = statusReportDenial(me(w).role, me(w).handle, p.creator);
+    if (why) throw new HttpError(403, "forbidden", why);
+  }
+  if (req.escalation_contact !== undefined) {
+    // Same order as the status report: an observer hears why, before the generic settings refusal.
+    const why = escalationContactDenial(me(w).role, me(w).handle, p.creator);
     if (why) throw new HttpError(403, "forbidden", why);
   }
   if (!isAdmin(w, p)) throw new HttpError(403, "forbidden", "only the project's creator or an owner can change its settings");
@@ -345,10 +383,17 @@ async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject
       if ("queued" in res) throw new HttpError(409, "channel_pending", "the roster authority is offline; the visibility change is queued");
     }
   }
-  const { private: _p, ...fields } = req;
+  const { private: _p, escalation_contact: rawContact, ...fields } = req;
+  // Null and "" clear. The same contact again is left out, so a contact-only request that changes nothing is not signed.
+  let contact: string | null | undefined;
+  if (rawContact !== undefined) {
+    const next = normalizeEscalationContact(w, channel, rawContact);
+    if ((next ?? "") !== escalationContactOf(p)) contact = next;
+  }
   const changes = Object.fromEntries(Object.entries({
     ...fields, ...(fields.name ? { name: clean(w, fields.name) } : {}), ...(fields.folder !== undefined ? { folder: clean(w, fields.folder) } : {}),
     ...(fields.description !== undefined ? { description: clean(w, fields.description) } : {}),
+    ...(contact !== undefined ? { escalation_contact: contact } : {}),
   }).filter(([, v]) => v !== undefined));
   if (Object.keys(changes).length) {
     const s = w.idx.settingsOf(channel);
@@ -357,6 +402,7 @@ async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject
     const what = changes.state === "deleted" ? "deleted" : changes.state === "archived" ? "archived" : changes.state === "active" ? "restored"
       : Object.keys(changes).length === 1 && changes.steward ? `board steward turned ${String(changes.steward)}`
       : Object.keys(changes).length === 1 && changes.status_report ? `status report turned ${changes.status_report === "hourly" ? "on" : "off"}`
+      : Object.keys(changes).length === 1 && changes.escalation_contact !== undefined ? (changes.escalation_contact ? "escalation contact set" : "escalation contact cleared")
       : Object.keys(changes).length === 1 && changes.steward_node !== undefined ? "board steward machine set" : `settings changed (${Object.keys(changes).join(", ")})`;
     post(w, channel, `Project "${p.name}" ${what}`, { v: 1, rev, op: "project", ...(after ? { after } : {}), ...changes }, { thread: p.id });
   }

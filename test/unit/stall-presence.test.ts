@@ -279,6 +279,39 @@ describe("a clock correction is not a stall", () => {
     tick(10_000); // 47 s, and the peer never answered again: offline after the usual window, not 345 s
     expect(online(t.sync, "tail")).toEqual([false]);
   });
+
+  test("alternating steps back 0.9 s and forward 1.1 s do not keep a dead peer online past 45 s", async () => {
+    const quiet: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+    const clocks = { mono: 1_000, wall: 5_000_000 };
+    const dog = new LoopWatchdog(quiet, { now: () => clocks.mono, wallNow: () => clocks.wall });
+    dog.start();
+    cleanups.push(() => dog.stop());
+    const t = setup(() => ({ livenessMs: 45_000, now: () => clocks.wall, stallTotal: () => dog.stallTotalMs() }));
+    // Older than the credit lifetime, with the clocks agreeing. The pattern then has to credit a loss under a second
+    // on a daemon that is already past that lifetime, or the next tick treats the forward step as a full sleep.
+    for (let i = 0; i < 2_440; i++) { clocks.mono += 250; clocks.wall += 250; dog.check(); }
+    await t.sync.antiEntropy(t.nodes.get("tail") as never);
+    const seen = clocks.wall;
+    const monoAtContact = clocks.mono;
+    let back = true;
+    const pattern = () => {
+      const drift = back ? -900 : 1_100;
+      back = !back;
+      clocks.mono += 250;
+      clocks.wall += 250 + drift;
+      dog.check();
+    };
+    while (clocks.wall - seen < 37_000) pattern();
+    expect(online(t.sync, "tail")).toEqual([true]); // inside the usual window
+    while (clocks.wall - seen < 46_000) pattern();
+    expect(online(t.sync, "tail")).toEqual([false]); // 45 s of presence time, not held open by the discount
+    expect(clocks.mono - monoAtContact).toBeLessThan(45_000); // the wall clock ran ahead; real time was shorter
+    // The probe that found this kept the peer online for a 7_200 s run of the same pattern.
+    const monoAtOffline = clocks.mono;
+    while (clocks.mono - monoAtOffline < 7_200_000) pattern();
+    expect(clocks.mono - monoAtOffline).toBeGreaterThanOrEqual(7_200_000);
+    expect(online(t.sync, "tail")).toEqual([false]);
+  });
 });
 
 describe("the gate reports contact from admitted machines only", () => {

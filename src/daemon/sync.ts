@@ -55,6 +55,23 @@ export interface PeerState {
   pool?: PoolShare;
 }
 
+/** Result of pulling the authority's own origin during one anti-entropy round. */
+interface AuthorityOrigin { readonly contacted: boolean; readonly level: boolean }
+
+function originGate(): { readonly promise: Promise<AuthorityOrigin>; settle(result: AuthorityOrigin): void } {
+  let settled = false;
+  let resolve: (result: AuthorityOrigin) => void = () => {};
+  const promise = new Promise<AuthorityOrigin>((r) => { resolve = r; });
+  return {
+    promise,
+    settle(result) {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    },
+  };
+}
+
 const MAX_QUEUED_PUSHES = 200;
 const PULL_PAGE = 500;
 /** Stub-fill pages per anti-entropy round (each ≤ MAX_IDS_PER_FETCH ids). */
@@ -83,6 +100,15 @@ export class SyncManager {
   readonly intervalMs: number; readonly livenessMs: number; readonly pushTimeoutMs: number;
   private lastOnline = new Map<string, boolean>();
   private flushing = false;
+  /** In-flight anti-entropy rounds. A second call while one is running returns immediately and does not replace it. */
+  private readonly antiEntropyRuns = new Map<string, Promise<void>>();
+  /**
+   * The authority-origin pull of a round that is still running. Resolves when that origin has been pulled, or the
+   * attempt ended, before any other origin is pulled and before stub fills. `contacted` is false when the
+   * authority's version vector was never read (it could not be reached, or this machine stopped first).
+   */
+  /** The round in progress with each authority, and the authority transfer count it started under. */
+  private readonly authorityOrigin = new Map<string, { readonly term: number; readonly promise: Promise<AuthorityOrigin> }>();
   /** Per origin: the highest seq received past a held row (resumeFrom). */
   private readonly pulled = new Map<string, number>();
   /**
@@ -321,12 +347,35 @@ export class SyncManager {
     this.core.drainPending();
   };
 
-  /** Retries queued roster requests against the authority (PROTOCOL §2 "Roster requests"). */
+  /**
+   * Retries queued roster requests against the authority (PROTOCOL §2 "Roster requests").
+   * Waits only for the authority's own origin in a round this tick already started (not every other
+   * origin, and not the stub-fill pages). A queued invite spend is sent only when that round read the
+   * authority's version vector, pulled its origin, and left this machine's copy caught up. In every other
+   * case (the version vector call failed or timed out, the pull fell short, no round was running for the
+   * authority) the spend stays queued for a later round, because it is rebuilt from this machine's record
+   * and a stale record would undo a newer pin. Other queued requests are sent either way. When this
+   * machine is itself the authority there is nothing to catch up on.
+   */
   async flushRequests(): Promise<void> {
     if (this.flushing || this.stopped) return;
     this.flushing = true;
     try {
-      await flushRequests(this.core, this.client, this.requestCatchUp);
+      const auth = this.core.authority;
+      const term = this.core.authorityLeaseTerm;
+      let origin: AuthorityOrigin | null = null;
+      if (auth && auth !== this.core.nodeId) {
+        // Only a round started under this same transfer count says anything about the authority now: after a transfer
+        // away and back (A to B to A) an older round's result for A is not used (Codex pre.13 audit round 3).
+        const inflight = this.authorityOrigin.get(auth);
+        if (inflight && inflight.term === term) origin = await inflight.promise;
+      }
+      if (this.stopped) return;
+      // The authority can change while the round is awaited: the round then said nothing about the one the spend goes
+      // to, so the spend waits for that one's own round (WALK-107 r5 review LOW-1). A transfer away and back counts too.
+      const moved = this.core.authority !== auth || this.core.authorityLeaseTerm !== term;
+      const holdSpends = moved || (auth !== null && auth !== this.core.nodeId && !(origin?.contacted && origin.level));
+      await flushRequests(this.core, this.client, this.requestCatchUp, holdSpends ? { holdSpends: true } : {});
     } catch (err) {
       this.core.log.warn("roster_requests_failed", { err: (err as Error).message });
     } finally {
@@ -487,12 +536,26 @@ export class SyncManager {
 
   async antiEntropy(n: NodeRec): Promise<void> {
     const s = this.stateOf(n.node_id);
+    // A second call while a round is in flight returns immediately, as before: the round is one.
+    // It does not replace the round whose authority-origin pull flushRequests is waiting on.
     if (s.running || this.stopped) return;
     s.running = true;
+    const run = this.runAntiEntropy(n, s).finally(() => {
+      s.running = false;
+      if (this.antiEntropyRuns.get(n.node_id) === run) this.antiEntropyRuns.delete(n.node_id);
+    });
+    this.antiEntropyRuns.set(n.node_id, run);
+    return run;
+  }
+
+  private async runAntiEntropy(n: NodeRec, s: PeerState): Promise<void> {
+    const track = n.node_id === this.core.authority && n.node_id !== this.core.nodeId;
+    const gate = track ? originGate() : null;
+    if (gate) this.authorityOrigin.set(n.node_id, { term: this.core.authorityLeaseTerm, promise: gate.promise });
     const startedStall = this.stallTotal();
     try {
       const addr = this.client.addrOf(n);
-      if (!addr) return; // no shared transport: its events come through the machines that serve both
+      if (!addr) { gate?.settle({ contacted: false, level: false }); return; } // no shared transport: its events come through the machines that serve both
       const t0 = performance.now();
       const w0 = Date.now();
       const peerVv = await this.client.vv(addr, n.pubkey);
@@ -519,19 +582,24 @@ export class SyncManager {
       }
       this.reported.set(n.node_id, { at: this.now(), stall: this.stallTotal(), online: new Set(peerVv.online ?? []) });
       this.seen(n.node_id);
-      await this.pullAll(addr, peerVv.vv, n.node_id);
+      if (this.stopped) { gate?.settle({ contacted: false, level: false }); return; }
+      await this.pullAll(addr, peerVv.vv, n.node_id, (level) => gate?.settle({ contacted: true, level }));
+      // pullAll always reports the authority origin. If it did not, the copy is not known to be caught up.
+      gate?.settle({ contacted: true, level: false });
       await this.fillStubs(addr, n.node_id).catch((err: Error) => this.core.log.warn("stub_fill_failed", { peer: n.node_id, err: err.message }));
       s.behind = this.behind(peerVv.vv);
       if (s.behind === 0) s.levelAt = Math.max(s.levelAt ?? 0, w0);
       s.lastSync = Date.now();
       this.core.hub.nodesChanged();
     } catch (err) {
+      gate?.settle({ contacted: false, level: false });
       this.failed(n.node_id, err, startedStall);
       if (!(err instanceof PeerCallError && err.code === "unreachable")) {
         this.core.log.warn("sync_failed", { peer: n.node_id, err: (err as Error).message });
       }
     } finally {
-      s.running = false;
+      gate?.settle({ contacted: false, level: false });
+      if (gate && this.authorityOrigin.get(n.node_id)?.promise === gate.promise) this.authorityOrigin.delete(n.node_id);
     }
   }
 
@@ -545,20 +613,37 @@ export class SyncManager {
   /**
    * Pulls every origin where the peer is ahead, the roster authority first so roster events land
    * early. A failure on one origin is logged and never stops the others (PROTOCOL §3).
+   * `onAuthority` runs once the authority's own origin has been attempted, before any later origin, so a flush
+   * waiting on that origin is not held behind an unrelated one. The existing page cap in `catchUp` still bounds it.
    */
-  async pullAll(addr: PeerAddr, peerVv: Record<string, number>, peer = addrLabel(addr)): Promise<void> {
+  async pullAll(addr: PeerAddr, peerVv: Record<string, number>, peer = addrLabel(addr), onAuthority?: (level: boolean) => void): Promise<void> {
     const r = this.core.roster;
     const first = this.core.authority ?? r.team?.founder;
     const origins = Object.keys(peerVv).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
     function rank(o: string): number { return o === first ? 0 : r.nodes.has(o) ? 1 : 2; }
+    const auth = this.core.authority;
+    let told = false;
+    const tell = (level: boolean): void => {
+      if (told || !onAuthority) return;
+      told = true;
+      onAuthority(level);
+    };
     for (const origin of origins) {
-      if (this.stopped) return;
+      if (this.stopped) break;
       // A revoked origin's history the authority saw before the revocation stays valid and must stay pullable (D1).
       // Our own origin is never pulled: nobody else can hold events we don't (D3).
       if (origin === this.core.nodeId) continue;
-      await this.catchUp(addr, origin, peerVv[origin] ?? 0, peer).catch((err: Error) =>
-        this.core.log.warn("pull_failed", { origin, peer: addrLabel(addr), err: err.message }));
+      const target = peerVv[origin] ?? 0;
+      let ok = true;
+      try {
+        await this.catchUp(addr, origin, target, peer);
+      } catch (err) {
+        ok = false;
+        this.core.log.warn("pull_failed", { origin, peer: addrLabel(addr), err: (err as Error).message });
+      }
+      if (origin === auth) tell(ok && this.core.store.vvOf(origin) >= target);
     }
+    if (auth && auth !== this.core.nodeId) tell(this.core.store.vvOf(auth) >= (peerVv[auth] ?? 0));
     // Held rows whose dependency arrived drain on later ticks (F3); nothing is re-ingested wholesale.
   }
 

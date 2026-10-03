@@ -10,6 +10,7 @@ import { resolveAgentName } from "../../agent/identity.ts";
 import { cardForModel, projectLineForModel, timelineForModel } from "../../protocol/projects/format.ts";
 import { humanSize, roomFileForModel, roomUnavailableNote, taskContextForModel } from "../../protocol/projects/room-format.ts";
 import type { CardView, ProjectView, ProjectsPayload } from "../../protocol/projects/schema.ts";
+import { escalationContactOf } from "../../protocol/projects/escalation.ts";
 import { reportMode } from "../../protocol/projects/status-report.ts";
 import { defang, wrapForModel } from "../../protocol/safety.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
@@ -50,6 +51,12 @@ function bar(done: number, counted: number, width = 16): string {
 }
 function pct(done: number, counted: number): string {
   return counted ? `${Math.round((done / counted) * 100)}%` : "–";
+}
+
+/** Who is asked to resolve a dispute: the named contact, or the creator and then the owners. */
+function contactLine(p: ProjectView): string {
+  const who = escalationContactOf(p);
+  return `escalation contact: ${who || "the project's creator, then its owners"}`;
 }
 
 function projectLine(p: ProjectView): string {
@@ -130,15 +137,17 @@ async function show(ctx: Ctx): Promise<number> {
   const ref = need(ctx.args, 1, "project");
   const channel = await channelOf(cl, ref);
   const { project, cards } = await cl.project(channel);
-  if (ctx.json) { ctx.out(JSON.stringify(ctx.forAgent ? { project: projectLineForModel(project), status_report: reportMode(project), cards: cards.map((x) => ({ key: x.key, id: x.id, text: cardForModel(x, project), trust: "team-member" })) } : { project, cards })); return EXIT.ok; }
+  if (ctx.json) { ctx.out(JSON.stringify(ctx.forAgent ? { project: projectLineForModel(project), status_report: reportMode(project), escalation_contact: escalationContactOf(project), cards: cards.map((x) => ({ key: x.key, id: x.id, text: cardForModel(x, project), trust: "team-member" })) } : { project, cards })); return EXIT.ok; }
   if (ctx.forAgent) {
     ctx.out(projectLineForModel(project));
     ctx.out(`status report: ${reportMode(project)}`);
+    ctx.out(contactLine(project));
     ctx.out(cards.filter((x) => x.state === "open").map((x) => cardForModel(x, project)).join("\n") || "(no open cards)");
     return EXIT.ok;
   }
   ctx.out(projectLine(project));
   ctx.out(c.dim(`status report: ${reportMode(project)}${reportMode(project) === "hourly" ? " (WalkieTalkie writes it each hour something changed)" : ""}`));
+  ctx.out(c.dim(contactLine(project)));
   for (const b of project.boards) {
     ctx.out(`\n${c.bold(safeTerm(b.name))} ${bar(b.meter.done, b.meter.counted, 12)} ${b.meter.done}/${b.meter.counted}${b.state !== "active" ? c.dim(" (archived)") : ""}`);
     for (const col of b.columns) {
@@ -163,14 +172,16 @@ export async function channelOf(cl: WalkieClient, ref: string): Promise<string> 
 async function set(ctx: Ctx, state?: "active" | "archived" | "deleted"): Promise<number> {
   const cl = adminClient(ctx);
   const channel = await channelOf(cl, need(ctx.args, 1, "project"));
+  const contact = str(ctx.args, "contact");
   const body: Record<string, unknown> = {
     ...(state ? { state } : {}), ...(str(ctx.args, "name") ? { name: str(ctx.args, "name") } : {}),
     ...(str(ctx.args, "folder") !== undefined ? { folder: str(ctx.args, "folder") } : {}),
     ...(str(ctx.args, "prefix") ? { prefix: (str(ctx.args, "prefix") as string).toUpperCase() } : {}),
     ...(bool(ctx.args, "private") ? { private: true } : bool(ctx.args, "public") ? { private: false } : {}),
     ...(str(ctx.args, "path") ? { paths: [{ path: str(ctx.args, "path") }] } : {}),
+    ...(contact !== undefined ? { escalation_contact: contact === "none" || contact === "" ? null : contact } : {}),
   };
-  if (!Object.keys(body).length) throw new UsageError("nothing to change (--name, --folder, --prefix, --private|--public, --path)");
+  if (!Object.keys(body).length) throw new UsageError("nothing to change (--name, --folder, --prefix, --private|--public, --path, --contact)");
   const { project } = await cl.updateProject(channel, body);
   ctx.out(mutationOut(ctx, "updated", project));
   return EXIT.ok;

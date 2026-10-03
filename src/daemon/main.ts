@@ -67,10 +67,13 @@ import "./orchestrator/schedule-routes.ts";
 import "./projects/routes.ts"; // registers /v1/projects, /v1/tasks (WALKIE-PROJECTS-1)
 import "./projects/room-routes.ts"; // registers /v1/projects/:ch/room, /v1/tasks/:ref/context (DATA-ROOM-1)
 import "./projects/page-routes.ts"; // registers /v1/projects/:ch/page (PROJECT-PAGES-1)
+import "./memory/routes.ts"; // registers /v1/memory (ORG-MEMORY-1 personal scope; this machine only)
 import "./admin/routes.ts"; // registers /v1/admin (AGENT-ADMIN-1: switches, audit, remote admin)
+import "./history-routes.ts"; // registers GET /v1/history (WALK-70 phase 0: local read of audits already stored)
 import "./provision/routes.ts"; // local enrollment grant and bounded profile status/apply
 import { backfillEnrollment } from "./provision/grant.ts";
 import "./ssh/routes.ts"; // owner SSH status and local revoke
+import "./offboard-routes.ts"; // walkie team offboard --plan / --apply (WALK-72 phase 0)
 import { postUpgradeNotice } from "./admin/audit.ts";
 import { JoinStatusReporter } from "./join-status.ts";
 import "./projects/steward-routes.ts"; // registers /v1/steward (FO-6 board steward)

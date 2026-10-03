@@ -13,7 +13,7 @@ function fixture(initial: Schedule[] = [BASE]) {
   const events: Array<{ body: { text: string } }> = initial.map((schedule) => ({ body: { text: `walkie-talkie-schedule:v1:${JSON.stringify({ op: "put", schedule })}` } }));
   const meta = new Map<string, string>();
   const core = {
-    isAuthority: () => true, authorityLeaseTerm: 0,
+    isAuthority: () => true, authorityLeaseTerm: 0, clock: () => Date.now(),
     roster: { channels: new Map([[SCHEDULE_CHANNEL, {}]]) },
     store: { queryEvents: () => [...events].reverse().map((e) => ({ json: JSON.stringify(e) })), channelEventCount: () => events.length,
       transaction: (fn: () => void) => fn(), getMeta: (key: string) => meta.get(key) ?? null,
@@ -388,7 +388,10 @@ describe("replicated schedules", () => {
     const schedules = new Schedules(f.core, f.runner);
     const at = Date.now();
     await schedules.runNow(ID, at);
-    expect(f.prompts[0]).toContain("post one #general summary");
+    expect(f.prompts[0]).toContain("The daemon posts the fleet summary itself");
+    expect(f.prompts[0]).toContain("Do not post one");
+    expect(f.prompts[0]).not.toContain("post one #");
+    expect(f.prompts[0]).not.toContain("#general");
     const first = schedules.capacitySummaryForTurn("turn-1");
     expect(first?.due).toBe(true);
     schedules.recordCapacitySummaryPost("turn-1", first!.fingerprint, at);
@@ -397,7 +400,19 @@ describe("replicated schedules", () => {
     await schedules.tick(at);
     free = 1;
     await schedules.runNow(ID, at + 15 * 60_000);
-    expect(f.prompts[1]).toContain("no summary due");
+    expect(f.prompts[1]).toContain("Do not post one");
+    expect(f.prompts[1]).not.toContain("post one #");
+  });
+  test("the capacity turn says the daemon posts the fleet summary and the agent must not", async () => {
+    const f = fixture([{ ...BASE, task: { template: "capacity-check" } }]);
+    f.runner.capacityTargets = () => [];
+    f.runner.capacitySnapshot = () => ({ machines: [{ node: "one", online: true }], seats: [{ node: "one", free: 2 }], accounts: [] });
+    const schedules = new Schedules(f.core, f.runner);
+    await schedules.runNow(ID, Date.now());
+    expect(f.prompts[0]).toContain("The daemon posts the fleet summary itself");
+    expect(f.prompts[0]).toContain("Do not post one");
+    expect(f.prompts[0]).not.toContain("post one #");
+    expect(f.prompts[0]).not.toContain("#general");
   });
   test("a capacity claim sends a bounded batch of target ids", async () => {
     const f = fixture([{ ...BASE, task: { template: "capacity-check" } }]);

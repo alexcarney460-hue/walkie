@@ -99,6 +99,6 @@ export function adminRead(c: GateCtx): void {
  * What stays a person's alone (AGENT-ADMIN-1 §3): secrets in plain text (a dashboard session), removing a member,
  * moving the roster authority, deleting the team, and turning an admin switch back on.
  */
-export function personOnly(c: Caller, what: string): void {
-  if (agentCaller(c)) throw new HttpError(403, "person_only", `agents can't ${what}; a person does it, in the dashboard or in their own terminal`);
+export function personOnly(c: Caller, what: string, where = "in the dashboard or in their own terminal"): void {
+  if (agentCaller(c)) throw new HttpError(403, "person_only", `agents can't ${what}; a person does it, ${where}`);
 }

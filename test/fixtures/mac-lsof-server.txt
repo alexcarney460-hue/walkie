@@ -1,0 +1,10 @@
+p22244
+f0
+tunix
+n->0x27e6bdea70f1a972
+f3
+tunix
+n/tmp/rv106.0ROY/s.sock
+f6
+tunix
+n/tmp/rv106.0ROY/s.sock

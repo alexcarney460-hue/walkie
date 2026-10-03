@@ -27,7 +27,8 @@ import "./lib/theme.ts";
 import "./styles/machine.css";
 import "./styles/boundary.css";
 import "./styles/glass.css"; // the glass layer restyles the view surfaces
-import "./styles/color.css"; // last: the colour layer (UI-POLISH-2) tints the glass surfaces
+import "./styles/color.css"; // the colour layer (UI-POLISH-2) tints the glass surfaces
+import "./styles/simple.css"; // last: Simple mode's 18px type and 44px targets win over the glass buttons
 import { Root } from "./Root.tsx";
 
 const root = document.getElementById("root");
