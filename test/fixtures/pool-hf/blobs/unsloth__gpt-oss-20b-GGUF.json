@@ -1,0 +1,63 @@
+{
+ "_id": "68923b71467354ab9147aa88",
+ "id": "unsloth/gpt-oss-20b-GGUF",
+ "sha": "d449b42d93e1c2c7bda5312f5c25c8fb91dfa9b4",
+ "downloads": 487590,
+ "siblings": [
+  {
+   "rfilename": "config.json",
+   "blobId": "2a40409409c78fdd63b47f17349f60c007055df2",
+   "size": 1643
+  },
+  {
+   "rfilename": "gpt-oss-20b-F16.gguf",
+   "blobId": "333332366a43eb2188db57edeac2e01ba2d21a9f",
+   "size": 13792639168,
+   "lfs": {
+    "sha256": "4e4f9cd88d6456e4f389e7262eca4a8d565211e2b22ece9ca7a8556168ff3c66",
+    "size": 13792639168,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gpt-oss-20b-Q4_K_M.gguf",
+   "blobId": "132e1d5c25298009164d1ebe2d791b3b63082f78",
+   "size": 11624759488,
+   "lfs": {
+    "sha256": "c27536640e410032865dc68781d80a08b98f8db5e93575919af8ccc0568aeb4f",
+    "size": 11624759488,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gpt-oss-20b-Q5_K_M.gguf",
+   "blobId": "ddce211e5897e0e3be1058da3a435f6bf307f19a",
+   "size": 11717357248,
+   "lfs": {
+    "sha256": "9c3814533c5b4c84d42b5dce4376bbdfd7227e990b8733a3a1c4f741355b3e75",
+    "size": 11717357248,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gpt-oss-20b-Q6_K.gguf",
+   "blobId": "9d60f95f6b4d3534cf6f38169172b829fec905f2",
+   "size": 12041000128,
+   "lfs": {
+    "sha256": "f2ead52a7842a556ea10d5edd91a88e5af974856d2485ecaad3aade679832935",
+    "size": 12041000128,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gpt-oss-20b-Q8_0.gguf",
+   "blobId": "663c05365e0c7fdc0fb25dd9837bba4dc59f525c",
+   "size": 12109567168,
+   "lfs": {
+    "sha256": "bcd455d4034ec02f71a875b46cb17df44a97911d7258291973be4d21f98329f3",
+    "size": 12109567168,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

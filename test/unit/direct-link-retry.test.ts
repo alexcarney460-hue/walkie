@@ -11,7 +11,7 @@ import { tnode } from "../helpers/events.ts";
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()?.(); });
 
-function setup(failures: number) {
+function setup(failures: number, config: ConstructorParameters<typeof DirectLink>[1] = { transport: "direct" }) {
   const core = makeCore(tnode("alex", "direct:alex"), "0000000000000000", cleanups);
   const logs: { msg: string; fields?: Record<string, unknown> }[] = [];
   const log: Logger = { debug: () => undefined, info: (msg, fields) => logs.push({ msg, fields }), warn: () => undefined, error: (msg, fields) => logs.push({ msg, fields }) };
@@ -27,7 +27,7 @@ function setup(failures: number) {
       return net;
     },
   } as unknown as DirectLinkDeps;
-  const link = new DirectLink(deps, { transport: "direct" }, { retryBaseMs: 10, retryMaxMs: 40, random: () => 0.5 });
+  const link = new DirectLink(deps, config, { retryBaseMs: 10, retryMaxMs: 40, random: () => 0.5 });
   cleanups.push(() => void link.stop());
   return { link, logs, calls: () => calls, rosterChanges: () => rosterChanges };
 }
@@ -61,4 +61,28 @@ test("roster changes reach the running endpoint", async () => {
   await s.link.startWithRetry();
   s.link.rosterChanged();
   expect(s.rosterChanges()).toBe(1);
+});
+
+test("pending(): this daemon should run Walkie Direct but its endpoint is not up, starting or failing to bind and retrying", async () => {
+  const s = setup(2);
+  expect(s.link.pending()).toBe(true); // a Direct team's daemon wants Direct from the start
+  await s.link.startWithRetry(); // the first attempt fails
+  expect(s.link.direct()).toBeNull();
+  expect(s.link.pending()).toBe(true); // still failing, retrying
+  const deadline = Date.now() + 2_000;
+  while (!s.link.direct() && Date.now() < deadline) await Bun.sleep(5);
+  expect(s.link.direct()).not.toBeNull();
+  expect(s.link.pending()).toBe(false); // the endpoint is up
+});
+
+test("pending(): a Tailscale-only daemon never wants Direct; a dual one (config direct) is pending until its endpoint is up", async () => {
+  const tailscale = setup(0, { transport: "tailscale" });
+  expect(tailscale.link.wantsDirect()).toBe(false);
+  expect(tailscale.link.pending()).toBe(false);
+  const dual = setup(0, { direct: true });
+  expect(dual.link.wantsDirect()).toBe(true);
+  expect(dual.link.pending()).toBe(true);
+  await dual.link.startWithRetry();
+  expect(dual.link.direct()).not.toBeNull();
+  expect(dual.link.pending()).toBe(false);
 });

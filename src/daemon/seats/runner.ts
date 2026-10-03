@@ -48,6 +48,29 @@ export const RUNNER_MAX_STAGED = 1024 * 1024 * 1024;
 export const RUNNER_MAX_PROMPT = 256 * 1024;
 export const HEADER_MAX = 1024 * 1024;
 export const CONTROL_MAX = 64;
+/** The longest control line: a gated run's `go`, which carries the login (each part at most 64 KB, base64-free JSON). */
+export const GO_LINE_MAX = 192 * 1024;
+const LOGIN_PART_MAX = 64 * 1024;
+
+/** The login a gated run receives with `go`: the same three ways in an ungated spec has. */
+export interface RunnerLogin { env?: { CLAUDE_CODE_OAUTH_TOKEN?: string }; claude_credentials?: string; codex_auth?: string }
+
+/** A `go` line's login, or null when it is anything else (unknown keys, other variables, oversized parts). */
+export function parseGo(text: string): RunnerLogin | null {
+  let v: unknown;
+  try { v = JSON.parse(text); } catch { return null; }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (Object.keys(o).some((k) => k !== "env" && k !== "claude_credentials" && k !== "codex_auth")) return null;
+  const part = (x: unknown) => x === undefined || (typeof x === "string" && x.length > 0 && x.length <= LOGIN_PART_MAX);
+  if (!part(o.claude_credentials) || !part(o.codex_auth)) return null;
+  if (o.env !== undefined) {
+    if (!o.env || typeof o.env !== "object" || Array.isArray(o.env)) return null;
+    const env = o.env as Record<string, unknown>;
+    if (Object.keys(env).some((k) => k !== "CLAUDE_CODE_OAUTH_TOKEN") || !part(env.CLAUDE_CODE_OAUTH_TOKEN)) return null;
+  }
+  return o as RunnerLogin;
+}
 const REAP_GRACE_MS = 2_000;
 /** After the runtime exited and its group was reaped, how long its output may still drain (a leftover may hold it). */
 const DRAIN_MS = 2_000;
@@ -125,6 +148,13 @@ export interface RunnerSpec {
    * and gone with the user (the product requirement: seats use the machine's own Claude/Codex login).
    */
   codex_auth?: string;
+  /**
+   * A gated run (Codex pre.12 audit MUST 1): the spec carries no login (none of the three above). The runner prepares
+   * the run (the clone, the branch, the brief, the help probe), says `prepared`, and starts the runtime only when the
+   * host's `go` line arrives with the login. The host judges the launcher and the account once more, with nothing
+   * awaited, right before it sends `go`; refused, it sends `abort` and no login ever reaches this user.
+   */
+  gate?: boolean;
   /** rv 7: the brief, written into the work tree (TASK.md) once it exists; the prompt is then the fixed pointer. */
   task?: string;
   /** rv 7: after the clone, check out this branch at its HEAD (a build lane). */
@@ -152,6 +182,9 @@ export function validSpec(v: unknown): RunnerSpec | null {
   if (s.probe_permission_prompts !== undefined && typeof s.probe_permission_prompts !== "boolean") return null;
   if (s.claude_credentials !== undefined && (typeof s.claude_credentials !== "string" || s.claude_credentials.length > 64 * 1024)) return null;
   if (s.codex_auth !== undefined && (typeof s.codex_auth !== "string" || s.codex_auth.length > 64 * 1024)) return null;
+  if (s.gate !== undefined && typeof s.gate !== "boolean") return null;
+  // A gated spec carries no login at all: it comes with `go`.
+  if (s.gate === true && (s.claude_credentials !== undefined || s.codex_auth !== undefined || s.env.CLAUDE_CODE_OAUTH_TOKEN !== undefined)) return null;
   return s as RunnerSpec;
 }
 
@@ -252,6 +285,23 @@ export async function runSeatRunner(): Promise<number> {
   return runSeat(spec, input);
 }
 
+/**
+ * A gated run, prepared: says so, waits for the host's `go`, and puts its login in place (the two files 0600 in this
+ * run's fresh configuration roots, the token in the runtime's environment). Null: aborted first, or the files failed.
+ */
+async function receiveLogin(go: Promise<RunnerLogin | null>, claudeConfig: string, codexHome: string, env: Record<string, string>): Promise<Record<string, string> | null> {
+  send({ prepared: true });
+  const login = await go;
+  if (!login) return null;
+  try {
+    if (login.claude_credentials) writeFileSync(join(claudeConfig, ".credentials.json"), login.claude_credentials, { mode: 0o600, flag: "wx" });
+    if (login.codex_auth) writeFileSync(join(codexHome, "auth.json"), login.codex_auth, { mode: 0o600, flag: "wx" });
+  } catch {
+    return null;
+  }
+  return login.env?.CLAUDE_CODE_OAUTH_TOKEN ? { ...env, CLAUDE_CODE_OAUTH_TOKEN: login.env.CLAUDE_CODE_OAUTH_TOKEN } : env;
+}
+
 async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   const me = userInfo();
   const home = seatHome();
@@ -289,8 +339,9 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   mkdirSync(claudeConfig, { mode: 0o700 });
   mkdirSync(codexHome, { mode: 0o700 });
   writeFileSync(join(claudeConfig, "settings.json"), `${JSON.stringify({ disableAllHooks: true }, null, 2)}\n`, { mode: 0o600 });
-  if (spec.claude_credentials) writeFileSync(join(claudeConfig, ".credentials.json"), spec.claude_credentials, { mode: 0o600 });
-  if (spec.codex_auth) writeFileSync(join(codexHome, "auth.json"), spec.codex_auth, { mode: 0o600 });
+  // Ungated (an older host): the login came with the spec. Gated: nothing of it is here until `go`.
+  if (!spec.gate && spec.claude_credentials) writeFileSync(join(claudeConfig, ".credentials.json"), spec.claude_credentials, { mode: 0o600 });
+  if (!spec.gate && spec.codex_auth) writeFileSync(join(codexHome, "auth.json"), spec.codex_auth, { mode: 0o600 });
   // This user's own identity: nothing of the daemon user's home, whatever the spec says.
   const env: Record<string, string> = {
     ...spec.env, HOME: home, USER: me.username, LOGNAME: me.username, SHELL: me.shell ?? "/bin/sh", TMPDIR: join(dir, "tmp"),
@@ -303,9 +354,13 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   // Control lines are read from here on: a stop may come while the clone runs.
   let child = null as ReturnType<typeof Bun.spawn> | null;
   let ended = false;
+  // A gated run's login: resolved once by the host's `go`, or null by an abort (or the end of stdin) first.
+  let answerGo: (login: RunnerLogin | null) => void = () => undefined;
+  const go = new Promise<RunnerLogin | null>((resolve) => { answerGo = resolve; });
+  abort.signal.addEventListener("abort", () => answerGo(null), { once: true });
   void (async () => {
     for (;;) {
-      const cmd = (await input.line(CONTROL_MAX))?.trim();
+      const cmd = (await input.line(spec.gate ? GO_LINE_MAX : CONTROL_MAX))?.trim();
       const pid = child?.pid;
       if (cmd === undefined) {
         // stdin's end (the daemon is gone) or a broken line: nothing of this seat outlives it.
@@ -314,6 +369,12 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
         return;
       }
       if (cmd === "abort") { abort.abort(); continue; }
+      if (cmd.startsWith("go ")) {
+        // Only a gated run takes one, and only before its runtime started; a malformed one stops the seat.
+        const login = spec.gate && !pid ? parseGo(cmd.slice(3)) : null;
+        if (login) answerGo(login); else abort.abort();
+        continue;
+      }
       if (!pid) { if (cmd === "kill" || cmd === "term") abort.abort(); continue; } // stopped while it prepares
       if (ended) continue;
       if (cmd === "term") { signalGroup(pid, "SIGCONT"); signalGroup(pid, "SIGTERM"); }
@@ -352,8 +413,11 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
   const alt = task !== null && task.prompt !== SEAT_TASK_PROMPT;
   const args = spec.args.map((a) => (a === "{cwd}" ? cwd : alt && a === SEAT_TASK_PROMPT ? SEAT_TASK_PROMPT_ALT : a));
   const promptBytes = alt ? new TextEncoder().encode(new TextDecoder().decode(prompt).split(SEAT_TASK_PROMPT).join(SEAT_TASK_PROMPT_ALT)) : prompt;
+  // Gated, the probe runs before any login is here (Codex pre.12 audit SHOULD 1).
   if (spec.probe_permission_prompts && await knowsPermissionPrompts(spec.bin, env)) args.push("--permission-prompts", "none");
-  child = Bun.spawn([spec.bin, ...args], { cwd, env, stdin: "pipe", stdout: "pipe", stderr: "inherit", detached: true });
+  const runEnv = spec.gate ? await receiveLogin(go, claudeConfig, codexHome, env) : env;
+  if (!runEnv || abort.signal.aborted) { dropToken(); return fail("stopped"); }
+  child = Bun.spawn([spec.bin, ...args], { cwd, env: runEnv, stdin: "pipe", stdout: "pipe", stderr: "inherit", detached: true });
   const runtime = child;
   send({ ready: { dir, cwd, base, pid: runtime.pid } });
   const sink = runtime.stdin as import("bun").FileSink;

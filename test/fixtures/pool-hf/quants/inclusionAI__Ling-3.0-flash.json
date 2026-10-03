@@ -1,0 +1,27 @@
+[
+ {
+  "_id": "6a7244edb664134a5e88e1cd",
+  "id": "AtomicChat/Ling-3.0-flash-GGUF",
+  "downloads": 282399
+ },
+ {
+  "_id": "6a83daedb586288f04ce7310",
+  "id": "bartowski/Ling-3.0-flash-GGUF",
+  "downloads": 13772
+ },
+ {
+  "_id": "6a72715360412a97204ff1fd",
+  "id": "bloomer010/Ling-3.0-flash-GGUF",
+  "downloads": 13059
+ },
+ {
+  "_id": "6a7e726885b393a3e629e485",
+  "id": "SC117/Ling-3.0-flash-abliterated-APEX-GGUF",
+  "downloads": 1668
+ },
+ {
+  "_id": "6a80cf19cd82471569d57b81",
+  "id": "bloomer010/Ling-3.0-flash-REAP288-73B-A5B-GGUF",
+  "downloads": 1158
+ }
+]

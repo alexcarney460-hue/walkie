@@ -29,12 +29,13 @@ import { AutoPilot, defaultLogins, leadIfRunning, needsLoginText, peerLive, type
 import type { Logins } from "./logins.ts";
 import { FIRST_RUN_PROMPT, playbook } from "./playbook.ts";
 import { walkieArgv } from "../../hooks/install.ts";
-import { ClaudeChild, childEnv, shellChildEnv, claudeArgs, claudeBinaryIdentity, findClaude, supportsPermissionPrompts, unsupportedClaudeFlag, walkieMcpConfig } from "./process.ts";
+import { ClaudeChild, childEnv, shellChildEnv, claudeArgs, claudeBinaryIdentity, findClaude, supportsPermissionPrompts, TOOLLESS_FLAGS, unsupportedClaudeFlag, walkieMcpConfig } from "./process.ts";
 import { TalkieOsUser, type TalkieOsDeps } from "./os-user.ts";
 import { readClaudeToken, systemKeychain, type TokenResult } from "../../accounts/adapters/claude.ts";
 import { TALKIE_USER } from "../seats/talkie-user.ts";
 import { vmMayLead, setVmLeadEligible } from "./vm-lead.ts";
-import { Schedules } from "./schedules.ts";
+import type { Prepared } from "./prepared.ts";
+import { Schedules, type ScheduleRunner, type TurnOptions } from "./schedules.ts";
 import type { CapacitySnapshot } from "./capacity-summary.ts";
 import type { CatchUp } from "../requests.ts";
 
@@ -119,8 +120,18 @@ interface HostState {
   gave_up?: boolean;
 }
 
-/** A message to answer (`ts`: when the person sent it); `origin` is authorised again when it runs. */
-interface Item { id: string; text: string; thread: string; ts: number; origin: MessageOrigin }
+/**
+ * A message to answer (`ts`: when the person sent it); `origin` is authorised again when it runs. `tools: "none"`: its
+ * Claude runs with no tool at all (a scheduled duty that needs none, schedules.ts TurnOptions).
+ */
+interface Item { id: string; text: string; thread: string; ts: number; origin: MessageOrigin; tools?: "none" }
+/** Why a queued message was not answered when its turn came, in the words a duty's result shows. */
+const IGNORED_TEXT = {
+  stale: "Not run: the turn waited too long in WalkieTalkie's queue",
+  credential_ended: "Not run: the session that sent it ended before its turn",
+  not_the_person: "Not run: this machine no longer counts as WalkieTalkie's person",
+  observer: "Not run: WalkieTalkie's person is now an observer, and observers can't run WalkieTalkie",
+} as const;
 interface Turn {
   id: string; thread: string; texts: string[];
   /** The first MAX_TOOL_ENTRIES tool lines, and how many tools the reply used in all (ORCH-FIX-13: bounded). */
@@ -144,16 +155,42 @@ const LIVE_FRAME_MS = 100;
 const TRANSCRIPT_CHARS = 24_000;
 /** A child that ran this long before exiting resets the backoff. */
 const HEALTHY_MS = 60_000;
+/** How a tool-less turn ends on a Claude that does not know the flags it needs: its reply in the conversation and its duty's result. */
+const TOOLLESS_UNSUPPORTED = "this Claude is too old for tool-less report turns; update Claude";
 const MAX_RAPID_FAILURES = 5;
 
 export interface HostDeps {
   core: Core; log: Logger; client?: PeerClient;
   catchUp?: CatchUp;
-  boardRefresh?: (canAct: () => boolean) => Promise<string>;
+  /** PROJECT-REPORTS-1: the project status reports duty's prepare step (daemon/projects/status-report.ts). */
+  projectReports?: (canAct: () => boolean, signal: AbortSignal) => Promise<Prepared>;
+  /** TALKIE-OPS-1: the orchestration poll's and the card curation's prepare steps (orchestrator/poll.ts, curation.ts): daemon work that ends the run itself. */
+  orchestrationPoll?: (canAct: () => boolean, signal: AbortSignal) => Promise<Prepared>;
+  cardCuration?: (canAct: () => boolean, signal: AbortSignal) => Promise<Prepared>;
   capacityTargets?: () => readonly string[];
   capacitySnapshot?: () => CapacitySnapshot;
   /** The team's machines with their heartbeats (views.ts nodesView), for the lead election. */
   nodes?: () => NodeView[];
+}
+
+/**
+ * The prepare step of a scheduled duty, run on the daemon before its model turn: the orchestration poll and the card curation
+ * (which also are what the older Capacity check and Board refresh now run: nothing a scheduled duty does changes anything),
+ * the project status reports' change check (which may decide there is no turn at all), or nothing.
+ */
+export function prepareFor(deps: Pick<HostDeps, "orchestrationPoll" | "cardCuration" | "projectReports">, task: Parameters<NonNullable<ScheduleRunner["prepare"]>>[0],
+  canAct: () => boolean, signal: AbortSignal): Promise<Prepared> {
+  if (!("template" in task)) return Promise.resolve("");
+  if (task.template === "orchestration-poll" || task.template === "capacity-check") {
+    return deps.orchestrationPoll ? deps.orchestrationPoll(canAct, signal) : Promise.resolve({ skip: "The orchestration poll is not available on this daemon." });
+  }
+  if (task.template === "card-curation" || task.template === "board-refresh") {
+    return deps.cardCuration ? deps.cardCuration(canAct, signal) : Promise.resolve({ skip: "Card curation is not available on this daemon." });
+  }
+  if (task.template === "project-reports") {
+    return deps.projectReports ? deps.projectReports(canAct, signal) : Promise.resolve({ skip: "Project status reports are not available on this daemon." });
+  }
+  return Promise.resolve("");
 }
 
 /** How often a running WalkieTalkie re-announces its status (views treat a card older than 30 min as offline). */
@@ -172,8 +209,18 @@ export class OrchestratorHost {
   /** The secret the current Claude child got (acceptsToken). */
   private childLeaseEpoch = 0;
   private childToken: string | null = null;
+  /** TALKIE-OPS-1: the live child answered a scheduled turn; until a new child replaces it, its writes stay held (scheduledChildActive). */
+  private childScheduled = false;
   /** The child was spawned for a new session and has not been sent anything yet. */
   private childFresh = false;
+  /** Whether the running Claude was launched with no tools (its next message must want the same: pump). */
+  private childTools: "platform" | "none" = "platform";
+  /**
+   * The binary (claudeBinaryIdentity) that rejected the flags of a tool-less turn: tool-less turns fail at once, without a
+   * launch, for as long as that is the Claude that would be launched. A start of WalkieTalkie, or a replaced `claude`,
+   * clears it.
+   */
+  private toollessRejected: { binary: string | null } | null = null;
   private childInit = false;
   private childResumed = false;
   private childStartedAt = 0;
@@ -263,13 +310,13 @@ export class OrchestratorHost {
       epoch: () => this.leadership.epoch,
       leaseFailure: () => this.leadership.leaseFailure,
       claim: (id, slot, run, runNow, targets) => this.leadership.claimSchedule(id, slot, run, runNow, targets),
-      prepare: (task, canAct) => "template" in task && task.template === "board-refresh" && deps.boardRefresh ? deps.boardRefresh(canAct) : Promise.resolve(""),
-      turn: (prompt) => this.say(prompt, undefined, { via: "schedule" }).id,
+      prepare: (task, canAct, signal) => prepareFor(deps, task, canAct, signal),
+      turn: (prompt, _run, opts) => this.say(prompt, undefined, { via: "schedule" }, opts).id,
       reply: (id) => { const reply = this.scheduleReplies.get(id) ?? null; if (reply) this.scheduleReplies.delete(id); return reply; },
       interrupt: (id) => { const m = this.core.store.orchMessage(id); if (m) this.interrupt(m.thread); },
       capacityTargets: deps.capacityTargets,
       capacitySnapshot: deps.capacitySnapshot,
-    }, deps.client, deps.catchUp);
+    }, deps.client, deps.catchUp, { topUpDefaults: true });
   }
 
   private monitorFailed(reason: string): void {
@@ -547,6 +594,19 @@ export class OrchestratorHost {
     return this.turn?.item.origin.via === "schedule";
   }
 
+  /**
+   * The local API holds the child to what a scheduled turn may do (local-routes.ts refuseScheduledWrite) while one runs AND after,
+   * until the child is replaced: a background job a scheduled turn left behind keeps the token but cannot act once the turn ends.
+   */
+  scheduledChildActive(): boolean {
+    return this.scheduledTurnActive() || (this.childScheduled && this.child !== null);
+  }
+
+  /** The id of the turn being answered (a message's id), or null between turns: what a per-turn limit counts against. */
+  currentTurnId(): string | null {
+    return this.turn?.id ?? null;
+  }
+
   capacitySummaryForCurrentTurn(): { fingerprint: string; due: boolean; turn: string } | null {
     if (!this.scheduledTurnActive() || !this.turn) return null;
     const decision = this.schedules.capacitySummaryForTurn(this.turn.id);
@@ -633,8 +693,10 @@ export class OrchestratorHost {
         await this.prepareShellUser();
         if (!this.canLaunch(generation, final)) { await this.cleanupCancelledShell(final); throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled"); }
       }
-      if (!this.canLaunch(generation, final)) throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled");
-      this.state = { ...s, access, permission_mode: effectiveMode(access, base) };
+      const current = this.state;
+      if (!current || !this.canLaunch(generation, final)) throw new HttpError(409, "orchestrator_superseded", "the access change was cancelled");
+      // Conversation turns can update sessions while access preparation awaits.
+      this.state = { ...current, access, permission_mode: effectiveMode(access, base) };
       this.save();
       this.log.info("orchestrator_access", { access, deferred: !!this.turn });
       const note = `_Access: ${access}._`;
@@ -700,7 +762,7 @@ export class OrchestratorHost {
    * The person, at this machine, sends a message (the dashboard or the CLI; the local API refuses agents). It is stored
    * `queued` and answered in turn; when its turn comes, its origin is authorised again (pump).
    */
-  say(text: string, thread: string | undefined, origin: MessageOrigin): OrchMessage {
+  say(text: string, thread: string | undefined, origin: MessageOrigin, opts: TurnOptions = {}): OrchMessage {
     const s = this.state;
     if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", this.lastError ?? "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
     if (this.core.me()?.handle !== s.owner) throw new HttpError(403, "forbidden", "this machine no longer counts as the orchestrator's person");
@@ -712,7 +774,7 @@ export class OrchestratorHost {
     const id = `om_${randomUUID()}`;
     const msg: OrchMessage = { id, thread: thread ?? id, role: "person", text, ts: Date.now(), via: origin.via, state: "queued" };
     this.keep(msg);
-    this.queue.push({ id, text, thread: msg.thread, ts: msg.ts, origin });
+    this.queue.push({ id, text, thread: msg.thread, ts: msg.ts, origin, ...(opts.tools ? { tools: opts.tools } : {}) });
     this.pump();
     return this.core.store.orchMessage(id) ?? msg;
   }
@@ -781,6 +843,7 @@ export class OrchestratorHost {
     if (!s) return;
     if (this.stopRequests !== mark) return; // stopping stays set: only a start nobody stopped clears it
     this.stopping = false;
+    this.toollessRejected = null; // a restart tries a tool-less turn again
     const final = this.finalGeneration;
     this.startGate();
     this.phase = "starting";
@@ -1122,8 +1185,13 @@ export class OrchestratorHost {
       this.permissionPrompts = false;
       void this.probePermissionPrompts(); // a changed binary starts safely while its capability is checked again
     }
+    // The message this Claude is for (the head of the queue: pump and every restart spawn for it) says whether it gets tools.
+    // One that is known not to run a tool-less turn is not asked to: that turn fails in pump, and this Claude is the usual one.
+    const tools = this.queue[0]?.tools === "none" && !this.toollessUnavailable() ? "none" as const : undefined;
+    this.childTools = tools ?? "platform";
     let args = claudeArgs({
       session, resume, ...(s.model ? { model: s.model } : {}), permissionMode: effectiveMode(s.access, s.permission_mode),
+      ...(tools ? { tools } : {}),
       permissionPrompts: this.permissionPrompts === true, allowedTools: PLATFORM_TOOLS,
       mcpConfig: walkieMcpConfig(this.shellUser.active ? [this.shellUser.runner] : walkieArgv(),
         this.core.paths.home, this.shellUser.active ? this.shellUser.socket : this.core.paths.socket),
@@ -1135,6 +1203,7 @@ export class OrchestratorHost {
     this.childArgs = args;
     // A fresh secret per Claude process: only this child (and what it runs) can write as `orchestrator`.
     this.childToken = randomBytes(32).toString("hex");
+    this.childScheduled = false;
     this.childLeaseEpoch = this.leadership.epoch;
     const projected = {
       WALKIE_AGENT: ORCHESTRATOR_AGENT, WALKIE_HOME: this.core.paths.home, WALKIE_SOCKET: shell ? this.shellUser.socket : this.core.paths.socket,
@@ -1233,9 +1302,13 @@ export class OrchestratorHost {
     // ClaudeChild scrubbed it before cutting it (stderrDiagnostic); scrubbed again here before it is cut to a line,
     // logged or kept as last_error (a diagnostic may carry a credential).
     const tail = scrub(stderr).trim().split("\n").slice(-1)[0] ?? "";
+    const unknownFlag = /unknown option\s+['"`]?(-{1,2}[a-zA-Z][\w-]*)/i.exec(stderr)?.[1];
+    if (this.childTools === "none" && !this.childInit && code !== 0 && unknownFlag && TOOLLESS_FLAGS.includes(unknownFlag)) {
+      this.onToollessRejected(session, unknownFlag, tail);
+      return;
+    }
     this.lastError = `claude exited (code ${code ?? "signal"})${tail ? `: ${tail.slice(0, 240)}` : ""}`;
     this.log.warn("orchestrator_claude_exited", { code, session, err: tail.slice(0, 240) });
-    const unknownFlag = /unknown option\s+['"`]?(-{1,2}[a-zA-Z][\w-]*)/i.exec(stderr)?.[1];
     const unsupported = !this.childInit && code !== 0 && !this.flagRetryUsed
       ? unsupportedClaudeFlag(this.childArgs, stderr)
       : null;
@@ -1277,6 +1350,52 @@ export class OrchestratorHost {
     this.scheduleRestart(!!unsupported);
   }
 
+  /**
+   * Whether the Claude that would be launched is known not to run a tool-less turn (it rejected the flags: see
+   * onToollessRejected). A different binary (an update replaced it) clears the memory.
+   */
+  private toollessUnavailable(): boolean {
+    const known = this.toollessRejected;
+    const s = this.state;
+    if (!known || !s) return false;
+    const bin = this.shellUser.active ? this.shellUser.runtime : s.claude;
+    if (claudeBinaryIdentity(bin) === known.binary) return true;
+    this.toollessRejected = null;
+    return false;
+  }
+
+  /**
+   * A tool-less turn this Claude cannot run ends here, in plain words: a reply in its conversation, and (for a duty) the
+   * run's result, as a failure. It is never run with the tools instead. `turn` is set when the message had been sent.
+   */
+  private failToolless(item: Item, turn?: Turn): void {
+    if (turn) this.endLive(turn); else this.setState(item.id, "dropped");
+    this.postReply(item.thread, TOOLLESS_UNSUPPORTED, { id: item.id, tools: turn?.tools ?? [], toolCount: turn?.toolCount ?? 0 });
+    if (item.origin.via === "schedule") this.scheduleReplies.set(item.id, { text: TOOLLESS_UNSUPPORTED, ok: false });
+  }
+
+  /**
+   * A tool-less Claude exited at launch because this Claude does not know one of its flags (too old). Only tool-less turns
+   * are affected: the one in flight ends here, plainly (failToolless), and tool-less turns fail at once, with no launch
+   * (pump), until the binary changes or WalkieTalkie is started again; any queued behind it end the same way when the
+   * restart pumps. WalkieTalkie itself stays up: this is not a failure that counts towards giving up, and the Claude that
+   * follows is launched with the usual flags for whatever comes next.
+   */
+  private onToollessRejected(session: string | null, flag: string, tail: string): void {
+    this.toollessRejected = { binary: this.spawnedBinary };
+    this.log.warn("orchestrator_toolless_unsupported", { flag, session, err: tail.slice(0, 240) });
+    this.clearInterruptTimer();
+    if (session) { this.forgetSession(session); this.childSession = null; }
+    if (this.turn) {
+      const t = this.turn;
+      this.turn = null;
+      this.failToolless(t.item, t);
+    }
+    this.pendingModel = undefined;
+    this.pendingNote = undefined;
+    this.scheduleRestart(true);
+  }
+
   private scheduleRestart(unsupportedRetry = false): void {
     if (this.stopping || !this.state?.active) return;
     if (this.restartTimer) clearTimeout(this.restartTimer);
@@ -1314,10 +1433,9 @@ export class OrchestratorHost {
         }
         if (!this.canLaunch(generation, final)) return;
         if (this.child) { this.phase = "idle"; this.pump(); return; }
-        const session = this.childSession;
-        const used = !!session && Object.values(this.state?.sessions ?? {}).includes(session);
-        this.spawn(used && session ? session : randomUUID(), used);
-        if (this.child) this.status("idle", used ? "Resumed session" : "Ready", true);
+        const { session, resume } = this.sessionForRestart();
+        this.spawn(session, resume);
+        if (this.child) this.status("idle", resume ? "Resumed session" : "Ready", true);
         this.pump();
       } catch (err) {
         if (!this.canLaunch(generation, final)) return;
@@ -1327,6 +1445,24 @@ export class OrchestratorHost {
         } else await this.bootFailed(err);
       }
     }).catch((err) => this.log.warn("orchestrator_restart_failed", { err: scrub(String(err)).slice(0, 200) })); }, delay);
+  }
+
+  /**
+   * The session the Claude a restart launches is for. The message at the head of the queue decides it, as it does in pump
+   * (and in spawn, which reads its tools from it): the session of its conversation when there is one (resumed), a fresh one
+   * when the message starts a conversation. This is how a full-access WalkieTalkie, which changes conversation by
+   * restarting, gets the Claude the next message needs; the session that was running is never what it wants then. With
+   * nothing waiting, the session that was running continues after a crash, or a fresh one starts when it was never used.
+   */
+  private sessionForRestart(): { session: string; resume: boolean } {
+    const sessions = this.state?.sessions ?? {};
+    const next = this.queue[0];
+    if (next) {
+      const known = sessions[next.thread];
+      return known ? { session: known, resume: true } : { session: randomUUID(), resume: false };
+    }
+    const running = this.childSession;
+    return running && Object.values(sessions).includes(running) ? { session: running, resume: true } : { session: randomUUID(), resume: false };
   }
 
   private async cleanupAfterGiveUp(): Promise<void> {
@@ -1389,22 +1525,30 @@ export class OrchestratorHost {
     const s = this.state;
     if (!s?.active || this.turn || this.phase === "restarting" || this.phase === "starting" || this.phase === "stopped" || this.phase === "failed") return;
     // Authorised again when its turn comes (ORCH-FIX-11, Codex r11 HIGH 3's local analogue): a message that waited past
-    // the age limit, whose credential ended (a signed-out or expired dashboard session, a rotated token), or whose
-    // machine no longer counts as its person is not answered.
+    // the age limit, whose credential ended (a signed-out or expired dashboard session, a rotated token), whose
+    // machine no longer counts as its person, or whose person is now an observer (WALK-74: observers can't run an
+    // orchestrator) is not answered. A duty's turn gets the reason as its run's result, not a 10-minute timeout.
     while (this.queue.length) {
       const head = this.queue[0] as Item;
+      const me = this.core.me();
       const why = Date.now() - head.ts > this.maxAge ? "stale"
         : head.origin.signal?.aborted || (head.origin.expiresAt !== undefined && Date.now() >= head.origin.expiresAt) ? "credential_ended"
-        : this.core.me()?.handle !== s.owner ? "not_the_person" : null;
+        : me?.handle !== s.owner ? "not_the_person" : me?.role === "observer" ? "observer" : null;
       if (!why) break;
       this.log.info("orchestrator_ignored", { id: head.id, reason: why });
       this.setState(head.id, why === "stale" ? "dropped" : "refused");
+      if (head.origin.via === "schedule") this.scheduleReplies.set(head.id, { text: IGNORED_TEXT[why], ok: false });
       this.queue.shift();
     }
+    // A Claude known not to run a tool-less turn is not launched for one: the turn fails at once, in plain words, and is never
+    // handed to a Claude that has the tools.
+    while (this.queue[0]?.tools === "none" && this.toollessUnavailable()) this.failToolless(this.queue.shift() as Item);
     const item = this.queue[0];
     if (!item) return;
     const known = s.sessions[item.thread];
-    const ready = this.child?.alive && (known ? this.childSession === known : this.childFresh);
+    // A Claude launched with no tools only ever answers a message that asks for none, and the other way round.
+    // A child that answered a scheduled turn is never reused: the next message gets a new one, with a new token.
+    const ready = this.child?.alive && !this.childScheduled && (known ? this.childSession === known : this.childFresh) && this.childTools === (item.tools ?? "platform");
     if (!ready) {
       const child = this.child;
       this.child = null;
@@ -1425,6 +1569,7 @@ export class OrchestratorHost {
       preface = this.transcript(item);
     }
     this.childFresh = false;
+    if (item.origin.via === "schedule") this.childScheduled = true;
     if (!this.child?.write(userMessage(preface + item.text))) {
       this.queue.unshift(item);
       return;

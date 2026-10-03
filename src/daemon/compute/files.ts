@@ -32,8 +32,21 @@ const RentalRecord = z.object({
   ended_at: z.number().int().nullable(),
   /** The node that joined with one of `invite_ids` (from the chain), once seen. */
   node_id: z.string().regex(/^[0-9a-f]{16}$/).nullable(),
-  /** Its revocation was written (or queued) after the rental ended. */
+  /** The roster shows that node revoked (confirmed). A revocation that is only queued or refused is NOT this. */
   revoked: z.boolean(),
+  /**
+   * While an ended rental's machine is still on the team: "pending" (the revocation is queued or not confirmed yet) or
+   * "refused" (with the plain reason owners are shown). Absent once revoked, and for a rental with nothing to revoke.
+   */
+  revoke: z.object({
+    state: z.enum(["pending", "refused"]),
+    reason: z.string().max(400).optional(),
+    /** "pending": when the authority accepted a request that this daemon's roster doesn't show yet (not re-sent for a while). */
+    accepted_at: z.number().int().optional(),
+    /** "refused": how many times it was refused, and when to ask again (backed off, up to an hour; the alert stays meanwhile). */
+    attempts: z.number().int().min(1).optional(),
+    retry_at: z.number().int().optional(),
+  }).strict().optional(),
   /** Nothing more to do for this rental. */
   closed: z.boolean(),
 }).strict();
@@ -92,9 +105,26 @@ export function markAccountsScanned(home: string): void {
   writeAtomic(accountPath(home), JSON.stringify({ ...parsed, needs_scan: false }) + "\n");
 }
 
+/** The rentals file is there but is not this version's format: damaged, or written by a newer Walkie. */
+export class RentalsFileError extends Error {
+  constructor() {
+    super("compute-rentals.json can't be read (damaged, or written by a newer Walkie): it is left as it is, and no rented machine is revoked until it is fixed or moved aside");
+  }
+}
+
+/**
+ * The records ({} when there is no file yet). A file that is there but unreadable THROWS instead of reading as empty: the
+ * poller writes the records back after every round, and an empty read would wipe the links from active rentals to their
+ * machines (the same fail-closed rule as loadPending).
+ */
 export function loadRentals(home: string): Rentals {
-  const p = RentalsFile.safeParse(readJson(rentalsPath(home)));
-  return p.success ? p.data.rentals : {};
+  const path = rentalsPath(home);
+  if (!existsSync(path)) return {};
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(path, "utf8")); } catch { throw new RentalsFileError(); }
+  const p = RentalsFile.safeParse(raw);
+  if (!p.success) throw new RentalsFileError();
+  return p.data.rentals;
 }
 
 /** Writes the records (validated), pruning the oldest closed ones past MAX_RENTAL_RECORDS. */

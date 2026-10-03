@@ -5,7 +5,9 @@
 // This is the logic of the root helper `walkie-seat-admin` (installed root-owned by `walkie seats setup-user
 // --apply`), which the daemon's user may run through sudo with exactly `seat-admin create <n>` or
 // `seat-admin destroy <n>` (n an integer; the user is `walkie-s<n>`, uid 600000+n), or `seat-admin pending` (the
-// ids of the calling person's that may still have something of them, for the daemon's restart). The system calls sit behind
+// ids of the calling person's that may still have something of them, for the daemon's restart). Those three answer
+// only the Walkie that setup-user registered for this machine's seat users (WALK-103, instance.ts): root binds the
+// daemon that ran sudo to the registered socket's instance lock first. The system calls sit behind
 // AdminSys, so the grammar and every verification here are tested with fakes (test/unit/seats-fix5.test.ts,
 // seats-fix6.test.ts); the real one is admin-sys.ts.
 //
@@ -21,6 +23,7 @@ import { SeatAdminBusyError, withSeatAdminLock, withSeatFileLock } from "./talki
 import { schedulerProblem } from "./seat-user.ts";
 import { SF_NOUNLINK, SF_RESTRICTED, UF_DATAVAULT } from "./fsat.ts";
 import type { ResidueProof } from "./sweep.ts";
+import type { SeatInstanceCheck } from "./instance.ts";
 
 export const SEAT_USER_PREFIX = "walkie-s";
 /** The sudo rule lets the daemon run the runner as any member of this group: every ephemeral seat user. */
@@ -32,8 +35,12 @@ export const SEAT_HOME_MARKER = ".walkie-seat-home";
 export type AdminVerb = "create" | "destroy" | "pending" | "talkie-create" | "talkie-destroy" | "talkie-reconcile" | "talkie-repair" | "talkie-status" | "talkie-lock-init";
 const TALKIE_GENERATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** `seat-admin <create|destroy> <n>` or `seat-admin pending`, nothing else: the fixed grammar sudo allows. */
-export function parseAdminArgv(argv: readonly string[]): { verb: AdminVerb; n: number; generation?: string; instance?: string } | null {
+/**
+ * `seat-admin <create|destroy> <n>`, `seat-admin destroy <n> idle` (a leftover the daemon didn't make in this run:
+ * refused while any process of it runs, WALK-103) or `seat-admin pending`, nothing else: the fixed grammar sudo allows
+ * (`destroy *` in the sudo rules covers the trailing word).
+ */
+export function parseAdminArgv(argv: readonly string[]): { verb: AdminVerb; n: number; generation?: string; instance?: string; idle?: true } | null {
   if (argv.length === 1 && argv[0] === "pending") return { verb: "pending", n: 0 };
   if (argv.length === 1 && (argv[0] === "talkie-status" || argv[0] === "talkie-lock-init")) return { verb: argv[0], n: 0 };
   if (argv.length === 3 && (argv[0] === "talkie-create" || argv[0] === "talkie-reconcile")
@@ -43,6 +50,8 @@ export function parseAdminArgv(argv: readonly string[]): { verb: AdminVerb; n: n
     return { verb: argv[0], n: 0, generation: argv[1] };
   if (argv.length === 2 && argv[0] === "talkie-repair" && (argv[1] === "legacy" || TALKIE_GENERATION.test(argv[1] ?? "")))
     return { verb: argv[0], n: 0, generation: argv[1] };
+  if (argv.length === 3 && argv[0] === "destroy" && argv[2] === "idle" && /^[1-9]\d{0,4}$/.test(argv[1] ?? ""))
+    return { verb: "destroy", n: Number(argv[1]), idle: true };
   if (argv.length !== 2) return null;
   const [verb, n] = argv;
   if (verb !== "create" && verb !== "destroy") return null;
@@ -83,6 +92,12 @@ export interface AdminSys {
   talkieGenerationStopped?(generation: string | null, owner: number, daemon: import("./admin-ledger.ts").OpId | null): Promise<{ ok: boolean; why?: string }>;
   /** The person who asked (sudo's SUDO_UID): seat users are theirs, and only theirs are destroyed or listed. */
   caller(): number;
+  /**
+   * WALK-103: whether the daemon that ran this helper is the Walkie setup-user registered for this machine's seat users
+   * (admin-sys.ts checkSeatInstance: the record in SEAT_INSTANCE_FILE, and that daemon holding the recorded socket's
+   * instance lock). `create`, `destroy` and `pending` answer only `registered`.
+   */
+  seatInstance(owner: number): SeatInstanceCheck;
   /** This helper process as an operation (its pid and start time). */
   self?(): OpId;
   /** Does a user or group with this name, or this uid/gid, exist? Throws when it can't tell. */
@@ -151,7 +166,14 @@ export interface AdminSys {
  * (another create or destroy of the id is running: ask again).
  */
 export interface AdminResult {
-  ok: boolean; code?: "used" | "refused" | "failed" | "busy"; name?: string; uid?: number; home?: string; generation?: string; high?: number; why?: string;
+  ok: boolean; code?: "used" | "refused" | "failed" | "busy" | "running"; name?: string; uid?: number; home?: string; generation?: string; high?: number; why?: string;
+  /**
+   * WALK-103: refused because the asking daemon isn't the registered Walkie (`other`), none is recorded
+   * (`unregistered`), or that couldn't be checked right now (`unchecked`, code `busy`: ask again).
+   */
+  scope?: "other" | "unregistered" | "unchecked";
+  /** WALK-103: on a `pending` refused for scope, whether the id ledger reads (`ok`) or why not; never its ids. */
+  ledger?: string;
   left?: string[]; ids?: number[]; idleIds?: number[]; leftoverDirs?: string[];
   residueSummary?: { homes: number; vaults: number; knownBytes: number };
   /** A helper process check found no live uid processes; absent means the check could not be made. */
@@ -536,8 +558,23 @@ export async function runSeatAdmin(argv: readonly string[], sys: AdminSys, emit:
   const out = (r: AdminResult) => { emit(`${JSON.stringify(r)}\n`); return r.ok ? 0 : 1; };
   if (process.getuid?.() !== 0) return out({ ok: false, code: "refused", why: "walkie seat-admin runs as root (through sudo) only" });
   const cmd = parseAdminArgv(argv);
-  if (!cmd) return out({ ok: false, code: "refused", why: "usage: seat-admin create <n> | destroy <n> | pending | talkie-create <generation> <instance> | talkie-reconcile <generation> <instance> | talkie-destroy <generation> | talkie-repair <generation|legacy> | talkie-status | talkie-lock-init" });
-  try { sys.caller(); } catch (err) { return out({ ok: false, code: "refused", why: msg(err) }); }
+  if (!cmd) return out({ ok: false, code: "refused", why: "usage: seat-admin create <n> | destroy <n> [idle] | pending | talkie-create <generation> <instance> | talkie-reconcile <generation> <instance> | talkie-destroy <generation> | talkie-repair <generation|legacy> | talkie-status | talkie-lock-init" });
+  let caller: number;
+  try { caller = sys.caller(); } catch (err) { return out({ ok: false, code: "refused", why: msg(err) }); }
+  if (cmd.verb === "pending" || cmd.verb === "create" || cmd.verb === "destroy") {
+    // WALK-103: only the registered Walkie lists, makes or removes seat users; nothing is read or touched otherwise.
+    let scope: SeatInstanceCheck;
+    try { scope = sys.seatInstance(caller); } catch (err) { scope = { state: "other", why: `the asking Walkie could not be checked: ${msg(err)}` }; }
+    if (scope.state !== "registered") {
+      // The doctor's and setup's own `pending` probes land here (they aren't the daemon): say whether the ledger reads,
+      // never what it holds.
+      let ledger: string | undefined;
+      if (cmd.verb === "pending") {
+        try { sys.pendingReadOnly(caller); ledger = "ok"; } catch (err) { ledger = `the helper's id ledger can't be read: ${msg(err)}`; }
+      }
+      return out({ ok: false, code: scope.state === "unchecked" ? "busy" : "refused", scope: scope.state, why: scope.why, ...(ledger ? { ledger } : {}) });
+    }
+  }
   if (cmd.verb === "pending") return out(pendingSeatUsers(sys));
   if (cmd.verb === "talkie-status") {
     const { talkieStatus } = await import("./talkie-user.ts");
@@ -562,6 +599,13 @@ export async function runSeatAdmin(argv: readonly string[], sys: AdminSys, emit:
         return out(cmd.verb === "talkie-create" ? await createTalkieUser(sys, cmd.generation as string, cmd.instance as string)
           : cmd.verb === "talkie-reconcile" ? await reconcileTalkieUser(sys, cmd.generation as string, cmd.instance as string)
             : await destroyTalkieUser(sys, cmd.generation as string));
+      }
+      if (cmd.verb === "destroy" && cmd.idle) {
+        // A leftover the daemon found in the helper's list, not one of its own seats: never while it runs anything.
+        let live: number;
+        try { live = sys.procs(seatUserUid(cmd.n)).length; } catch (err) { return out({ ok: false, name: seatUserName(cmd.n), uid: seatUserUid(cmd.n), why: `can't tell whether ${seatUserName(cmd.n)} still runs anything (${msg(err)}): not removed` }); }
+        if (live) return out({ ok: false, code: "running", name: seatUserName(cmd.n), uid: seatUserUid(cmd.n), processesGone: false,
+          why: `${seatUserName(cmd.n)} still has ${live} running process${live === 1 ? "" : "es"} and isn't one of this Walkie's current seats: not removed while it runs (checked again later)` });
       }
       return out(cmd.verb === "create" ? await createSeatUser(cmd.n, sys) : await destroySeatUser(cmd.n, sys));
     });

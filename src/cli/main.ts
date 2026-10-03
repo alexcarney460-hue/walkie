@@ -62,7 +62,10 @@ team
            [--accept-readable-home]        any teammate's machine (same seat opt-in flags as setup)
   channel create <name> [--topic t] [--members a,b | --public]   (members = restricted; --public opens an existing one)
   who [--all]                              people → machines → agents that are working or need you (--all: idle and offline too)
-  pool                                     open-weight models your machines could run locally, all of them together too
+  pool [--offline] [--refresh] [--nodes-file f.json]   the best open-weight model each machine, each local network and
+                                           all of your machines together could run, ranked from Hugging Face (read when
+                                           you ask, kept a day; --offline: no request; --refresh: ask again; --nodes-file:
+                                           machines from a file of captured reports instead of the team's)
   pool share on|off [--max-gb N]           let teammates' split runs use this machine (person only; off by default;
                                            only share with people you trust with your computer: see SECURITY.md)
   pool run <model> [--quant q4|q8] [--machines a,b] | pool run --file <x.gguf> [--machines a,b]   split one model
@@ -101,6 +104,7 @@ switching accounts at usage limits (your own logins, in this machine's encrypted
   accounts exec --provider claude|codex -- <command…>           run a command (a headless launcher) on the picked account
   accounts shims install|uninstall [--profile]                   make every claude / codex switch (PATH shims)
   accounts allow-proxy on|off              keep HTTP(S)_PROXY for credentialed sessions (off: removed)
+  accounts lease-limit [10..256]           local owner: owner-launched hand-outs/node/hour (default 10); teammate seats stay at 10
   team authority <machine>                 move roster authority to another owner machine
   team role <handle> <role>                owner: change a member's role (owner|member|observer|removed)
   team revoke <machine>                    revoke one machine (owner); the member keeps their others
@@ -127,6 +131,15 @@ projects (kanban boards; every change is a signed post in the project's channel)
   projects set <project> [--name n] [--folder f] [--prefix P] [--private|--public] [--path p]   (people only)
   projects archive|restore|delete <project>          (the project's creator or an owner)
   projects board <project> add <name…>     another board (3 per project included; more are a paid add-on)
+  projects report <project> [on|off]       WalkieTalkie's hourly plain-English status report for it, posted in the project's
+                                           channel and its Data Room (on or off: the project's creator or an owner, people only)
+  projects fact <project> ["<label>" <value…> | "<label>" --remove]
+                                           the facts on its status page (the page non-technical teammates read): list, set (six at
+                                           most; a label up to 24 and a value up to 60 plain characters) or remove one
+                                           (members and their agents; a plain page: no links)
+  projects screen <project> [<image> --title t --group g --status works|partial|empty|not-built --about "…" [--route /path] [--note "…"]]
+                                           the screens on its status page: list them, or add one (a PNG, JPEG or WebP up to 8 MB;
+                                           the same group and title replaces it) · screen <project> --remove --group g --title t
   projects export <project> [--format csv|json|ndjson] [-o file]   (people only; ndjson = the signed posts)
   tasks [--project p] [--mine] [--search q] [--assignee @a] [--state open|archived|deleted|all]
         [--role backlog|todo|active|review|done|cancelled (comma list)] [--limit n (default 50)]
@@ -206,6 +219,10 @@ WalkieTalkie (your team's orchestrator: your own Claude Code session; walkie orc
                                            --here: don't ask)
   talkie log [--limit 20]                  this machine's conversation
   talkie cleanup --repair                  person-only: verify the dedicated uid, home and ledger, then clear stuck cleanup
+  talkie recs [--all] [--json]             list grouped recommendations
+  talkie approve <id> [--note <text>]      person-only: approve a recommendation
+  talkie dismiss <id> [--note <text>]      person-only: dismiss a recommendation
+  talkie recommend '<JSON object>'        authenticated WalkieTalkie duties only: record a recommendation
   talkie schedules                         list scheduled WalkieTalkie turns
   talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset  scheduled WalkieTalkie turns
 seats (agents a teammate starts on a machine whose person opted in; they run on that machine's own sign-in)
@@ -213,8 +230,11 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
                                            one step: let your team start agents on THIS company machine (same-user
                                            by default, existing seat-user mode retained; --seat-users uses sudo;
                                            claude setup-token | walkie seats enable --yes --claude-token-stdin
-                                           also gives Claude seats a token of their own, on a Keychain-only Mac)
-  seats setup-user [--apply] [--accept-readable-home]   explicit OS-user hardening step
+                                           also gives Claude seats a token of their own, on a Keychain-only Mac;
+                                           --seat-users --codex-release gives seat users OpenAI's standalone Codex,
+                                           checksum-verified, when your codex is a script such as an npm install; once
+                                           seat users are set up, use seats setup-user --apply --codex-release)
+  seats setup-user [--apply] [--accept-readable-home] [--codex-release]   explicit OS-user hardening step
   seats token set (Claude token on stdin) | seats token clear   give Claude seats a token of their own, or
                                            go back to this machine's login
   seats doctor                             is this machine ready for seats (Claude/Codex signed in for them, …)?
@@ -270,7 +290,8 @@ ops
   doctor                                   diagnose Tailscale, daemon, peers, clock, db
   daemon start|stop|status|run             manage the local daemon
   daemon install|uninstall [--dry-run]     launchd (macOS) / systemd --user (Linux) service
-  update [--check] [--allow-downgrade]     self-update from the latest release (signed checksums + version)
+  update [--check] [--allow-downgrade]     self-update (signed checksums + version): to the latest release, or on a
+                                           pre-release to the version the site's installer offers
   version | help
 
 env: WALKIE_HOME (default ~/.walkie), WALKIE_SOCKET, WALKIE_AGENT (agent name for posts), NO_COLOR,
@@ -373,7 +394,9 @@ export async function main(argv: string[]): Promise<number> {
         : profileArgvProblem(rest);
       if (problem) throw new UsageError(problem);
     }
-    const args = parseArgs(rest, cmd === "provision" ? new Set([...BOOLEANS].filter((x) => x !== "profile")) : BOOLEANS);
+    // `profile` is a value in `provision`, and `status` a value in `projects screen` (--status works|partial|empty|not-built); a switch everywhere else.
+    const without = (name: string) => new Set([...BOOLEANS].filter((x) => x !== name));
+    const args = parseArgs(rest, cmd === "provision" ? without("profile") : cmd === "projects" && rest[0] === "screen" ? without("status") : BOOLEANS);
     if (args.flags.get("help") === true) { writeOut(USAGE + "\n"); return EXIT.ok; }
     ctx = makeCtx(args);
     return await run(ctx);

@@ -9,6 +9,7 @@ import { useActions, useStore } from "../../state/store.tsx";
 import { Composer, type ComposerHandle } from "./Composer.tsx";
 import { Message, MessageBoundary, Pending } from "./Messages.tsx";
 import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
+import { RecommendationsPanel } from "./Recommendations.tsx";
 import { SchedulesPanel } from "./Schedules.tsx";
 import { HeaderModel } from "./ModelPicker.tsx";
 import { accessLabel, cleanupDiagnostic, notRunningKind, ResumeButton, standingDown, StoppedCard, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
@@ -328,6 +329,7 @@ export function Orchestrator() {
               </div>
             )}
           </div>
+          {empty && <RecommendationsPanel />}
           {empty && <SchedulesPanel />}
         </div>
         {!empty && composerEl}

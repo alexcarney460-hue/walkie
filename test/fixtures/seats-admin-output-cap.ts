@@ -23,5 +23,5 @@ process.stdout.write = ((data: string | Uint8Array) => {
   return false;
 }) as typeof process.stdout.write;
 // `pending` reads the ledger read-only (seat round 20); the mutating ledger() must not be needed for it.
-const sys = { caller: () => 1, pendingReadOnly: () => ({ ids, summary: { homes: 0, vaults: 0, knownBytes: 0 } }), procs: () => [] } as unknown as AdminSys;
+const sys = { caller: () => 1, seatInstance: () => ({ state: "registered" }), pendingReadOnly: () => ({ ids, summary: { homes: 0, vaults: 0, knownBytes: 0 } }), procs: () => [] } as unknown as AdminSys;
 process.exit(await runSeatAdmin(["pending"], sys));

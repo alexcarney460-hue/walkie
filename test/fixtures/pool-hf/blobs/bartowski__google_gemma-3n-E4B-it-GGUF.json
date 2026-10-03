@@ -1,0 +1,58 @@
+{
+ "_id": "685da4994850f1cfef7eaaae",
+ "id": "bartowski/google_gemma-3n-E4B-it-GGUF",
+ "sha": "6dd3cb1e6c463bf6982385d1fdb2f23754cf2b29",
+ "downloads": 2769,
+ "siblings": [
+  {
+   "rfilename": "google_gemma-3n-E4B-it-IQ4_XS.gguf",
+   "blobId": "003d112069c7278e61a9ab7ee93289ed61447a9f",
+   "size": 3895023488,
+   "lfs": {
+    "sha256": "ec43a69462be559e6c48f6ededc417039f81b5fb9faab2e09748ce841ebb7a1f",
+    "size": 3895023488,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "google_gemma-3n-E4B-it-Q4_K_M.gguf",
+   "blobId": "dcb36d188964bb2fa70ea5431388f15cdfd76ce9",
+   "size": 4237064064,
+   "lfs": {
+    "sha256": "70b4129714d30cfd7d36ff449257a2633485693ea6f5da9c2057f20fb7cbe1f8",
+    "size": 4237064064,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "google_gemma-3n-E4B-it-Q5_K_M.gguf",
+   "blobId": "c7217b0bbc36686df61d68a04a67d16184c63101",
+   "size": 4947998592,
+   "lfs": {
+    "sha256": "6c63ee24020ff14efa35edf8f5cc6dec96960d2c69e1c65a3e68459d75559f45",
+    "size": 4947998592,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "google_gemma-3n-E4B-it-Q6_K.gguf",
+   "blobId": "5276d2c55da8f97fa8dd3e5b8d81e6552fcaca32",
+   "size": 5703366528,
+   "lfs": {
+    "sha256": "a3c33c4a0a01b86d3e509acab4335a9acfc59948955581b4a91025089cefd49f",
+    "size": 5703366528,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "google_gemma-3n-E4B-it-Q8_0.gguf",
+   "blobId": "07373926a5c04806885c3f296814b68b9363711d",
+   "size": 7353292672,
+   "lfs": {
+    "sha256": "e2c69d482d1a7dae9d3b1e477626e30c0c29825ea2dc05e4ef55159230a07c80",
+    "size": 7353292672,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

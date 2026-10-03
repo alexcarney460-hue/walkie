@@ -7,8 +7,9 @@ import { tailscaleBinary, TailscaleIdentity } from "../../daemon/identity.ts";
 import { defaultHome, pathsFor } from "../../daemon/paths.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { planLine } from "./license.ts";
-import { c } from "../format.ts";
+import { c, safeTerm } from "../format.ts";
 import type { MachineStats } from "../../protocol/machine-stats.ts";
+import type { NodeView, TransportKind } from "../../protocol/schemas.ts";
 import { enrollmentMode, grantSuspensionProblem, readGrant } from "../../daemon/provision/grant.ts";
 import { observedStatus } from "../../daemon/provision/runner.ts";
 import { executorFor } from "../../daemon/provision/executor.ts";
@@ -183,7 +184,40 @@ export function peerApiCheck(diag: Diag): Check {
     : { level: "fail", name: "peer api", detail: "not listening (no Tailscale IP)" };
 }
 
-async function daemonChecks(out: Check[]): Promise<void> {
+/** Machine names in a doctor line: at most this many, then "and N more". */
+const UNREACHED_NAMES_SHOWN = 8;
+
+/**
+ * Mixed teams (PROTOCOL §4 "Mixed teams"): machines this one shares no transport with, a Tailscale-only machine and a
+ * Direct-only one. Their agents show here only while another machine that reaches them is in sync (the daemon's
+ * `NodeView.unreached`); when none is, they are hidden, and the wording says which case it is. `serving` is what this
+ * machine serves now. Nothing to say when it reaches every machine (a dual machine reaches both kinds).
+ *
+ * Always a warning, never a failure: it reports other machines' reachability, not this machine's health, and doctor's
+ * exit status follows failures. The macOS company-machine join (a Direct-only machine) runs `walkie doctor` last and
+ * treats a non-zero exit as a failed join, skipping its owner-SSH step.
+ */
+export function unreachedCheck(serving: readonly TransportKind[], nodes: readonly NodeView[]): Check | null {
+  const gone = nodes.filter((n) => !n.self && n.unreached !== undefined);
+  if (!gone.length) return null;
+  const names = gone.map((n) => safeTerm(n.hostname));
+  const list = names.length > UNREACHED_NAMES_SHOWN
+    ? `${names.slice(0, UNREACHED_NAMES_SHOWN).join(", ")} and ${names.length - UNREACHED_NAMES_SHOWN} more` : names.join(", ");
+  const many = gone.length > 1;
+  const them = many ? "them" : "it";
+  const their = many ? "their" : "its";
+  const off = many ? "those machines are off" : "that machine is off";
+  const directOnlyHere = serving.includes("direct") && !serving.includes("tailscale");
+  const hidden = gone.every((n) => n.unreached?.vouched === false);
+  const subject = `${gone.length} ${many ? "machines use" : "machine uses"} only ${directOnlyHere ? "Tailscale" : "Walkie Direct"} (${list})`;
+  const effect = hidden
+    ? `no machine that reaches ${them} is in sync now, so ${their} agents are hidden here (or ${off})`
+    : `${their} agents show here only while another machine that reaches ${them} is in sync`;
+  const fix = directOnlyHere ? "Tailscale is optional on this machine; the other machines should run walkie direct enable" : "walkie direct enable";
+  return { level: "warn", name: "mixed transports", detail: `${subject} and this machine can't reach ${them}: ${effect}. Fix: ${fix}` };
+}
+
+export async function daemonChecks(out: Check[]): Promise<void> {
   const client = new WalkieClient({ timeoutMs: 5_000 });
   try {
     const h = await client.healthz();
@@ -222,6 +256,8 @@ async function daemonChecks(out: Check[]): Promise<void> {
       out.push({ level: "warn", name: `clock ${n.hostname}`, detail: `skew ${(n.sync.skew_ms / 1000).toFixed(1)} s vs this machine` });
     }
   }
+  const unreached = unreachedCheck(me.transport?.transports ?? nodes.find((x) => x.self)?.transports ?? ["tailscale"], nodes);
+  if (unreached) out.push(unreached);
 }
 
 /** The daemon's transport (null when it isn't reachable or hasn't picked one). */

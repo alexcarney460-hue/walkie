@@ -1,0 +1,78 @@
+{
+ "_id": "6a7b3a3c03ad247dc1485d43",
+ "id": "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+ "sha": "f0eec2267ae843d9eb21ea3926ab0046da0a8628",
+ "downloads": 33230,
+ "siblings": [
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-IQ4_XS.gguf",
+   "blobId": "b9c40027683a59724f71292bbf952f91b206dd1d",
+   "size": 18918361056,
+   "lfs": {
+    "sha256": "c7be5d2ca9700a0e02de1a6707bbcdda3b38b7721caef7ac05bf9dda158aa270",
+    "size": 18918361056,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_K_M.gguf",
+   "blobId": "1fd114f0c32572e21b77a04bcf0ab42c6960d380",
+   "size": 25477403616,
+   "lfs": {
+    "sha256": "b520a8992e94c4d61e6a0833edffc499a46f42522df446c290d75dc5787a9158",
+    "size": 25477403616,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q5_K_M.gguf",
+   "blobId": "3baeed64705719e8ecfb93c32e7acb0273ad724f",
+   "size": 26964179424,
+   "lfs": {
+    "sha256": "0d9d9bfecdc8bdcbf2cf03068200876d225736e93458891fbdc4fba468a67b39",
+    "size": 26964179424,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q6_K.gguf",
+   "blobId": "8b6e9281be249a9cdcd0a538a6308ef985df2369",
+   "size": 34305161184,
+   "lfs": {
+    "sha256": "928ba75ef36eb88e11e7f0fc47ee2e48a5ad5e2f81008927f6ce078d3acd18f4",
+    "size": 34305161184,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+   "blobId": "00e139234fba0f013b50909fb8b00c339361f579",
+   "size": 35004643296,
+   "lfs": {
+    "sha256": "adba46df36ef92ee12cf9e6848b706a245cc246dca6a36ae7364abbb9233e6ca",
+    "size": 35004643296,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-bf16/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-bf16-00001-of-00002.gguf",
+   "blobId": "691e40459b613e8f8952f9b1f51409a1679b3bb8",
+   "size": 39726023136,
+   "lfs": {
+    "sha256": "24067cbbc09817fd7bf88dd177d19119870f4d1bee7da27703757a668c55a346",
+    "size": 39726023136,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+   "blobId": "ec4c6bcef0d98c7900d762b90c590ccbb7995c8c",
+   "size": 2175713312,
+   "lfs": {
+    "sha256": "a8be9bdeafd1503e73bf2d335b3ee1e2577822af7b4761b14322fc7c7546c886",
+    "size": 2175713312,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

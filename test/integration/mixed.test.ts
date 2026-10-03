@@ -164,6 +164,13 @@ describe("Tailscale-only ⇄ Direct-only through the dual authority", () => {
     expect((await peer(alex, "arvid-mbp"))?.via).toBe("direct");
     expect((await peer(alex, "bobs-mbp"))?.via).toBe("tailscale");
     expect((await peer(bob, "alex-mbp"))?.via).toBe("tailscale");
+    // The view of the gap: each side marks the other "unreached" (no transport in common) and shows it online only on
+    // the dual authority's word ("vouched"). The authority, which reaches both, and the machines each reaches, show none.
+    expect((await peer(arvid, "bobs-mbp"))?.unreached).toEqual({ vouched: true });
+    expect((await peer(bob, "arvid-mbp"))?.unreached).toEqual({ vouched: true });
+    for (const [n, host] of [[alex, "bobs-mbp"], [alex, "arvid-mbp"], [arvid, "alex-mbp"], [bob, "alex-mbp"]] as const) {
+      expect((await peer(n, host))?.unreached).toBeUndefined();
+    }
   }, 70_000);
 
   test("authority can't move to a machine the Direct-only member couldn't reach", async () => {

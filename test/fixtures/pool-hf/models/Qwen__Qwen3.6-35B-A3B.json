@@ -1,0 +1,187 @@
+{
+ "_id": "69df2937a1a44a4df58e0dd5",
+ "id": "Qwen/Qwen3.6-35B-A3B",
+ "downloads": 3167082,
+ "likes": 2900,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5_moe",
+  "image-text-to-text",
+  "conversational",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/aime_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/aime_2026",
+     "task_id": "MathArena/aime_2026"
+    },
+    "value": 92.7,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/gpqa.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 86,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/hle.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 21.4,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/hmmt_feb_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/hmmt_feb_2026",
+     "task_id": "MathArena/hmmt_feb_2026"
+    },
+    "value": 83.6,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/mmlu-pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "TIGER-Lab/MMLU-Pro",
+     "task_id": "mmlu_pro"
+    },
+    "value": 85.2,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/swe-bench_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 49.5,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/swe-bench_verified.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 73.4,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "date": "2026-04-16T13:53:00.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/terminal-bench-2.0.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.0",
+     "task_id": "terminalbench_2"
+    },
+    "value": 51.5,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B",
+     "name": "Model Card"
+    },
+    "notes": "Harbor/Terminus-2 harness; 3h timeout, 32 CPU/48 GB RAM; temp=1.0, top_p=0.95, top_k=20, max_tokens=80K, 256K ctx; avg of 5 runs.",
+    "date": "2026-04-16T14:17:49.000Z"
+   },
+   "pullRequest": 3
+  },
+  {
+   "filename": ".eval_results/extractbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "llamaindex/ExtractBench",
+     "task_id": "mean"
+    },
+    "value": 88.11,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/datasets/llamaindex/ExtractBench",
+     "name": "ExtractBench",
+     "user": "boyang-runllama"
+    },
+    "notes": "Pipeline name: qwen3_6_35b_a3b_fp8_vllm_extract_oneshot_structured_output_file; served checkpoint Qwen/Qwen3.6-35B-A3B-FP8 on vLLM, one-shot json_object structured output"
+   },
+   "pullRequest": 75
+  }
+ ],
+ "createdAt": "2026-04-15T05:59:19.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 35951822704
+  },
+  "total": 35951822704
+ }
+}

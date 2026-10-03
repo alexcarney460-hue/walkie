@@ -7,6 +7,7 @@ import { Link2, Play, Square, Unlink } from "lucide-react";
 import type { NodeView } from "../api/types.ts";
 import { friendlyError } from "../api/client.ts";
 import { poolApi, type ConnectionView, type ServeView } from "../api/pool.ts";
+import { machineCapacity } from "../../../src/pool/capacity.ts";
 import { bestServe } from "../../../src/pool/run/plan.ts";
 import { SPEED_HINT, tpsText } from "../../../src/pool/format.ts";
 import { CopyCommand } from "./primitives.tsx";
@@ -100,6 +101,10 @@ export function ServeBlock({ nodes }: { nodes: readonly NodeView[] }) {
   return (
     <div className="lm-all lm-serve">
       <p className="lm-all-label">Serve on one machine · every layer on its GPU, the fastest way to run a model that fits</p>
+      {nodes.filter((n) => n.self || (n.online && n.pool?.share)).map((n) => {
+        const note = machineCapacity(n)?.runtimeNote;
+        return note ? <p key={n.node_id} className="lm-run-note">{n.hostname}: {note}</p> : null;
+      })}
       {remote.map((n) => (
         <Remote key={n.node_id} n={n} conn={conns.find((c) => c.node_id === n.node_id) ?? null} busy={busy}
           onConnect={() => void act(() => poolApi.connect(n.node_id))} onDisconnect={() => void act(() => poolApi.disconnect(n.node_id))} />

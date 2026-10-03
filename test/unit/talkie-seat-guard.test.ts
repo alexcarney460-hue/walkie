@@ -42,7 +42,8 @@ test("the seat run route rejects a scheduled request and accepts the same intera
     return dispatch({ core, req, url: new URL(req.url), agent, orchestratorToken: "valid",
       via: "cli", noTimeout: () => {}, sync: { isOnline: () => true } } as unknown as RouteCtx);
   };
-  await expect(request()).rejects.toMatchObject({ status: 403, code: "scheduled_turn_cannot_launch" });
+  // The dispatcher refuses every write of a scheduled turn (TALKIE-OPS-1); the seat route's own check stays as a second fence.
+  await expect(request()).rejects.toMatchObject({ status: 403, code: "scheduled_turn_cannot_act" });
   await expect(request("helper")).rejects.toMatchObject({ status: 403, code: "forbidden" });
   expect(launches).toBe(0);
   scheduled = false;
@@ -76,6 +77,6 @@ test("a scheduled child using --agent helper still sends its token and both writ
 });
 
 test("scheduled instructions recommend and forbid launches, including custom schedules", () => {
-  expect(schedulePrompt({ prompt: "Check capacity" })).toContain("never launch seats");
-  expect(playbook({ owner: "alex", hostname: "test", access: "platform" })).toContain("During scheduled turns, send recommendations");
+  expect(schedulePrompt({ prompt: "Check capacity" })).toContain("no seat started or stopped");
+  expect(playbook({ owner: "alex", hostname: "test", access: "platform" })).toContain("During scheduled turns, record a recommendation");
 });

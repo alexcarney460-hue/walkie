@@ -1,0 +1,38 @@
+{
+ "_id": "695ec6b5cc177b5e774d4a86",
+ "id": "lmstudio-community/LFM2.5-1.2B-Instruct-GGUF",
+ "sha": "9f52cbda2d3dddff3ba08f457e937ef95ae5bc4c",
+ "downloads": 12214,
+ "siblings": [
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+   "blobId": "e8d8e2fa28e3e25bf5f41d1ef5cb9fa714aa4a0e",
+   "size": 730896736,
+   "lfs": {
+    "sha256": "7e6e347274a9a6eb1699e3d6024e6492d3b5eee6088afbad62b200f7800fa455",
+    "size": 730896736,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q6_K.gguf",
+   "blobId": "013f338d152f7df00d258b352a117f7d8989caa5",
+   "size": 962845024,
+   "lfs": {
+    "sha256": "138ec3bacd9a9268c7e513d40e50a2bcb3bdf3b4ff48062a81aee22132c1588a",
+    "size": 962845024,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q8_0.gguf",
+   "blobId": "9c791b155f139a378409d00ac7f7a9f80013618e",
+   "size": 1246255456,
+   "lfs": {
+    "sha256": "c40c8a9239dbc2d8874c5508110b9b1f3d325376eecffdba7bce2dcb49a0207c",
+    "size": 1246255456,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

@@ -28,9 +28,10 @@ import { HttpError, errorResponse, json, normalizeIp, parseWith, readBytes, read
 import { shortNodeName, type WhoisResult } from "./identity.ts";
 import { checkInvite, decodeInvite, directLogin } from "./invite.ts";
 import { isValidPubkey } from "./keys.ts";
-import type { BucketSpec } from "./ratelimit.ts";
+import { RateLimiter, type BucketSpec } from "./ratelimit.ts";
 import { applyRequest } from "./requests.ts";
 import { grantLease, probeLease, refreshBorrowedUsage } from "./vault-lease.ts";
+import { LEASE_LAUNCHER_CAP } from "./vault-lease-policy.ts";
 import {
   DEFAULT_PEER_PORT, canSeeChannel, directMemberByKey, endpointHex, isRestricted, memberByHandle, nodeMember, pickTransport, servesDirect, transportFields,
   transportsOf, withTransport, type MemberRec,
@@ -59,6 +60,16 @@ function isStub(e: unknown): boolean {
 const REQUEST_BODY_MAX = 256 * 1024;
 /** Requests from keys that aren't admitted nodes (joiners, strangers), all of them together. */
 const UNADMITTED_DIRECT: BucketSpec = { capacity: 20, perSecond: 5 };
+/**
+ * Separate from `core.limiter`. Unadmitted keys are free to mint; a per-key entry on the main limiter (512 keys,
+ * least recently used dropped) let a stranger push out an admitted peer's bucket. One limiter per daemon.
+ */
+const unadmittedDirectLimiters = new WeakMap<Core, RateLimiter>();
+function unadmittedDirectLimiter(core: Core): RateLimiter {
+  let limiter = unadmittedDirectLimiters.get(core);
+  if (!limiter) { limiter = new RateLimiter(); unadmittedDirectLimiters.set(core, limiter); }
+  return limiter;
+}
 
 interface Caller { ip: string; who: WhoisResult; member: MemberRec }
 
@@ -283,9 +294,10 @@ export class PeerApi {
   }
 
   /**
-   * Walkie Direct gate: the QUIC-authenticated key names the node. Rate limits are per endpoint, plus one shared
-   * bucket for every key that isn't an admitted node (keys are free to mint). A revoked node, a removed member's
-   * node and an outsider all get `403 not_member`; only `/join` with a valid invite admits a new key.
+   * Walkie Direct gate: the QUIC-authenticated key names the node. Admitted nodes are limited per endpoint on the
+   * main limiter. Every key that isn't an admitted node shares one pre-auth limiter (keys are free to mint) and
+   * does not take a slot on the main one. A revoked node, a removed member's node and an outsider all get
+   * `403 not_member`; only `/join` with a valid invite admits a new key.
    */
   private async routeDirect(req: Request, pubkey: string): Promise<Response> {
     const url = new URL(req.url);
@@ -295,8 +307,9 @@ export class PeerApi {
     // The stored key must match, not just the 64-bit id, and the record must serve Direct (a Tailscale-only
     // machine's key gets in only after proving it with a Direct /join: PROTOCOL §4 "Mixed teams").
     const member = directMemberByKey(core.roster, pubkey);
-    if (!member && !core.limiter.take("peer:direct-unadmitted", UNADMITTED_DIRECT)) throw new HttpError(429, "rate_limited", "slow down");
-    if (!core.limiter.take(`peer:direct:${nodeId}`, core.limits.peer)) throw new HttpError(429, "rate_limited", "slow down");
+    if (!member) {
+      if (!unadmittedDirectLimiter(core).take("peer:direct-unadmitted", UNADMITTED_DIRECT)) throw new HttpError(429, "rate_limited", "slow down");
+    } else if (!core.limiter.take(`peer:direct:${nodeId}`, core.limits.peer)) throw new HttpError(429, "rate_limited", "slow down");
     const path = url.pathname;
     if (hasPeerSig(req.headers)) await this.checkSignature(req.clone(), url, nodeId, pubkey);
 
@@ -340,11 +353,12 @@ export class PeerApi {
   private async serveAdmitted(req: Request, url: URL, nodeId: string, member: MemberRec): Promise<Response> {
     const core = this.core;
     const path = url.pathname;
+    core.onPeerContact?.(nodeId); // the gate has passed: this machine is up (presence rule, sync.ts)
     if (req.method === "GET" && path === "/peer/v1/vv") {
       const online = core.reachedPeers?.() ?? [];
       const body = {
         node: core.nodeId, vv: core.store.vv(), ts: Date.now(),
-        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, PEER_SIG_CAP, SSH_REVOCATION_CAP] },
+        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, PEER_SIG_CAP, SSH_REVOCATION_CAP, LEASE_LAUNCHER_CAP] },
         ...(online.length ? { online } : {}),
         ...(core.publishedStats() ? { stats: core.publishedStats() } : {}),
         ...(core.accounts ? { accounts: core.accounts } : {}), // ACCOUNTS-1: this machine's accounts + usage (PROTOCOL §3)
@@ -424,7 +438,7 @@ export class PeerApi {
     }
     if (req.method === "POST" && path === "/peer/v1/vault/usage") {
       if (member.role === "observer") throw new HttpError(403, "forbidden", "observers cannot refresh borrowed accounts");
-      return json(refreshBorrowedUsage(core, nodeId, await readJson(req, 1024)));
+      return json(refreshBorrowedUsage(core, { vault: core.vault, sharing: core.vaultSharing, teamPolicy: core.teamPolicy }, nodeId, member, await readJson(req, 1024)));
     }
     if (req.method === "POST" && path === "/peer/v1/vault/lease") {
       // ACCOUNTS-2 phase 3: a setup-token from this machine's vault, if its policy allows the caller (vault-lease.ts).

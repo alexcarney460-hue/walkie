@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "../../src/daemon/logger.ts";
 import { machineCapacity } from "../../src/pool/capacity.ts";
-import { headFirst, suggestCombined } from "../../src/pool/combined.ts";
+import { headFirst } from "../../src/pool/combined.ts";
+import { suggestCombined } from "../helpers/pool-legacy.ts";
 import { CATALOG } from "../../src/pool/catalog.ts";
 import { PoolConnections } from "../../src/pool/run/connect.ts";
 import { ensureFiles, localPath } from "../../src/pool/run/gguf.ts";
@@ -18,7 +19,7 @@ import { PoolServer } from "../../src/pool/run/serve.ts";
 import { ServeProxy, MAX_ACTIVE } from "../../src/pool/run/serve-proxy.ts";
 import { PoolStages } from "../../src/pool/run/stage.ts";
 import { deviceSlot } from "../../src/pool/suggest.ts";
-import type { MachineAccel, MachineStats } from "../../src/protocol/machine-stats.ts";
+import type { MachineAccel, MachineStats, MachineSys } from "../../src/protocol/machine-stats.ts";
 import type { PoolShare } from "../../src/protocol/pool.ts";
 import type { NodeView } from "../../src/protocol/schemas.ts";
 import { fakeServeRuntime, placeModel } from "../helpers/pool-runtime.ts";
@@ -31,11 +32,13 @@ const tmp = (p: string): string => { const d = mkdtempSync(join(tmpdir(), p)); r
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 
 const share = (p: Partial<PoolShare> = {}): PoolShare => ({ share: true, cap: null, runtime: true, busy: false, serve: true, ...p });
+/** What the machine's daemon reports as its platform: an Apple chip is a Mac (Metal build), anything else here is Linux on x64 (WSL, a CUDA box). */
+const platformOf = (s: Partial<MachineStats>): MachineSys => (s.accel?.chip?.startsWith("Apple") ? { os: "darwin", arch: "arm64", cpus: 12, load1: 0 } : { os: "linux", arch: "x64", cpus: 16, load1: 0 });
 function node(hostname: string, stats: Partial<MachineStats>, over: Partial<NodeView> = {}): NodeView {
   return {
     node_id: hostname.padEnd(16, "0").slice(0, 16), handle: "alex", hostname, ip: "100.64.0.1", online: true, last_seen: 1,
     rtt_ms: 3, self: false, sync: { behind: 0, last_sync: 1 },
-    stats: { at: 1, temp_c: 50, mem: { total: 16 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, ...stats },
+    stats: { at: 1, temp_c: 50, mem: { total: 16 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, sys: platformOf(stats), ...stats },
     ...over,
   } as NodeView;
 }

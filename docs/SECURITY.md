@@ -16,7 +16,7 @@ important — each teammate's **agents**, which hold real credentials and can ac
 | Boundary | Who is on the other side | Control |
 |---|---|---|
 | Peer port (Tailscale IP only; Tailscale and dual machines) | any device on the tailnet, including shared-in nodes or another OS user on a member machine | `tailscale whois` on every request → login must be a current member (a `direct:` login, which only invites create, is refused outright); the node must be admitted with a matching login, its record must serve Tailscale (a Direct-only machine is never let in over the tailnet) and its pinned address must be the source IP; team header must match; node-key request signatures are required on privileged routes and on replication/read routes after verified node-key evidence or strict mode (PROTOCOL §4) |
-| Walkie Direct endpoint (v0.2; iroh QUIC, ALPN `walkie/1`) | **anyone on the internet** who knows or guesses the node's endpoint id (its public key), directly or through a relay | QUIC/TLS authenticates the caller's ed25519 key before any request is read; the gate is that key ∈ the roster's admitted, non-revoked nodes of current members whose record serves Direct (a Tailscale-only machine's key is refused until it proves the key with a Direct `/join`, see "Mixed teams"; `403 not_member` otherwise, `hello` and every data endpoint included; `X-Walkie-Node` must match the key or be absent). Only `/join` accepts an unknown key, and only with a valid invite (below), admitting exactly the connection's key. Per-endpoint rate limit (60 req/s) plus one shared 5 req/s bucket for every key that isn't an admitted node (keys are free to mint); at most 16 connections from unadmitted keys at once, each closed after 30 s and limited to 4 concurrent streams (lifted when the key is admitted on that connection); at most 4 connections per authenticated key (a member at 4 replaces its least recently active idle one; with all 4 busy the 5th is refused); 512 connections total, running native handshakes included. Pending handshakes are budgeted before `accept()` starts any native work, by what iroh names without a handshake: the **source** (an IPv4 address, an IPv6 /64, or on the relay path the sender's relay-authenticated endpoint id), its **network** (IPv4 /24, IPv6 /48) and, on the relay path, the **member** owning an admitted endpoint id. Native budgets are given back only when the native handshake really ends (iroh 1.1's binding can't cancel one): at most **128 native handshakes alive in total**, whatever their lifetime; of those at most 64 from the direct path and 16 from relay-path strangers (whose ids are free to mint), so members arriving through a relay always have at least 48; at most 4 per source, 8 per /24 or /48, and 8 per member across all of that member's machines. Lanes bound handshakes in progress: at most 32 from sources not known to be members, of which the direct path takes at most 24 (the other 8 only relay-path joiners can take); a relay-path sender whose endpoint id is an admitted node's has its own 32-slot lane (a handshake is abandoned after 15 s and closed if it completes late; its lane slot comes back when the native handshake ends or at 60 s, while its native budgets wait for the native end); above 8 pending, an unvalidated UDP source is sent a QUIC Retry first, so a spoofed or reply-blind sender never starts a handshake, and an unvalidated source over a limit is ignored rather than answered; when a node is revoked or its member removed, its open connections are closed at once, idle ones included; request heads ≤ 16 KiB, bodies ≤ 1 MB, 30 s to arrive. PROTOCOL §2 is unchanged: everything that arrives is still verified event by event |
+| Walkie Direct endpoint (v0.2; iroh QUIC, ALPN `walkie/1`) | **anyone on the internet** who knows or guesses the node's endpoint id (its public key), directly or through a relay | QUIC/TLS authenticates the caller's ed25519 key before any request is read; the gate is that key ∈ the roster's admitted, non-revoked nodes of current members whose record serves Direct (a Tailscale-only machine's key is refused until it proves the key with a Direct `/join`, see "Mixed teams"; `403 not_member` otherwise, `hello` and every data endpoint included; `X-Walkie-Node` must match the key or be absent). Only `/join` accepts an unknown key, and only with a valid invite (below), admitting exactly the connection's key. Admitted nodes keep a per-endpoint rate limit (60 req/s) on the main limiter. Keys that are not admitted nodes share one separate pre-auth limiter (a burst of 20, then 5 req/s; keys are free to mint) and do not take a per-key slot on the main limiter, so a flood cannot evict an admitted peer's bucket; at most 16 connections from unadmitted keys at once, each closed after 30 s and limited to 4 concurrent streams (lifted when the key is admitted on that connection); at most 4 connections per authenticated key (a member at 4 replaces its least recently active idle one; with all 4 busy the 5th is refused); 512 connections total, running native handshakes included. Pending handshakes are budgeted before `accept()` starts any native work, by what iroh names without a handshake: the **source** (an IPv4 address, an IPv6 /64, or on the relay path the sender's relay-authenticated endpoint id), its **network** (IPv4 /24, IPv6 /48) and, on the relay path, the **member** owning an admitted endpoint id. Native budgets are given back only when the native handshake really ends (iroh 1.1's binding can't cancel one): at most **128 native handshakes alive in total**, whatever their lifetime; of those at most 64 from the direct path and 16 from relay-path strangers (whose ids are free to mint), so members arriving through a relay always have at least 48; at most 4 per source, 8 per /24 or /48, and 8 per member across all of that member's machines. Lanes bound handshakes in progress: at most 32 from sources not known to be members, of which the direct path takes at most 24 (the other 8 only relay-path joiners can take); a relay-path sender whose endpoint id is an admitted node's has its own 32-slot lane (a handshake is abandoned after 15 s and closed if it completes late; its lane slot comes back when the native handshake ends or at 60 s, while its native budgets wait for the native end); above 8 pending, an unvalidated UDP source is sent a QUIC Retry first, so a spoofed or reply-blind sender never starts a handshake, and an unvalidated source over a limit is ignored rather than answered; when a node is revoked or its member removed, its open connections are closed at once, idle ones included; request heads ≤ 16 KiB, bodies ≤ 1 MB, 30 s to arrive. PROTOCOL §2 is unchanged: everything that arrives is still verified event by event |
 | Walkie Direct invites | whoever holds the code (a bearer credential until used) | `wk1…` code signed by an owner node's key (checked against that node's key on the roster, and the node must still be an admitted owner's when the code is used), naming the team; 7-day expiry (the authority refuses an expiry further out than that); single use: redeemed only by the roster authority, which records `sha256(secret)` on the chain in the admitting `team.node`, so no replica and no later authority accepts it again; a code for a handle that has ever been removed is refused unless it was minted after the latest removal (`invite_predates_removal`), whatever the handle's member is now (removed, or re-invited since): the code carries the issuer's signed roster chain position, which must be past the removing entry's chain index. That position is the only removal test (no clock is compared, so an authority clock that ran ahead when it removed someone can't block their later re-invite). So a removed member can't come back, with their old role or their old machine, on a code they held before, not after a re-invite and not through clock skew; the code and its secret are never logged (only the chain id), and no error echoes a pasted code. Anyone holding an unused code can join as its handle once, which is the point of it: send it privately |
 | Relays (Walkie Direct) | n0's public relays by default, or the ones in `config.json` `relays` | a relay forwards QUIC packets it can't read: every connection is end-to-end encrypted and authenticated between the two node keys (TLS 1.3 inside QUIC), so a relay sees only ciphertext, packet sizes and timing, and which endpoint ids talk to which. The n0 preset also publishes each endpoint's relay URL (not its IP addresses: iroh's publisher defaults to the relay only) to n0's address-lookup service, keyed by endpoint id and publicly resolvable by anyone who has that id, so peers can dial by key alone; n0 sees the source IP addresses of those publishes, of lookups and of relay connections; set your own `relays` to keep relay traffic on your infrastructure (address lookup still uses n0's service in v0.2) |
 | Event ingest (push or pull, relayed) | a member's daemon, possibly relaying others' events | ed25519 signature and header signature by the origin node (stubs too), author ↔ node ↔ login binding, roster changes only from the single roster authority's chain (each entry carrying the authority's signed watermark; events are judged by the roster in force when the authority first saw them), restricted-channel membership, answer ↔ ask addressee binding (PROTOCOL §2) |
@@ -25,16 +25,17 @@ important — each teammate's **agents**, which hold real credentials and can ac
 | Unix socket | processes of the same OS user | file mode 0600 in a 0700 directory; an unmarked request is the owner's own process and has the owner's authority |
 | Loopback dashboard port | any local process (including other OS users' and containers' forwarded ports on 127.0.0.1), and any website in a browser | the durable token as a bearer (scripts), or a dashboard **session** in the `X-Walkie-Session` header; **no cookie authorizes anything**. Exact Host check (DNS rebinding), Origin check on mutations (CSRF), CSP `default-src 'self'`, and a cross-origin page can't send the header (it needs a CORS preflight that is never granted). The session is obtained through `GET /auth?nonce=…`: a 60 s single-use nonce that `walkie dashboard` mints over the unix socket (`POST /v1/auth/nonce`, refused on loopback); `/auth` hands the value to the page in the redirect's URL fragment (never sent to a server), and the page keeps it in its own origin's `localStorage`, which other ports can't read. The session is not the token: 256 random bits kept only as a hash (in memory, and in the store's `meta` so a daemon restart or upgrade doesn't sign dashboards out), bound to its Host, 12 h idle / 7 days absolute across restarts, revocable (`POST /auth/logout`, `walkie dashboard logout`, `walkie token rotate`; each also clears the saved hashes), accepted only in that header and only on the dashboard's routes (PROTOCOL §5), never as a bearer or cookie. The durable token is never set as a cookie; old cookies are cleared |
 | License keys (`team.license`, `walkie license activate`) | the vendor, and anyone who can hand an owner a key | ed25519 signature over the key's payload segment, verified offline by every node against the vendor public key embedded in the binary (`src/license/vendor-key.ts`; no env or config override), canonical base64url only (one valid spelling per key); the chain accepts only a license naming its own team (`kind: "license"`, `team`), so an activation code or another team's key is rejected and never applied; only the authority's (owner) entries count; a license entry carries no watermark, so it can't change any event's anchor or verdict |
-| License service (the authority → `https://<site>/api/license/{bind,status,renew}`) | the vendor's billing functions (Vercel + Stripe) | the only calls Walkie makes to the vendor (other outbound traffic, none of it to the vendor: usage meters query each model provider's usage endpoints with your own login, on by default; `walkie update` and the installer fetch GitHub releases; Walkie Direct uses n0's address lookup and relays; a paired phone links through the phone relay), to the pinned site origin (a loopback override exists only in source runs with `WALKIE_DEV=1`; it is compiled out of release binaries), never following redirects: `{code, team_id, proof}` once when an owner activates a code (the proof carries signed roster genesis, authority transfers and a short-lived authority signature bound to the license id), `{lic_id, renewal_token, issued_at}` once a day (the check-in), and `{lic_id, renewal_token}` when a renewal is due or the check-in reports a newer grant; responses are size-capped and a key must verify against the vendor key, name this team and carry the same `lic_id` before it is activated; a renewal answer is dropped if the team's license changed meanwhile; failures are logged and retried the next day, never fatal |
+| License service (the authority → `https://<site>/api/license/{bind,status,renew}`) | the vendor's billing functions (Vercel + Stripe) | the only calls Walkie makes to the vendor (apart from the plain `install.sh` read described at the end of this cell; other outbound traffic, none of it to the vendor: usage meters query each model provider's usage endpoints with your own login, on by default; `walkie update` and the installer fetch GitHub releases; Walkie Direct uses n0's address lookup and relays; a paired phone links through the phone relay; the local-model suggestions read the public Hugging Face Hub API when someone opens them: on demand, no login, nothing about the team or its machines), to the pinned site origin (a loopback override exists only in source runs with `WALKIE_DEV=1`; it is compiled out of release binaries), never following redirects: `{code, team_id, proof}` once when an owner activates a code (the proof carries signed roster genesis, authority transfers and a short-lived authority signature bound to the license id), `{lic_id, renewal_token, issued_at}` once a day (the check-in), and `{lic_id, renewal_token}` when a renewal is due or the check-in reports a newer grant; responses are size-capped and a key must verify against the vendor key, name this team and carry the same `lic_id` before it is activated; a renewal answer is dropped if the team's license changed meanwhile; failures are logged and retried the next day, never fatal. The one other request to the site: a pre-release `walkie update` reads the public `install.sh` (a plain GET that follows redirects like `curl -L`; as for any download the site sees the request's IP address and the runtime's generic user agent, and nothing about the team or machine is sent) to learn which release the installer offers, then fetches that release from GitHub as usual |
 | Renewal token (`~/.walkie/license-renew-token`) | any process of the same OS user on the roster authority | 32 random bytes returned once at the first bind; a 0600 file, never on the chain, never logged; the site stores only its sha256 and compares in constant time. Without it a subscription id renews nothing |
 | Billing functions (`site/api/*`) | anyone on the internet | the activation code is shown once, within 24 h of checkout (`walkie_code_revealed_at`, completed by `walkie_code_shown_at`; a marked but never completed reveal may be retried by the same session for 10 min); a code binds to one team only (`409` for any other); renewal and the status check-in need the token; `/api/portal` never opens a portal session itself, it only redirects to Stripe's email-verified login; only `active` subscriptions reveal, bind or renew; `/api/checkout` refuses a second subscription for a team that passes a still-billing `lic_id` (`409 already_subscribed`, with the portal link) and fails closed on a Stripe outage |
 | Rental compute control plane (`site/api/compute/*`, RENT-2) | anyone on the internet; the owner's daemon with its compute token; rented machines | every route but quotes, account and heartbeat needs the account's bearer token (32 random bytes, stored as sha256, compared in constant time); the heartbeat needs the rental's own token; the tick needs Vercel's `CRON_SECRET`; the webhook needs its own Stripe signing secret. Launching needs `COMPUTE_ENABLED=1`; stopping never does. Bodies are strictly validated (unknown fields refused), per-IP (account creation), per-account and per-rental rate limits live in Postgres. The control-plane provider token (`DIGITALOCEAN_TOKEN`), the private config (provider, size, region, image, **our cost**, our provider limits) and the database URL live only in Vercel env; the watchdog uses a separate token. No response, log line or user-data carries any of them (site/test/compute-no-cost.test.ts) |
 | Compute account token (`~/.walkie/compute-account`) | any process of the same OS user on the owner's machine that opened the account | a 0600 file written atomically, never on the chain, never logged or returned by any local route; whoever holds it can spend the account's prepaid credit on machines that join **the team as the owner's machines** only with a code the owner's daemon mints, so a stolen token alone launches machines that can't join |
 | Rented machines (RENT-2) | the renting team's agents, running as seat users on a VM in our provider account | boots from user-data that installs the **pinned, signed** release through the official installer and joins with a single-use **1-hour** add-machine code (the site passes it to the provider and never stores or logs it); bootstrap passes `--seat-users`, so rentals retain seat users (never `--same-user`); the instance metadata endpoint (which re-serves the user-data) is blocked for every user but root and the user-data copies are deleted after the install; the bootstrap sudo rule is removed; no SSH keys, no provider agent, no logins of its own (seats lease the team's accounts only through the existing vault lease path when the team turns the pool on). The owner's daemon revokes the node when the rental ends. Stop = terminate + wipe (disks deleted with the droplet) |
-| Release artifacts (`SHA256SUMS`, `SHA256SUMS.sig`, the binaries) | GitHub Releases / a mirror | `SHA256SUMS.sig` is an **ECDSA P-256 / SHA-256** signature (DER) by the Walkie **release** key (not the license key; private half in `~/keys/walkie-release-signing-p256.pem` 0600 and the CI secret `WALKIE_RELEASE_SIGNING_KEY`) over `SHA256SUMS`, which carries a signed `version <tag>` line. P-256 because the installer must verify on a stock machine: macOS ships LibreSSL as `/usr/bin/openssl`, which can't verify ed25519, so the previous ed25519 scheme refused every valid release there. install.sh verifies with `openssl dgst -sha256 -verify` (LibreSSL and OpenSSL alike) and refuses without openssl; it then requires the signed version to be the release asked for (`WALKIE_VERSION`, or the tag GitHub's "latest" resolves to; a mirror without `WALKIE_VERSION` installs what it signs for), compares the binary's SHA-256, and removes a binary that doesn't report that version. `walkie update` verifies against the public key embedded in the binary, requires the signed version to match the advertised tag and to be newer than the running one (`--allow-downgrade` to go back on purpose), keeps a copy of the old binary, runs `<new> version` and restores the copy if it reports anything else. So a compromised host can't serve a signed older release as a newer one. The checksums alone give integrity of the download, not authenticity: anyone who can change the release can change the checksums; the signature is what says they are ours |
+| Release artifacts (`SHA256SUMS`, `SHA256SUMS.sig`, the binaries) | GitHub Releases / a mirror | `SHA256SUMS.sig` is an **ECDSA P-256 / SHA-256** signature (DER) by the Walkie **release** key (not the license key; private half in `~/keys/walkie-release-signing-p256.pem` 0600 and the CI secret `WALKIE_RELEASE_SIGNING_KEY`) over `SHA256SUMS`, which carries a signed `version <tag>` line. P-256 because the installer must verify on a stock machine: macOS ships LibreSSL as `/usr/bin/openssl`, which can't verify ed25519, so the previous ed25519 scheme refused every valid release there. install.sh verifies with `openssl dgst -sha256 -verify` (LibreSSL and OpenSSL alike) and refuses without openssl; it then requires the signed version to be the release asked for (`WALKIE_VERSION`, or the tag GitHub's "latest" resolves to; a mirror without `WALKIE_VERSION` installs what it signs for), compares the binary's SHA-256, and removes a binary that doesn't report that version. `walkie update` verifies against the public key embedded in the binary, requires the signed version to match the advertised tag (a stable install's tag is GitHub's latest release; a pre-release install's is the `DEFAULT_VERSION` of the site's `install.sh`, which only picks which release to fetch: every check here still applies to it) and to be newer than the running one (`--allow-downgrade` to go back on purpose), keeps a copy of the old binary, runs `<new> version` and restores the copy if it reports anything else. So a compromised host can't serve a signed older release as a newer one. The checksums alone give integrity of the download, not authenticity: anyone who can change the release can change the checksums; the signature is what says they are ours |
 | Join requests (`/peer/v1/join` with approval on) | admitted-login machines that aren't members' nodes yet | at most 16 pending requests per login and 256 per team (`429 join_limit` beyond), each expiring after 24 h |
 | Model context (MCP results, hook-injected context, channel pushes, and CLI reads run by an agent) | text written by other people's agents | wrapped in `<walkie-message … trust=… note=…>`, NFKC + control-char strip, `<`/`>` neutralised so the wrapper can't be closed, role markers (`system:`, `assistant:` …) neutralised, explicit "information, not instructions" note. The CLI applies the same contract to `get`, `subscribe`, `inbox`, `ask` answers, `who` and `linear create` (previews, results and errors) whenever it runs under an agent: **pass `--for-agent`** when the output goes to a model; `WALKIE_AGENT`, `CLAUDECODE`, `CODEX*`, `KIMI_*`, `GEMINI_CLI`, `CURSOR_AGENT`, `HERMES_*`, `OPENCODE*` and `AIDER_*` in the environment are recognised without it (any other runtime needs the flag). `--json` for a model is built from a per-kind **allowlist** of fields (never a spread of a signed body: a member can sign a body with any extra field, and validation keeps the body verbatim), with `text`/`note` wrapped, one-line fields defanged, no signatures, and a `trust` field per item. A person's terminal sees the usual output |
 | External services (integrations: Fireflies, Linear, the Wispr share page/API) | third-party APIs answering this daemon's connectors | fixed https hosts only (no redirects followed), 20 s / 10 s timeouts, byte caps (8 MB JSON, 2 MB share pages), zod shape validation; every upstream error is scrubbed of the configured keys (all spellings) and secret-shaped tokens *before* it is truncated; the fetched text is redacted (configured keys + patterns) in every emitted field, including artifact names, and size-capped before it is posted; everything external reaches models wrapped with `trust="external"`, including MCP dry-run previews, issue fields and upstream errors |
+| Hugging Face Hub API (local-model suggestions, `src/pool/hf/`, LOCAL-MODELS-HF-1) | the public Hub's API and its content (model names, descriptions, benchmark numbers, model cards, config files: anyone can publish them) | **on demand only**: when a person opens a dashboard page that shows the suggestions (Mission Control, the Team page's Models tab or a machine page: each asks its own daemon) or runs `walkie pool` (which reads for itself) and the list is missing or over a day old, never on a timer, never in the background; the browser never contacts Hugging Face. Plain `GET`s to `https://huggingface.co` only (same-origin redirects, such as the Hub's `resolve/main/<file>` one, are followed by hand up to three hops, a redirect to any other origin is refused), **no login, token or cookie, a fixed User-Agent, and nothing about the team, its members or their machines**; 6 requests at once, 15 s each, 120 s and 450 requests per refresh (406 measured), a 15-minute memory of a failure, a manual refresh at least a minute after the previous read ended, one read at a time across processes (a lock file in the pool folder), and a stop before the Hub's anonymous request windows run out (its `ratelimit` header); body caps (4 MiB lists, 2 MiB per-repository file listings, 1 MiB records, 64 KiB organisation overviews, 256 KiB configs and cards) and zod validation of every JSON response (a `config.json` and a model card are not JSON-validated: their numbers are read by hand within fixed bounds, and a model whose numbers fall outside them is skipped). Everything from the Hub is untrusted text: repository ids and names pass strict character allow-lists, a maker's name is cut to plain characters, links are built by Walkie from validated ids and the catalog schema allows model pages on `huggingface.co` only, model cards are only searched for numbers, a catalog read back from the cache file is re-validated, and the output for a model is wrapped like other external text. Only the maker and four known quantizers (unsloth, bartowski, lmstudio-community, ggml-org) size a model, a maker must be an organisation with 1,000 followers, and benchmark results are self-reported (`verified` is false on every one seen), so ranking is advice. **A live suggestion never starts a download or a run**: `walkie pool run|serve|prepare` still take only the pinned, sha256-checked list (`src/pool/gguf.json`). The cache file `<home>/pool/hf-catalog.json` is 0600 in a 0700 folder, written atomically, and holds no secret. |
 | Local files read by integrations (Wispr Flow meeting store, key files) | the user's own disk | the Wispr directory is polled read-only (20 MB per transcript file); a `key_path` is opened (non-blocking) and checked on the descriptor (`fstat`): a regular file owned by the daemon's user with no group/other permission bits (`mode & 077 == 0`), at most 4 KB, one token, and no ACL entry granting anyone but the owner access (macOS: `ls -le`, refused with the `chmod -N` fix; Linux: `getfacl` when installed, `setfacl -b`; the ACL tools are run on the **real path** of the opened descriptor, symlinks resolved and the inode re-checked, so a link can't point the check at a clean file; the path is passed as an argument, never through a shell; the verdict is cached per inode + ctime, so any chmod/ACL change is re-checked); anything else is refused with the fix, and the file's content never appears in errors |
 | Local secrets (`~/.walkie/secrets/<connector>`, `key_path` files) | any process of the same OS user | 0600 files in a 0700 directory (checked like a `key_path` on every read); never replicated, logged, or returned by any API (status shows only the key's source and path); one central scrubber (`src/integrations/scrub.ts`) removes every configured key and secret-shaped strings from errors, route responses (success bodies too, patterns included even with no configured key), MCP results, log lines and emitted events. Every operation captures the credentials it used (its key as read at the start, the configured keys, and the keys used recently on this daemon) and passes them to every scrubber of its outputs, so a key file rotated while a request is in flight is still scrubbed from what that request produces; external fields (Linear issues, Fireflies transcripts, Wispr notes and speaker names) are scrubbed in every string as soon as they are parsed, before they are cached, formatted, truncated or turned into a filename |
 | Phone link: the relay (`walkie-relay`, WALKIE-PWA-1) | anyone on the internet, and the relay's operator | end-to-end encryption between the phone and the daemon (P-256 ECDH + PSK handshake, AES-256-GCM with strict counters, docs/PWA.md): the relay forwards frames it can't read or forge, and a frame it alters, replays, drops or reorders ends the session. A room is claimed only by the holder of its key (room id = hash of the key). The daemon connects out only while a phone is paired or a pairing is open; no listener is added on the computer. The relay limits sockets and new connections per address (IPv6 by /64), messages and bytes per socket (computer sockets 16×), frame size (1 MiB), phones per room (4) and per computer connection (64); it stores and logs nothing about frames, rooms or addresses. What it does see: room ids, handshake device ids, connection times, sizes and addresses (the phone's IP, the computer's IP). The daemon treats it as hostile: controls are shape-checked and budgeted, and a violation drops the link (threat 14) |
@@ -165,10 +166,13 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    whole shows no detail at all. **Hermes** is stricter: every Hermes profile shows its state (working, idle, offline) and
    never an activity line, whatever `share_activity` says, unless `config.json` lists the profile in
    `"hermes_activity_profiles"` (`walkie hooks install hermes --activity name[,name]`). No profile name is special and no
-   environment variable decides: the hook, the daemon's `POST /v1/hermes/status` and discovery each read the list from
-   `config.json` through one function, a missing or invalid list is empty, and the route drops the line of an unlisted
+   environment variable decides: the hook, the daemon's `POST /v1/hermes/status`, its scrub pass and discovery each read the
+   list from `config.json` through one function, a missing or invalid list is empty, and the route drops the line of an unlisted
    profile before it is stored. A profile taken off the list shows nothing from the rows the daemon stored while it was on it,
-   and its card loses the line within one discovery scan.
+   and its card loses the line within about 15 seconds, whether or not agent discovery is on: a session at its prompt hooks no
+   more, so the daemon itself posts the card again with its state only, from a pass of its own that runs at start and every 15
+   seconds (discovery's scans do the same where they run). The new card keeps the time the old one was observed, so a session
+   that died long ago is not made to look alive by it.
    Statuses already replicated stay in teammates' logs: turning sharing off stops new disclosure only. A machine that
    joins later is served, by a machine on this version, superseded statuses and this node's statuses signed under a
    wider policy only as header-signed stubs (and pushes never carry them). The node re-signs its non-compliant
@@ -183,7 +187,9 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    `<config dir>/projects` after resolving symlinks, and only when the opened descriptor is a regular file owned by the
    daemon's user (opened `O_NOFOLLOW | O_NONBLOCK`, so a FIFO swapped in can't block the daemon); at most 32 KB (1 MB
    when the last record is longer) per changed file.
-8. **Flooding/abuse**: per-agent and per-peer token buckets (512 keys max, LRU), body caps (256 KiB per event,
+8. **Flooding/abuse**: per-agent and per-peer token buckets (512 keys max, LRU; unadmitted Walkie Direct keys are
+   limited by a separate pre-auth limiter and do not insert a per-key entry, and vault-lease budgets are not in that
+   table), body caps (256 KiB per event,
    1 MB peer batches and responses, 25 MB artifacts), JSON depth ≤ 32, a 64-client SSE cap with a 1 MB per-client
    queue, peer pages byte-budgeted to 768 KiB (the client retries smaller pages and isolates failures per origin),
    and at most 1000 hidden (signed-but-invalid) non-roster rows per origin, this node's own included, enforced on
@@ -467,7 +473,7 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    per run, never reused** (Codex r5,
    Opus r5: any reuse of a uid let state cross runs through a home's inheritable ACL, files outside the home, the cron
    spool or a launchd domain, whatever was wiped): `walkie seats setup-user --apply` installs a root-owned helper that
-   sudo runs as root with only `seat-admin create <n>` or `seat-admin destroy <n>`; before each seat it makes
+   sudo runs as root with only `seat-admin create <n>` or `seat-admin destroy <n>` (or `destroy <n> idle`, below); before each seat it makes
    `walkie-s<n>` (n above every id it ever used, in a root-owned SQLite ledger changed only in `BEGIN IMMEDIATE`
    transactions, so concurrent helpers can't lose or reuse an id, Codex r6 HIGH 3, Opus r6 HIGH 1; recorded before
    anything is made, and kept in the daemon's `seats.json` before it asks, Codex r6 MEDIUM 4; its own new group, no
@@ -531,7 +537,32 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    recorded durably by the daemon before it asks, and at every start (whenever the helper is installed, whatever the
    seats settings: Kimi r11 LOW 2) it destroys the ids the helper still holds for
    it (Codex r7 MEDIUM 3); each id belongs to the person whose daemon asked for it (sudo's `SUDO_UID`), so one
-   person's daemon can't destroy another's seat users. **What that protects**, with the person's home closed to other users (`chmod 700 ~`, required
+   person's daemon can't destroy another's seat users, and (WALK-103) to the one Walkie of that person's that
+   `setup-user --apply` registered: its home and daemon socket, recorded root-owned in
+   `/usr/local/libexec/walkie/seat-instance` before the helper is copied. The helper answers `create`, `destroy` and
+   `pending` only when the nearest process of that person above sudo holds the registered socket's instance lock
+   (`<socket>.lock`, close-on-exec, held for the daemon's whole life). On Linux root checks that process's open files
+   (`/proc/<pid>/fd`) and that the kernel lists the lock, taken by it, on that very open file (`/proc/<pid>/fdinfo`), opening nothing of the
+   daemon user's; on macOS lsof shows the file open and root probes the lock by opening only that same inode, never
+   following a symlink or waiting on what was swapped in (macOS can't name a lock's holder, so there a process that
+   merely has the file open while the registered home's own daemon holds the lock also passes). So a second daemon
+   of the same person (a smoke test, another `HOME` or `WALKIE_HOME`, a copied `~/.walkie`, even one started by the
+   registered daemon's own seat or shell) gets nothing listed and removes nothing; such a daemon also never asks,
+   and says the seat users are managed by another Walkie. A check that fails for a passing reason (ps or lsof timing
+   out) is answered "busy, ask again", not "another Walkie". Before WALK-103 such a daemon listed the person's seat
+   users and destroyed every one, live seats included, whenever sudo let it through (passwordless sudo, or a cached
+   sudo timestamp in the same terminal). Ids the registered daemon holds but didn't make itself (found only in the
+   helper's list, or in a `seats.json` it didn't write) are removed with `destroy <n> idle`, which the helper refuses
+   while any process of that user runs (retried, the user keeps its seat slot, and `walkie seats doctor` gives the
+   command that ends them). A record that isn't root's alone counts as another Walkie's. **Before `setup-user
+   --apply` runs again** after updating from a release without the record, the helper copy that setup installed has
+   no check of its own; the daemon then removes only the seat users it made itself since the update (each seat user
+   in `seats.json` is stamped with the socket of the daemon that made it) and leaves every other one, and every
+   process of it, alone: one named in a copied `seats.json` or one from before the stamps, as well as ids found only
+   in the helper's list; the Seats view and the doctor list them. What stays open until then: an older Walkie
+   started with another home has no such rule and could still remove them through that helper. This guards against
+   mistakes, not against the person: their own uid can still stop the registered daemon and start another on its
+   socket. **What that protects**, with the person's home closed to other users (`chmod 700 ~`, required
    unless `--accept-readable-home`): the person's Walkie (the daemon's socket and `local.token` are in its `0700` home:
    before seat users, a seat connected to that socket by path and acted as the person, Opus r2), the person's home and
    files in it, **other seats** (their homes, tokens and processes belong to other users, Codex r3), **later seats**
@@ -600,7 +631,12 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    are checked like the runner before every launch and the permission probe runs as the seat user (Codex r4 MEDIUM
    5). The runner and every directory above it must be root-owned
    and not group/other-writable (checked at setup and before every launch, Codex r3 LOW 6), and the sudoers file is
-   checked by `visudo` after it is installed. Isolation is decided from `config.json` and the OS at start, at every
+   checked by `visudo` after it is installed. A sudo that parses the rules and still refuses them is never reported
+   ready: a sudo-rs before 0.2.13 (which reads the `*` that ends the helper's rules as a plain character) is refused
+   before anything changes, and setup then runs the helper's `create` through `sudo -k -n` with an id it refuses
+   (0: nothing is made) to confirm sudo lets that command through; sudo-rs gets the same rules without the two
+   `!requiretty` lines it does not know.
+   Isolation is decided from `config.json` and the OS at start, at every
    change and **before every launch**: a configuration enabled before seat users existed runs nothing until the person
    sets them up or consents to same-user mode (Codex r3 HIGH 2). Without seat users (the company default on a new machine,
    explicitly consented to in the CLI or dashboard) a seat runs as the person: it reaches their
@@ -631,7 +667,27 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    the local API takes `X-Walkie-Agent` as authorship) stays an audited post naming that agent. Observers, a
    mismatched author node or handle, and seat agents are refused; a seat agent needs its own exact entry.
    **The host itself** must be an admitted, non-observer member when it judges a launch and again just before it
-   spawns (a demoted host starts nothing, Codex r2 HIGH 1). **Stopping** is for the seat's own launcher or the host's
+   spawns (a demoted host starts nothing, Codex r2 HIGH 1). A borrowed account is not written to disk, and is not
+   placed in any process's environment, until the launcher's standing and this machine's account check have both
+   passed again after the hand-out returned. The Claude help probe runs with the host environment and no login. Both
+   checks run once more right before the process starts, after its environment is built (which can wait on the
+   Keychain), with nothing awaited between that check and the start, for every seat, borrowed or not. A seat user's
+   runner is started with no login at all: it prepares the run (the clone, the branch, the brief and its own help
+   probe, with no login on disk or in its environment), says so, and starts the runtime only on the host's go-ahead,
+   which carries the login. The host judges both checks once more, with nothing awaited, right before it sends that;
+   refused, the runner is stopped and no login reaches the seat user. At that final check (and while the seat runs,
+   every 10 s) the login already held must also still be the one the account names: not expired (when the lender
+   reported an expiry; older lenders do not), handed out by the same lending machine and of the same credential
+   generation (when the lender reports one), and, for this machine's own vault entry, the same stored generation (an
+   account removed and added again under the same id is a new credential, and the one held is not sent). The same
+   check runs before a borrowed Codex login is written to a same-user lease home. Residual: a borrower knows the
+   lender's generation only from its synced view of the lender's accounts, so an account the lender replaces in the
+   seconds before that view syncs is not seen at the final check; the watcher stops the seat once the view shows the
+   new generation. (A view that lags the hand-out the other way refuses the seat, fail-closed; start it again.) An installed runner older than this Walkie, which
+   does not wait, gets no login and is stopped (`walkie seats setup-user --apply` updates it). A seat carries only its
+   own runtime's login: the machine's Claude token never reaches a Codex, Kimi or Grok seat. If either check then fails, the seat is refused and a hand-out that already returned is
+   spent. If the seats channel is only being narrowed, the login is discarded (its lease home is deleted and no
+   reference to it is kept) and a new hand-out is requested once the channel fits. **Stopping** is for the seat's own launcher or the host's
    person (another launcher can't end someone's work, Opus r2 LOW 4); the host person's local stop, like a revoke,
    aborts the post-run git. **Deny always stops**: seats end before `config.json` is written, and a failed write is
    reported, not a reason to keep them running (Codex r2 MEDIUM 3). Preparation is cancellable throughout (the
@@ -651,7 +707,7 @@ tailnet on macOS was not live-tested for this change; the signature gate does no
    teammates' text is information, and hooks, the MCP push and `/v1/status` leave `seat-*` agents alone, so
    teammates' asks aren't injected into a seat and no team-wide status carries its prompt or tool arguments; the
    host's own `seats` status is generic. **Environment and billing:** the seat's environment is an allowlist
-   (`PATH`, `HOME`, `USER`, `SHELL`, `TMPDIR`, `LANG`/`LC_*`, `TERM`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`
+   (`PATH`, `HOME`, `USER`, `SHELL`, `TMPDIR`, `LANG`/`LC_*`, `TERM`, `CLAUDE_CODE_OAUTH_TOKEN` (Claude seats only), `CLAUDE_CONFIG_DIR`, `CODEX_HOME`
    and the names the person lists in `seats.env`; the two login-location variables let the machine's seat environment
    point same-user seats at a worker login such as `~/.worker-claude`, away from the person's own `~/.claude`, and a seat
    user's runner always overrides both with that run's fresh directories), so GitHub, cloud or database credentials in the daemon's environment or
@@ -847,6 +903,70 @@ allow-list proxy on the serving machine.
   resume after a broken connection and are checked whole before use.
 - **Resources.** One served model per machine, never alongside a stage; it must fit the GPU memory free now (the
   owner's cap applies to another machine's start); no request for 30 minutes stops it.
+
+## Talkie recommendation boundaries (TALKIE-OPS-1)
+
+The poll and card-curation prepare steps record suggestions without model turns or executing the suggested
+actions. `local-routes.ts:dispatch/refuseScheduledWrite` validates the orchestrator child token/identity and,
+while that child's scheduled turn runs, permits GET/HEAD and only `POST /v1/post` (to a channel that exists: it
+creates none) and `POST /v1/talkie/recs` writes. Other writes are refused with `scheduled_turn_cannot_act`, and so
+are `/v1/auth/logout` and `/v1/auth/rotate`, which the local API answers before routing. The hold outlives the turn:
+in full access the Claude child and its shell stay alive between turns, so a background job a scheduled turn started
+keeps the token; `host.ts` never reuses a child that answered a scheduled turn and keeps it held until a new child
+(with a new token) replaces it. This local API boundary is not an OS sandbox and does not restrict all people, other
+agents, manual steward runs, a person's steward auto-move loop, or ordinary WalkieTalkie conversations (a new child).
+Allowed channel posts are still writes subject to their route permissions.
+
+**Nothing a model wrote is sent in a person's name.** An ask recommendation carries no text: approving it sends
+`askMessage`'s fixed sentence for its topic, built from the card as it is then (and the daemon's own reason for what
+the daemon recommended). A card's title, which any member can write, is data on its own line (`Card REF: title`) with
+quote marks, Markdown and `@` neutralised, so it cannot close a quote, format the message or mention anyone; a
+confidential card's title is not repeated at all. An ask about a card is sent in the card's own channel, never
+channel-less (which every member and observer reads), so a private project's card reaches only those who can see it. A model-recorded recommendation's reason, note and evidence are kept as `context`, shown
+quoted and marked as WalkieTalkie's in the dashboard and the CLI, with links and secrets withheld, and are never sent,
+posted on a card or put in a created card's body; its reason line is a fixed sentence. The dashboard and the CLI show,
+before anyone approves, word for word what approving does in their name (`outgoing`), and the approval must echo that
+text (`seen`): the daemon computes it again and refuses the approval (409 `rec_changed`) if it differs, so a card renamed
+or another machine chosen between the list and the tap is reviewed again rather than sent. The CLI prints it and asks
+for a typed `yes`. A new card's title is the one shown.
+
+Approve and dismiss use `personOnly` (named/under-agent callers are refused); recommendation routes also reject
+paired phones. Observers cannot answer, owners-only recommendations and setup require an owner, and execution
+reuses existing action routes under the approver's identity. A dashboard session may call the list and the two
+answer routes only, yet an approval from the dashboard dispatches the action's route in-process (`/v1/ask`,
+`/v1/seats/run`, `/v1/tasks`) under that person's context and each route's own checks, though a dashboard session could
+not call `/v1/ask` itself. A setup step, which runs a command on another machine through `/v1/admin/run`, is refused to a
+dashboard session and approved at a terminal (`walkie talkie approve <id>`) only. List permission flags are coarse checks, not a promise that an action will pass
+its own authorization or remain applicable. An action route that answers with an error status is a refusal, never a
+success. A seat's approval re-applies the poll's exclusions (blocked, confidential, assigned, waiting on a decision
+or someone, a reviewer named for a review, an agent working on it) to the card as it is then, so a card that became
+confidential since is never put in a seat's brief, and both the poll and the approval choose only among machines whose
+person can see the card's channel, so a private project's card and name never go into a brief on another person's
+machine (409 `no_free_seat` when none can). Cooldowns count an answer only for its own recommendation's key.
+
+Creates count only from an owner's WalkieTalkie. Team-project records inherit project-channel visibility;
+private-project, confidential-card and machine records use owners-only `talkie-schedules`. Poll candidates exclude
+confidential cards. Evidence is signed channel content, and older peers can display ordinary posts. Later label
+changes do not retract previous posts. Text sanitization, templates and bounds do not guarantee sensitive-data
+removal from arbitrary evidence. No stronger privacy claim is made here.
+
+Approval is serialized per recommendation on one daemon only, and no poll or curation run on that daemon retires,
+replaces or remakes it while the approval runs (two seats for one card). Side effect, evidence comment and resolve are
+separate operations; partial failures can leave a pending recommendation after an action succeeded. Different
+daemons can act concurrently. Marker/title/current-state retry checks are bounded and action-specific; setup
+steps have no recommendation-specific repeat check. Folding one winning resolution is not exactly-once execution.
+Inspect existing effects before retrying. Caps and cooldowns are checks over each daemon's visible data, not
+global distributed reservations.
+
+The CLI (`src/cli/commands/talkie-recs.ts`) refuses agent approval/dismissal before it creates a client; listing
+preserves the agent context, and recommendation creation relies on daemon authentication. The dashboard panel
+(`web/src/views/orchestrator/Recommendations.tsx`) uses the server's separate answer flags, checks the returned ID and
+resolved status, and blocks a failed row until a successful manual refresh without automatically replaying its POST.
+Refresh is withheld while any row has an action pending, including the failed row's refresh control. These client
+checks do not replace daemon authorization or prove a failed action had no effect; the daemon's person-only gate
+and each action route's own permission check are what decide.
+See [TALKIE-OPS-1](plans/TALKIE-OPS-1.md) for the full contract.
+
 ## Projects (WALKIE-PROJECTS-1)
 
 Boards are folded from ordinary signed channel posts (PROTOCOL §10), so every existing defence applies to them
@@ -1010,6 +1130,69 @@ the room adds:
   unique on the wire: two machines adding a name offline make two files, and a name lookup that matches both is
   refused with their ids. A crafted room op may name any hash; its bytes are served only if a share of that hash is
   accepted in the same channel, so it can't reach bytes of another channel.
+
+## Status pages (PROJECT-PAGES-1)
+
+A project whose hourly status report is on has a status page for its non-technical teammates (PROTOCOL §10 "Status
+page"). Its parts are the same signed events as everything else, in the project's channel, so what the Data Room section
+says about access, replication and removal holds for them too. What they add:
+
+- **Who can write.** A fact or a screen is written by a member of the project or by their named agent. An observer is
+  refused with a reason; an agent that does not name itself is refused before anything is signed (`agent_unnamed`); the
+  agent name `orchestrator` stays WalkieTalkie's (the write limit refuses it). The dashboard session can read the page and
+  the image bytes and is refused every write (the session allow-list takes the one `GET` and nothing else; tested with a
+  real session). A fact is not an admin setting (the project's settings stay with owners and the creator): any member may
+  set one, so anyone on the project can put a line on the page, and each fact and screen names who set it.
+- **What is validated, where.** Facts: one line of plain text, a label up to 24 and a value up to 60 characters, no
+  control, invisible, direction-changing or line-separating character, six at most. Screen details: the same kind of plain
+  line for title, group, a sentence and a note, a route that starts with `/` or `#/` with no spaces (a path, never an
+  address: `//host/path` and `/\host/path` are refused, and so is any query string, because the detectors do not know every
+  token that rides in one, such as an OAuth code or a session id; what a page was filtered by goes in the note). A route is
+  also refused when a segment of its path looks like a one-time token (an invitation, a password reset, a session: a UUID,
+  32 or more hex digits, or a long run of letters and digits that changes kind like random text, as `/invite/Xk9pQ2rT...` does),
+  because routes are signed into the log for good and the secret detectors rate such a token no better than a build id; this
+  is judged for routes alone (a fact or a note may hold a build id), is best effort like the other checks, and passes the
+  dashboard's own ids (project channels, event ids, node ids), numbers, slugs and ordinary names. A link in any spelling (`https://`, `www.`, `mailto:`, `javascript:`, `data:` and
+  the like), a join code, or anything the secret detectors flag is **refused** where it is written, with the reason, in
+  every text including a screen's route; each is judged on the text as shown and on its bare letters, so an accent, a
+  fullwidth letter or a blank-looking filler does not hide one. The page never shows a link of its own (the only anchors on
+  it are the index's own). The checks run in the daemon for every writer, and the fold and the readers apply the limits
+  again, so a modified daemon that signs past them changes nothing: a seventh fact, an observer's op and a stranger's op are
+  ignored by every replica. The texts are checked again **when the page is read** (`page-text.ts`): a fact or a screen a
+  modified peer signed without the checks is shown with its link taken out (the words stay) and its secret redacted, a note
+  or a route that cannot be cleaned is left off (a route signed with a query string shows its path alone), and a fact or a screen
+  whose text is a join code is not listed and takes none of the six places; the Data Room's own file list and a file's history
+  read a screen's details the same way (the signed events and their NDJSON export stay as signed). Any
+  member's agent may add a screen or take one off the page, including a room image a person pinned: the page is a view of
+  the room's images, and an image taken off stays in the room.
+- **Images are judged from their own bytes.** The type a caller declares is never believed. A screen is a PNG, JPEG or
+  WebP whose header says so, at most 8 MB, at most 12 000 pixels a side and 25 million pixels (a few hundred bytes of
+  compressed zeros can claim a billion, which no tab should be asked to decode); SVG, HTML, PDF and everything else are
+  refused. The dashboard checks the bytes again before it shows them and shows an image as a `data:` URL of the type the
+  bytes say; the dashboard's content policy (`img-src 'self' data:`) is unchanged, and an image in an `<img>` runs nothing.
+  A screen file that is not an image is shown as "This image can't be shown".
+- **Everything written is text on the page.** Titles, sentences, facts, the story and the screens' details are rendered
+  as text nodes, never as HTML or Markdown (a test fails if a page component reaches for `innerHTML`).
+- **The story is WalkieTalkie's, and cleaned twice.** The report turn still runs in a Claude with no tools; the model
+  writes a `<page>` block and the daemon cleans it string by string (no link, no markup, no card key, secrets redacted, a
+  join code drops the string, a week written `wk1` respelled) before posting it as `status_page`, and the page cleans it
+  again when it reads it, so a post by a modified daemon is not shown as it came. Only a post by an owner's WalkieTalkie
+  is a report. The sentence about out-of-date screens is kept only when the daemon's own check says the screens are
+  out of date, and shown only while that is still true. The post also carries the three numbers the summary was written
+  against (blocked, in progress, in review): the page flags a summary only when today's numbers differ from those and the
+  summary is over two hours old, so no machine's clock decides whether the board moved; the summary is dated by the earlier of
+  its lead machine's stamp and this daemon's receipt.
+- **Confidential and private.** The counts and the sheet the model reads leave out every card labelled `confidential`
+  (and its comments); a project of the team's owners is not there for anyone else (the page route, a write and the image
+  bytes all answer 404 to a member who cannot see it). Risk accepted: a fact or a screen is written by people and agents,
+  not drawn from the board, so anything a person types or shows in a screenshot is on the page for everyone on the
+  project. Image bytes are not scanned for secrets (a screenshot shows what was on the screen) and are stored as
+  they are, metadata included (a JPEG's EXIF is shared with the project). Take screenshots of demo data, not of
+  customers or credentials, and remove one with `walkie projects screen <project> --remove` (like any room file it stays
+  in the signed log and on machines that fetched it: rotate what leaked).
+- **Bounds.** Six facts, 120 screens in 12 groups, 8 MB an image, one report turn an hour (no new turn: a fact or a screen
+  is not news); writes take the existing human or agent write limit; the page folds only its own ops and counts from
+  one narrow query; the browser keeps at most 64 images and fetches one only as it comes near the screen.
 
 ## Agent admin and remote admin (AGENT-ADMIN-1)
 
@@ -1515,8 +1698,33 @@ The provider and approximate region remain observable to a shell user through ha
   `"vault_sharing": true` (off by default: the customer default is owner-only). Only Claude setup-tokens move whole (a copied
   Codex login would fight its twin over the refresh token; a Codex login is lent as an access-token copy, see Company pool): `POST /peer/v1/vault/lease` on the owner's machine, over
   the authenticated peer channel (WireGuard; whois login must be a member; the calling node admitted, owned by that
-  login, from its pinned IP), with a 60 s timestamp window, a nonce replay guard, 10 hand-outs per calling node per
-  hour, and the reply sealed to a one-time X25519 key of the requesting daemon (HKDF-SHA256, AES-256-GCM, bound to the
+  login, from its pinned IP), with a 60 s timestamp window and a nonce replay guard. The base is 10 hand-outs per
+  calling node per hour, including older requests without a launcher, local-socket requests (`walkie accounts exec`,
+  the switching shims) and teammate-launched seats on an owner's host. An owner-launched seat on an authenticated
+  machine of that owner may use the local vault holder's configured 10–256 per-node limit, subject to a 256/hour
+  total across that person's borrower nodes at that vault holder (their base requests count toward it too). Once that limit is above 10 it is a bucket of its
+  own, separate from the base, so other requests from the same machine can neither spend it nor shrink it. The first
+  time that separate bucket is created, it is seeded with the owner-launched hand-outs already used in the shared base
+  bucket this hour (a raise from 10 allows the new limit minus those, not a fresh full bucket). Other requests that
+  shared the base bucket do not seed it, and raising a limit that is already above 10 does not refill a bucket that
+  exists. A machine taken off the team while the vault read for its hand-out is in flight does not receive the sealed
+  login: the same refusal as a machine already off the team, and that hand-out is spent. Everything else the hand-out
+  was judged on is judged again when the read returns, as a fresh request would be: a caller made an observer (or no
+  longer lent the account) is refused (`not_allowed`), and so is a hand-out whose owner machine is no longer a member
+  (`not_ready`), whose account was removed (`not_found`), whose Claude token now has too little time left
+  (`expired`), or whose person's 10% reserve a usage reading that arrived meanwhile now covers (`reserved`). An account
+  removed and added again under the same id during the read is a new credential generation: the one read is not
+  handed out (`unavailable`). The limits refill continuously, and revoking and readmitting a machine does not reset
+  them: it continues the cap it left with. Restarting the vault-holder daemon resets its in-memory counters; separate vault holders do
+  not share a counter. The owner machine's seats host relays the signed seat event's launcher, and only to a vault
+  holder whose verified capabilities announce `lease_launcher_v1` (older holders refuse the field). **The raised
+  limit's trust boundary is the owner's OS user on each of the owner's machines:** any process running as that user
+  can post a seat request over the local socket (the agent name it gives is only a header), and the daemon signs that
+  request as the owner, so its seat counts as owner-launched. That includes the owner's agents and every same-user
+  seat, a teammate-launched same-user seat among them. A process with a machine's node signing key can also assert a
+  launcher directly. The local lease route refuses a caller-supplied launcher, which keeps `walkie accounts exec` at
+  the base but does not narrow that boundary. The reply is sealed to a one-time X25519 key of the
+  requesting daemon (HKDF-SHA256, AES-256-GCM, bound to the
   account and both node ids). The requester never stores it: its daemon returns it over the unix socket to the
   wrapper, which writes it to the session's fd 3. The owner's log records each hand-out and refusal (account id,
   node, handle, agent — never the token). **A hand-out gives the borrower's OS user the plaintext token for the
@@ -1781,7 +1989,7 @@ The provider and approximate region remain observable to a shell user through ha
 - **Walkie Direct (v0.2)**: the endpoint is reachable from the internet by anyone who knows its id, so the peer gate
   and the unadmitted-key budgets above are what stand between a stranger and the API; a flood of fresh keys can
   exhaust the shared unadmitted budget and delay a real joiner (members are unaffected: they have their own
-  buckets). **What stalled handshakes can still do.** The bound is on how many native handshakes exist, not on how
+  buckets, and the flood cannot evict those buckets or a vault-lease budget). **What stalled handshakes can still do.** The bound is on how many native handshakes exist, not on how
   long each lives: a sender that keeps sending packets keeps its handshake alive (QUIC's idle timer; iroh 1.1's
   binding can't cancel a server handshake), and it keeps its native budgets for as long. At most 128 are alive at
   once (64 from the direct path, 16 from relay-path strangers), so memory and native work stay bounded whatever the

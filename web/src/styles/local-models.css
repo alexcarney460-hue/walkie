@@ -44,11 +44,20 @@
 }
 .lm-pick:first-child { border-top: 0; }
 .lm-pick-label { grid-row: span 2; padding-top: 1px; color: var(--text-3); font-size: var(--fs-12); }
+/* a pick that shows its facts has a third line (the meta) beside the label */
+.lm-pick.has-meta .lm-pick-label { grid-row: span 3; }
 .lm-pick-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
 .lm-pick-model { color: var(--text); font-size: var(--fs-14); font-weight: 500; }
 .lm-pick.is-nofit .lm-pick-model { color: var(--text-2); font-weight: 400; }
 .lm-pick-where { color: var(--text-3); font-size: var(--fs-12); overflow-wrap: anywhere; }
 .lm-pick-why { color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+/* LOCAL-MODELS-HF-1: who made it, how big, and why it ranks where it does (Hugging Face benchmark results) */
+.lm-pick-meta { grid-column: 2; color: var(--text-3); font-size: var(--fs-12); line-height: 1.45; }
+.lm-source { margin: 6px 0 8px; color: var(--text-3); font-size: var(--fs-12); line-height: 1.5; }
+.lm-source-note { color: var(--amber); }
+.lm-source-again { margin-left: 4px; vertical-align: baseline; }
+.lm-best { margin: 4px 0 10px; padding: 8px 0 10px; border-bottom: 1px solid var(--line-soft); }
+.lm-machine-picks { grid-column: 1 / -1; margin-top: 4px; padding-left: 10px; border-left: 2px solid var(--line-soft); }
 
 .lm-speed {
   align-self: center;
@@ -213,8 +222,12 @@
   .lm-place-mem { order: 5; flex-basis: 100%; }
   .lm-run-stop { margin-left: 0; }
   .lm-card { padding: 12px 12px 12px; }
+  /* one column: the label, the model, the reason and the meta line stack. The meta line sits in column 2 above this
+     width, so it is put back in column 1 here (else the grid grows a second column and the real one collapses). */
   .lm-pick { grid-template-columns: minmax(0, 1fr); }
   .lm-pick-label { grid-row: auto; }
+  .lm-pick.has-meta .lm-pick-label { grid-row: auto; }
+  .lm-pick-meta { grid-column: 1; }
   .lm-group-card { padding: 12px 12px 8px; }
   .lm-group-free { margin-left: 0; }
   .lm-machine { grid-template-columns: minmax(0, 1fr) auto; }

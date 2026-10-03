@@ -1,0 +1,58 @@
+{
+ "_id": "6a3cb50c4f7477d7ac6fcb42",
+ "id": "ornith-ai/Ornith-1.0-35B-GGUF",
+ "sha": "383064f72a1ef3087b779f268d3ca117eb989aac",
+ "downloads": 1699389,
+ "siblings": [
+  {
+   "rfilename": "ornith-1.0-35b-Q4_K_M.gguf",
+   "blobId": "fe22dc3ac4939a48113ce5c419550fb4c627d994",
+   "size": 21166757760,
+   "lfs": {
+    "sha256": "ff25291b2599fb927a835e624d2b3540106af61761c3fa57ac4264046dbec002",
+    "size": 21166757760,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "ornith-1.0-35b-Q5_K_M.gguf",
+   "blobId": "668278d63d45032bd0a9b3531805d8b821c00d24",
+   "size": 24729130848,
+   "lfs": {
+    "sha256": "325b351fc30a4114af5bb21dc2ba7f666ccc90c8f26e6bb36909255d5a449469",
+    "size": 24729130848,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "ornith-1.0-35b-Q6_K.gguf",
+   "blobId": "6b508985d071c95cdfdfd709f9fc6a27ce44a78a",
+   "size": 28514152288,
+   "lfs": {
+    "sha256": "b3da60c3643af02e7979eb47267c3046dc3f6e3a5c88b6790db12208c051116c",
+    "size": 28514152288,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "ornith-1.0-35b-Q8_0.gguf",
+   "blobId": "b1faf816685e013ceb18974c06599324f86e8402",
+   "size": 36903138880,
+   "lfs": {
+    "sha256": "cbc992bca07901c1a51f33e65e6fc5d687de179c852a772dfd15e4c3261dbf5c",
+    "size": 36903138880,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "ornith-1.0-35b-bf16.gguf",
+   "blobId": "e517833c64de6ad0c4da66d06b31269c3cd2d7f4",
+   "size": 69376636800,
+   "lfs": {
+    "sha256": "7ee1ede4e151f41eb1ad89ffc2b8ce0b33935d87a0bf473a0dd1957ccc45ec8a",
+    "size": 69376636800,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

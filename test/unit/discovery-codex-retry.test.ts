@@ -8,6 +8,7 @@ import { jl, ME, world } from "../helpers/discovery-world.ts";
 const cleanups: Array<() => void> = [];
 const RealWorker = globalThis.Worker;
 const delayed = new URL("../fixtures/discovery-files/delayed-worker.ts", import.meta.url);
+const slowFirstOpen = new URL("../fixtures/discovery-files/slow-first-open-worker.ts", import.meta.url);
 afterEach(() => { globalThis.Worker = RealWorker; for (const clean of cleanups.splice(0)) clean(); });
 
 test("Codex session files delayed in the worker queue recover on later scans", async () => {
@@ -125,3 +126,100 @@ test("missing Codex rollouts back off from 15 seconds to five minutes", async ()
     expect(recovered[0]?.activity?.file).toBe(true);
   } finally { discovery.stop(); }
 });
+
+test("a rollout the worker gave no answer for is tried again on the next scan, not after the missing-file delay", async () => {
+  const w = world(cleanups, { prompts: false, activity: true });
+  const mark = join(w.root, "slow-open.mark");
+  globalThis.Worker = class extends RealWorker {
+    constructor(url: string | URL, opts?: WorkerOptions) {
+      const ours = String(url).includes("discovery-files-worker");
+      super(ours ? slowFirstOpen : url, ours ? { ...opts, env: { ...process.env, WALKIE_TEST_SLOW_OPEN_MARK: mark } } : opts);
+    }
+  };
+  w.fx.procs = w.fx.procs.filter((p) => p.pid < 100);
+  const uuid = randomUUID();
+  const dir = join(w.root, ".codex", "sessions", "2026", "09", "26");
+  const rollout = join(dir, `rollout-2026-09-26T07-50-56-${uuid}.jsonl`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(rollout, jl({ type: "session_meta", payload: { id: uuid } },
+    { type: "event_msg", payload: { type: "user_message", message: "task" } }));
+  w.fx.procs.push({ pid: 2502, ppid: 1, uid: ME, startedAt: w.clock.t - 60_000, command: "codex exec do the thing", cpuMs: 1_000 });
+  w.fx.files.set(2502, [rollout]);
+  w.fx.cwds.set(2502, w.cwd);
+  let listings = 0;
+  const openFiles = w.fx.openFiles.bind(w.fx);
+  w.fx.openFiles = async (pid) => { listings++; return openFiles(pid); };
+  const discovery = w.disc({ scanBudgetMs: 10_000 });
+  try {
+    const first = await discovery.scan(); // the worker takes 2 s over the first openFile: no answer within 500 ms
+    expect(first[0]?.activity?.file).not.toBe(true);
+    w.clock.t += 1_000;
+    await discovery.scan(); // the worker is being replaced; still no answer, and no missing-file delay is started
+    await Bun.sleep(1_200);
+    w.clock.t += 1_000; // two seconds in all, far short of the 15 s a confirmed miss waits
+    const later = await discovery.scan();
+    expect(later[0]?.activity?.file).toBe(true);
+    expect(listings).toBe(1); // the rollout found by the first listing is kept; only the worker call is repeated
+  } finally { discovery.stop(); }
+}, 20_000);
+
+test("an open-files lookup that got no answer is repeated on the next scan; only a real empty answer starts the missing-file delay", async () => {
+  const w = world(cleanups, { prompts: false, activity: true });
+  w.fx.procs = w.fx.procs.filter((p) => p.pid < 100);
+  w.fx.procs.push({ pid: 2503, ppid: 1, uid: ME, startedAt: w.clock.t - 60_000, command: "codex exec do the thing", cpuMs: 1_000 });
+  w.fx.cwds.set(2503, w.cwd); // it holds no rollout open: a real answer is []
+  let listings = 0;
+  let answered = false;
+  w.fx.openFiles = async () => { listings++; return answered ? [] : null; };
+  const warnings: string[] = [];
+  const discovery = new AgentDiscovery(w.core, { debug() {}, info() {}, error() {}, warn: (message: string) => { warnings.push(message); } }, {
+    provider: w.fx, uid: ME, now: () => w.clock.t, home: w.home, claudeConfigDir: w.cfg,
+    share: { prompts: false, activity: true }, scanBudgetMs: 10_000,
+  });
+  try {
+    await discovery.scan();
+    expect(listings).toBe(1);
+    w.clock.t += 1_000;
+    await discovery.scan(); // no answer last time: asked again at once, no delay was started
+    expect(listings).toBe(2);
+    w.clock.t += 1_000;
+    answered = true;
+    await discovery.scan(); // a real answer: nothing is open, and the 15 s delay starts now
+    expect(listings).toBe(3);
+    w.clock.t += 14_000;
+    await discovery.scan();
+    expect(listings).toBe(3);
+    w.clock.t += 1_000;
+    await discovery.scan();
+    expect(listings).toBe(4);
+    expect(warnings).toEqual([]); // a lookup with no answer is handled, not thrown into the examine-failed warning
+  } finally { discovery.stop(); }
+});
+
+test("an older Kimi's open-files listing that timed out or failed leaves its session file unknown, so a later scan looks again", async () => {
+  const w = world(cleanups, { prompts: false, activity: true });
+  w.fx.procs = w.fx.procs.filter((p) => p.pid < 100);
+  w.fx.procs.push({ pid: 2504, ppid: 1, uid: ME, startedAt: w.clock.t - 60_000, command: "kimi", cpuMs: 1_000 });
+  w.fx.cwds.set(2504, w.cwd);
+  const wire = join(w.root, "kimi-wire.jsonl");
+  writeFileSync(wire, jl({ type: "event", n: 1 }));
+  let listings = 0;
+  w.fx.openFiles = () => {
+    listings++;
+    if (listings === 1) return new Promise(() => {}); // no answer within the read limit
+    return Promise.resolve(listings === 2 ? null : [wire]); // then a failed lookup, then the real list
+  };
+  const discovery = w.disc({ scanBudgetMs: 10_000 });
+  try {
+    await discovery.scan();
+    w.clock.t += 1_000;
+    await discovery.scan();
+    w.clock.t += 1_000;
+    const found = await discovery.scan();
+    expect(listings).toBe(3); // an empty list used to be taken for "no file" at the first timeout, and never asked again
+    expect(found.find((a) => a.pid === 2504)?.activity?.file).toBe(true);
+    w.clock.t += 1_000;
+    await discovery.scan();
+    expect(listings).toBe(3); // the file is known now: no further listing
+  } finally { discovery.stop(); }
+}, 20_000);

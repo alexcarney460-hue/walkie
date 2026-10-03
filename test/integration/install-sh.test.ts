@@ -236,19 +236,49 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
     });
   });
 
-  // SITE-2: the installer defaults to one pinned release (DEFAULT_VERSION), which pre-release builds don't cover
-  // on Intel Macs. A fake `uname` stands in for an Intel Mac; the refusal comes before any network request.
-  test("the default release on an Intel Mac is refused with the way out, before any download", async () => {
-    const shim = mkdtempSync(join(root, "uname-"));
+  // SITE-2 / WALK-58: the installer defaults to one pinned release (DEFAULT_VERSION). It no longer refuses an Intel Mac
+  // up front on the pinned default: the resolved release's SHA256SUMS decides. A fake `uname` stands in for an Intel Mac
+  // and a fake `curl` stands in for GitHub (no WALKIE_BASE_URL here, so the script takes its real default path; nothing
+  // touches the network). The fake curl logs every URL it is asked for and serves only SHA256SUMS.
+  async function intelDefault(sums: string): Promise<{ code: number; out: string; err: string; urls: string[]; defaultVersion: string }> {
+    const src = readFileSync(join(import.meta.dir, "..", "..", "scripts", "install.sh"), "utf8");
+    const defaultVersion = src.match(/^DEFAULT_VERSION="([^"]+)"$/m)![1]!;
+    const shim = mkdtempSync(join(root, "shim-"));
+    const log = join(shim, "curl.log");
+    writeFileSync(join(shim, "sums"), sums);
     writeFileSync(join(shim, "uname"), '#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac\n', { mode: 0o755 });
+    writeFileSync(join(shim, "curl"), [
+      "#!/bin/sh", 'out=""; url=""',
+      'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; http*) url="$1" ;; esac; shift; done',
+      `echo "$url" >> "${log}"`,
+      `case "$url" in */SHA256SUMS) cat "${join(shim, "sums")}" > "$out" ;; *) exit 22 ;; esac`, "",
+    ].join("\n"), { mode: 0o755 });
     const home = mkdtempSync(join(root, "home-"));
     const env = { HOME: home, PATH: `${shim}:${SYSTEM_PATH}`, WALKIE_BIN_DIR: join(home, "bin") };
     const p = Bun.spawn(["/usr/bin/env", "-i", ...Object.entries(env).map(([k, v]) => `${k}=${v}`), "/bin/sh", script], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
-    expect(await p.exited).toBe(1);
-    expect(err).toContain("has no Intel Mac build");
-    expect(err).toContain("WALKIE_VERSION=latest");
-    expect(out).not.toContain("Downloading");
+    const urls = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
+    return { code: await p.exited, out, err, urls, defaultVersion };
+  }
+
+  test("the default release on an Intel Mac is refused from its checksums with the way out, before the binary download", async () => {
+    const r = await intelDefault(`${sha256("x")}  walkie-darwin-arm64\n`); // no Intel asset listed
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`${r.defaultVersion} has no Intel Mac build`);
+    expect(r.err).toContain("WALKIE_VERSION=latest");
+    expect(r.out).toContain(`Downloading walkie-darwin-x86_64 (${r.defaultVersion})`);
+    expect(r.urls).toHaveLength(1); // only the checksum list was requested; the binary never was
+    expect(r.urls[0]!.endsWith(`/releases/download/${r.defaultVersion}/SHA256SUMS`)).toBe(true);
+  });
+
+  test("the default release on an Intel Mac is not refused up front when its checksums list an Intel build (text or binary record)", async () => {
+    for (const marker of [" ", "*"]) {
+      const r = await intelDefault(`${sha256("x")} ${marker}walkie-darwin-x86_64\n`);
+      expect(r.err).not.toContain("has no Intel Mac build");
+      expect(r.urls).toHaveLength(2); // checksum list, then the Intel binary (the fake curl then fails it: nothing real is installed)
+      expect(r.urls[1]!.endsWith(`/releases/download/${r.defaultVersion}/walkie-darwin-x86_64`)).toBe(true);
+      expect(r.err).toContain("download failed");
+    }
   });
 
   test("an explicit release without an Intel Mac build is refused from its checksums, before the binary download", async () => {

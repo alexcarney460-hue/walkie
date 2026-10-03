@@ -8,6 +8,7 @@ import { accept, beginMore, failed, initialPager, invalidate, restart, type Page
 import { Archive as ArchiveIcon, GitBranch, Search } from "lucide-react";
 import { api, friendlyError } from "../../api/client.ts";
 import type { AgentView } from "../../api/types.ts";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { EmptyState, ErrorState, RuntimeBadge, SkeletonRows, StatePill } from "../../components/primitives.tsx";
 import { getRoute, hrefFor, navigate } from "../../lib/route.ts";
 import { agoLong, useNow } from "../../lib/time.ts";
@@ -182,18 +183,20 @@ export function ArchiveView({ machine }: { machine?: string }) {
               </header>
               <ul className="archive-list">
                 {list.map((a) => (
-                  <li key={a.id}>
-                    <button type="button" className="archive-row" onClick={() => open(a.id)} aria-label={`${a.agent} on ${a.hostname}: ${a.effective_state}, last seen ${agoLong(a.updated_at, now)}`}>
-                      <StatePill state={a.effective_state} />
-                      <span className="archive-agent mono truncate">{a.agent}</span>
-                      <RuntimeBadge runtime={a.status.runtime} runtime_name={a.status.runtime_name} launch={a.status.launch} />
-                      <span className="archive-title truncate">{a.status.title ?? <span className="muted">No status title</span>}</span>
-                      <span className="archive-repo mono truncate">
-                        {a.status.repo && <><GitBranch size={11} strokeWidth={1.75} aria-hidden="true" />{a.status.repo}{a.status.branch ? `@${a.status.branch}` : ""}</>}
-                      </span>
-                      <span className="archive-seen tnum muted">{agoLong(a.updated_at, now)}</span>
-                    </button>
-                  </li>
+                  <ErrorBoundary key={a.id} scope="item" as="li" name={`archived agent ${a.agent}`} resetKeys={[a]}>
+                    <li>
+                      <button type="button" className="archive-row" onClick={() => open(a.id)} aria-label={`${a.agent} on ${a.hostname}: ${a.effective_state}, last seen ${agoLong(a.updated_at, now)}`}>
+                        <StatePill state={a.effective_state} />
+                        <span className="archive-agent mono truncate">{a.agent}</span>
+                        <RuntimeBadge runtime={a.status.runtime} runtime_name={a.status.runtime_name} launch={a.status.launch} />
+                        <span className="archive-title truncate">{a.status.title ?? <span className="muted">No status title</span>}</span>
+                        <span className="archive-repo mono truncate">
+                          {a.status.repo && <><GitBranch size={11} strokeWidth={1.75} aria-hidden="true" />{a.status.repo}{a.status.branch ? `@${a.status.branch}` : ""}</>}
+                        </span>
+                        <span className="archive-seen tnum muted">{agoLong(a.updated_at, now)}</span>
+                      </button>
+                    </li>
+                  </ErrorBoundary>
                 ))}
               </ul>
             </section>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Armchair, Bot, CircleHelp, FileText, FolderKanban, Gauge, Hash, LayoutGrid, Lock, LogOut, MessagesSquare, Moon, Plug, Search, Sparkles, User, Users } from "lucide-react";
+import { Armchair, Bot, CircleHelp, FileText, FolderKanban, Gauge, Hash, LayoutGrid, Lock, LogOut, MessagesSquare, Moon, Newspaper, Plug, Search, Sparkles, User, Users } from "lucide-react";
 import { api } from "../api/client.ts";
 import { STATE_LABEL, displayName } from "../lib/format.ts";
 import { getRoute, navigate } from "../lib/route.ts";
@@ -37,6 +37,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const commands = useMemo<Cmd[]>(() => {
     const views: Cmd[] = [
       { id: "v-m", group: "Go to", label: "Mission Control", icon: LayoutGrid, keys: "G M", run: () => navigate({ view: "mission" }) },
+      { id: "v-r", group: "Go to", label: "Updates · project status reports", icon: Newspaper, keys: "G R", run: () => navigate({ view: "updates" }) },
       { id: "v-p", group: "Go to", label: "Projects", icon: FolderKanban, keys: "G P", run: () => navigate({ view: "projects" }) },
       { id: "v-o", group: "Go to", label: "WalkieTalkie", icon: Sparkles, keys: "G O", run: () => navigate({ view: "orchestrator" }) },
       { id: "v-b", group: "Go to", label: "Channels", icon: MessagesSquare, keys: "G B", run: () => navigate({ view: "board" }) },

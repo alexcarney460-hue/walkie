@@ -14,7 +14,7 @@ function context(pos: string[], flags: Record<string, string | true>, client: Re
 
 describe("talkie schedule CLI", () => {
   test("plural schedules lists the named defaults", async () => {
-    const names = ["Board refresh", "Machine onboarding", "Project sync", "Capacity check", "Data room refresh"];
+    const names = ["Board refresh", "Machine onboarding", "Project sync", "Capacity check", "Data room refresh", "Project status reports", "Orchestration poll", "Card curation"];
     const { ctx, lines } = context(["schedules"], {}, {
       schedules: async () => ({ schedules: names.map((name) => ({ id: "id", name, enabled: true, cron: "0 * * * *", next_run: null, last_result: null })) }),
     });
@@ -22,7 +22,7 @@ describe("talkie schedule CLI", () => {
     for (const name of names) expect(lines.join("\n")).toContain(name);
   });
   test("new templates can be added by name", async () => {
-    for (const template of ["machine-onboarding", "project-sync"]) {
+    for (const template of ["machine-onboarding", "project-sync", "project-reports", "orchestration-poll", "card-curation"]) {
       let task: unknown;
       const { ctx } = context(["schedule", "add", "Duty"], { cron: "0 * * * *", template }, {
         scheduleAdd: async (body: { task: unknown }) => { task = body.task; return { schedule: { name: "Duty", id: "id", next_run: Date.now() + 60_000 } }; },
@@ -41,6 +41,24 @@ describe("talkie schedule CLI", () => {
     expect(args).toEqual(["cursor", 2]);
     expect(lines.join("\n")).toContain("next");
   });
+  test("unresolved --ack-legacy clears the older-outcome count and refuses paging options", async () => {
+    let calls = 0;
+    const client = { scheduleUnresolvedAckLegacy: async () => { calls++; return { cleared: calls === 1 ? 3 : 0 }; } };
+    const first = context(["schedule", "unresolved"], { "ack-legacy": true }, client);
+    expect(await orchestrator(first.ctx)).toBe(0);
+    expect(first.lines).toEqual(["acknowledged 3 older outcomes"]);
+    const second = context(["schedule", "unresolved"], { "ack-legacy": true }, client);
+    expect(await orchestrator(second.ctx)).toBe(0);
+    expect(second.lines).toEqual(["no older outcomes were counted"]);
+    const json = context(["schedule", "unresolved"], { "ack-legacy": true }, { scheduleUnresolvedAckLegacy: async () => ({ cleared: 1 }) });
+    expect(await orchestrator({ ...json.ctx, json: true } as Ctx)).toBe(0);
+    expect(json.lines).toEqual(['{"cleared":1}']);
+    const withPaging: Record<string, string | true>[] = [{ "ack-legacy": true, limit: "5" }, { "ack-legacy": true, after: "cursor" }];
+    for (const flags of withPaging) {
+      await expect(orchestrator(context(["schedule", "unresolved"], flags, client).ctx)).rejects.toThrow("takes no other option");
+    }
+    expect(calls).toBe(2);
+  });
   test("unresolved text distinguishes claims and local ids for the same run", async () => {
     const entries = [
       { id: "id", name: "Job", run: "run", claim: { term: 1, seq: 2, generation: 3 } },
@@ -55,6 +73,16 @@ describe("talkie schedule CLI", () => {
     expect(lines[0]).toContain("claim 1:2:3");
     expect(lines[1]).toContain("claim 1:4:3");
     expect(lines[2]).toContain("local_id local-1");
+  });
+  test("unresolved text shows the result excerpt a run kept, with terminal control characters removed", async () => {
+    const entries = [{ id: "id", name: "Job", run: "run", local_id: "local-1", result: "boom\u001b[31m red" }, { id: "id", name: "Job", run: "run-2", local_id: "local-2" }];
+    const { ctx, lines } = context(["schedule", "unresolved"], {}, {
+      scheduleUnresolved: async () => ({ total: entries.length, entries, next_cursor: null }),
+    });
+    expect(await orchestrator(ctx)).toBe(0);
+    expect(lines[0]).toContain("result boom");
+    expect(lines[0]).not.toContain("\u001b");
+    expect(lines[1]).not.toContain("result");
   });
   test("reset sanitizes terminal control characters in schedule JSON", async () => {
     const { ctx, lines } = context(["schedule", "reset", "id"], {}, {

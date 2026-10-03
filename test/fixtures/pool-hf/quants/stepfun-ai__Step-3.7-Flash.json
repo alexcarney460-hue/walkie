@@ -1,0 +1,37 @@
+[
+ {
+  "_id": "6a19843ef4090276d1c9589a",
+  "id": "unsloth/Step-3.7-Flash-GGUF",
+  "downloads": 242191
+ },
+ {
+  "_id": "6a18283973882ba820f3dab6",
+  "id": "stepfun-ai/Step-3.7-Flash-GGUF",
+  "downloads": 4610
+ },
+ {
+  "_id": "6a19773315024dbf3d9d3872",
+  "id": "mudler/Step-3.7-Flash-APEX-GGUF",
+  "downloads": 2484
+ },
+ {
+  "_id": "6a1f21b2da5f8c053f979e9e",
+  "id": "bartowski/Step-3.7-Flash-GGUF",
+  "downloads": 1639
+ },
+ {
+  "_id": "6aa5965db82a750ffcb57088",
+  "id": "Baekpica/Step-3.7-Flash-Mixed-Quant-GGUF",
+  "downloads": 725
+ },
+ {
+  "_id": "6a1e245be07a7f0cfa1d361e",
+  "id": "DevQuasar/stepfun-ai.Step-3.7-Flash-GGUF",
+  "downloads": 272
+ },
+ {
+  "_id": "6a192b87ef18f7cbc549c752",
+  "id": "AesSedai/Step-3.7-Flash-GGUF",
+  "downloads": 252
+ }
+]

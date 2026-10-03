@@ -1,0 +1,138 @@
+{
+ "_id": "6a90a9f94eef6f63ac7830e3",
+ "id": "lmstudio-community/Qwen3.8-Flash-Next-GGUF",
+ "sha": "158fc825df3eaa6c22d3c57a5927a5adf1c7cda7",
+ "downloads": 20388,
+ "siblings": [
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q4_K_M-00001-of-00003.gguf",
+   "blobId": "bca4a42333bf3a0ccb5a8fea07873fc863017264",
+   "size": 39928319168,
+   "lfs": {
+    "sha256": "7f721917033a7e170625334c7f33f4a6ec1bf7a8d78c972e34360a77f593f60d",
+    "size": 39928319168,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q4_K_M-00002-of-00003.gguf",
+   "blobId": "c93a6ee40d5b6cf4406cbe6293752461e2246c25",
+   "size": 39874671712,
+   "lfs": {
+    "sha256": "31c358255d5d534cf5830f2e173065a4b26f960555f7891a64cc6b840ef80d8d",
+    "size": 39874671712,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q4_K_M-00003-of-00003.gguf",
+   "blobId": "a4e6371034a967e2d61845e02ef2820231653d1f",
+   "size": 39347731360,
+   "lfs": {
+    "sha256": "85f66f79c3c3f29fb6ed1776a0c42d95dfff882a990dcbf1a650fc4231e3144a",
+    "size": 39347731360,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q6_K-00001-of-00005.gguf",
+   "blobId": "33e8a553e04484d706054d8d84fa29e3cd1206f9",
+   "size": 538627872,
+   "lfs": {
+    "sha256": "71387ae2f2a5a6f3a960ad0201e4d80f6a9cbe9e0a628beb1b2e08f142ef900f",
+    "size": 538627872,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q6_K-00002-of-00005.gguf",
+   "blobId": "766778caaa60509ea54718bf10bf8a31a6261ad0",
+   "size": 54400261312,
+   "lfs": {
+    "sha256": "8aeb4c8e478809a91b2094f61ba276265d10425d036a3a9c5c9959ea650858d4",
+    "size": 54400261312,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q6_K-00003-of-00005.gguf",
+   "blobId": "a36e3c13bafaafa21fa20b6db427f1fc8a2856bd",
+   "size": 39554850240,
+   "lfs": {
+    "sha256": "fb3e3b39db9c355eac677b0f546a2478127db4d586effc09eca5aa74e9879b8b",
+    "size": 39554850240,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q6_K-00004-of-00005.gguf",
+   "blobId": "d75646f7d1d6e15a209b66d7c1be1ff088b809b1",
+   "size": 39721523392,
+   "lfs": {
+    "sha256": "967cf6f40210c1cd99f0dd8c6ae5a44758322e995516529fe3c6ca1f0e9a39a3",
+    "size": 39721523392,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+   "blobId": "637eb66d56cc5ab2424e83d8334909df8341818a",
+   "size": 693379872,
+   "lfs": {
+    "sha256": "ffc3e5f2d9766a5bdf5481af0a9a7ab48354f6e6e8a394b09ecd1b6930b6e054",
+    "size": 693379872,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+   "blobId": "b7e91ff2bd3489f8b900a7ac5dd2d85f8e570f07",
+   "size": 54400261312,
+   "lfs": {
+    "sha256": "2427ca6b4344c95c55f99a0b04390da30cd5bc3ea5906c2f2ce8fcb23273d946",
+    "size": 54400261312,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+   "blobId": "e0ed3dae9029f908db16e3542b5147ad5beb8a94",
+   "size": 39380516832,
+   "lfs": {
+    "sha256": "88488e4ab467a1392cfa09cc794545f3896f9ceca543b69a16c47ef1c65867dd",
+    "size": 39380516832,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+   "blobId": "bd565cd2cad1d9e40de023c3478ef163b38945cc",
+   "size": 39513029696,
+   "lfs": {
+    "sha256": "a5a8c7d4fa1a009e250cf9ba6dc8e6ca26ff2ad010611038e630c3aa863a1da4",
+    "size": 39513029696,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+   "blobId": "8a19e464d7aa3d17c1151b635b1a4a62fa188262",
+   "size": 39523784672,
+   "lfs": {
+    "sha256": "b2dc91a815816b8abc09199989b0a98bf814fb422173fa485cfff803ded10b6b",
+    "size": 39523784672,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf",
+   "blobId": "de5f2a76ad3706291cff0b08863bed7050c24b0f",
+   "size": 14713977408,
+   "lfs": {
+    "sha256": "2b8131888e254a05473fc8e1ddd7111b80327f5aae7fc361b8d5563375d4b9c0",
+    "size": 14713977408,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

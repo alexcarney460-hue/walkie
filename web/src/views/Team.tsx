@@ -15,7 +15,7 @@ import { PhoneDevices } from "./PhoneDevices.tsx";
 import { rentalForNode, useCompute } from "../api/compute.ts";
 import { AddComputeButton, AddComputeSheet, rentalStateLabel } from "./compute/AddComputeSheet.tsx";
 import { RentedChip } from "./compute/RentedChip.tsx";
-import { ACTIVE_STATES } from "../../../src/protocol/compute.ts";
+import { ACTIVE_STATES, COMPUTE_ALERT_TEXT } from "../../../src/protocol/compute.ts";
 
 const ROLE_LABEL = { owner: "Owner", member: "Member", observer: "Observer" };
 
@@ -104,7 +104,7 @@ export function Team() {
 
           <Section title="Machines" meta={`${nodes.filter((n) => n.online).length} of ${nodes.length} online`} id="machines-h"
             actions={owner && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined}>
-            {compute.state?.alerts?.map(alert => <p key={alert} role="alert">{alert === 'tick_stale' ? 'Compute monitoring is delayed. New rentals are paused.' : 'Shutdown is delayed. Billing continues until deletion is confirmed.'}</p>)}
+            {compute.state?.alerts?.map(alert => <p key={alert} role="alert">{COMPUTE_ALERT_TEXT[alert]}</p>)}
             <div className="table-wrap">
               <table className="table table-compact">
                 <thead>

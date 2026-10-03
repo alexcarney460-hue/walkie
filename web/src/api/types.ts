@@ -19,6 +19,8 @@ export type {
   BoardDelta, BoardView, CardDetail, CardView, Column, ColumnRole, Meter, PathRule, ProjectStub, ProjectView, ProjectsPayload, TimelineEntry,
 } from "../../../src/protocol/projects/schema.ts";
 export type { RoomFileDetail, RoomFileView, RoomVersion } from "../../../src/protocol/projects/schema.ts";
+export type { StatusReportMode, StatusReportPayload } from "../../../src/protocol/projects/status-report-setting.ts";
+export type { ComputedFacts, ScreenGroupView, ScreensView, ScreenStatus, ScreenView, SetFactView, StatusPagePayload, StoryCounts, StoryView, WhoView } from "../../../src/protocol/projects/status-page.ts";
 
 import type { BodyOf } from "../../../src/protocol/schemas.ts";
 
@@ -48,3 +50,26 @@ export interface PendingJoin {
   ip: string;
   requested_at: number;
 }
+
+/** Browser projection of the recommendation view; authority comes from the server. */
+export interface Recommendation {
+  id: string;
+  short: string;
+  group: "work" | "moves" | "reviews" | "stalled" | "setup";
+  project_name: string | null;
+  summary: string;
+  reason: string;
+  evidence: readonly string[];
+  status: "pending" | "approved" | "dismissed" | "expired" | "superseded";
+  can_approve: boolean;
+  can_dismiss: boolean;
+  why_not?: string;
+  resolved?: { status: "approved" | "dismissed" | "superseded"; by: string; at: number; note?: string };
+  /** What a model-driven duty wrote itself: shown quoted as WalkieTalkie's, never sent in anyone's name. */
+  context?: string;
+  /** Word for word what approving sends or makes in this person's name (an ask's message, a new card's title); null: its card is gone. */
+  outgoing?: string | null;
+}
+/** Every open recommendation comes first; `more_open` counts open ones past the list's cap. */
+export interface RecommendationsPayload { recs: Recommendation[]; now: number; more_open?: number }
+export type RecommendationDecision = "approve" | "dismiss";

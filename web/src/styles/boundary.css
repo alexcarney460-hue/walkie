@@ -1,0 +1,48 @@
+/* Render error boundaries (DASH-BLANK-1): the root screen, a view's place and one card's place. They reuse the first-run
+   screen (.firstrun*) and the error card (.error-state); this file adds the Details disclosure and the spacing. */
+.boundary-alert { display: grid; gap: 20px; }
+.boundary-message { overflow-wrap: anywhere; }
+.boundary-root .firstrun-actions { flex-wrap: wrap; }
+
+.boundary-details { min-width: 0; max-width: 100%; }
+.boundary-details > summary {
+  width: fit-content;
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  font-weight: 500;
+  cursor: pointer;
+}
+.boundary-details > summary:hover { color: var(--text); }
+.boundary-stack {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--bg-rail);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.boundary-item { min-width: 0; }
+.boundary-item-title { font-weight: 550; }
+.boundary-item .boundary-details[open] { flex: 1 1 100%; }
+
+.boundary-view { display: grid; gap: 16px; align-content: start; }
+.boundary-view .page-title { margin-bottom: 4px; }
+
+/* A drawer that cannot render has no panel to sit in: its message floats at the corner until the page changes. */
+.app > .boundary-item {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--tabbar-h) + 8px);
+  z-index: 30;
+  width: min(420px, calc(100vw - 32px));
+  background: linear-gradient(var(--red-soft), var(--red-soft)), var(--surface);
+  box-shadow: var(--shadow-pop);
+}

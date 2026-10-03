@@ -1,0 +1,135 @@
+{
+ "_id": "6a375abf5427d61a91ee2f82",
+ "id": "ornith-ai/Ornith-1.0-35B",
+ "downloads": 1506004,
+ "likes": 506,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "5df2ed3f675c7beaa490328cc70bb573b65fb660",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5_moe",
+  "image-text-to-text",
+  "text-generation",
+  "conversational",
+  "license:mit",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/terminal-bench-2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 64.2,
+    "date": "2026-06-25",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.0-35B",
+     "name": "Model Card"
+    },
+    "notes": "Terminus-2 harness (Harbor framework), parser=json, temperature=1.0, top_p=1.0, 128K context, 4h timeout, avg of 5 runs."
+   },
+   "pullRequest": 36
+  },
+  {
+   "filename": ".eval_results/terminal-bench-2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 62.8,
+    "date": "2026-06-25",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.0-35B",
+     "name": "Model Card"
+    },
+    "notes": "Claude Code 2.1.126 harness, parser=json, temperature=1.0, top_p=1.0, max_new_tokens=131072, avg of 5 runs."
+   },
+   "pullRequest": 36
+  },
+  {
+   "filename": ".eval_results/swe-bench_multilingual.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Multilingual",
+     "task_id": "swe_bench_multilingual_%_resolved"
+    },
+    "value": 69.3,
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.0-35B",
+     "name": "Model Card"
+    },
+    "date": "2026-08-10T19:50:40.000Z"
+   },
+   "pullRequest": 35
+  },
+  {
+   "filename": ".eval_results/Ornith-1.0-35B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 75.6,
+    "date": "2026-06-25",
+    "source": {
+     "url": "https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B",
+     "name": "Ornith-1.0-35B model card"
+    }
+   },
+   "pullRequest": 8
+  },
+  {
+   "filename": ".eval_results/Ornith-1.0-35B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 50.4,
+    "date": "2026-06-25",
+    "source": {
+     "url": "https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B",
+     "name": "Ornith-1.0-35B model card"
+    }
+   },
+   "pullRequest": 8
+  },
+  {
+   "filename": ".eval_results/Ornith-1.0-35B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "claw-eval/Claw-Eval",
+     "task_id": "general"
+    },
+    "value": 69.8,
+    "date": "2026-06-25",
+    "source": {
+     "url": "https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B",
+     "name": "Ornith-1.0-35B model card"
+    }
+   },
+   "pullRequest": 8
+  }
+ ],
+ "createdAt": "2026-06-21T03:30:07.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 35107181936
+  },
+  "total": 664944
+ }
+}

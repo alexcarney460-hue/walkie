@@ -24,7 +24,7 @@ export const ACCOUNT_NOT_USABLE = "account_not_usable";
 
 export type AccountPlan =
   | { kind: "local"; entry: VaultEntry }
-  | { kind: "peer"; id: string; owner: string; node: string; provider: "claude" | "codex"; pooled?: true }
+  | { kind: "peer"; id: string; owner: string; node: string; provider: "claude" | "codex"; pooled?: true; gen?: string }
   | { kind: "refused"; why: string };
 
 /** The team's pool and who is an owner/member (the pool's borrowers); omitted: the pool is off. */
@@ -77,7 +77,21 @@ export function planSeatAccount(
   const online = both.find((m) => m.online);
   if (!online) return refused(`the machine holding it (${both[0]?.hostname ?? "?"}) is offline`);
   return { kind: "peer", id, owner, node: online.node_id, provider: runtime,
-    ...(owner !== o.me && o.pool?.team === "company" && online.vault?.company && !online.vault.personal ? { pooled: true as const } : {}) };
+    ...(owner !== o.me && o.pool?.team === "company" && online.vault?.company && !online.vault.personal ? { pooled: true as const } : {}),
+    ...(online.vault?.gen ? { gen: online.vault.gen } : {}) };
+}
+
+/**
+ * Whether two plans name the same credential: the same lending machine for a hand-out, and the same stored generation
+ * for this machine's own vault entry (an account removed and added again under the same id is a new credential).
+ */
+export function sameAccountSource(a: Exclude<AccountPlan, { kind: "refused" }>, b: Exclude<AccountPlan, { kind: "refused" }>): boolean {
+  // A hand-out's generation is compared when both sides know it (an older lender or view may not report one).
+  if (a.kind === "peer" && b.kind === "peer") {
+    return a.node === b.node && a.id === b.id && a.provider === b.provider && (a.gen === undefined || b.gen === undefined || a.gen === b.gen);
+  }
+  if (a.kind === "local" && b.kind === "local") return a.entry.id === b.entry.id && a.entry.gen === b.entry.gen;
+  return false;
 }
 
 /** What a seat's run gets from its account: environment additions and, for a seat user's Codex, its auth.json copy. */
@@ -89,6 +103,8 @@ export interface SeatCredentials {
   codexAuth?: string;
   /** A same-user seat's leased Codex home (COMPANY POOL; codex-lease-home.ts), deleted when the seat ends. */
   leaseHome?: string;
+  /** A hand-out's credential generation as the lending machine reported it (absent from older lenders). */
+  gen?: string;
   /** For the router's lease (the account id, a hand-out's node, owner and grant). */
   lease: { provider: "claude" | "codex"; account: string; from_node?: string; owner?: string; grant?: string };
 }
@@ -97,9 +113,14 @@ export interface CredentialDeps {
   /** This machine's vault: a Claude token, decrypted in memory for one launch. */
   claudeToken: (id: string) => Promise<string>;
   /** A hand-out from the owner's machine (vault-lease.ts): a Claude setup-token, or an access-only Codex auth.json. */
-  lease: (id: string, node: string, provider: "claude" | "codex") => Promise<{ token?: string; codex_auth?: string; grant: string; expires_at?: number | null }>;
+  lease: (id: string, node: string, provider: "claude" | "codex") => Promise<{ token?: string; codex_auth?: string; grant: string; expires_at?: number | null; gen?: string }>;
   /** A same-user seat's Codex home for a leased login (codex-lease-home.ts writeLeaseHome). */
   leaseHome?: (grant: string, authJson: string) => string;
+  /**
+   * Keep a same-user Codex lease in memory (`codexAuth`) and do not call `leaseHome`. The host writes the home
+   * only after it has checked the launcher again. A seat user never writes a lease home, so this does not apply.
+   */
+  deferLeaseHome?: boolean;
   /** Codex auth.json reduced to access-only (host.ts accessOnlyCodex). */
   accessOnlyCodex: (text: string) => string | null;
 }
@@ -110,15 +131,17 @@ export async function seatCredentials(plan: Exclude<AccountPlan, { kind: "refuse
     const r = await d.lease(plan.id, plan.node, plan.provider);
     if (r.expires_at !== undefined && r.expires_at !== null && r.expires_at <= Date.now()) throw new Error("the owner's account lease expired");
     const lease = { provider: plan.provider, account: plan.id, from_node: plan.node, ...(plan.owner !== me ? { owner: plan.owner } : {}), grant: r.grant };
+    const gen = r.gen ? { gen: r.gen } : {};
     if (plan.provider === "claude") {
       if (!r.token) throw new Error("the owner's machine sent no token");
-      return { env: { CLAUDE_CODE_OAUTH_TOKEN: r.token }, expiresAt: r.expires_at, lease };
+      return { env: { CLAUDE_CODE_OAUTH_TOKEN: r.token }, expiresAt: r.expires_at, lease, ...gen };
     }
     if (!r.codex_auth) throw new Error("the owner's machine sent no Codex login");
-    if (asSeatUser) return { env: {}, codexAuth: r.codex_auth, expiresAt: r.expires_at, lease };
+    if (asSeatUser) return { env: {}, codexAuth: r.codex_auth, expiresAt: r.expires_at, lease, ...gen };
+    if (d.deferLeaseHome) return { env: {}, codexAuth: r.codex_auth, expiresAt: r.expires_at, lease, ...gen };
     if (!d.leaseHome) throw new Error("a leased Codex login needs a home of its own on this machine");
     const home = d.leaseHome(r.grant, r.codex_auth);
-    return { env: { CODEX_HOME: home }, leaseHome: home, expiresAt: r.expires_at, lease };
+    return { env: { CODEX_HOME: home }, leaseHome: home, expiresAt: r.expires_at, lease, ...gen };
   }
   const e = plan.entry;
   if (e.provider === "claude") return { env: { CLAUDE_CODE_OAUTH_TOKEN: await d.claudeToken(e.id) }, lease: { provider: "claude", account: e.id } };

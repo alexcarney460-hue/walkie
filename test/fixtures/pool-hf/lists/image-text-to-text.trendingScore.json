@@ -1,0 +1,921 @@
+[
+ {
+  "_id": "6a91d58bed327671e1699008",
+  "id": "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 194,
+  "downloads": 1679425,
+  "createdAt": "2026-08-28T18:38:03.000Z"
+ },
+ {
+  "_id": "6ab7939bff5de70b9ff8761d",
+  "id": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 169,
+  "downloads": 148142,
+  "createdAt": "2026-09-26T09:42:51.000Z"
+ },
+ {
+  "_id": "6a9e86d1dab7f88030e2af20",
+  "id": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 151,
+  "downloads": 952084,
+  "createdAt": "2026-09-07T09:41:37.000Z"
+ },
+ {
+  "_id": "6a9678354e2541b828b4a40e",
+  "id": "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8cf4424d6320019d7c4e9d",
+     "id": "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NM-DAU"
+    }
+   ]
+  },
+  "trendingScore": 145,
+  "downloads": 1817224,
+  "createdAt": "2026-09-01T07:01:09.000Z"
+ },
+ {
+  "_id": "6ab1a088c55709928a29bee0",
+  "id": "ukisai/Swift-1.5-Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6aaaa6bd63c33058fdf07bf1",
+     "id": "ukisai/Swift-1.5-Qwen3.8-27b"
+    }
+   ]
+  },
+  "trendingScore": 107,
+  "downloads": 90036,
+  "createdAt": "2026-09-21T21:24:24.000Z"
+ },
+ {
+  "_id": "6a832587e74e9a9edfb67ff9",
+  "id": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 100,
+  "downloads": 2053544,
+  "createdAt": "2026-08-17T15:15:19.000Z"
+ },
+ {
+  "_id": "6a81b8bfa514d4eed962e012",
+  "id": "huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 89,
+  "downloads": 2039470,
+  "createdAt": "2026-08-16T13:18:55.000Z"
+ },
+ {
+  "_id": "6a5c53b3dd4adc6511a71e1b",
+  "id": "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a7540d25d3ee4a18936b47e",
+     "id": "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP"
+    }
+   ]
+  },
+  "trendingScore": 80,
+  "downloads": 1891994,
+  "createdAt": "2026-07-19T04:33:55.000Z"
+ },
+ {
+  "_id": "6ab1ab2a0904bf417755525e",
+  "id": "bartowski/MiMo-V2.6-Distill-Qwen-9B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6ab17500b9a45e1c8617ba79",
+     "id": "XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B"
+    }
+   ]
+  },
+  "trendingScore": 74,
+  "downloads": 245420,
+  "createdAt": "2026-09-21T22:09:46.000Z"
+ },
+ {
+  "_id": "6ab52f8603b03a61f6e814d3",
+  "id": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6ab2422c6621b087165137ca",
+     "id": "ukisai/Swift-Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 71,
+  "downloads": 96094,
+  "createdAt": "2026-09-24T14:11:18.000Z"
+ },
+ {
+  "_id": "6a8167f07e5b0adb68f9fcf0",
+  "id": "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 65,
+  "downloads": 143711,
+  "createdAt": "2026-08-16T07:34:08.000Z"
+ },
+ {
+  "_id": "6ab74f96122ef418c3a08839",
+  "id": "huihui-ai/Huihui-GLM-5.3-Flash-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "trendingScore": 59,
+  "downloads": 5711,
+  "createdAt": "2026-09-26T04:52:38.000Z"
+ },
+ {
+  "_id": "6abbb08d722dff10787eac37",
+  "id": "isichan-ai/Mitsuba-ComfyUI-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 53,
+  "downloads": 3388,
+  "createdAt": "2026-09-29T12:35:25.000Z"
+ },
+ {
+  "_id": "6a8ecac19808154a6906b9bd",
+  "id": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 51,
+  "downloads": 184752,
+  "createdAt": "2026-08-26T11:15:13.000Z"
+ },
+ {
+  "_id": "6aa41730b646c53df3eb0873",
+  "id": "ukisai/Swift-Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6aa00f19341fe5074df32af6",
+     "id": "ukisai/Swift-Qwen3.8-27b"
+    }
+   ]
+  },
+  "trendingScore": 47,
+  "downloads": 271757,
+  "createdAt": "2026-09-11T14:58:56.000Z"
+ },
+ {
+  "_id": "6a9614f04682791833118a51",
+  "id": "peculiar-ragdoll/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8c3d99b18973cf28470e29",
+     "id": "huihui-ai/Huihui-Ornith-1.5-35B-A3B-abliterated"
+    }
+   ]
+  },
+  "trendingScore": 41,
+  "downloads": 174565,
+  "createdAt": "2026-08-31T23:57:36.000Z"
+ },
+ {
+  "_id": "69ceedbf0689e4caa5ab755f",
+  "id": "HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive",
+  "trendingScore": 38,
+  "downloads": 1318602,
+  "createdAt": "2026-04-02T22:29:19.000Z"
+ },
+ {
+  "_id": "6a8edc2c225d22c0ee0fdab6",
+  "id": "unsloth/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 36,
+  "downloads": 1562076,
+  "createdAt": "2026-08-26T12:29:32.000Z"
+ },
+ {
+  "_id": "69e17b9e48b1ac4c5ec71427",
+  "id": "HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "trendingScore": 35,
+  "downloads": 911715,
+  "createdAt": "2026-04-17T00:15:26.000Z"
+ },
+ {
+  "_id": "6abb35648a5ba01dff2721a5",
+  "id": "DavidAU/Qwen3.8-27B-Turbo-Brilliance-Power-35X-Reasoning-Instruct-modes-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 31,
+  "downloads": 0,
+  "createdAt": "2026-09-29T03:49:56.000Z"
+ },
+ {
+  "_id": "6ab0652e40bcb88107c54f43",
+  "id": "EldanRing/Winnow-12B",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "trendingScore": 27,
+  "downloads": 21482,
+  "createdAt": "2026-09-20T22:58:54.000Z"
+ },
+ {
+  "_id": "6ab2ab0dfe5614d2e08dbff8",
+  "id": "agentionai/Qwen3.8-27B-AP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 24,
+  "downloads": 119696,
+  "createdAt": "2026-09-22T16:21:33.000Z"
+ },
+ {
+  "_id": "6a7f364cccffc05984ed3c4f",
+  "id": "peculiar-ragdoll/Dirk-Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 21,
+  "downloads": 1227399,
+  "createdAt": "2026-08-14T15:37:48.000Z"
+ },
+ {
+  "_id": "6a9cea389d04f655f2d624e4",
+  "id": "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 20,
+  "downloads": 183862,
+  "createdAt": "2026-09-06T04:21:12.000Z"
+ },
+ {
+  "_id": "69e066230bd313faad5d76e7",
+  "id": "unsloth/Qwen3.6-35B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "trendingScore": 19,
+  "downloads": 1308144,
+  "createdAt": "2026-04-16T04:31:31.000Z"
+ },
+ {
+  "_id": "6a1977c791f1a95deb74b2fa",
+  "id": "unsloth/gemma-4-12b-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "trendingScore": 16,
+  "downloads": 1481600,
+  "createdAt": "2026-05-29T11:25:59.000Z"
+ },
+ {
+  "_id": "6a954c3292de0e20d7c5bc1c",
+  "id": "orcarouter/GLM-5.3-Flash-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "trendingScore": 16,
+  "downloads": 29031,
+  "createdAt": "2026-08-31T09:41:06.000Z"
+ },
+ {
+  "_id": "69a2f5edef408247323ee7f4",
+  "id": "unsloth/Qwen3.5-9B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "trendingScore": 14,
+  "downloads": 1311522,
+  "createdAt": "2026-02-28T14:04:29.000Z"
+ },
+ {
+  "_id": "69a6a7c0ae4e7dd37aeedff2",
+  "id": "lukey03/Qwen3.5-9B-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "trendingScore": 13,
+  "downloads": 30755,
+  "createdAt": "2026-03-03T09:20:00.000Z"
+ },
+ {
+  "_id": "69cd2e52ea37eb5eb635f98a",
+  "id": "unsloth/gemma-4-31B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69b1b2ec895b2d5026e6bc2e",
+     "id": "google/gemma-4-31B-it"
+    }
+   ]
+  },
+  "trendingScore": 13,
+  "downloads": 331551,
+  "createdAt": "2026-04-01T14:40:18.000Z"
+ },
+ {
+  "_id": "6a01d228550577cadfac8843",
+  "id": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "trendingScore": 13,
+  "downloads": 1102796,
+  "createdAt": "2026-05-11T12:57:12.000Z"
+ },
+ {
+  "_id": "6a3947825cc4ec067c8e0a4c",
+  "id": "HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "trendingScore": 11,
+  "downloads": 863034,
+  "createdAt": "2026-06-22T14:32:34.000Z"
+ },
+ {
+  "_id": "6a849035fcf5142100762676",
+  "id": "byteshape/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 11,
+  "downloads": 620194,
+  "createdAt": "2026-08-18T17:02:45.000Z"
+ },
+ {
+  "_id": "6a7f38b6483eb93f2a5f6001",
+  "id": "bartowski/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 9,
+  "downloads": 477275,
+  "createdAt": "2026-08-14T15:48:06.000Z"
+ },
+ {
+  "_id": "6a3c6badf45388626e883cee",
+  "id": "HauhauCS/Gemma4-31B-QAT-Uncensored-HauhauCS-Balanced-MTP",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69b1b2ec895b2d5026e6bc2e",
+     "id": "google/gemma-4-31B-it"
+    }
+   ]
+  },
+  "trendingScore": 8,
+  "downloads": 83618,
+  "createdAt": "2026-06-24T23:43:41.000Z"
+ },
+ {
+  "_id": "6a8076cedec2241021b96942",
+  "id": "empero-ai/Qwen3.8-27B-Ridge-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 8,
+  "downloads": 439286,
+  "createdAt": "2026-08-15T14:25:18.000Z"
+ },
+ {
+  "_id": "6aa684a93eaa602a16ca209d",
+  "id": "pfeifferj/GLM-5.3-Flash-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "trendingScore": 8,
+  "downloads": 24744,
+  "createdAt": "2026-09-13T11:10:33.000Z"
+ },
+ {
+  "_id": "6a838b56859b6056ecfa5667",
+  "id": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 7,
+  "downloads": 4173935,
+  "createdAt": "2026-08-17T22:29:42.000Z"
+ },
+ {
+  "_id": "6a907a9e2f6af93259faccae",
+  "id": "ggml-org/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 7,
+  "downloads": 11281,
+  "createdAt": "2026-08-27T17:57:50.000Z"
+ },
+ {
+  "_id": "6ab51514cd21e1f407b2ae8c",
+  "id": "EldanRing/Winnow-E4B",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "69a5ebb435468e1470916cd0",
+     "id": "google/gemma-4-E4B-it"
+    }
+   ]
+  },
+  "trendingScore": 7,
+  "downloads": 19346,
+  "createdAt": "2026-09-24T12:18:28.000Z"
+ },
+ {
+  "_id": "6a8f8ec7f0e47dd74dee8695",
+  "id": "bartowski/orcarouter_Qwen3.8-27B-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83bdd45235f3a3672c77d7",
+     "id": "orcarouter/Qwen3.8-27B-Uncensored"
+    }
+   ]
+  },
+  "trendingScore": 6,
+  "downloads": 147870,
+  "createdAt": "2026-08-27T01:11:35.000Z"
+ },
+ {
+  "_id": "69cd2ebc3dc1641e52e18d1d",
+  "id": "unsloth/gemma-4-E4B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a5ebb435468e1470916cd0",
+     "id": "google/gemma-4-E4B-it"
+    }
+   ]
+  },
+  "trendingScore": 5,
+  "downloads": 616439,
+  "createdAt": "2026-04-01T14:42:04.000Z"
+ },
+ {
+  "_id": "6a047df735125438ed2a1d14",
+  "id": "unsloth/Qwen3.5-9B-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "trendingScore": 5,
+  "downloads": 66413,
+  "createdAt": "2026-05-13T13:34:47.000Z"
+ },
+ {
+  "_id": "6a7f31a8d0b754daf3d51692",
+  "id": "ggml-org/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 5,
+  "downloads": 1006096,
+  "createdAt": "2026-08-14T15:18:00.000Z"
+ },
+ {
+  "_id": "6aa18aa6bdd60e32fcfced93",
+  "id": "jcbtc/Qwen3.8-Flash-CIRU-STRIX-Orca",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 5,
+  "downloads": 734,
+  "createdAt": "2026-09-09T16:34:46.000Z"
+ },
+ {
+  "_id": "6ab1d527fd545be1ccfd1d34",
+  "id": "GCSA-AiLab/GLM-5.3-Flash-Uncensored-RCO-GSQ-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "trendingScore": 5,
+  "downloads": 1956,
+  "createdAt": "2026-09-22T01:08:55.000Z"
+ },
+ {
+  "_id": "69e0f0f03ee9bc5ee6957725",
+  "id": "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 190210,
+  "createdAt": "2026-04-16T14:23:44.000Z"
+ },
+ {
+  "_id": "6a7870f41595134d50005177",
+  "id": "peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 6958,
+  "createdAt": "2026-08-09T12:22:12.000Z"
+ },
+ {
+  "_id": "6a917d36353ae3d2f0bca822",
+  "id": "bartowski/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 72687,
+  "createdAt": "2026-08-28T12:21:10.000Z"
+ },
+ {
+  "_id": "6a965827c9955f15d2771f61",
+  "id": "HermiHg/Qwen3.8-27B-mmproj-Q5_K-MIX-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 8956,
+  "createdAt": "2026-09-01T04:44:23.000Z"
+ },
+ {
+  "_id": "6a9abcf3a0a4fe024b25fd77",
+  "id": "Jackrong/Qwopus3.8-27B-Flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 287411,
+  "createdAt": "2026-09-04T12:43:31.000Z"
+ },
+ {
+  "_id": "6aa1b5f7e59f463e8074fee5",
+  "id": "agentionai/Signal-3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 25114,
+  "createdAt": "2026-09-09T19:39:35.000Z"
+ },
+ {
+  "_id": "6aa1b66094123133167cbb52",
+  "id": "RentedNoodle/Qwen3.8-27B-OrcaRouter-GSQ-RCO-IQ3_XXS-Uncensored",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83bdd45235f3a3672c77d7",
+     "id": "orcarouter/Qwen3.8-27B-Uncensored"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 34892,
+  "createdAt": "2026-09-09T19:41:20.000Z"
+ },
+ {
+  "_id": "6aa680cd26bbc82b745637ca",
+  "id": "pfeifferj/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 26503,
+  "createdAt": "2026-09-13T10:54:05.000Z"
+ },
+ {
+  "_id": "6aaa191063d79b1fcd3d0d05",
+  "id": "JackAgentLead/Jack-3.8-27B-V2-VL-16GB-VRAM",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 1493,
+  "createdAt": "2026-09-16T04:20:32.000Z"
+ },
+ {
+  "_id": "6abd4d5f29b577735c208e79",
+  "id": "agentionai/Qwen3.8-Flash-Next-Gyro-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 4,
+  "downloads": 306,
+  "createdAt": "2026-09-30T17:56:47.000Z"
+ },
+ {
+  "_id": "6a7b6f1f8270d9832e03bb42",
+  "id": "peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-GGUF-MTP",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "trendingScore": 3,
+  "downloads": 14778,
+  "createdAt": "2026-08-11T18:51:11.000Z"
+ },
+ {
+  "_id": "6a9274f332a924cb8c6e67ca",
+  "id": "jcbtc/Qwen3.8-Flash-CIRU-STRIX-IU4",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "trendingScore": 3,
+  "downloads": 28458,
+  "createdAt": "2026-08-29T05:58:11.000Z"
+ }
+]

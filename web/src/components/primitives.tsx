@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { Check, Copy, RefreshCw, TriangleAlert } from "lucide-react";
 import type { AgentState, Runtime } from "../api/types.ts";
 import { STATE_LABEL, hueFor, initials } from "../lib/format.ts";
-import { ago, agoLong, fullTime, useNow } from "../lib/time.ts";
+import { ago, agoLong, agoPlain, fullTime, useNow } from "../lib/time.ts";
 import { runtimeLabel } from "../../../src/protocol/runtime-label.ts";
 
 /** An inline hue custom property (UI-POLISH-2): `--mh` machine, `--ph` person, `--th` tag. */
@@ -41,6 +41,12 @@ export function RelTime({ ts, long, className }: { ts: number; long?: boolean; c
       {long ? agoLong(ts, now) : ago(ts, now)}
     </time>
   );
+}
+
+/** A time in whole words ("3 weeks ago", never "3w"), counting on its own, with the exact moment on hover: for pages read by people who are not on a terminal. */
+export function PlainTime({ ts, className }: { ts: number; className?: string }) {
+  const now = useNow();
+  return <time className={className} dateTime={new Date(ts).toISOString()} title={fullTime(ts)}>{agoPlain(ts, now)}</time>;
 }
 
 /** The default empty-state picture: two little chat bubbles, one waiting for a reply. */

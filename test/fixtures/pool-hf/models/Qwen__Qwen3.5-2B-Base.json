@@ -1,0 +1,29 @@
+{
+ "_id": "69a380e31f73b6d64f5d8d4e",
+ "id": "Qwen/Qwen3.5-2B-Base",
+ "downloads": 259070,
+ "likes": 97,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "b1485b2fa6dfa1287294f269f5fb618e03d52d7c",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5",
+  "image-text-to-text",
+  "conversational",
+  "license:apache-2.0",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "region:us"
+ ],
+ "createdAt": "2026-02-28T23:57:23.000Z",
+ "safetensors": {
+  "parameters": {
+   "F32": 2592,
+   "BF16": 2274067232
+  },
+  "total": 2274069824
+ },
+ "evalResults": []
+}

@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "69cd2e52ea37eb5eb635f98a",
+  "id": "unsloth/gemma-4-31B-it-GGUF",
+  "downloads": 331551
+ },
+ {
+  "_id": "69ceefb3a91383ae4e9cbb1c",
+  "id": "paperscarecrow/Gemma-4-31B-it-abliterated",
+  "downloads": 85620
+ },
+ {
+  "_id": "6a3c6badf45388626e883cee",
+  "id": "HauhauCS/Gemma4-31B-QAT-Uncensored-HauhauCS-Balanced-MTP",
+  "downloads": 83618
+ },
+ {
+  "_id": "69ce92d4588265df1fab5d2d",
+  "id": "bartowski/google_gemma-4-31B-it-GGUF",
+  "downloads": 38825
+ },
+ {
+  "_id": "69cd72b518ee711e165c2d4e",
+  "id": "lmstudio-community/gemma-4-31B-it-GGUF",
+  "downloads": 36352
+ },
+ {
+  "_id": "69ccf4754603a0959d971bd7",
+  "id": "ggml-org/gemma-4-31B-it-GGUF",
+  "downloads": 33447
+ },
+ {
+  "_id": "6a547fe8c25480eb7909d141",
+  "id": "TheDrummer/Artemis-31B-v1.1-GGUF",
+  "downloads": 8914
+ },
+ {
+  "_id": "69d323752d56eb23d872ffec",
+  "id": "LiconStudio/Gemma-4-31B-it-abliterated-GGUF",
+  "downloads": 6649
+ }
+]

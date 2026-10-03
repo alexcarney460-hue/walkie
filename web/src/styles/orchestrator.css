@@ -502,3 +502,22 @@ ul.mdr-list ul.mdr-list { list-style: circle; }
 .wt-more:hover { color: var(--text); }
 .wt-card-meta { color: var(--text-2); font-size: var(--fs-12); }
 .wt-card-controls .orch-start { gap: 6px; }
+
+/* Recommendations stay below the conversation's start controls. */
+.orch-recommendations { width: min(100%, var(--orch-col)); margin: 24px auto; padding: 16px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); color: var(--text); overflow-wrap: anywhere; }
+.orch-rec-heading, .orch-rec-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.orch-rec-heading { justify-content: space-between; }
+.orch-recommendations h2, .orch-recommendations h3, .orch-recommendations h4 { margin: 0; }
+.orch-recommendations p { margin: 8px 0; }
+.orch-rec-group { margin-top: 20px; }
+.orch-rec-group > ul { list-style: none; padding: 0; margin: 8px 0 0; }
+.orch-rec { border-top: 1px solid var(--line); padding: 14px 0; }
+.orch-rec-project { font-size: 12px; }
+.orch-rec details { margin: 10px 0; }
+.orch-rec summary { cursor: pointer; }
+.orch-rec details ul { padding-left: 20px; }
+.orch-rec-status { font-weight: 600; }
+.orch-rec-context, .orch-rec-outgoing { margin: 10px 0; padding: 8px 12px; border-left: 3px solid var(--line); background: var(--bg); }
+.orch-rec-label { font-size: 12px; font-weight: 600; }
+.orch-rec-message { white-space: pre-line; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .orch-recommendations { padding: 12px; } .orch-rec-actions .btn { min-height: 44px; } }

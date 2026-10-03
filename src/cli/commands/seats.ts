@@ -17,9 +17,9 @@ import { bool, int, need, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, requirePerson, type Ctx } from "../context.ts";
 import { ago, c, safeTerm } from "../format.ts";
 
-const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user|--seat-users] | seats doctor | seats cleanup-root <root-key> | seats migration-preflight | seats migrate --same-user"
+const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user|--seat-users [--codex-release]] | seats doctor | seats cleanup-root <root-key> | seats migration-preflight | seats migrate --same-user"
   + " | seats start <machine> [--count n] [--provider claude|codex] (--prompt \"…\" | --brief file|-)"
-  + " | seats setup-user [--apply] [--accept-readable-home] | seats allow [--same-user]"
+  + " | seats setup-user [--apply] [--accept-readable-home] [--codex-release] | seats allow [--same-user]"
   + " [--accept-readable-home] [--inherit-person-config] [--launchers @a,@a/machine,@a/machine/agent] [--max n]"
   + " [--runtimes claude,codex,kimi,grok] [--dir path] [--env NAME,NAME] | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
   + " | seats repo [list] | seats repo add <id> <path> | seats repo rm <id>";

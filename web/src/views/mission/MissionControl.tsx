@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive as ArchiveIcon, ArrowUpRight, ChevronRight, Laptop, Server } from "lucide-react";
 import type { AgentState, AgentView, ArchiveCount, NodeView, TeamView } from "../../api/types.ts";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { PageHeader } from "../../components/Shell.tsx";
 import { LocalModelsCard } from "../../components/LocalModels.tsx";
 import { ModelServerLoad } from "../../components/MachineStats.tsx";
@@ -23,6 +24,7 @@ import { projectCounts } from "../../lib/project-counts.ts";
 import { useProjects } from "../../state/projects.ts";
 import { api } from "../../api/client.ts";
 import { LocalLagBanner, type LocalLag } from "./LocalLagBanner.tsx";
+import { UnreachedNotice } from "./UnreachedBanner.tsx";
 import { isCloudAgent } from "../../../../src/protocol/guest-cloud.ts";
 
 /** Mission Control shows working agents and those needing a person; the strip narrows it to one of those. */
@@ -63,6 +65,14 @@ export function useRosterSplit(): { shown: AgentView[]; cloud: AgentView[]; hidd
 
 function ProjectCountStrip({ shown }: { shown: readonly AgentView[] }) {
   const { projects } = useProjects();
+  return (
+    <ErrorBoundary scope="item" name="project counts" resetKeys={[shown, projects]}>
+      <ProjectCounts shown={shown} projects={projects} />
+    </ErrorBoundary>
+  );
+}
+
+function ProjectCounts({ shown, projects }: { shown: readonly AgentView[]; projects: ReturnType<typeof useProjects>["projects"] }) {
   const counts = useMemo(() => projectCounts(shown, projects), [shown, projects]);
   if (!counts.length) return null;
   return (
@@ -155,24 +165,26 @@ function AttentionList({ agents, onOpen }: { agents: AgentView[]; onOpen: (id: s
         {agents.map((a) => {
           const openAsk = asks.find((v) => v.state === "open" && v.ask.author.agent === a.agent && v.ask.author.node === a.node && askBody(v.ask).expires_at > now);
           return (
-            <li key={a.id} className={`attention-row is-${a.effective_state}`}>
-              <button type="button" className="attention-main" onClick={() => onOpen(a.id)}>
-                <StatePill state={a.effective_state} />
-                <span className="attention-who">
-                  <span className="mono">{a.agent}</span>
-                  <span className="muted"> · {displayName(team?.members, a.handle).split(" ")[0]} · {a.hostname}</span>
+            <ErrorBoundary key={a.id} scope="item" as="li" name={`agent ${a.agent} needing you`} resetKeys={[a, openAsk, team?.members]}>
+              <li className={`attention-row is-${a.effective_state}`}>
+                <button type="button" className="attention-main" onClick={() => onOpen(a.id)}>
+                  <StatePill state={a.effective_state} />
+                  <span className="attention-who">
+                    <span className="mono">{a.agent}</span>
+                    <span className="muted"> · {displayName(team?.members, a.handle).split(" ")[0]} · {a.hostname}</span>
+                  </span>
+                  <span className="attention-title truncate">{a.status.title}</span>
+                  <span className="attention-time tnum muted">{ago(a.updated_at, now)}</span>
+                </button>
+                <span className="attention-cta-slot">
+                  {openAsk && (
+                    <a className="btn btn-sm attention-cta" href={hrefFor({ view: "asks" })}>
+                      Answer ask <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" />
+                    </a>
+                  )}
                 </span>
-                <span className="attention-title truncate">{a.status.title}</span>
-                <span className="attention-time tnum muted">{ago(a.updated_at, now)}</span>
-              </button>
-              <span className="attention-cta-slot">
-                {openAsk && (
-                  <a className="btn btn-sm attention-cta" href={hrefFor({ view: "asks" })}>
-                    Answer ask <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" />
-                  </a>
-                )}
-              </span>
-            </li>
+              </li>
+            </ErrorBoundary>
           );
         })}
       </ul>}
@@ -273,6 +285,7 @@ export function MissionControl() {
       <div className="mission-main">
         <PageHeader title="Mission Control" actions={me?.role === "owner" && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined} />
         <LocalLagBanner lag={localLag} now={now} />
+        <UnreachedNotice />
         {tab === "live" && <ProjectCountStrip shown={counted} />}
         <nav className="tabs" role="tablist" aria-label="Agents">
           <a role="tab" aria-selected={tab === "live"} href={hrefFor({ view: "mission" })} className={tab === "live" ? "tab-link is-on" : "tab-link"}>Live</a>
@@ -391,12 +404,20 @@ function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentVi
                 </div>
                 <div className="agent-grid">
                   {groupAgents(guests).map((group) => <AgentGroupView key={group.agent.id} group={group} onOpen={open} />)}
-                  {unreported.map((guest) => <UnreportedGuest key={guest.id} guest={guest} killed={guestRegistry?.killed ?? false} refresh={refreshGuests} />)}
+                  {unreported.map((guest) => (
+                    <ErrorBoundary key={guest.id} scope="item" name={`guest ${guest.agent}`} resetKeys={[guest, guestRegistry?.killed]}>
+                      <UnreportedGuest guest={guest} killed={guestRegistry?.killed ?? false} refresh={refreshGuests} />
+                    </ErrorBoundary>
+                  ))}
                 </div>
               </div>
             )}
             {machines.length ? (
-              machines.map(({ node, agents: list, hidden: h }) => <MachineBlock key={node.node_id} node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} compute={compute} owner={owner} />)
+              machines.map(({ node, agents: list, hidden: h }) => (
+                <ErrorBoundary key={node.node_id} scope="item" name={`machine ${node.hostname}`} resetKeys={[node, h, accounts, compute, owner, filtering, ...list]}>
+                  <MachineBlock node={node} agents={list} hidden={h} accounts={accounts} onOpen={open} filtered={filtering} compute={compute} owner={owner} />
+                </ErrorBoundary>
+              ))
             ) : (
               <div className="machine-empty"><span>No machines joined yet.</span><CopyCommand command="walkie join <teammate-machine>" /></div>
             )}
@@ -415,9 +436,9 @@ function MissionExtras() {
   const now = useNow();
   return (
     <div className="mission-extras">
-      <WalkieTalkieCard />
-      <AccountsRow accounts={accounts} now={now} />
-      <LocalModelsCard nodes={nodes} />
+      <ErrorBoundary scope="item" name="WalkieTalkie card"><WalkieTalkieCard /></ErrorBoundary>
+      <ErrorBoundary scope="item" name="accounts" resetKeys={[accounts]}><AccountsRow accounts={accounts} now={now} /></ErrorBoundary>
+      <ErrorBoundary scope="item" name="local models" resetKeys={[nodes]}><LocalModelsCard nodes={nodes} /></ErrorBoundary>
     </div>
   );
 }

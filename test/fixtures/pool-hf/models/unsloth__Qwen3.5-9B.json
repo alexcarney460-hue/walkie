@@ -1,0 +1,40 @@
+{
+ "_id": "69a2f5d3a50ce97141b9e391",
+ "id": "unsloth/Qwen3.5-9B",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "69a194f2d29af86e5f085743",
+    "id": "Qwen/Qwen3.5-9B"
+   }
+  ]
+ },
+ "downloads": 91842,
+ "likes": 33,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "005429cee5cb648998cf2b70eebdd83175989c9a",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5",
+  "image-text-to-text",
+  "unsloth",
+  "conversational",
+  "base_model:Qwen/Qwen3.5-9B",
+  "base_model:finetune:Qwen/Qwen3.5-9B",
+  "license:apache-2.0",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "createdAt": "2026-02-28T14:04:03.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 9653100528,
+   "F32": 3840
+  },
+  "total": 9653104368
+ },
+ "evalResults": []
+}

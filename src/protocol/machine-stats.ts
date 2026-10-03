@@ -67,7 +67,12 @@ export const MachineAccel = z.object({
   unified: z.boolean(),
   /** Bytes; null = the OS default. */
   gpu_limit: Bytes.max(MAX_MEM_BYTES).nullable(),
-  gpus: cappedArray(z.object({ name: HwName, vram: Vram }), MAX_GPUS),
+  /**
+   * NVIDIA GPUs. `unified` (WALK-81): an integrated GPU that shares the machine's memory (a DGX Spark's GB10, Jetson),
+   * for which nvidia-smi prints `[N/A]` for its memory: `vram` is 0 and the viewer sizes it from the machine's memory.
+   * Absent from older daemons (which drop the machine's GPU altogether); a malformed flag is dropped alone.
+   */
+  gpus: cappedArray(z.object({ name: HwName, vram: Vram, unified: z.boolean().optional().catch(undefined) }), MAX_GPUS),
   /**
    * Apple Silicon (POOL-REAL-1): the GPU's Metal working-set budget in bytes (MTLDevice recommendedMaxWorkingSetSize),
    * as the installed llama.cpp reports it (`llama-server --list-devices`, MTL0 total); absent without the runtime.
@@ -175,6 +180,16 @@ export function machineBusy(stats: MachineStats | null | undefined): boolean {
   if (stats.agent_processes?.some((a) => a.count > 0)) return true;
   const sys = stats.sys;
   return !!sys && ((sys.load1 !== null && sys.load1 / sys.cpus >= 0.75) || (sys.cpu_busy_pct ?? 0) >= 70);
+}
+
+/**
+ * Agent discovery's process census has gone stale and expired (CENSUS_MAX_AGE_MS), so the machine publishes no agent counts:
+ * how many agents it runs is unknown, not zero. Low CPU alone does not make such a machine idle (20 Codex processes can be
+ * waiting on a model), so callers must not offer its capacity as idle and must label it "Load unknown". A machine that
+ * `machineBusy` already calls busy is known busy, whatever this says.
+ */
+export function loadUnknown(stats: MachineStats | null | undefined): boolean {
+  return !!stats && stats.discovery?.stale === true && stats.agent_processes === undefined;
 }
 
 /** Whether a machine's announced facts say it runs v2 seat requests (FO-2); an older daemon (no caps) does not. */

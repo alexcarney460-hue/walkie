@@ -1,0 +1,97 @@
+{
+ "_id": "6a54ef0b62869082b568f3ec",
+ "id": "poolside/Laguna-S-2.1",
+ "downloads": 107916,
+ "likes": 1036,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "0f573140834b11cfac0c2af97a101a7a69a13e22",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "laguna",
+  "text-generation",
+  "laguna-s-2.1",
+  "vllm",
+  "conversational",
+  "custom_code",
+  "license:openmdw-1.1",
+  "eval-results",
+  "deploy:sagemaker",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/deepswe.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "datacurve/deep-swe",
+     "task_id": "deep_swe"
+    },
+    "value": 40.4,
+    "source": {
+     "url": "https://huggingface.co/poolside/Laguna-S-2.1",
+     "name": "Model Card"
+    },
+    "date": "2026-07-21T18:00:54.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/swe-bench_multilingual.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Multilingual",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 78.5,
+    "source": {
+     "url": "https://huggingface.co/poolside/Laguna-S-2.1",
+     "name": "Model Card"
+    },
+    "date": "2026-07-21T17:02:54.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/swe-bench_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 59.4,
+    "source": {
+     "url": "https://huggingface.co/poolside/Laguna-S-2.1",
+     "name": "Model Card"
+    },
+    "date": "2026-07-21T17:02:54.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/terminal-bench_2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 70.2,
+    "source": {
+     "url": "https://huggingface.co/poolside/Laguna-S-2.1",
+     "name": "Model Card"
+    },
+    "date": "2026-08-26T13:43:10.000Z"
+   },
+   "pullRequest": 41
+  }
+ ],
+ "createdAt": "2026-07-13T13:58:35.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 117561977600
+  },
+  "total": 117561977600
+ }
+}

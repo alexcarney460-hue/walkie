@@ -8,8 +8,9 @@ import { MODEL_ALIASES, ORCHESTRATOR_ACCESS, PERMISSION_MODES, validModel, type 
 import { bool, int, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, requirePerson, TERMINAL, type Ctx } from "../context.ts";
 import { ago, c, hhmm, safeTerm } from "../format.ts";
+import { talkieRecs } from "./talkie-recs.ts";
 import { talkieRepair } from "./talkie-repair.ts";
-import { ScheduleTask } from "../../protocol/talkie-schedule.ts";
+import { ScheduleTask, ScheduleTemplate } from "../../protocol/talkie-schedule.ts";
 
 const USAGE = "talkie start [--here] [--access platform|full] [--model m] [--cwd path] [--permission-mode default|acceptEdits|bypassPermissions] [--claude path]"
   + " | model <default|opus|sonnet|haiku|fable|full-id> | access <platform|full> | lead-eligible <on|off> | auto | stop | status | cleanup --repair | say <text…|-> [--new] [--thread id] [--timeout 600] | log [--limit 20]";
@@ -25,6 +26,7 @@ export async function orchestrator(ctx: Ctx): Promise<number> {
   // reached from a person's terminal or the dashboard only.
   const marker = ctx.agentMarker();
   const agent = marker !== null || ctx.args.flags.get("for-agent") === true || adminCaller(ctx).kind === "agent";
+  if (sub === "recs" || sub === "approve" || sub === "dismiss" || sub === "recommend") return talkieRecs(ctx, agent);
   if (sub === "schedule" || sub === "schedules") return schedule(ctx, agent);
   if (agent && sub === "lead-eligible") return refused(ctx, sub, marker);
   if (agent && sub === "cleanup") return refused(ctx, sub, marker);
@@ -61,7 +63,14 @@ async function schedule(ctx: Ctx, agent: boolean): Promise<number> {
     return EXIT.ok;
   }
   if (action === "unresolved") {
-    if (ctx.args.pos.length !== 2) throw new UsageError("talkie schedule unresolved [--after <cursor>] [--limit 1..100]");
+    if (ctx.args.pos.length !== 2) throw new UsageError("talkie schedule unresolved [--after <cursor>] [--limit 1..100] | --ack-legacy");
+    if (bool(ctx.args, "ack-legacy")) {
+      if (str(ctx.args, "after") !== undefined || str(ctx.args, "limit") !== undefined) throw new UsageError("talkie schedule unresolved --ack-legacy takes no other option");
+      const { cleared } = await client.scheduleUnresolvedAckLegacy();
+      ctx.out(ctx.json ? JSON.stringify({ cleared }) : cleared
+        ? `acknowledged ${cleared} older outcome${cleared === 1 ? "" : "s"}` : "no older outcomes were counted");
+      return EXIT.ok;
+    }
     const limit = int(ctx.args, "limit", 100)!;
     if (limit < 1 || limit > 100) throw new UsageError("--limit must be between 1 and 100");
     const page = await client.scheduleUnresolved(str(ctx.args, "after"), limit);
@@ -69,7 +78,7 @@ async function schedule(ctx: Ctx, agent: boolean): Promise<number> {
     else {
       for (const entry of page.entries) {
         const claim = entry.claim ? `${entry.claim.term}:${entry.claim.seq}:${entry.claim.generation}` : "-";
-        ctx.out(`${entry.id}  ${safeTerm(entry.name)}  run ${entry.run}  claim ${claim}  local_id ${safeTerm(entry.local_id ?? "-")}`);
+        ctx.out(`${entry.id}  ${safeTerm(entry.name)}  run ${entry.run}  claim ${claim}  local_id ${safeTerm(entry.local_id ?? "-")}${entry.result ? `  result ${safeTerm(entry.result)}` : ""}`);
       }
       ctx.out(`${page.entries.length} shown of ${page.total}; next cursor: ${page.next_cursor ?? "-"}`);
     }
@@ -135,14 +144,14 @@ function editLost(patch: { name?: string; cron?: string; task?: unknown },
 }
 
 function scheduleTask(ctx: Ctx, required: true): NonNullable<ReturnType<typeof scheduleTask>>;
-function scheduleTask(ctx: Ctx, required: false): { template: "board-refresh" | "machine-onboarding" | "project-sync" | "capacity-check" | "data-room-refresh" } | { prompt: string } | undefined;
+function scheduleTask(ctx: Ctx, required: false): { template: ScheduleTemplate } | { prompt: string } | undefined;
 function scheduleTask(ctx: Ctx, required: boolean) {
   const template = str(ctx.args, "template");
   const prompt = str(ctx.args, "prompt");
   if ((template && prompt) || (required && !template && !prompt)) throw new UsageError("choose exactly one of --template or --prompt");
   if (!template && !prompt) return undefined;
   const parsed = ScheduleTask.safeParse(template ? { template } : { prompt });
-  if (!parsed.success) throw new UsageError("template is board-refresh, machine-onboarding, project-sync, capacity-check, or data-room-refresh; prompt must be 1–8000 characters");
+  if (!parsed.success) throw new UsageError(`template is ${ScheduleTemplate.options.slice(0, -1).join(", ")}, or ${ScheduleTemplate.options[ScheduleTemplate.options.length - 1]}; prompt must be 1–8000 characters`);
   return parsed.data;
 }
 

@@ -1,0 +1,92 @@
+{
+ "_id": "6a180e5a00cc0bea772f12d4",
+ "id": "LiquidAI/LFM2.5-8B-A1B",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "6a181264689e59fc40764f66",
+    "id": "LiquidAI/LFM2.5-8B-A1B-Base"
+   }
+  ]
+ },
+ "downloads": 34148,
+ "likes": 778,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "5dd22602c2e9f6a097b1de4c4efe0658b605015c",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "lfm2_moe",
+  "text-generation",
+  "liquid",
+  "lfm2.5",
+  "edge",
+  "conversational",
+  "en",
+  "ar",
+  "zh",
+  "fr",
+  "de",
+  "ja",
+  "ko",
+  "es",
+  "pt",
+  "it",
+  "arxiv:2511.23404",
+  "arxiv:2607.15232",
+  "base_model:LiquidAI/LFM2.5-8B-A1B-Base",
+  "base_model:finetune:LiquidAI/LFM2.5-8B-A1B-Base",
+  "license:other",
+  "eval-results",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/aime_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/aime_2026",
+     "task_id": "MathArena/aime_2026"
+    },
+    "value": 50,
+    "date": "2026-05-28",
+    "source": {
+     "url": "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B",
+     "name": "Model Card"
+    }
+   }
+  },
+  {
+   "filename": ".eval_results/lexam-hard.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "joelniklaus/LEXam-hard",
+     "task_id": "lexam_hard",
+     "revision": "1bd50ee3ac80286fed27e5b89f03f4d8b4494244"
+    },
+    "value": 15.53,
+    "date": "2026-06-11",
+    "source": {
+     "url": "https://huggingface.co/buckets/joelniklaus/SwissLegalEvals",
+     "name": "SwissLegalEvals per-sample details (lighteval)",
+     "user": "joelniklaus"
+    },
+    "notes": "lighteval, LEXam paper prompts, one response per question, no tools; DeepSeek-R1-0528 judge; mean of the German and English means over the 518 questions, 0-100"
+   },
+   "pullRequest": 35
+  }
+ ],
+ "createdAt": "2026-05-28T09:43:54.000Z",
+ "safetensors": {
+  "parameters": {
+   "F32": 704,
+   "BF16": 8467856128
+  },
+  "total": 8467856832
+ }
+}

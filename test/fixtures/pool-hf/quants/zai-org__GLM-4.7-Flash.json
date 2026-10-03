@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "696ec8f2170fe37807eda878",
+  "id": "unsloth/GLM-4.7-Flash-GGUF",
+  "downloads": 146591
+ },
+ {
+  "_id": "696eb741454ebbfcc960d742",
+  "id": "lmstudio-community/GLM-4.7-Flash-GGUF",
+  "downloads": 43213
+ },
+ {
+  "_id": "696ec5c0982be58c02de6432",
+  "id": "bartowski/zai-org_GLM-4.7-Flash-GGUF",
+  "downloads": 20249
+ },
+ {
+  "_id": "696f403d982be58c02e60f7d",
+  "id": "ggml-org/GLM-4.7-Flash-GGUF",
+  "downloads": 9882
+ },
+ {
+  "_id": "69d17b57bbf83b1a4b9f2f51",
+  "id": "mudler/GLM-4.7-Flash-APEX-GGUF",
+  "downloads": 3416
+ },
+ {
+  "_id": "696fcb4b685821140e3727d5",
+  "id": "mradermacher/GLM-4.7-Flash-i1-GGUF",
+  "downloads": 2379
+ },
+ {
+  "_id": "6971677138616e3bf19792f4",
+  "id": "DavidAU/GLM-4.7-Flash-NEO-CODE-Imatrix-MAX-GGUF",
+  "downloads": 2299
+ },
+ {
+  "_id": "6a29fccb7751ab64eb8efd23",
+  "id": "FreedomAISVR/GLM-4.7-Flash-NVFP4-GGUF",
+  "downloads": 2192
+ }
+]

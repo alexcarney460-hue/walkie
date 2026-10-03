@@ -1,0 +1,151 @@
+{
+ "_id": "69b1b2ec895b2d5026e6bc2e",
+ "id": "google/gemma-4-31B-it",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "69b20b043fadc91fa2784660",
+    "id": "google/gemma-4-31B"
+   }
+  ]
+ },
+ "downloads": 9845000,
+ "likes": 3987,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "842da3794eaa0b77d5f08bae87a17459d91ff475",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "gemma4",
+  "image-text-to-text",
+  "conversational",
+  "arxiv:2607.02770",
+  "base_model:google/gemma-4-31B",
+  "base_model:finetune:google/gemma-4-31B",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/mmmu_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MMMU/MMMU_Pro",
+     "task_id": "mmmu_pro_vision"
+    },
+    "value": 76.9,
+    "date": "2026-05-12",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-31B-it",
+     "name": "Model Card"
+    }
+   }
+  },
+  {
+   "filename": ".eval_results/lexam-hard.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "joelniklaus/LEXam-hard",
+     "task_id": "lexam_hard",
+     "revision": "1bd50ee3ac80286fed27e5b89f03f4d8b4494244"
+    },
+    "value": 37.41,
+    "date": "2026-06-11",
+    "source": {
+     "url": "https://huggingface.co/buckets/joelniklaus/SwissLegalEvals",
+     "name": "SwissLegalEvals per-sample details (lighteval)",
+     "user": "joelniklaus"
+    },
+    "notes": "lighteval, LEXam paper prompts, one response per question, no tools; DeepSeek-R1-0528 judge; mean of the German and English means over the 518 questions, 0-100"
+   },
+   "pullRequest": 145
+  },
+  {
+   "filename": ".eval_results/google-gemma-4-31b-it.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "LiquidAI/ifstruct-v1.0",
+     "task_id": "ifstruct_v1"
+    },
+    "value": 95.9,
+    "date": "2026-06-30",
+    "source": {
+     "url": "https://www.liquid.ai/blog/ifstruct-v1.0",
+     "name": "Liquid AI \u2014 IFStruct v1.0 blog (gemma-4-31B-it)"
+    }
+   },
+   "pullRequest": 125
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 84.3,
+    "date": "2026-04-02",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-31B-it",
+     "name": "Model Card",
+     "user": "merve"
+    }
+   },
+   "pullRequest": 5
+  },
+  {
+   "filename": ".eval_results/hle_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 26.5,
+    "date": "2026-04-02",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-31B-it",
+     "name": "Model Card",
+     "user": "merve"
+    },
+    "notes": "With search"
+   },
+   "pullRequest": 5
+  },
+  {
+   "filename": ".eval_results/mmlu_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "TIGER-Lab/MMLU-Pro",
+     "task_id": "mmlu_pro"
+    },
+    "value": 85.2,
+    "date": "2026-04-02",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-31B-it",
+     "name": "Model Card",
+     "user": "merve"
+    }
+   },
+   "pullRequest": 5
+  }
+ ],
+ "createdAt": "2026-03-11T18:22:36.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 31273088876
+  },
+  "total": 31273088876
+ }
+}

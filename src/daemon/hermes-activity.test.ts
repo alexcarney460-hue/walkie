@@ -13,8 +13,14 @@ import { HERMES_ACTIVITY_PROFILES_MAX, hermesActivityProfiles } from "../protoco
 import { ConfigSchema, loadConfig, saveConfigField, saveHermesActivityProfiles } from "./config.ts";
 import { EXITED_ACTIVITY } from "./discovery.ts";
 import { applyHermesStatus, shownCard, submitHermesUpdate } from "./hermes-status.ts";
+import { scrubHermesActivity, startHermesActivityScrub } from "./hermes-scrub.ts";
 import { dispatch, type RouteCtx } from "./local-routes.ts";
-import { ME, status, world } from "../../test/helpers/discovery-world.ts";
+import { createLogger, type Logger } from "./logger.ts";
+import { effectiveState, observedAt } from "./views.ts";
+import { makeCore } from "../../test/helpers/core.ts";
+import { waitFor } from "../../test/helpers/cluster.ts";
+import { AGENT, hook as claudeHook, ME, status, world } from "../../test/helpers/discovery-world.ts";
+import { tnode } from "../../test/helpers/events.ts";
 import type { World } from "../../test/helpers/hermes-world.ts";
 
 const hex = (name: string) => createHash("sha256").update(name).digest("hex");
@@ -147,6 +153,9 @@ describe("the daemon and the hook read the same list from the same file", () => 
 });
 
 // ---- the route and discovery, over a world's real Core -----------------------------------------------------------------------------
+
+/** The activity line of a profile's card, if it shows one. */
+const lineOf = (w: World, profile: string) => status(w.core, `hermes-${profile}`)?.activity;
 
 const BASE = { share_prompts: true, share_activity: true, share_paths: false };
 /** Replaces the world's config.json by a new file (so the daemon sees the change), with the share policy it started with. */
@@ -372,11 +381,177 @@ describe("discovery", () => {
     expect(status(w.core, "hermes-writer")).not.toHaveProperty("activity");
   }));
 
+  /** Holds the process listing of the next scans until the returned function is called: a scan that is in flight, deterministically. */
+  const holdListing = (w: World): (() => void) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const list = w.fx.list.bind(w.fx);
+    w.fx.list = async () => { await gate; return list(); };
+    return release;
+  };
+  const atPrompt = { state: "idle", fallback: "idle", activity: "Finished turn", source: "phrase" } as const; // a session at its prompt: it hooks no more
+
+  test("a profile listed while a scan is in flight keeps the line its hook posted: the sweep judges by the list as it is then, not as the scan began", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: [] });
+    const disc = w.disc(listed(w));
+    const release = holdListing(w);
+    const scanning = disc.tick(); // the scan has read the list ([]) and waits for the process listing
+    configure(w, { hermes_activity_profiles: ["research"] }); // the person lists research while it is in flight
+    expect((await post(w, observation("research", "r", atPrompt))).status).toBe(200);
+    expect(lineOf(w, "research")).toBe("Finished turn");
+    w.clock.t += 15_000;
+    release();
+    await scanning;
+    expect(lineOf(w, "research")).toBe("Finished turn"); // listed now: the sweep did not scrub it with the list the scan began with
+  }));
+
+  test("a profile taken off the list while a scan is in flight loses its line at that scan's sweep, not one scan later", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research"] });
+    await post(w, observation("research", "r", atPrompt));
+    expect(lineOf(w, "research")).toBe("Finished turn");
+    const disc = w.disc(listed(w));
+    const release = holdListing(w);
+    const scanning = disc.tick(); // the scan has read the list (["research"]) and waits for the process listing
+    configure(w, { hermes_activity_profiles: [] }); // the person takes it off while it is in flight
+    w.clock.t += 15_000;
+    release();
+    await scanning;
+    expect(status(w.core, "hermes-research")).toMatchObject({ state: "idle", runtime_name: "hermes" });
+    expect(status(w.core, "hermes-research")).not.toHaveProperty("activity");
+  }));
+
   test("a discovery built without the setting lists nobody: every Hermes card is state only", async () => inWorld(async (w) => {
     configure(w, { hermes_activity_profiles: ["research"] }); // the file lists it, but this discovery was never given the list
     await post(w, observation("research", "r"));
     expect(status(w.core, "hermes-research")?.activity).toBe("Using terminal");
     await w.disc().tick(); // no hermesActivity option: private
     expect(status(w.core, "hermes-research")).not.toHaveProperty("activity");
+  }));
+});
+
+// ---- the scrub does not depend on discovery ----------------------------------------------------------------------------------------
+// A machine with `"discover_agents": false` (and a Windows daemon) runs no discovery scan, so nothing there would ever take a line off the
+// card of a session at its prompt, which hooks no more. The daemon's own timer does, at start and every pass (src/daemon/hermes-scrub.ts).
+// No test below builds an AgentDiscovery.
+
+describe("the scrub without discovery", () => {
+  const quiet = createLogger({});
+  const statusEvents = (w: World, agent: string) => w.core.store.db.query<{ n: number }, [string]>(
+    "SELECT COUNT(*) AS n FROM events WHERE kind = 'agent.status' AND author_agent = ?").get(agent)!.n;
+
+  test("a pass posts state only for each card that shows a line for an unlisted profile, once, and touches no other card", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research", "writer"] });
+    await post(w, observation("research", "r"));
+    await post(w, observation("writer", "w"));
+    await post(w, observation("example-billing", "b")); // never listed: no line was ever stored for it
+    claudeHook(w.core, "working", "Thinking"); // an ordinary agent that shows a line: not a Hermes card, never touched
+    w.clock.t += 15_000; // a later status than the cards above
+    const before = statusEvents(w, "hermes-research");
+    expect(scrubHermesActivity(w.core, ["research", "writer"])).toBe(0); // both listed (and example-billing has no line)
+    expect(statusEvents(w, "hermes-research")).toBe(before);
+    expect(scrubHermesActivity(w.core, ["writer"])).toBe(1); // research left the list
+    expect(status(w.core, "hermes-research")).toMatchObject({ state: "working", runtime: "other", runtime_name: "hermes" });
+    expect(status(w.core, "hermes-research")).not.toHaveProperty("activity");
+    expect(statusEvents(w, "hermes-research")).toBe(before + 1);
+    expect(lineOf(w, "writer")).toBe("Using terminal");
+    expect(status(w.core, AGENT)?.activity).toBe("Thinking");
+    expect(scrubHermesActivity(w.core, ["writer"])).toBe(0); // nothing left to post: a second pass repeats nothing
+    expect(statusEvents(w, "hermes-research")).toBe(before + 1);
+    expect(scrubHermesActivity(w.core, [])).toBe(1); // an empty list takes writer's line too
+    expect(lineOf(w, "writer")).toBeUndefined();
+    expect(status(w.core, AGENT)?.activity).toBe("Thinking");
+  }));
+
+  test("a pass keeps the time the card was observed: a session that died long ago is not made to look alive by it", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research"] });
+    await post(w, observation("research", "r")); // working, "Using terminal"
+    const before = w.core.store.agent(w.core.nodeId, "hermes-research")!;
+    w.clock.t += 3 * 60 * 60_000; // three hours and no hook since: no discovery runs here to say the session is gone
+    expect(scrubHermesActivity(w.core, [])).toBe(1);
+    const after = w.core.store.agent(w.core.nodeId, "hermes-research")!;
+    const card = JSON.parse(after.body) as { state: "working"; observed_at?: number };
+    expect(after.ts).toBeGreaterThan(before.ts); // signed now
+    expect(observedAt(card, after.ts)).toBe(before.ts); // observed then
+    expect(effectiveState(card.state, observedAt(card, after.ts), true, w.clock.t)).toBe("offline"); // shown as the stale card it is, not as working
+    expect(card).not.toHaveProperty("activity");
+  }));
+
+  test("a card whose status bucket is empty is left for the next pass, which posts it", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research"] });
+    await post(w, observation("research", "r"));
+    w.clock.t += 15_000;
+    const take = w.core.limiter.take.bind(w.core.limiter);
+    Object.assign(w.core.limiter, { take: () => false });
+    expect(scrubHermesActivity(w.core, [])).toBe(0);
+    expect(lineOf(w, "research")).toBe("Using terminal");
+    Object.assign(w.core.limiter, { take });
+    expect(scrubHermesActivity(w.core, [])).toBe(1);
+    expect(lineOf(w, "research")).toBeUndefined();
+  }));
+
+  test("a node that is not in a team has nothing to scrub, and a pass does not throw", () => {
+    const cleanups: Array<() => void> = [];
+    try {
+      const core = makeCore(tnode("solo"), "00000000000000aa", cleanups); // a team id in its store but no roster: not an admitted member
+      expect(scrubHermesActivity(core, [])).toBe(0);
+    } finally { while (cleanups.length) cleanups.pop()?.(); }
+  });
+
+  test("the timer takes the line off a profile that left the list, and off every profile once the file is damaged, with no discovery built", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research", "writer"] });
+    await post(w, observation("research", "r"));
+    await post(w, observation("writer", "w"));
+    const stop = startHermesActivityScrub(w.core, quiet, { intervalMs: 10 });
+    try {
+      await Bun.sleep(80); // many passes while both are listed: nothing is touched
+      expect([lineOf(w, "research"), lineOf(w, "writer")]).toEqual(["Using terminal", "Using terminal"]);
+      w.clock.t += 15_000;
+      configure(w, { hermes_activity_profiles: ["writer"] }); // research is taken off the list
+      await waitFor(() => lineOf(w, "research") === undefined, { what: "research's line gone" });
+      expect(status(w.core, "hermes-research")).toMatchObject({ state: "working", runtime_name: "hermes" });
+      expect(lineOf(w, "writer")).toBe("Using terminal");
+      w.clock.t += 15_000;
+      configure(w, "{ damaged"); // a damaged file lists nobody
+      await waitFor(() => lineOf(w, "writer") === undefined, { what: "writer's line gone" });
+      expect(status(w.core, "hermes-writer")).toMatchObject({ state: "working", runtime_name: "hermes" });
+    } finally { stop(); }
+  }));
+
+  test("it scrubs at start, before the first interval: a list edited while the daemon was down is in force at once", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research"] });
+    await post(w, observation("research", "r"));
+    expect(lineOf(w, "research")).toBe("Using terminal");
+    w.clock.t += 15_000;
+    configure(w, { hermes_activity_profiles: [] }); // taken off the list while no daemon ran: no pass has seen it
+    const stop = startHermesActivityScrub(w.core, quiet, { intervalMs: 3_600_000 });
+    try { expect(lineOf(w, "research")).toBeUndefined(); } finally { stop(); }
+  }));
+
+  test("a stopped scrub does nothing more", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research"] });
+    await post(w, observation("research", "r"));
+    startHermesActivityScrub(w.core, quiet, { intervalMs: 10 })();
+    w.clock.t += 15_000;
+    configure(w, { hermes_activity_profiles: [] });
+    await Bun.sleep(80); // eight intervals, had it still been running
+    expect(lineOf(w, "research")).toBe("Using terminal");
+  }));
+
+  test("a pass that fails is logged without the profile and the timer lives on", async () => inWorld(async (w) => {
+    configure(w, { hermes_activity_profiles: ["research"] });
+    await post(w, observation("research", "r"));
+    w.clock.t += 15_000;
+    configure(w, { hermes_activity_profiles: [] });
+    const warns: Array<{ msg: string; fields?: Record<string, unknown> }> = [];
+    const log: Logger = { ...quiet, warn: (msg, fields) => { warns.push({ msg, ...(fields ? { fields } : {}) }); } };
+    const take = w.core.limiter.take.bind(w.core.limiter);
+    let calls = 0;
+    Object.assign(w.core.limiter, { take: (...args: Parameters<typeof take>) => { if (++calls === 1) throw new Error("the status path is down"); return take(...args); } });
+    const stop = startHermesActivityScrub(w.core, log, { intervalMs: 10 }); // the run at start fails, a later one succeeds
+    try {
+      await waitFor(() => lineOf(w, "research") === undefined, { what: "the line gone after the failed pass" });
+      expect(warns[0]).toEqual({ msg: "hermes_activity_scrub_failed", fields: { err: "the status path is down" } });
+      expect(JSON.stringify(warns)).not.toContain("research");
+    } finally { stop(); }
   }));
 });

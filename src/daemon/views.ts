@@ -1,14 +1,14 @@
 // Local API response views (schemas.ts MeView / TeamView / NodeView / AgentView / AskView).
-import { AgentSince } from "../protocol/agent-since.ts";
-import { PROTOCOL_VERSION, type AgentState, type AgentsPayload, type AgentView, type AskView, type BodyOf, type ChannelView, type Event, type MeView, type NodeView, type PlanView, type TeamView } from "../protocol/schemas.ts";
+import { PROTOCOL_VERSION, type AgentState, type AgentsPayload, type AgentView, type AskView, type ChannelView, type Event, type MeView, type NodeView, type PlanView, type TeamView } from "../protocol/schemas.ts";
 import { FUTURE_SKEW_MS } from "../license/plans.ts";
 import { UNKNOWN_MS, usageUntil } from "../protocol/accounts-format.ts";
 import type { MachineStats } from "../protocol/machine-stats.ts";
-import { cloudAddress, isCloudAgent } from "../protocol/guest-cloud.ts";
 import { clockFromReading, mergeClock, shiftClock, validClock } from "../accounts/clock.ts";
 import { MAX_LEASES_PER_NODE, PROVIDERS, type AccountLeaseView, type AccountUsage, type AccountView, type ResetClock as ResetClockT } from "../protocol/accounts.ts";
-import { countByNode, IDLE_ARCHIVE_MS, isArchived, matchesSearch } from "../protocol/agent-roster.ts";
-import { countSubagents, CUSTOM_SUBAGENT_TYPE } from "../protocol/subagents.ts";
+import { countByNode, IDLE_ARCHIVE_MS, matchesSearch } from "../protocol/agent-roster.ts";
+import { agentStatus } from "./agent-table.ts";
+import { effectiveState, observedAt, STALE_STATUS_MS } from "./agent-state.ts";
+import { agentViewCache } from "./agent-view-cache.ts";
 import type { Core } from "./core.ts";
 import type { TransportControl } from "./direct/link.ts";
 import { activeNodes, transportsOf } from "./roster.ts";
@@ -16,7 +16,7 @@ import type { AgentRow, EventRow } from "./store.ts";
 import type { SyncManager } from "./sync.ts";
 import { VERSION } from "./version.ts";
 
-export const STALE_STATUS_MS = 30 * 60_000;
+export { effectiveState, observedAt, STALE_STATUS_MS };
 
 export function meView(core: Core, tailscaleError?: string, transport?: TransportControl): MeView {
   const r = core.roster;
@@ -56,11 +56,13 @@ export function peerStats(stats: MachineStats | undefined, skewMs: number | unde
 export function nodesView(core: Core, sync: SyncManager): NodeView[] {
   const r = core.roster;
   const now = Date.now();
+  const unreached = new Map(sync.unreached().map((u) => [u.node.node_id, u.vouched]));
   return activeNodes(r).map((n) => {
     const self = n.node_id === core.nodeId;
     const s = sync.peerState(n.node_id);
     const stats = self ? core.publishedStats() ?? undefined : peerStats(s?.stats, s?.skewMs, now);
     const pool = self ? core.poolShare?.() ?? undefined : s?.pool;
+    const vouched = unreached.get(n.node_id);
     return {
       node_id: n.node_id,
       handle: r.members.get(n.login)?.handle ?? "?",
@@ -68,6 +70,7 @@ export function nodesView(core: Core, sync: SyncManager): NodeView[] {
       ip: n.ip,
       transports: transportsOf(n),
       ...(self ? {} : { via: sync.via(n) }),
+      ...(vouched === undefined ? {} : { unreached: { vouched } }),
       online: self || sync.isOnline(n.node_id),
       last_seen: self ? Date.now() : s?.lastSeen ?? null,
       rtt_ms: self ? 0 : s?.rtt ?? null,
@@ -112,24 +115,13 @@ export function teamView(core: Core, sync: SyncManager): TeamView | null {
   };
 }
 
-export function effectiveState(state: AgentState, updatedAt: number, machineOnline: boolean, now = Date.now()): AgentState {
-  if (!machineOnline) return "offline";
-  if (state !== "idle" && now - updatedAt > STALE_STATUS_MS) return "offline";
-  return state;
-}
-
-/** When a status was observed: its signing time, or an earlier `observed_at` of a re-signed copy (never later). */
-export function observedAt(status: { observed_at?: number }, ts: number): number {
-  return typeof status.observed_at === "number" ? Math.min(status.observed_at, ts) : ts;
-}
-
 /**
  * A status row that is a sub-agent in the live roster: any state but offline (idle included: Codex mission-sub r2 #2,
  * idle children stay live for IDLE_ARCHIVE_MS), reported within the last 30 minutes.
  */
 export function isLiveSubagentRow(row: AgentRow | null, now = Date.now()): boolean {
   if (!row) return false;
-  const st = JSON.parse(row.body) as BodyOf<"agent.status">;
+  const st = agentStatus(row);
   return !!st.parent && st.state !== "offline" && now - observedAt(st, row.ts) < Math.min(STALE_STATUS_MS, IDLE_ARCHIVE_MS);
 }
 
@@ -142,7 +134,7 @@ export function liveSubagents(core: Core, parent: string, except: string, now = 
   const live = new Set<string>();
   for (const row of core.store.agents()) {
     if (row.node !== core.nodeId || row.agent === except || !row.body.includes('"parent"')) continue;
-    if (isLiveSubagentRow(row, now) && (JSON.parse(row.body) as { parent?: string }).parent === parent) live.add(row.agent);
+    if (isLiveSubagentRow(row, now) && agentStatus(row).parent === parent) live.add(row.agent);
   }
   for (const held of core.statuses.heldStatuses()) {
     if (held.parent !== parent || held.agent === except) continue;
@@ -155,61 +147,10 @@ export function liveSubagents(core: Core, parent: string, except: string, now = 
  * Every agent this node knows (live and archived), each marked `archived` (agent-roster.ts). Sub-agents
  * (WALKIE-MISSION-SUB-1): a session's row counts its sub-agents (`subagents`) and stays live while one works; this
  * node's own sub-agents show their description and type to this machine's dashboard even when the team doesn't get them.
+ * Built incrementally (agent-view-cache.ts): the views are shared between reads and never changed.
  */
 export function agentsView(core: Core, sync: SyncManager, now = Date.now()): AgentView[] {
-  const rows = rawAgentsView(core, sync, now);
-  const counts = countSubagents(rows);
-  return rows.map((a) => {
-    const c = a.status.parent ? undefined : counts.get(`${a.node}/${a.agent}`);
-    const own = a.status.parent && a.node === core.nodeId ? core.localSubagents.get(a.agent) : undefined;
-    const status = own && ((!a.status.title && own.title) || (a.status.subagent_type === CUSTOM_SUBAGENT_TYPE && own.type))
-      ? { ...a.status, ...(!a.status.title && own.title ? { title: own.title } : {}), ...(a.status.subagent_type === CUSTOM_SUBAGENT_TYPE && own.type ? { subagent_type: own.type } : {}) }
-      : a.status;
-    if (!c && status === a.status) return a;
-    return { ...a, status, ...(c ? { subagents: c, archived: a.archived && c.working === 0 } : {}) };
-  });
-}
-
-function rawAgentsView(core: Core, sync: SyncManager, now: number): AgentView[] {
-  const r = core.roster;
-  const out: AgentView[] = [];
-  /** Per row: the start its time-in-state may claim (see withSince). */
-  const starts = new Map<string, number>();
-  for (const row of core.store.agents()) {
-    const node = r.nodes.get(row.node);
-    if (!node || node.revoked) continue;
-    const member = r.members.get(node.login);
-    if (!member || member.role === "removed") continue;
-    const status = JSON.parse(row.body) as BodyOf<"agent.status">;
-    const online = sync.isOnline(row.node, now);
-    const observed = observedAt(status, row.ts);
-    const effective = effectiveState(status.state, observed, online, now);
-    const id = isCloudAgent({ agent: row.agent, status }) ? cloudAddress({ handle: member.handle, agent: row.agent })
-      : `${member.handle}/${node.hostname}/${row.agent}`;
-    out.push({
-      id,
-      handle: member.handle, node: row.node, hostname: node.hostname, agent: row.agent,
-      status: { ...status, runtime: status.runtime ?? "other" },
-      updated_at: observed, machine_online: online,
-      effective_state: effective,
-      archived: isArchived({ effective_state: effective, updated_at: observed }, now),
-    });
-    // Time-in-state never starts before this node received the status (Opus r1 LOW): a peer's `observed_at` (or ts)
-    // can't make a card claim hours in a state. This node's own statuses keep their observed time (re-signed copies).
-    const received = row.node === core.nodeId ? null : core.store.agentReceivedAt(row);
-    starts.set(id, received === null ? observed : Math.max(observed, received));
-  }
-  return withSince(core, out, starts, now);
-}
-
-/** Per Core: when each agent's state and activity line began (agent-since.ts). */
-const SINCE = new WeakMap<object, AgentSince>();
-
-function withSince(core: Core, list: AgentView[], starts: ReadonlyMap<string, number>, now: number): AgentView[] {
-  let t = SINCE.get(core);
-  if (!t) { t = new AgentSince(); SINCE.set(core, t); }
-  const since = t.read(list.map((a) => ({ id: a.id, effective_state: a.effective_state, activity: a.status.activity, observed: starts.get(a.id) ?? a.updated_at })), now);
-  return list.map((a) => ({ ...a, ...since.get(a.id) }));
+  return agentViewCache(core).build(core, sync, now);
 }
 
 export type AgentScope = "live" | "archive" | "all";

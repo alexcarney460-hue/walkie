@@ -86,6 +86,8 @@ function machineFlags(i: StaleInput, todoWaiting: number): MachineFlag[] {
   const out: MachineFlag[] = [];
   for (const n of i.nodes) {
     if (!n.online) continue;
+    // Its agent census could not be read for a while: nothing is known about its agents, so nothing is claimed about their absence.
+    if (n.stats?.discovery?.stale) continue;
     const working = i.agents.filter((a) => a.node === n.node_id && a.effective_state === "working").length;
     if (working > 0 || n.stats?.agent_processes?.some((a) => a.count > 0)) continue;
     const pressure = n.stats?.mem?.pressure ?? null;

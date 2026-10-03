@@ -10,6 +10,7 @@ import { resolveAgentName } from "../../agent/identity.ts";
 import { cardForModel, projectLineForModel, timelineForModel } from "../../protocol/projects/format.ts";
 import { humanSize, roomFileForModel, roomUnavailableNote, taskContextForModel } from "../../protocol/projects/room-format.ts";
 import type { CardView, ProjectView, ProjectsPayload } from "../../protocol/projects/schema.ts";
+import { reportMode } from "../../protocol/projects/status-report.ts";
 import { defang, wrapForModel } from "../../protocol/safety.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
 import { agentFrom, EXIT, readStdin, type Ctx } from "../context.ts";
@@ -129,13 +130,15 @@ async function show(ctx: Ctx): Promise<number> {
   const ref = need(ctx.args, 1, "project");
   const channel = await channelOf(cl, ref);
   const { project, cards } = await cl.project(channel);
-  if (ctx.json) { ctx.out(JSON.stringify(ctx.forAgent ? { project: projectLineForModel(project), cards: cards.map((x) => ({ key: x.key, id: x.id, text: cardForModel(x, project), trust: "team-member" })) } : { project, cards })); return EXIT.ok; }
+  if (ctx.json) { ctx.out(JSON.stringify(ctx.forAgent ? { project: projectLineForModel(project), status_report: reportMode(project), cards: cards.map((x) => ({ key: x.key, id: x.id, text: cardForModel(x, project), trust: "team-member" })) } : { project, cards })); return EXIT.ok; }
   if (ctx.forAgent) {
     ctx.out(projectLineForModel(project));
+    ctx.out(`status report: ${reportMode(project)}`);
     ctx.out(cards.filter((x) => x.state === "open").map((x) => cardForModel(x, project)).join("\n") || "(no open cards)");
     return EXIT.ok;
   }
   ctx.out(projectLine(project));
+  ctx.out(c.dim(`status report: ${reportMode(project)}${reportMode(project) === "hourly" ? " (WalkieTalkie writes it each hour something changed)" : ""}`));
   for (const b of project.boards) {
     ctx.out(`\n${c.bold(safeTerm(b.name))} ${bar(b.meter.done, b.meter.counted, 12)} ${b.meter.done}/${b.meter.counted}${b.state !== "active" ? c.dim(" (archived)") : ""}`);
     for (const col of b.columns) {
@@ -170,6 +173,23 @@ async function set(ctx: Ctx, state?: "active" | "archived" | "deleted"): Promise
   if (!Object.keys(body).length) throw new UsageError("nothing to change (--name, --folder, --prefix, --private|--public, --path)");
   const { project } = await cl.updateProject(channel, body);
   ctx.out(mutationOut(ctx, "updated", project));
+  return EXIT.ok;
+}
+
+/**
+ * `walkie projects report <project> [on|off]` (PROJECT-REPORTS-1): WalkieTalkie's hourly plain-English status report for a
+ * project. With no verb it only says which. Switching is for people (the project's creator and the team's owners): the
+ * daemon refuses an agent's request, and says why.
+ */
+async function reportCmd(ctx: Ctx): Promise<number> {
+  const cl = client(ctx);
+  const channel = await channelOf(cl, need(ctx.args, 1, "project"));
+  const verb = ctx.args.pos[2];
+  if (verb !== undefined && verb !== "on" && verb !== "off") throw new UsageError("usage: walkie projects report <project> [on|off]");
+  const { project } = verb ? await cl.updateProject(channel, { status_report: verb === "on" ? "hourly" : "off" }) : await cl.project(channel);
+  const mode = reportMode(project);
+  ctx.out(ctx.json ? JSON.stringify({ project: project.prefix, status_report: mode })
+    : `${safeTerm(project.prefix)}: hourly status report ${mode === "hourly" ? c.green("on") : c.yellow("off")}`);
   return EXIT.ok;
 }
 
@@ -211,8 +231,11 @@ export async function projectsCmd(ctx: Ctx): Promise<number> {
     case "restore": return set(ctx, "active");
     case "delete": return set(ctx, "deleted");
     case "board": return boardCmd(ctx);
+    case "report": return reportCmd(ctx);
+    case "fact": return (await import("./projects-page.ts")).factCmd(ctx); // PROJECT-PAGES-1 (loaded when used: it imports this file)
+    case "screen": return (await import("./projects-page.ts")).screenCmd(ctx);
     case "export": return exportCmd(ctx);
-    default: throw new UsageError(`unknown projects command "${sub}" (list|create|show|set|archive|restore|delete|board|export)`);
+    default: throw new UsageError(`unknown projects command "${sub}" (list|create|show|set|archive|restore|delete|board|report|fact|screen|export)`);
   }
 }
 

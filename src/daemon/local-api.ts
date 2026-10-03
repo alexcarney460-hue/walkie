@@ -131,7 +131,7 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   ["GET", /^\/v1\/artifacts\/[0-9a-f]{64}$/],
   // WALKIE-PROJECTS-1: projects, boards and cards (the dashboard is a person: every board action is open to it).
   ["GET", /^\/v1\/(?:projects|tasks)$/],
-  ["GET", /^\/v1\/projects\/p-[0-9a-f]{8}(?:\/export)?$/],
+  ["GET", /^\/v1\/projects\/p-[0-9a-f]{8}(?:\/export|\/status-report|\/page)?$/], // the project page's latest status report (PROJECT-REPORTS-1) and its status page (PROJECT-PAGES-1; read only)
   ["GET", /^\/v1\/tasks\/[^/]+$/],
   ["POST", /^\/v1\/(?:projects|tasks)$/],
   ["POST", /^\/v1\/projects\/p-[0-9a-f]{8}(?:\/boards(?:\/[0-9a-f]{16}(?::|%3[Aa])[0-9]+)?)?$/], // the board id's ":" arrives percent-encoded (encodeURIComponent)
@@ -145,6 +145,9 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   ["POST", /^\/v1\/accounts\/(?:reset|reset\/prepare|reset\/resolve|refresh)$/],
   ["DELETE", /^\/v1\/integrations\/[a-z]+$/],
   ["POST", /^\/v1\/pool\/(?:share|run|stop|serve|serve\/stop|connect|disconnect|install)$/], // WALKIE-POOL-2: the person at this machine's dashboard
+  // LOCAL-MODELS-HF-1: the model list the suggestions rank from, and asking Hugging Face again (rate limited like other writes).
+  ["GET", /^\/v1\/pool\/models$/],
+  ["POST", /^\/v1\/pool\/models\/refresh$/],
   // The Seats view (PROTOCOL §11; Codex seats r9 MEDIUM 5): this machine's opt-in, launching and stopping seats, busy
   // and resume. Person-only like the rest (a dashboard session sends no agent header). Not the token or bundle
   // uploads: those are the CLI's.
@@ -160,6 +163,10 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   ["DELETE", /^\/v1\/orchestrator\/schedules\/[^/]+$/],
   // ORCH-2: and its model picker (the chat header).
   ["POST", /^\/v1\/orchestrator\/(?:say|stop-reply|start|stop|model|access|auto)$/],
+  // TALKIE-OPS-1: the tab's recommendations, and a person's one-tap approve or dismiss (rec-routes.ts checks the id and
+  // keeps answers person-only). Not POST /v1/talkie/recs itself: recording one is WalkieTalkie's child's alone.
+  ["GET", /^\/v1\/talkie\/recs$/],
+  ["POST", /^\/v1\/talkie\/recs\/[^/]+\/(?:approve|dismiss)$/],
   // Team > Devices (WALKIE-PWA-1): pair a phone, list and revoke paired phones.
   ["GET", /^\/v1\/mobile$/],
   ["POST", /^\/v1\/mobile\/pair$/],
@@ -496,6 +503,11 @@ export class LocalApi {
       refuseAgent(caller, "agents can't open the dashboard (its login link is a credential in plain text); a person runs walkie dashboard in their own terminal");
     }
     if (url.pathname === "/v1/auth/logout" || url.pathname === "/v1/auth/rotate") {
+      // TALKIE-OPS-1: served before dispatch, so the scheduled-turn hold (local-routes.ts refuseScheduledWrite) is repeated here.
+      const host = hostFor(this.d.core);
+      if (req.headers.get(ORCHESTRATOR_TOKEN_HEADER) !== null && (host?.scheduledChildActive ? host.scheduledChildActive() : host?.scheduledTurnActive?.())) {
+        throw new HttpError(403, "scheduled_turn_cannot_act", "a scheduled WalkieTalkie turn changes nothing: it cannot sign out dashboards or rotate the token");
+      }
       adminGate({ core: this.d.core, agent, underAgent, req }, url.pathname === "/v1/auth/logout" ? "signed out every dashboard session" : "rotated the local API token");
     }
     if (url.pathname === "/v1/auth/nonce") return body(this.mintNonce());

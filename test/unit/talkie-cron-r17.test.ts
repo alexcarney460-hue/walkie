@@ -249,10 +249,12 @@ test("a later start retains an authority-committed failure after every completio
     return response;
   }) as Schedules["progress"];
   for (let i = 0; i < 18; i++) await schedules.tick(wall.value + i * 15_000);
-  expect(lost).toBe(5);
+  // The lead sees its completion recorded in its own copy of the log after the first lost acknowledgement and stops
+  // retrying (WALK-78); before, it spent all five attempts and left an unresolved marker for the status read to clear.
+  expect(lost).toBe(1);
   expect(schedules.get(schedule.id).failures).toBe(1);
   expect(schedules.get(schedule.id).last_result).toBe("failed");
-  expect(schedules.status()).toBeNull(); // signed completion reconciles the unresolved marker
+  expect(schedules.status()).toBeNull(); // the recorded completion leaves no unresolved marker
   wall.value = stale.next_run! + 1_000;
   setSystemTime(new Date(wall.value));
   const second = randomUUID();

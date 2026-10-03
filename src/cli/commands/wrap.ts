@@ -45,6 +45,9 @@ async function wrapWith(provider: Provider, args: string[], home: string, spawn:
     provider, args, walkieHome: home, env: process.env, cwd: process.cwd(), source: defaultSource(home), spawn,
     thresholdPct: thresholdPct(home),
     ...(ms(process.env.WALKIE_SWITCH_SETTLE_MS, 0, 60_000) !== null ? { settleMs: ms(process.env.WALKIE_SWITCH_SETTLE_MS, 0, 60_000) as number } : {}),
-    openRollout: async (pid) => (pid > 0 ? rolloutsIn(await procs.openFiles(pid)) : null),
+    openRollout: async (pid) => {
+      const open = pid > 0 ? await procs.openFiles(pid) : null;
+      return open ? rolloutsIn(open) : null;
+    },
   });
 }

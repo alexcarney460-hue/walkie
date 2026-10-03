@@ -17,6 +17,7 @@ import { walkieArgv } from "../../hooks/install.ts";
 import { UID_MONITOR_LEASE_MS, uidMonitorFailureFile, writeUidLease } from "./uid-monitor.ts";
 import { CleanupObligation, cleanupDelay, newerGenerationOwnsCleanup, type PendingCleanup } from "./cleanup-obligation.ts";
 import { selfOp, type OpId } from "../seats/admin-ledger.ts";
+import { RecommendInput } from "./rec-input.ts";
 
 export const SETUP_USER_COMMAND = "walkie seats setup-user --apply";
 export const TALKIE_SHELL_HEADER = "X-Walkie-Talkie-Shell";
@@ -30,6 +31,7 @@ export function talkieRouteAllowed(method: string, path: string): boolean {
     /^\/v1\/projects\/p-[0-9a-f]{8}\/room(?:\/.*)?$/,
     /^\/v1\/orchestrator\/messages$/,
     /^\/v1\/seats\/busy$/,
+    /^\/v1\/talkie\/recs$/, // TALKIE-OPS-1: the recommendations it may list
   ].some((pattern) => pattern.test(path));
   if (method !== "POST") return false;
   return [
@@ -40,10 +42,14 @@ export function talkieRouteAllowed(method: string, path: string): boolean {
     /^\/v1\/seats\/run$/,
     /^\/v1\/orchestrator\/(say|stop-reply)$/,
     /^\/v1\/team\/(invite-code|add-machine)$/,
+    /^\/v1\/talkie\/recs$/, // TALKIE-OPS-1: recording one (never approving or dismissing: those are a person's)
   ].some((pattern) => pattern.test(path));
 }
 
-function talkieBodyAllowed(path: string, body: ArrayBuffer): boolean {
+export function talkieBodyAllowed(path: string, body: ArrayBuffer): boolean {
+  if (path === "/v1/talkie/recs") {
+    try { return RecommendInput.safeParse(JSON.parse(new TextDecoder().decode(body))).success; } catch { return false; }
+  }
   if (path === "/v1/team/invite-code" || path === "/v1/team/add-machine") {
     try {
       const value = JSON.parse(new TextDecoder().decode(body)) as unknown;

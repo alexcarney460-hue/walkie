@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Ban, Check, Paperclip, Plus } from "lucide-react";
 import type { AgentView, CardView, Column } from "../../api/types.ts";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { Avatar, hueVar } from "../../components/primitives.tsx";
 import { tagHue } from "../../lib/format.ts";
 import { stuck, type Focus } from "../../lib/projects.ts";
@@ -217,14 +218,17 @@ export function Kanban(p: KanbanProps) {
                 {list.map((card, ri) => (
                   <div key={card.id} className="kslot">
                     {dropHere && target?.index === ri && <div className="kdrop" aria-hidden="true" />}
-                    <CardFace
-                      card={card} agents={p.byCard.get(card.key)}
-                      focused={p.focus?.col === ci && p.focus.row === ri} selected={p.selected.has(card.id)}
-                      dragging={target?.id === card.id} open={p.openCard === card.id}
-                      onPointerDown={down(card)} files={p.attached?.get(card.id)}
-                      {...(p.onCardFiles ? { onFiles: (fs: File[]) => p.onCardFiles?.(card, fs) } : {})}
-                      onClick={() => { if (suppressClick.current) return; p.onFocus({ col: ci, row: ri }); p.onOpen(card); }}
-                    />
+                    {/* One card that cannot be drawn gives way alone (DASH-BLANK-1): the rest of the board keeps working. */}
+                    <ErrorBoundary scope="item" name={`card ${card.key}`} resetKeys={[card, p.byCard.get(card.key), p.attached?.get(card.id)]}>
+                      <CardFace
+                        card={card} agents={p.byCard.get(card.key)}
+                        focused={p.focus?.col === ci && p.focus.row === ri} selected={p.selected.has(card.id)}
+                        dragging={target?.id === card.id} open={p.openCard === card.id}
+                        onPointerDown={down(card)} files={p.attached?.get(card.id)}
+                        {...(p.onCardFiles ? { onFiles: (fs: File[]) => p.onCardFiles?.(card, fs) } : {})}
+                        onClick={() => { if (suppressClick.current) return; p.onFocus({ col: ci, row: ri }); p.onOpen(card); }}
+                      />
+                    </ErrorBoundary>
                   </div>
                 ))}
                 {dropHere && (target?.index ?? 0) >= list.length && <div className="kdrop" aria-hidden="true" />}

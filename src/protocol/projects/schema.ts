@@ -10,6 +10,7 @@
 //             a reply WITHOUT `board` in a card's thread is a comment
 import { z } from "zod";
 import { Address, BlobHash, EventId, type Author } from "../schemas.ts";
+import { MAX_SCREEN_GROUPS, MAX_SCREENS, SCREEN_IMAGE_TYPES, SCREEN_MAX_BYTES, SCREEN_MAX_PIXELS, SCREEN_MAX_SIDE, SCREEN_STATUSES } from "./page-limits.ts";
 
 /** The reserved channel prefix of projects; the rest is 8 random hex characters (opaque: names reach every member). */
 export const PROJECT_CHANNEL_PREFIX = "p-";
@@ -100,6 +101,12 @@ export const ProjectOp = z.object({
    * moved lease stops the old holder's writes (two machines' plans can still overlap in time). Pre.6 drops it too.
    */
   steward_node: z.string().regex(/^(?:[0-9a-f]{16})?$/).optional(),
+  /**
+   * PROJECT-REPORTS-1: WalkieTalkie writes this project's plain-English status report every hour it changed while
+   * "hourly" (default "off"). Not strict like the fields above: a peer from before it drops the field and applies the
+   * op's others.
+   */
+  status_report: z.enum(["hourly", "off"]).optional(),
 });
 export const BoardOp = z.object({
   ...Base, op: z.literal("board"),
@@ -145,8 +152,51 @@ export const FileOp = z.object({
   state: z.enum(["active", "removed"]).optional(),
   attach: z.array(EventId).min(1).max(20).optional(),
   detach: z.array(EventId).min(1).max(20).optional(),
+  /**
+   * PROJECT-PAGES-1: this file is a screen of the project's status page (ScreenMeta), or `null`: not any more. Lenient on
+   * purpose: the register is judged where it is folded and written (room.ts, `ScreenMeta`), so a screen written by a newer
+   * build (a status this one does not know) costs only the register, never the version or the rename the op also carries.
+   */
+  screen: z.unknown().optional(),
 });
-export const BoardOpSchema = z.discriminatedUnion("op", [ProjectOp, BoardOp, CardOp, FileOp]);
+
+// ---- the status page (PROJECT-PAGES-1) ---------------------------------------------------------------------------------
+
+/** Text of a fact or a screen: one line, nothing a reader cannot see (no control, invisible, direction-changing or line-separating character). */
+export const PLAIN_LINE = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u;
+const PLAIN = PLAIN_LINE;
+/** Facts a page shows (set by the project's people and agents), and how long a label and a value may be. */
+export const MAX_FACTS = 6;
+export const FACT_LABEL_MAX = 24;
+export const FACT_VALUE_MAX = 60;
+export const FactLabel = z.string().min(1).max(FACT_LABEL_MAX).regex(PLAIN);
+export const FactValue = z.string().min(1).max(FACT_VALUE_MAX).regex(PLAIN);
+/**
+ * One fact of a project's status page: set (`value`) or removed (`value: null`), by any member or their agent. A reply in the
+ * project root's thread, ranked by its own chain of page ops (page.ts foldPage), so it never touches the settings or a card.
+ */
+export const PageOp = z.object({
+  ...Base, op: z.literal("page"),
+  fact: z.object({ label: FactLabel, value: FactValue.nullable() }).optional(),
+});
+
+/** What a screenshot of the page can say about itself, and how big it may be (page-limits.ts). */
+export { MAX_SCREEN_GROUPS, MAX_SCREENS, SCREEN_IMAGE_TYPES, SCREEN_MAX_BYTES, SCREEN_MAX_PIXELS, SCREEN_MAX_SIDE, SCREEN_STATUSES };
+export const ScreenMeta = z.object({
+  title: z.string().min(1).max(60).regex(PLAIN),
+  group: z.string().min(1).max(40).regex(PLAIN),
+  status: z.enum(SCREEN_STATUSES),
+  about: z.string().min(1).max(300).regex(PLAIN),
+  /** The page of the product it shows ("/carrier/dispatch", or "#/projects" for an app that routes by hash): printable ASCII, no spaces. */
+  route: z.string().min(1).max(120).regex(/^#?\/[\x21-\x7e]*$/).optional(),
+  note: z.string().min(1).max(200).regex(PLAIN).optional(),
+  /** The image's size in pixels, read from the file when it was added (the page reserves room for it). */
+  w: z.number().int().min(1).max(SCREEN_MAX_SIDE).optional(),
+  h: z.number().int().min(1).max(SCREEN_MAX_SIDE).optional(),
+});
+export type ScreenMetaT = z.infer<typeof ScreenMeta>;
+export type ScreenStatus = ScreenMetaT["status"];
+export const BoardOpSchema = z.discriminatedUnion("op", [ProjectOp, BoardOp, CardOp, FileOp, PageOp]);
 
 /**
  * The largest post body (text + board op, as serialised JSON) that counts as a board op (round-6 audit, Opus M3): a
@@ -173,12 +223,13 @@ export type BoardOpT = z.infer<typeof BoardOp>;
 export type CardOpT = z.infer<typeof CardOp>;
 export type AnyOp = z.infer<typeof BoardOpSchema>;
 export type FileOpT = z.infer<typeof FileOp>;
+export type PageOpT = z.infer<typeof PageOp>;
 
 /** Fields a card op may set, in the order the timeline lists them. */
 export const CARD_FIELDS = [
   "title", "body", "board", "column", "pos", "assignee", "reviewer", "labels", "estimate", "due", "blocked", "blocked_reason", "state",
 ] as const;
-export const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node"] as const;
+export const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node", "status_report"] as const;
 export const BOARD_FIELDS = ["name", "columns", "state"] as const;
 
 export const DEFAULT_COLUMNS: readonly Column[] = [
@@ -223,6 +274,11 @@ export interface ProjectView {
   steward: "on" | "off";
   /** FO-6: the machine whose steward loop keeps this board ("" = none: no loop runs it; people can still run it). */
   steward_node: string;
+  /**
+   * PROJECT-REPORTS-1: "hourly" = WalkieTalkie writes a status report here each hour something changed (a project admin's
+   * setting). A view stored before the field existed reads as "off" (status-report.ts reportMode).
+   */
+  status_report: "hourly" | "off";
   /** Restricted channel: the team's owners only (Alex 2026-09-26). */
   private: boolean;
   /** Owners and the creator: who may change settings. */
@@ -286,6 +342,8 @@ export interface BoardDelta {
   reset?: boolean;
   /** The project's Data Room changed (DATA-ROOM-1): refetch the room. Older dashboards ignore it. */
   room?: boolean;
+  /** The project's status page changed (PROJECT-PAGES-1: a fact, or a new report): refetch it. Older dashboards ignore it. */
+  page?: boolean;
 }
 
 // ---- Data Room views (DATA-ROOM-1; the fold is room.ts) ----------------------------------------------------------
@@ -322,6 +380,8 @@ export interface RoomFileView {
   available: boolean;
   /** Head the next op names as its parent (informational for clients; the daemon re-reads it). */
   rev: number;
+  /** PROJECT-PAGES-1: set while the file is a screen of the project's status page. */
+  screen?: ScreenMetaT;
 }
 
 export interface RoomFileDetail { file: RoomFileView; versions: RoomVersion[]; timeline: TimelineEntry[] }

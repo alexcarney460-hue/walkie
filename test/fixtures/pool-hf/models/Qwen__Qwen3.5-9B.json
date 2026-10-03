@@ -1,0 +1,149 @@
+{
+ "_id": "69a194f2d29af86e5f085743",
+ "id": "Qwen/Qwen3.5-9B",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "69a072ba6af161bf9190e6ef",
+    "id": "Qwen/Qwen3.5-9B-Base"
+   }
+  ]
+ },
+ "downloads": 9282840,
+ "likes": 2080,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5",
+  "image-text-to-text",
+  "conversational",
+  "base_model:Qwen/Qwen3.5-9B-Base",
+  "base_model:finetune:Qwen/Qwen3.5-9B-Base",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/mdpbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Delores-Lin/MDPBench",
+     "task_id": "overall"
+    },
+    "value": 65.7,
+    "date": "2026-04-14",
+    "source": {
+     "url": "https://huggingface.co/datasets/Delores-Lin/MDPBench",
+     "name": "MDPBench leaderboard",
+     "user": "Delores-Lin"
+    }
+   },
+   "pullRequest": 50
+  },
+  {
+   "filename": ".eval_results/mdpbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Delores-Lin/MDPBench",
+     "task_id": "digital"
+    },
+    "value": 74.8,
+    "date": "2026-04-14",
+    "source": {
+     "url": "https://huggingface.co/datasets/Delores-Lin/MDPBench",
+     "name": "MDPBench leaderboard",
+     "user": "Delores-Lin"
+    }
+   },
+   "pullRequest": 50
+  },
+  {
+   "filename": ".eval_results/MathArena--hmmt_feb_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/hmmt_feb_2026",
+     "task_id": "MathArena/hmmt_feb_2026"
+    },
+    "value": 71.21,
+    "date": "2026-03-17",
+    "source": {
+     "url": "https://matharena.ai/?comp=hmmt--hmmt_feb_2026",
+     "name": "Official MathArena Evaluation"
+    }
+   },
+   "pullRequest": 36
+  },
+  {
+   "filename": ".eval_results/MathArena--aime_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/aime_2026",
+     "task_id": "MathArena/aime_2026"
+    },
+    "value": 92.5,
+    "date": "2026-03-17",
+    "source": {
+     "url": "https://matharena.ai/?comp=aime--aime_2026",
+     "name": "Official MathArena Evaluation"
+    }
+   },
+   "pullRequest": 35
+  },
+  {
+   "filename": ".eval_results/gpqa.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 81.7,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.5-9B",
+     "name": "Model Card",
+     "user": "SaylorTwift"
+    },
+    "date": "2026-03-02T13:35:24.000Z"
+   },
+   "pullRequest": 2
+  },
+  {
+   "filename": ".eval_results/mmlu_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "TIGER-Lab/MMLU-Pro",
+     "task_id": "mmlu_pro"
+    },
+    "value": 82.5,
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.5-9B",
+     "name": "Model Card",
+     "user": "SaylorTwift"
+    },
+    "date": "2026-03-02T13:37:52.000Z"
+   },
+   "pullRequest": 2
+  }
+ ],
+ "createdAt": "2026-02-27T12:58:26.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 9653100528,
+   "F32": 3840
+  },
+  "total": 9653104368
+ }
+}

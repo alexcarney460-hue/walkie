@@ -2,14 +2,16 @@
 // free VRAM sampled and used for "now" (5), GPU and CPU backends considered independently (6), accurate "if idle"
 // wording (7) and trust framing of peer-reported names for a model (1).
 import { describe, expect, test } from "bun:test";
-import { poolFromTeam, poolJson, POOL_NOTE, renderPool } from "../../src/cli/commands/pool.ts";
+import { poolFromTeam as realPoolFromTeam, poolJson, POOL_NOTE, renderPool } from "../../src/cli/commands/pool.ts";
 import { parseGpuFree, readGpuFree } from "../../src/daemon/machine-stats/accel.ts";
 import { abandonedCount, MAX_ABANDONED, run, type Proc } from "../../src/daemon/machine-stats/read.ts";
 import { MachineStatsSampler, shouldPublish } from "../../src/daemon/machine-stats/sampler.ts";
 import { CPU_MEMORY, machineCapacity } from "../../src/pool/capacity.ts";
-import { suggestTeam } from "../../src/pool/suggest.ts";
+import { LEGACY, suggestTeam } from "../helpers/pool-legacy.ts";
 import { MachineStats, type MachineAccel } from "../../src/protocol/machine-stats.ts";
 import type { NodeView, TeamView } from "../../src/protocol/schemas.ts";
+// The scenarios below name models of the frozen 13-model list (test/helpers/pool-legacy.ts).
+const poolFromTeam = (t: TeamView) => realPoolFromTeam(t, LEGACY);
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;

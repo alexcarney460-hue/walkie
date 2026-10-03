@@ -7,7 +7,7 @@ import { bool, int, str, UsageError } from "../args.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { ago, c, safeTerm } from "../format.ts";
 import {
-  CREDIT_BLOCKS, IDLE_MINUTES_MAX, IDLE_MINUTES_MIN, parseMachineAsks, usd, type CreditBlock, type LocalComputeState,
+  COMPUTE_ALERT_TEXT, CREDIT_BLOCKS, IDLE_MINUTES_MAX, IDLE_MINUTES_MIN, parseMachineAsks, usd, type CreditBlock, type LocalComputeState,
   type Quotes, type RentalView, type RentResult,
 } from "../../protocol/compute.ts";
 
@@ -42,7 +42,8 @@ export function listText(s: LocalComputeState): string {
   const active = s.rentals.filter((r) => r.state !== "ended" && r.state !== "failed");
   const head = active.length ? active.map(rentalLine).join("\n") : c.dim("no rented machines running or queued");
   const done = s.rentals.length - active.length;
-  return accounts + (done ? `${head}\n${c.dim(`${done} ended (walkie compute list --json for all)`)}` : head);
+  const alerts = (s.alerts ?? []).map((a) => `\n${c.yellow(COMPUTE_ALERT_TEXT[a])}`).join("");
+  return accounts + (done ? `${head}\n${c.dim(`${done} ended (walkie compute list --json for all)`)}` : head) + alerts;
 }
 
 export function creditText(s: LocalComputeState): string {

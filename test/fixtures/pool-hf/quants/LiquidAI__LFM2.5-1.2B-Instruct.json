@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "6959afb601130378732081de",
+  "id": "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+  "downloads": 354945
+ },
+ {
+  "_id": "695c9b3b5478be093b12b3c2",
+  "id": "unsloth/LFM2.5-1.2B-Instruct-GGUF",
+  "downloads": 36981
+ },
+ {
+  "_id": "695ec6b5cc177b5e774d4a86",
+  "id": "lmstudio-community/LFM2.5-1.2B-Instruct-GGUF",
+  "downloads": 12214
+ },
+ {
+  "_id": "695ea0407e6ede0dd9ed6aeb",
+  "id": "NovachronoAI/LFM2.5-1.2B-Nova-Function-Calling-GGUF",
+  "downloads": 3457
+ },
+ {
+  "_id": "695c84e92db2efe5f96e825c",
+  "id": "bartowski/LiquidAI_LFM2.5-1.2B-Instruct-GGUF",
+  "downloads": 1700
+ },
+ {
+  "_id": "6a2afec3b482926b9843d033",
+  "id": "NobodyWho/LFM2.5-1.2B-Instruct-GGUF",
+  "downloads": 1174
+ },
+ {
+  "_id": "695ec8819044579119f0a171",
+  "id": "mradermacher/LFM2.5-1.2B-Instruct-i1-GGUF",
+  "downloads": 889
+ },
+ {
+  "_id": "6aaa29e97147702600286b2c",
+  "id": "d4rkninja/tanpo-marketing-GGUF",
+  "downloads": 871
+ }
+]

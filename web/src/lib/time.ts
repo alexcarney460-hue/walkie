@@ -38,6 +38,22 @@ export function ago(ts: number, at: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+/** Whole words for a reader who is not on a terminal: "just now", "5 minutes ago", "2 hours ago", "2 days ago", "3 weeks ago", "4 months ago". */
+export function agoPlain(ts: number, at: number): string {
+  const s = Math.max(0, Math.floor((at - ts) / 1000));
+  const unit = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"} ago`;
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return unit(m, "minute");
+  const h = Math.floor(m / 60);
+  if (h < 24) return unit(h, "hour");
+  const d = Math.floor(h / 24);
+  if (d < 14) return unit(d, "day");
+  if (d < 60) return unit(Math.floor(d / 7), "week");
+  if (d < 365) return unit(Math.floor(d / 30), "month");
+  return unit(Math.floor(d / 365), "year");
+}
+
 export function agoLong(ts: number, at: number): string {
   const short = ago(ts, at);
   return short === "now" ? "just now" : `${short} ago`;

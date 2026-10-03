@@ -12,6 +12,7 @@ import { catalogNeed, PlanError, resolveMachine, serveHosts } from "./plan.ts";
 import { RunError } from "./runner.ts";
 import { freshGpuStats, type PoolService } from "./service.ts";
 import type { MachineStats } from "../../protocol/machine-stats.ts";
+import type { PoolModelsView } from "../../protocol/pool.ts";
 
 function pool(c: RouteCtx): PoolService {
   if (!c.core.pool) throw new HttpError(404, "not_found", "split runs are not available on this daemon");
@@ -20,6 +21,27 @@ function pool(c: RouteCtx): PoolService {
 
 
 route("GET", "/v1/pool", (c) => json(pool(c).view()));
+
+/** The model list as the wire form: the catalog only when asked for (the dashboard polls with `brief=1` while it refreshes). */
+function modelsView(c: RouteCtx): PoolModelsView {
+  const src = pool(c).models;
+  const v = src.peek();
+  const brief = c.url.searchParams.get("brief") === "1";
+  return { source: v.source, state: v.state, checked_at: v.checkedAt, note: v.note, refreshing: src.refreshing, ...(brief ? {} : { catalog: v.catalog }) };
+}
+
+// Opening the suggestions is what reads Hugging Face: when the list is missing or over a day old this starts the read
+// (in the background of this request; the answer is what there is now, with `refreshing: true`). Never on a timer.
+route("GET", "/v1/pool/models", (c) => {
+  void pool(c).models.load().catch(() => undefined);
+  return json(modelsView(c));
+});
+
+route("POST", "/v1/pool/models/refresh", (c) => {
+  limitWrite(c);
+  void pool(c).models.load({ refresh: true }).catch(() => undefined);
+  return json(modelsView(c), 202);
+});
 
 /** The node list with this machine's stats carrying free VRAM read now (service.ts freshGpuStats). */
 async function withFreshSelf<T extends { self: boolean; stats?: MachineStats }>(c: RouteCtx, nodes: T[]): Promise<T[]> {

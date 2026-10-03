@@ -174,7 +174,7 @@ export interface ProjectState {
   /** Every prefix an applied op ever gave the project (the current one included): old keys stay masked (Opus r4 M4). */
   prefixes: string[];
   meter: "count" | "points"; automations: Required<Automations>; state: "active" | "archived" | "deleted";
-  steward: "on" | "off"; steward_node: string;
+  steward: "on" | "off"; steward_node: string; status_report: "hourly" | "off";
   creator: string; created_at: number; updated_at: number;
   /** Highest applied rank, and the op new settings changes name as their parent. */
   rev: number; head: string;
@@ -182,7 +182,7 @@ export interface ProjectState {
 }
 
 const DEFAULT_AUTOMATIONS: Required<Automations> = { pr_opened: true, pr_merged: false, agents_can_close: true };
-const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node"] as const;
+const PROJECT_FIELDS = ["name", "folder", "description", "prefix", "paths", "meter", "automations", "state", "steward", "steward_node", "status_report"] as const;
 
 function isAdmin(ev: OpEvent, env: FoldEnv, creator: string): boolean {
   if (!isPerson(ev)) return false;
@@ -218,7 +218,7 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
   let s: ProjectState = {
     id: root.ev.id, name: r.name as string, folder: r.folder ?? "", description: r.description ?? "", prefix: r.prefix as string, prefixes: [r.prefix as string],
     paths: r.paths ?? [], meter: r.meter ?? "count", automations: { ...DEFAULT_AUTOMATIONS, ...(r.automations ?? {}) },
-    state: r.state ?? "active", steward: r.steward ?? "on", steward_node: r.steward_node ?? "", creator, created_at: root.ev.ts, updated_at: root.ev.ts, rev: 0, head: refOf(root.ev), timeline: [],
+    state: r.state ?? "active", steward: r.steward ?? "on", steward_node: r.steward_node ?? "", status_report: isPerson(root.ev) ? r.status_report ?? "off" : "off", creator, created_at: root.ev.ts, updated_at: root.ev.ts, rev: 0, head: refOf(root.ev), timeline: [],
   };
   const { applied, waiting } = order(root, replies);
   const timeline: TimelineEntry[] = waitingEntries(waiting, PROJECT_FIELDS);
@@ -242,6 +242,7 @@ export function foldProject(posts: readonly OpEvent[], env: FoldEnv): ProjectSta
       ...(p.state !== undefined ? { state: p.state } : {}),
       ...(p.steward !== undefined ? { steward: p.steward } : {}),
       ...(p.steward_node !== undefined ? { steward_node: p.steward_node } : {}),
+      ...(p.status_report !== undefined ? { status_report: p.status_report } : {}),
       updated_at: Math.max(s.updated_at, o.ev.ts),
     };
   }
@@ -543,7 +544,7 @@ export function projectView(
   return {
     channel, id: p.id, name: p.name, folder: p.folder, description: p.description, prefix: p.prefix, paths: p.paths,
     ...(p.prefixes.length > 1 ? { prior_prefixes: p.prefixes.filter((x) => x !== p.prefix) } : {}),
-    meter_mode: p.meter, automations: p.automations, state: p.state, steward: p.steward, steward_node: p.steward_node, private: opts.private, admins, creator: p.creator,
+    meter_mode: p.meter, automations: p.automations, state: p.state, steward: p.steward, steward_node: p.steward_node, status_report: p.status_report, private: opts.private, admins, creator: p.creator,
     created_at: p.created_at, boards: boardViews,
     meter: sumMeters(boardViews.filter((b) => b.state === "active").map((b) => b.meter), p.meter),
     cards, last_activity: Math.max(opts.lastActivity, p.updated_at),

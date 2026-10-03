@@ -1,0 +1,62 @@
+{
+ "_id": "680da79d48c19d19cf82ab5e",
+ "id": "Qwen/Qwen3-8B",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "680f0c3e6eacf22a04ee1219",
+    "id": "Qwen/Qwen3-8B-Base"
+   }
+  ]
+ },
+ "downloads": 11384459,
+ "likes": 2064,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "b968826d9c46dd6066d109eabc6255188de91218",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3",
+  "text-generation",
+  "conversational",
+  "arxiv:2309.00071",
+  "arxiv:2505.09388",
+  "base_model:Qwen/Qwen3-8B-Base",
+  "base_model:finetune:Qwen/Qwen3-8B-Base",
+  "license:apache-2.0",
+  "eval-results",
+  "text-generation-inference",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/Qwen-Qwen3-8B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "LiquidAI/ifstruct-v1.0",
+     "task_id": "ifstruct_v1"
+    },
+    "value": 79.75,
+    "date": "2026-06-30",
+    "source": {
+     "url": "https://www.liquid.ai/blog/ifstruct-v1.0",
+     "name": "Liquid AI \u2014 IFStruct v1.0 blog (Qwen3-8B)"
+    }
+   },
+   "pullRequest": 39
+  }
+ ],
+ "createdAt": "2025-04-27T03:42:21.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 8190735360
+  },
+  "total": 8190735360
+ }
+}

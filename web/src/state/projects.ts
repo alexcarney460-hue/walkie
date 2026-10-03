@@ -15,9 +15,11 @@ export interface ProjectsState {
   /** Data Room files per project channel (DATA-ROOM-1), for the rooms opened in this tab (removed ones included). */
   rooms: Record<string, RoomFileView[]>;
   roomsError: Record<string, string>;
+  /** Per project channel, how many times the stream said its status page or its Data Room changed (PROJECT-PAGES-1): an open page looks again. */
+  pageTicks?: Record<string, number>;
 }
 
-const EMPTY: ProjectsState = { status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} };
+const EMPTY: ProjectsState = { status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {}, pageTicks: {} };
 
 /** Applies a board delta (pure): the project's view, changed cards, removed cards. */
 export function applyDelta(s: ProjectsState, d: BoardDelta): ProjectsState {
@@ -85,7 +87,8 @@ class ProjectsStore {
   }
 
   delta(d: BoardDelta): void {
-    this.set(applyDelta(this.state, d));
+    const next = applyDelta(this.state, d);
+    this.set(d.page || d.room ? { ...next, pageTicks: { ...next.pageTicks, [d.channel]: (next.pageTicks?.[d.channel] ?? 0) + 1 } } : next);
     if (d.reset && this.state.cards[d.channel]) void this.loadCards(d.channel);
     if (d.room && this.state.rooms[d.channel]) void this.loadRoom(d.channel);
   }
@@ -130,4 +133,9 @@ export const projectsStore = new ProjectsStore();
 
 export function useProjects(): ProjectsState {
   return useSyncExternalStore(projectsStore.subscribe, projectsStore.get, projectsStore.get);
+}
+
+/** How many times a project's status page or Data Room was said to have changed (a number that only goes up). */
+export function usePageTick(channel: string): number {
+  return useSyncExternalStore(projectsStore.subscribe, () => projectsStore.get().pageTicks?.[channel] ?? 0, () => 0);
 }

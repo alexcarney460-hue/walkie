@@ -1,0 +1,109 @@
+{
+ "_id": "6a6f6cf134c714cf6381ccb4",
+ "id": "inclusionAI/Ling-3.0-flash",
+ "downloads": 16765,
+ "likes": 419,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "ef06d91fe382109ae82647da88ff99b0f11745b0",
+ "tags": [
+  "safetensors",
+  "bailing_hybrid",
+  "text-generation",
+  "conversational",
+  "custom_code",
+  "license:mit",
+  "eval-results",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/aime_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/aime_2026",
+     "task_id": "MathArena/aime_2026"
+    },
+    "value": 93.2,
+    "source": {
+     "url": "https://huggingface.co/inclusionAI/Ling-3.0-flash",
+     "name": "Model Card"
+    },
+    "date": "2026-08-06T15:09:42.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/hle.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 22.7,
+    "source": {
+     "url": "https://huggingface.co/inclusionAI/Ling-3.0-flash",
+     "name": "Model Card"
+    },
+    "date": "2026-08-06T15:09:42.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/hmmt_feb_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/hmmt_feb_2026",
+     "task_id": "MathArena/hmmt_feb_2026"
+    },
+    "value": 87,
+    "source": {
+     "url": "https://huggingface.co/inclusionAI/Ling-3.0-flash",
+     "name": "Model Card"
+    },
+    "date": "2026-08-06T15:09:42.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/swe-bench_multilingual.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Multilingual",
+     "task_id": "swe_bench_multilingual_%_resolved"
+    },
+    "value": 72.4,
+    "source": {
+     "url": "https://huggingface.co/inclusionAI/Ling-3.0-flash",
+     "name": "Model Card"
+    },
+    "date": "2026-08-06T15:09:42.000Z"
+   }
+  },
+  {
+   "filename": ".eval_results/swe-bench_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 56.6,
+    "source": {
+     "url": "https://huggingface.co/inclusionAI/Ling-3.0-flash",
+     "name": "Model Card"
+    },
+    "date": "2026-08-06T15:09:42.000Z"
+   }
+  }
+ ],
+ "createdAt": "2026-08-02T16:14:41.000Z",
+ "safetensors": {
+  "parameters": {
+   "F32": 165472,
+   "BF16": 127486240128
+  },
+  "total": 127486405600
+ }
+}

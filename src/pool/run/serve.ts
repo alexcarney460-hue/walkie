@@ -22,7 +22,7 @@ import type { Logger } from "../../daemon/logger.ts";
 import type { MachineStats } from "../../protocol/machine-stats.ts";
 import { ServeReq, type PoolServing, type ServeRes, type ServeView } from "../../protocol/pool.ts";
 import { SEATS_POOL_CODE } from "../../protocol/seats.ts";
-import { machineCapacity } from "../capacity.ts";
+import { machineCapacity, serveBudget } from "../capacity.ts";
 import { CATALOG, type Quant } from "../catalog.ts";
 import { freeLoopbackPort, minimalEnv, spawnChild, type Child, type ChildRegistry } from "./child.ts";
 import { ensureFiles, filesFor } from "./gguf.ts";
@@ -136,10 +136,10 @@ export class PoolServer {
   private async gpuBudget(forOther: boolean): Promise<number | null> {
     if (this.d.budget) return this.d.budget();
     const cap = machineCapacity({ node_id: "self", hostname: "self", handle: "self", stats: (await this.d.stats()) ?? undefined });
-    const gpu = cap?.backends.find((b) => b.kind !== "cpu" && b.measured) ?? null;
-    if (!gpu) return null;
+    const budget = cap ? serveBudget(cap) : null;
+    if (budget === null) return null;
     const share = this.d.share();
-    return forOther && share.maxBytes !== null ? Math.min(gpu.usable, share.maxBytes) : gpu.usable;
+    return forOther && share.maxBytes !== null ? Math.min(budget, share.maxBytes) : budget;
   }
 
   /** Starts a catalog model here. `by` = the member machine that asked; null = this machine's person. */
@@ -172,7 +172,7 @@ export class PoolServer {
       const pressed = startBlocked(this.d.mem?.());
       if (pressed) throw new HttpError(503, "memory_pressure", pressed);
       budget = await this.gpuBudget(by !== null);
-      if (budget === null) throw new HttpError(409, "no_gpu", "this machine has no GPU whose free memory Walkie can read; serving puts every layer on a GPU (split it instead: walkie pool run)");
+      if (budget === null) throw new HttpError(409, "no_gpu", "the pinned runtime has no usable GPU with measured free memory on this machine; serving puts every layer on a GPU (split it instead: walkie pool run)");
       if (need > budget) {
         throw new HttpError(507, "insufficient_memory", `${m.name} (${quant === "q8" ? "8-bit" : "4-bit"}) needs ${(need / GiB).toFixed(1)} GB of GPU memory; this machine has ${(budget / GiB).toFixed(1)} GB free${by !== null && this.d.share().maxBytes !== null ? " within its owner's cap" : ""} (split it instead: walkie pool run)`);
       }
@@ -314,6 +314,14 @@ export class PoolServer {
     if (pressed) { this.fail(run, `stopped: ${pressed.replaceAll("_", " ")} on this machine`); return; }
     const sharing = this.d.share().on;
     if (!sharing && run.view.started_by) { void this.teardown(run, "stopped", "its owner turned sharing off"); return; }
+    // A model a member asked for is not brought up once that member may no longer use this machine (WALK-74: removed,
+    // made an observer, their machine revoked) while it was still downloading or loading. One already serving keeps
+    // serving for the teammates still allowed; every connection is judged below.
+    const by = run.view.started_by;
+    if (by && run.view.state !== "serving" && !this.d.mayUse(by.node_id)) {
+      void this.teardown(run, "stopped", `not started: ${by.hostname} may no longer use this machine (its person was removed or made an observer, or the machine was revoked)`);
+      return;
+    }
     for (const c of [...run.clients.values()]) {
       if (!sharing) this.drop(run, c, "sharing_off");
       else if (!this.d.mayUse(c.node)) this.drop(run, c, "not_allowed");

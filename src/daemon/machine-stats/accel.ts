@@ -38,7 +38,17 @@ export function parseCpuinfo(text: string | null): string | null {
   return null;
 }
 
-/** `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits`: "NVIDIA GeForce RTX 4090, 24564" (MiB). */
+/**
+ * NVIDIA integrated GPUs that share the machine's memory with the CPU: nvidia-smi prints `[N/A]` for their memory
+ * (captured on a DGX Spark: "NVIDIA GB10, [N/A]"). Only these names count; a discrete card whose memory could not be read
+ * is still skipped, so a failed query never invents a GPU.
+ */
+const INTEGRATED_NVIDIA = /\b(?:GB10|Jetson|Orin|Thor|Tegra)\b/i;
+
+/**
+ * `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits`: "NVIDIA GeForce RTX 4090, 24564" (MiB).
+ * An integrated GPU with `[N/A]` memory is kept as `{vram: 0, unified: true}` (WALK-81).
+ */
 export function parseNvidiaSmi(text: string | null): MachineAccel["gpus"] {
   if (!text) return [];
   const out: MachineAccel["gpus"] = [];
@@ -46,9 +56,13 @@ export function parseNvidiaSmi(text: string | null): MachineAccel["gpus"] {
     const i = line.lastIndexOf(",");
     if (i < 0) continue;
     const name = hwName(line.slice(0, i));
-    const mib = Number(line.slice(i + 1).trim());
-    if (!name || !Number.isFinite(mib) || mib <= 0 || mib * MIB > MAX_VRAM_BYTES) continue;
-    out.push({ name, vram: Math.round(mib) * MIB });
+    const field = line.slice(i + 1).trim();
+    const mib = Number(field);
+    if (name && /^\[?N\/A\]?$/i.test(field) && INTEGRATED_NVIDIA.test(name)) {
+      out.push({ name, vram: 0, unified: true });
+    } else if (name && Number.isFinite(mib) && mib > 0 && mib * MIB <= MAX_VRAM_BYTES) {
+      out.push({ name, vram: Math.round(mib) * MIB });
+    } else continue;
     if (out.length >= MAX_GPUS) break;
   }
   return out;

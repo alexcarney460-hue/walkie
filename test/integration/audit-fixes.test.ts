@@ -116,17 +116,30 @@ describe("hestia #5: stub fill after access is granted", () => {
     const posts: Event[] = [];
     for (let i = 0; i < 3; i++) posts.push((await alex.client().post({ channel: "vault", text: `vault ${i}` })).event);
     await waitFor(() => posts.every((p) => kira.d.core.store.getRow(p.id)?.redacted === 1), { what: "stubs on kira" });
-    await alex.client().channel({ name: "vault", members: ["alex", "kira"] });
-    await waitFor(async () => (await kira.client().events({ channel: "vault" })).events.length === 3, { what: "backfill", timeoutMs: 8_000 });
-    expect(posts.every((p) => kira.d.core.store.getRow(p.id)?.redacted === 0)).toBe(true);
-    // A machine joining later stubs history while its own admission is still unknown, then fills it.
+    // A machine that joins while the history is still closed to its login holds stubs too (the path under test below).
     const kira3 = await c?.add({ name: "kira3", login: "kira@example.com", hostname: "kiras-pi" });
     if (!kira3) throw new Error("no cluster");
     expect(await kira3.client().join(alex.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
     await alex.client().request("POST", "/v1/team/admit", { node_id: kira3.d.nodeId, approve: true });
     expect(await kira3.client().join(alex.peerAddr)).toMatchObject({ admitted: true });
-    await waitFor(async () => (await kira3.client().events({ channel: "vault" })).events.length === 3, { what: "bootstrap backfill", timeoutMs: 8_000 });
-  }, 20_000);
+    await waitFor(() => posts.every((p) => kira3.d.core.store.getRow(p.id)?.redacted === 1), { what: "stubs on the late joiner", timeoutMs: 8_000 });
+    expect((await kira3.client().events({ channel: "vault" })).events).toEqual([]);
+
+    await alex.client().channel({ name: "vault", members: ["alex", "kira"] });
+    await waitFor(async () => (await kira.client().events({ channel: "vault" })).events.length === 3, { what: "backfill", timeoutMs: 8_000 });
+    expect(posts.every((p) => kira.d.core.store.getRow(p.id)?.redacted === 0)).toBe(true);
+    // The late joiner's stubs became the real events, with no restart: stub rows turned full, they were not ingested a second time.
+    await waitFor(async () => (await kira3.client().events({ channel: "vault" })).events.length === 3, { what: "late joiner fill", timeoutMs: 8_000 });
+    expect(posts.every((p) => kira3.d.core.store.getRow(p.id)?.redacted === 0)).toBe(true);
+
+    // A machine joining after the grant is served the full history directly (no stubs involved).
+    const kira4 = await c?.add({ name: "kira4", login: "kira@example.com", hostname: "kiras-nuc" });
+    if (!kira4) throw new Error("no cluster");
+    expect(await kira4.client().join(alex.peerAddr)).toMatchObject({ admitted: false, reason: "pending_approval" });
+    await alex.client().request("POST", "/v1/team/admit", { node_id: kira4.d.nodeId, approve: true });
+    expect(await kira4.client().join(alex.peerAddr)).toMatchObject({ admitted: true });
+    await waitFor(async () => (await kira4.client().events({ channel: "vault" })).events.length === 3, { what: "bootstrap backfill", timeoutMs: 8_000 });
+  }, 30_000);
 });
 
 describe("hestia #6: blob authorization", () => {
@@ -155,8 +168,12 @@ describe("Fable F3 / hestia #3 (r6): stub suppression of a public event", () => 
     if (!ps) throw new Error("no peer state");
     ps.failedAt = Date.now(); ps.lastSeen = null; // partition: alex's push to kira is skipped
     const { event: post } = await alex.client().post({ channel: "general", text: "IMPORTANT: prod deploy is cancelled" });
-    const res = await pushAs(bob, kira, [{ id: post.id, origin: post.origin, seq: post.seq, redacted: true, channel: "secret" }]);
+    // A well-formed stub: every field present, and the origin's own header signature for the post, which really covers #general.
+    // Only the claimed channel is a lie, so the one thing that can refuse it is the signature's binding to the channel.
+    const res = await pushAs(bob, kira, [{ id: post.id, origin: post.origin, seq: post.seq, ts: post.ts, kind: post.kind,
+      channel: "secret", hsig: post.hsig, redacted: true }]);
     expect(res.body.accepted).toBe(0);
+    expect(res.body.rejected).toEqual([{ id: post.id, reason: "bad_hsig" }]);
     await waitFor(async () => (await kira.client().events({ channel: "general" })).events.some((e) => e.id === post.id), { what: "real post", timeoutMs: 8_000 });
     expect(kira.d.core.store.getRow(post.id)?.redacted).toBe(0);
   }, 20_000);

@@ -1,0 +1,78 @@
+{
+ "_id": "69e066230bd313faad5d76e7",
+ "id": "unsloth/Qwen3.6-35B-A3B-GGUF",
+ "sha": "a483e9e6cbd595906af30beda3187c2663a1118c",
+ "downloads": 1308144,
+ "siblings": [
+  {
+   "rfilename": "BF16/Qwen3.6-35B-A3B-BF16-00001-of-00002.gguf",
+   "blobId": "7577f84ffbd5d4757b8ba88bc963b33b3741ebcb",
+   "size": 49913715424,
+   "lfs": {
+    "sha256": "783c22885003ac7607020cd9c318db7232a0cc206fa7b8dc064fa262e28d4db7",
+    "size": 49913715424,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Qwen3.6-35B-A3B-BF16-00002-of-00002.gguf",
+   "blobId": "2f8c14c6f6bec4081597182221a0004fccf19774",
+   "size": 19462922752,
+   "lfs": {
+    "sha256": "a5e66b67d4f2cdfc0cb9e399fc7d569576521d76cb69f186bdaff2b577457d66",
+    "size": 19462922752,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.6-35B-A3B-MXFP4_MOE.gguf",
+   "blobId": "d28b9d68492a569f17c6a80f6e7ace0b463b9d03",
+   "size": 21706144736,
+   "lfs": {
+    "sha256": "2fdd20997c4d88ee25f70f500c61f8b999378d92ab055f9d450fc70d617158d3",
+    "size": 21706144736,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.6-35B-A3B-Q8_0.gguf",
+   "blobId": "482eec4f0764b9374d4239af0e3cb61d85b25949",
+   "size": 36903140320,
+   "lfs": {
+    "sha256": "d1a395809f65a43a13ad119eb4e7acdef1ac6d68120f39902c8ab96e72794a59",
+    "size": 36903140320,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+   "blobId": "af3d6c1271ef693c3c16fff4f3c94384796b184a",
+   "size": 17730509792,
+   "lfs": {
+    "sha256": "649d7508507b84638732c4f52c24c8b15843c6dca2f3ff793ae07c14a67ebbb3",
+    "size": 17730509792,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+   "blobId": "c5100a3445ae71291c3c29f1e2e645744bbd04ca",
+   "size": 22134528992,
+   "lfs": {
+    "sha256": "ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61",
+    "size": 22134528992,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
+   "blobId": "e63e8e9771da65c0c4ccb44162ee2ecbf82da5fc",
+   "size": 26456194016,
+   "lfs": {
+    "sha256": "c13ce26253ea334df472bd8fbd2d6da66d8a41195c17f6fcbf44c4d20ece0932",
+    "size": 26456194016,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

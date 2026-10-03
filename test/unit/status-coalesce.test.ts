@@ -23,3 +23,24 @@ test("bursts over the limit coalesce to the latest status, emitted once the buck
   expect(emitted).toEqual(["1", "3"]); // only the latest survives
   c.stop();
 });
+
+test("a held status keeps the time it was really observed, and a later one replaces it", async () => {
+  let tokens = 0;
+  const emitted: Array<[string, number | undefined]> = [];
+  const c = new StatusCoalescer({
+    tryEmit: (_a, body, _p, _final, observedAt) => {
+      if (tokens <= 0) return null;
+      tokens--;
+      emitted.push([body.activity ?? "", observedAt]);
+      return { id: "x" } as unknown as Event;
+    },
+  }, 20);
+  expect(c.submit("a", { agent: "a", state: "offline", runtime: "cli", activity: "old" }, undefined, 1_000)).toBeNull();
+  expect(c.submit("a", { agent: "a", state: "offline", runtime: "cli", activity: "retired" }, undefined, 2_000)).toBeNull();
+  tokens = 2;
+  await Bun.sleep(60);
+  expect(emitted).toEqual([["retired", 2_000]]);
+  expect(c.submit("a", { agent: "a", state: "working", runtime: "cli", activity: "plain" })).not.toBeNull();
+  expect(emitted.at(-1)).toEqual(["plain", undefined]); // no observation time unless one is given
+  c.stop();
+});

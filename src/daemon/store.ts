@@ -3,6 +3,7 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import type { OrchMessage } from "../protocol/orchestrator.ts";
 import type { Event, Stub } from "../protocol/schemas.ts";
 import { isBoardOp } from "../protocol/projects/schema.ts";
+import { AgentTable } from "./agent-table.ts";
 import { indexedClaim } from "./orchestrator/schedule-claims.ts";
 
 const ROSTER_KIND_SQL = "('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')";
@@ -289,6 +290,9 @@ export class Store {
   private readonly hooks: TxHook[] = [];
   private syncMode: "NORMAL" | "FULL" = "NORMAL";
   private vvCache: Record<string, number> | null = null;
+  /** `agents_latest` in memory (agent-table.ts): every write to the table below goes through this store, which mirrors it. */
+  private readonly agentTable = new AgentTable(
+    () => this.db.query<AgentRow, []>("SELECT * FROM agents_latest ORDER BY handle, node, agent").all());
 
   constructor(path: string) {
     this.db = new Database(path, { create: true, strict: true });
@@ -333,6 +337,7 @@ export class Store {
       out = this.db.transaction(fn)();
     } catch (err) {
       this.vvCache = null;
+      this.agentTable.reset(); // an agent row written in the rolled-back transaction is not in the table any more
       this.deferred.length = mark;
       for (let i = this.hooks.length - 1; i >= 0; i--) (this.hooks[i] as TxHook).restore(snaps[i]);
       throw err;
@@ -981,19 +986,30 @@ export class Store {
    */
   upsertAgent(ev: Event, maxTs = Number.MAX_SAFE_INTEGER): void {
     const b = ev.body as { agent: string };
-    this.db.query(`INSERT INTO agents_latest(node, agent, handle, event_id, ts, body, recv_id, recv_at)
+    const written = this.db.query(`INSERT INTO agents_latest(node, agent, handle, event_id, ts, body, recv_id, recv_at)
       VALUES (?,?,?,?,?,?,?,(SELECT received_at FROM events WHERE id = ?))
       ON CONFLICT(node, agent) DO UPDATE SET handle = excluded.handle, event_id = excluded.event_id, ts = excluded.ts,
       body = excluded.body, recv_id = excluded.recv_id, recv_at = excluded.recv_at WHERE excluded.ts > agents_latest.ts
         OR (excluded.ts = agents_latest.ts AND excluded.event_id > agents_latest.event_id)`).run(
       ev.origin, b.agent, ev.author.handle, ev.id, Math.min(ev.ts, maxTs), JSON.stringify(ev.body), ev.id, ev.id);
+    if (written.changes > 0) this.refreshAgent(ev.origin, b.agent);
+  }
+  /** Brings one agent's row in the in-memory table in step with SQLite after a write (nothing to do while it is not loaded). */
+  private refreshAgent(node: string, agent: string): void {
+    if (!this.agentTable.loaded) return;
+    const row = this.agent(node, agent);
+    if (row) this.agentTable.put(row); else this.agentTable.remove(node, agent);
   }
   /** When this node received an agent row's latest status: remembered on the row, else read from its event. */
   agentReceivedAt(row: AgentRow): number | null {
     return row.recv_id === row.event_id && typeof row.recv_at === "number" ? row.recv_at : this.receivedAt(row.event_id);
   }
-  agents(): AgentRow[] {
-    return this.db.query<AgentRow, []>("SELECT * FROM agents_latest ORDER BY handle, node, agent").all();
+  /**
+   * Every agent's latest status ordered by handle, node, agent: from memory (agent-table.ts), the same array until a row
+   * changes. Read only: never change the array or a row in it.
+   */
+  agents(): readonly AgentRow[] {
+    return this.agentTable.list();
   }
   /** One node's latest agent statuses whose names start with `prefix`: a range over the primary key (node, agent), no scan of the other agents. */
   agentsWithPrefix(node: string, prefix: string): AgentRow[] {
@@ -1003,7 +1019,9 @@ export class Store {
   /** Deletes agents from the latest-status table (the Agent archive's cap and time limit); their events stay. */
   deleteAgents(keys: ReadonlyArray<{ node: string; agent: string }>): number {
     const del = this.db.query("DELETE FROM agents_latest WHERE node = ? AND agent = ?");
-    return this.db.transaction(() => keys.reduce((n, k) => n + del.run(k.node, k.agent).changes, 0))();
+    const removed = this.db.transaction(() => keys.reduce((n, k) => n + del.run(k.node, k.agent).changes, 0))();
+    for (const k of keys) this.agentTable.remove(k.node, k.agent);
+    return removed;
   }
   /** The recorded provenance of an own agent's latest status (status-projection.ts), or null. */
   statusProvenance(agent: string): { event_id: string; prov: string } | null {
@@ -1022,13 +1040,19 @@ export class Store {
   }
   /** Re-derives an agent's latest status from its accepted status events (after one was hidden). */
   recomputeAgent(node: string, agent: string, skewMs = Number.MAX_SAFE_INTEGER): void {
-    this.db.transaction(() => {
-      this.db.query("DELETE FROM agents_latest WHERE node = ? AND agent = ?").run(node, agent);
-      const rows = this.db.query<{ json: string; received_at: number }, [string, string]>(
-        `SELECT json, received_at FROM events WHERE origin = ? AND kind = 'agent.status' AND author_agent = ? AND redacted = 0 AND status = 'ok'
-         ORDER BY ts DESC, id DESC LIMIT 1`).all(node, agent);
-      for (const r of rows) this.upsertAgent(JSON.parse(r.json) as Event, r.received_at + skewMs); // clamped to its receipt, as at ingest
-    })();
+    try {
+      this.db.transaction(() => {
+        this.db.query("DELETE FROM agents_latest WHERE node = ? AND agent = ?").run(node, agent);
+        const rows = this.db.query<{ json: string; received_at: number }, [string, string]>(
+          `SELECT json, received_at FROM events WHERE origin = ? AND kind = 'agent.status' AND author_agent = ? AND redacted = 0 AND status = 'ok'
+           ORDER BY ts DESC, id DESC LIMIT 1`).all(node, agent);
+        for (const r of rows) this.upsertAgent(JSON.parse(r.json) as Event, r.received_at + skewMs); // clamped to its receipt, as at ingest
+      })();
+    } catch (err) {
+      this.agentTable.reset();
+      throw err;
+    }
+    this.refreshAgent(node, agent);
   }
 
   // ---- blobs ----

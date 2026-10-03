@@ -127,7 +127,9 @@ test("H1b successor with no fill waits and keeps one set of defaults", async () 
   feed(K, scheduleRows(t.A));
   const after = readSchedules(K).map((s) => s.name).sort();
   console.log("H1b A before:", JSON.stringify(before), "| K after tick + full fill:", JSON.stringify(after));
-  expect(after.length).toBe(5);
+  // One set: the eight built-in duties (TALKIE-OPS-1 added the orchestration poll and the card curation), each once.
+  expect(after.length).toBe(8);
+  expect(new Set(after).size).toBe(after.length);
 });
 
 test("H1c catch-up status and refused management never restore an unseen predecessor pause", async () => {

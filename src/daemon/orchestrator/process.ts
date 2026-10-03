@@ -31,6 +31,12 @@ export interface ArgsSpec {
   /** An MCP config (JSON) loaded for this session: the walkie server, so its tools exist whatever the hooks say. */
   mcpConfig?: string;
   systemPrompt: string;
+  /**
+   * `none`: a turn that needs no tool (a duty whose facts are all in its prompt and whose reply the daemon acts on):
+   * no built-in tool, no MCP server (so nothing to allow), and never bypassed permissions, so text injected into its
+   * prompt has nothing to call. Absent: the ordinary turn.
+   */
+  tools?: "none";
 }
 
 /**
@@ -43,16 +49,25 @@ export function walkieMcpConfig(argv: readonly string[], home: string, socket: s
   return JSON.stringify({ mcpServers: { walkie: { type: "stdio", command, args: [...pre, "mcp"], env: { WALKIE_HOME: home, WALKIE_SOCKET: socket } } } });
 }
 
+/**
+ * The flags only a tool-less turn's argv carries (claudeArgs `tools: "none"`). A claude that rejects one of them cannot run
+ * such a turn; the host then fails that turn alone (host.ts onToollessRejected) instead of giving up on WalkieTalkie.
+ */
+export const TOOLLESS_FLAGS: readonly string[] = ["--tools", "--strict-mcp-config"];
+
 /** The exact argv after the binary (pure; tested). */
 export function claudeArgs(s: ArgsSpec): string[] {
+  const none = s.tools === "none";
   return [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     s.resume ? "--resume" : "--session-id", s.session,
-    "--permission-mode", s.permissionMode,
+    "--permission-mode", none ? "default" : s.permissionMode,
     "--setting-sources", "",
+    // `--tools=` (an empty list, claude's documented way to disable every built-in tool) and no MCP server at all.
+    ...(none ? ["--tools=", "--strict-mcp-config"] : []),
     // One value, so the variadic option can't swallow what follows it.
-    ...(s.allowedTools.length ? [`--allowedTools=${s.allowedTools.join(",")}`] : []),
-    ...(s.mcpConfig ? [`--mcp-config=${s.mcpConfig}`] : []),
+    ...(!none && s.allowedTools.length ? [`--allowedTools=${s.allowedTools.join(",")}`] : []),
+    ...(!none && s.mcpConfig ? [`--mcp-config=${s.mcpConfig}`] : []),
     ...(s.permissionPrompts ? ["--permission-prompts", "none"] : []),
     ...(s.model ? ["--model", s.model] : []),
     "--append-system-prompt", s.systemPrompt,

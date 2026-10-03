@@ -97,6 +97,15 @@ export class DirectLink implements TransportControl {
   }
 
   /**
+   * This daemon should run Walkie Direct (its team, config or roster record says so) but the endpoint is not up: still
+   * starting, or failing to bind and retrying. Until it is, this machine reaches no machine over Direct, which says
+   * nothing about the team (SyncManager.unreached stays quiet; doctor's "walkie direct" check names the problem).
+   */
+  pending(): boolean {
+    return this.wantsDirect() && this.net === null;
+  }
+
+  /**
    * Boot on a Direct team: start the endpoint, and if that fails (no UDP socket yet, a native error), keep
    * retrying with jittered backoff (2 s growing to 60 s, forever) like the Tailscale peer link, instead of
    * leaving the node unreachable until a restart. The first attempt is awaited.

@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "6a7d8038d813eea1a14a8db4",
+  "id": "unsloth/Qwen3.8-27B-GGUF",
+  "downloads": 6271224
+ },
+ {
+  "_id": "6a838b56859b6056ecfa5667",
+  "id": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
+  "downloads": 4173935
+ },
+ {
+  "_id": "6aab2908d3d583554438fce8",
+  "id": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+  "downloads": 3766691
+ },
+ {
+  "_id": "6a7e8ee8b77fccb497299fb3",
+  "id": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
+  "downloads": 2206373
+ },
+ {
+  "_id": "6a832587e74e9a9edfb67ff9",
+  "id": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+  "downloads": 2053544
+ },
+ {
+  "_id": "6a7f2d9752ecf5558942e80c",
+  "id": "lmstudio-community/Qwen3.8-27B-GGUF",
+  "downloads": 1353198
+ },
+ {
+  "_id": "6a7f31a8d0b754daf3d51692",
+  "id": "ggml-org/Qwen3.8-27B-GGUF",
+  "downloads": 1006096
+ },
+ {
+  "_id": "6a7f38b6483eb93f2a5f6001",
+  "id": "bartowski/Qwen3.8-27B-GGUF",
+  "downloads": 477275
+ }
+]

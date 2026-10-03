@@ -1,0 +1,73 @@
+{
+ "_id": "6a7d8038d813eea1a14a8db4",
+ "id": "unsloth/Qwen3.8-27B-GGUF",
+ "sha": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+ "downloads": 6271224,
+ "siblings": [
+  {
+   "rfilename": "BF16/Qwen3.8-27B-BF16-00001-of-00002.gguf",
+   "blobId": "e8a9dbd80297afe281bd9e51c7319623d09ceaee",
+   "size": 49986159616,
+   "lfs": {
+    "sha256": "b9966e82b7a4d87028b5eae061d578ee826305ebf8baea5bfc6e09bad0ba191f",
+    "size": 49986159616,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Qwen3.8-27B-BF16-00002-of-00002.gguf",
+   "blobId": "49a6a7bc559cbdbaa03c29ae1bd54c5fcb5efa54",
+   "size": 4671576000,
+   "lfs": {
+    "sha256": "92e3943c4f9bd6292a7bef82369f65fed9bfed088b9df0fb2fa2ce17c9edfa02",
+    "size": 4671576000,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "MTP/mtp-Qwen3.8-27B-Q4_0.gguf",
+   "blobId": "446266735f6927d4772697db75b2e4eee6ac58fb",
+   "size": 1369590656,
+   "lfs": {
+    "sha256": "50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e",
+    "size": 1369590656,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Q8_0.gguf",
+   "blobId": "35ac97ff5397c87e482b6ea8fab31c02696ad1f6",
+   "size": 29047086048,
+   "lfs": {
+    "sha256": "a680f44a06920e5d689774823782006aa3acc8db95750323373b24139b67e348",
+    "size": 29047086048,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+   "blobId": "859b9d7d8718f71dd41c3506e259f4bbac224ae6",
+   "size": 14252845984,
+   "lfs": {
+    "sha256": "40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199",
+    "size": 14252845984,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+   "blobId": "e663c1e26c3e19799a7a7383ce2ea9de194fb115",
+   "size": 16464440224,
+   "lfs": {
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "size": 16464440224,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "config.json",
+   "blobId": "c2bb5cf2a82d965d5b11aa078ba9571fe949a4d5",
+   "size": 3760
+  }
+ ]
+}

@@ -20,6 +20,7 @@ import { installShims, profileFile, realCli, shimsFirst, uninstallShims } from "
 import { recordTrusted, sameObjects, trustedRecipient } from "../../switch/trusted.ts";
 import { credentialEnv, EXIT_ALL_EXHAUSTED, exhaustedLine, proxyAllowed } from "../../switch/wrapper.ts";
 import { personalCommand, poolCommand, promoteCommand, splitCommand } from "./accounts-pool.ts";
+import { leaseLimit } from "./lease-limit.ts";
 import { absTime } from "../../protocol/accounts-format.ts";
 import { planCodexArgv, routingOverride } from "../../switch/codex-routing.ts";
 import { agentSignals, type ProcRow } from "../agent-detect.ts";
@@ -543,6 +544,7 @@ export async function vaultCommand(ctx: Ctx, sub: string): Promise<number | null
     case "exec": return exec(ctx, home);
     case "shims": return shims(ctx, home);
     case "borrow": return borrow(ctx, home);
+    case "lease-limit": return leaseLimit(ctx, home, admitted);
     case "allow-proxy": return allowProxy(ctx, home);
     case "trust-cli": return trustCli(ctx, home);
     case "split": return splitCommand(ctx);

@@ -31,6 +31,7 @@ import { qrRows } from "../../src/daemon/mobile/qr.ts";
 import { Simulation } from "./sim.ts";
 import { BusySim, seedBusy } from "./busy.ts";
 import { MockPool } from "./pool.ts";
+import { MockRecommendations } from "./recommendations.ts";
 import { MockSeats } from "./seats.ts";
 import { MOCK_QUOTES, MockCompute } from "./compute.ts";
 import { CreditCheckoutReq, LocalRentReq, SiteStopReq } from "../../src/protocol/compute.ts";
@@ -62,6 +63,7 @@ busy?.start();
 const pool = new MockPool(() => world.nodeViews());
 const seats = new MockSeats(() => world.nodeViews(), () => world.me().handle, () => pool.share.on);
 const compute = new MockCompute();
+const recommendations = new MockRecommendations();
 const phones = [{ id: "3f9a1c2b7d4e", name: "iPhone", created_at: Date.now() - 3 * 86_400_000, last_seen: Date.now() - 12 * 60_000, expires_at: Date.now() + 87 * 86_400_000 }];
 if (world.hasTeam) sim.start();
 
@@ -246,6 +248,8 @@ async function api(req: Request, url: URL): Promise<Response> {
     phones.splice(i, 1);
     return json({ revoked: true });
   }
+  const recResponse = await recommendations.handle(req, world.me().role !== "observer");
+  if (recResponse) return recResponse;
   const integ = await integrations.handle(req, path, url, world);
   if (integ) return integ;
   const proj = await projects.handle(req, path, json, fail);

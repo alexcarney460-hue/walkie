@@ -1,0 +1,32 @@
+[
+ {
+  "_id": "6a8f8ec7f0e47dd74dee8695",
+  "id": "bartowski/orcarouter_Qwen3.8-27B-Uncensored-GGUF",
+  "downloads": 147870
+ },
+ {
+  "_id": "6aa1b66094123133167cbb52",
+  "id": "RentedNoodle/Qwen3.8-27B-OrcaRouter-GSQ-RCO-IQ3_XXS-Uncensored",
+  "downloads": 34892
+ },
+ {
+  "_id": "6aa144722cedee3d5ad16981",
+  "id": "Skttttt/Himeros-V2-27B-GGUF",
+  "downloads": 19515
+ },
+ {
+  "_id": "6a9395e06bd483e54a95814c",
+  "id": "SC117/Qwen3.8-27B-Uncensored-FIT-GGUF",
+  "downloads": 15573
+ },
+ {
+  "_id": "6ab73e0e42535b9c600098ab",
+  "id": "orcarouter/OrcaSAQ-2-Cyber-27B-Uncensored-GGUF",
+  "downloads": 8412
+ },
+ {
+  "_id": "6a8801eb73c05705f2cf78bf",
+  "id": "TheWegemann/Qwen3.8-27B-LowGPU-uncensored-NoMTP-IQ3XXXS-GGUF",
+  "downloads": 4166
+ }
+]

@@ -8,7 +8,7 @@ import { ALLOWED_OPS, checkGraph, guardSelfTest, RPC_TENSOR_SIZE, RpcGuard, RpcR
 import { ChildRegistry, processFacts, spawnChild } from "../../src/pool/run/child.ts";
 import { installRuntime, TARGETS } from "../../src/pool/run/runtime.ts";
 import { planRun } from "../../src/pool/run/plan.ts";
-import { suggestCombined } from "../../src/pool/combined.ts";
+import { suggestCombined } from "../helpers/pool-legacy.ts";
 import { WINDOW, WsEnd, type WsLike } from "../../src/pool/run/tunnel.ts";
 import { helloMsg, msgHead } from "../helpers/pool-runtime.ts";
 import type { GroupInput } from "../../src/pool/group.ts";

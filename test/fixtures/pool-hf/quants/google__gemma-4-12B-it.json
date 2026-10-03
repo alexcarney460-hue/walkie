@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "6a1977c791f1a95deb74b2fa",
+  "id": "unsloth/gemma-4-12b-it-GGUF",
+  "downloads": 1481600
+ },
+ {
+  "_id": "6a3947825cc4ec067c8e0a4c",
+  "id": "HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced",
+  "downloads": 863034
+ },
+ {
+  "_id": "6a3487efabb86916010f2c23",
+  "id": "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF",
+  "downloads": 724233
+ },
+ {
+  "_id": "6a29111236f02ab48e1a27e7",
+  "id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
+  "downloads": 421540
+ },
+ {
+  "_id": "6a0521a8998a2224520f384a",
+  "id": "rahul7star/gemma-gguf",
+  "downloads": 138327
+ },
+ {
+  "_id": "6a1de236cff89db09a790ac6",
+  "id": "lmstudio-community/gemma-4-12B-it-GGUF",
+  "downloads": 106080
+ },
+ {
+  "_id": "6a204465543ee99940abe28b",
+  "id": "ggml-org/gemma-4-12B-it-GGUF",
+  "downloads": 40541
+ },
+ {
+  "_id": "6a20746f26fac447c54bc312",
+  "id": "bartowski/gemma-4-12B-it-GGUF",
+  "downloads": 37694
+ }
+]

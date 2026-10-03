@@ -76,6 +76,12 @@ export function admit(c: GateCtx, action: string, options: { post?: boolean } = 
     appendAudit(c.core, { ...entry, refused: "agent_admin_off" });
     throw new HttpError(403, "agent_admin_off", AGENT_ADMIN_OFF);
   }
+  // A remote command's caller is judged again at each admin step it takes (WALK-74), not only every 30 s: one removed,
+  // demoted, whose machine was revoked, or whose remote admin was switched off since the run began does nothing more.
+  if (run?.authorized && !run.authorized()) {
+    appendAudit(c.core, { ...entry, refused: "not_your_machine" });
+    throw new HttpError(403, "not_your_machine", `the remote caller ${run.actor} may no longer administer ${c.core.hostname} (removed, made a member or observer, its machine revoked, or remote admin switched off)`);
+  }
   // A remote run's command line is posted once by the peer route (remote.ts); its steps are logged here only.
   let settled = false;
   return {

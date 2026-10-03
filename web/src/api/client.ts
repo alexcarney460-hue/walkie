@@ -5,9 +5,9 @@ import { forgetSession, sessionHeaders } from "../lib/session.ts";
 import type {
   AccountsPool, AccountView, AgentsPayload, AgentView, AskView, BoardView, CardDetail, CardView, Column, Event, IntegrationView, InviteCode, LinearIssueInfo,
   MeView, MobileStatus, NodeView, OrchestratorAccess, OrchestratorView, OrchMessage, PairView, PendingJoin, PlanLimitDetails, PlanView, ProjectView, ProjectsPayload,
-  ResetAttemptView, ResetResult, Role, RoomFileDetail, RoomFileView, TeamView, TimelineEntry,
+  ResetAttemptView, ResetResult, Role, RoomFileDetail, RoomFileView, StatusPagePayload, StatusReportPayload, TeamView, TimelineEntry,
   SeatMode, SeatRuntime, SeatsLocalView, SeatsView,
-  Schedule,
+  Schedule, Recommendation, RecommendationsPayload, RecommendationDecision,
   ImportOptions, ImportPlan, ImportSelection, ImportStatus, JobView, SyncResult, SyncView,
 } from "./types.ts";
 import type { ActivationResult } from "../lib/plan.ts";
@@ -221,6 +221,11 @@ export const api = {
   pending: () => request<{ requests: PendingJoin[] }>("GET", "/v1/team/pending"),
   admit: (b: { node_id: string; approve: boolean }) => request<{ event?: Event }>("POST", "/v1/team/admit", b),
   orchestrator: () => request<OrchestratorView>("GET", "/v1/orchestrator"),
+  recommendations: () => request<RecommendationsPayload>("GET", "/v1/talkie/recs?status=all"),
+  // An approval echoes the `outgoing` text the person was shown; the daemon refuses it if what it would do now differs.
+  answerRecommendation: (id: string, decision: RecommendationDecision, seen?: string) =>
+    request<{ rec: Recommendation; result?: string }>("POST", `/v1/talkie/recs/${encodeURIComponent(id)}/${decision}`,
+      decision === "approve" && seen !== undefined ? { seen } : {}),
   schedules: () => request<{ schedules: Schedule[]; status: string | null }>("GET", "/v1/orchestrator/schedules"),
   scheduleNext: (cron: string) => request<{ times: number[] }>("GET", `/v1/orchestrator/schedules/next?cron=${encodeURIComponent(cron)}`),
   scheduleAdd: (body: Pick<Schedule, "name" | "cron" | "task">) => request<{ schedule: Schedule }>("POST", "/v1/orchestrator/schedules", body),
@@ -310,6 +315,16 @@ export const api = {
   // ---- Data Room (DATA-ROOM-1) ----
   room: (channel: string, all = false) => request<{ files: RoomFileView[]; limits: { files: number; versions: number } }>("GET", `/v1/projects/${encodeURIComponent(channel)}/room${all ? "?all=1" : ""}`),
   roomFile: (channel: string, file: string) => request<RoomFileDetail>("GET", `/v1/projects/${encodeURIComponent(channel)}/room/${encodeURIComponent(file)}`),
+  statusReport: (channel: string) => request<StatusReportPayload>("GET", `/v1/projects/${encodeURIComponent(channel)}/status-report`),
+  /** A project's status page (PROJECT-PAGES-1): the story, the facts, the screens. Read only: the terminal and the agents write it. */
+  statusPage: (channel: string) => request<StatusPagePayload>("GET", `/v1/projects/${encodeURIComponent(channel)}/page`),
+  /** A screen's image bytes (a Data Room version), fetched with the session header; the page checks them before it shows them. */
+  roomBytes: async (channel: string, file: string, v?: number): Promise<Uint8Array> => {
+    const url = `/v1/projects/${encodeURIComponent(channel)}/room/${encodeURIComponent(file)}/content${v ? `?v=${v}` : ""}`;
+    const res = await send(url, { signal: AbortSignal.timeout(120_000) });
+    if (!res.ok) await parse(res, url);
+    return new Uint8Array(await res.arrayBuffer());
+  },
   roomChange: (channel: string, file: string, b: { name?: string; pin?: boolean; state?: "active" | "removed"; attach?: string[]; detach?: string[] }) =>
     request<{ file: RoomFileView }>("POST", `/v1/projects/${encodeURIComponent(channel)}/room/${encodeURIComponent(file)}`, b),
   roomAdd,

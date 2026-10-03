@@ -179,7 +179,9 @@ describe("change-threshold publishing", () => {
       if (i >= readings.length) throw new Error("sensor gone");
       return readings[i++]!;
     };
-    const s = new MachineStatsSampler((st) => published.push(st), log, { read, clock: () => now });
+    // Nothing from this machine but the injected reading: no accelerators (a DGX Spark has a GPU, a CI box usually none)
+    // and no CPU load (a busy host's load alone can cross a publish threshold between two ticks).
+    const s = new MachineStatsSampler((st) => published.push(st), log, { read, readAccel: async () => null, readSys: () => null, clock: () => now });
     expect(await s.tick()).toBe(true);
     now += 30_000;
     expect(await s.tick()).toBe(false);
@@ -196,7 +198,7 @@ describe("change-threshold publishing", () => {
   test("a partial reading is published and its reason logged once", async () => {
     const infos: unknown[] = [];
     const log = { ...createLogger({}), info: (m: string, f?: Record<string, unknown>) => { infos.push([m, f]); } };
-    const s = new MachineStatsSampler(() => undefined, log, { read: async () => ({ mem: MEM16, temp_c: null, note: "temperature unavailable: x" }) });
+    const s = new MachineStatsSampler(() => undefined, log, { read: async () => ({ mem: MEM16, temp_c: null, note: "temperature unavailable: x" }), readAccel: async () => null, readSys: () => null });
     expect(await s.tick()).toBe(true);
     await s.tick();
     expect(infos).toEqual([["machine_stats_partial", { note: "temperature unavailable: x" }]]);
@@ -209,7 +211,7 @@ describe("change-threshold publishing", () => {
     const gate = new Promise<void>((r) => { release = r; });
     const published: MachineStats[] = [];
     const s = new MachineStatsSampler((st) => published.push(st), createLogger({}), {
-      read: async () => { await gate; return { mem: null, temp_c: 50 }; },
+      read: async () => { await gate; return { mem: null, temp_c: 50 }; }, readAccel: async () => null,
     });
     const first = s.tick();
     expect(await s.tick()).toBe(false);

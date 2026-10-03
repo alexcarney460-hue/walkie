@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "6a8edc2c225d22c0ee0fdab6",
+  "id": "unsloth/Qwen3.8-Flash-Next-GGUF",
+  "downloads": 1562076
+ },
+ {
+  "_id": "6a9e86d1dab7f88030e2af20",
+  "id": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+  "downloads": 952084
+ },
+ {
+  "_id": "6a8ee7c9cee02e94f11eb54d",
+  "id": "AtomicChat/Qwen3.8-Flash-Next-GGUF",
+  "downloads": 616176
+ },
+ {
+  "_id": "6a8ecac19808154a6906b9bd",
+  "id": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
+  "downloads": 184752
+ },
+ {
+  "_id": "6a9cea389d04f655f2d624e4",
+  "id": "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+  "downloads": 183862
+ },
+ {
+  "_id": "6a917d36353ae3d2f0bca822",
+  "id": "bartowski/Qwen3.8-Flash-Next-GGUF",
+  "downloads": 72687
+ },
+ {
+  "_id": "6a90a9f94eef6f63ac7830e3",
+  "id": "lmstudio-community/Qwen3.8-Flash-Next-GGUF",
+  "downloads": 20388
+ },
+ {
+  "_id": "6a907a9e2f6af93259faccae",
+  "id": "ggml-org/Qwen3.8-Flash-Next-GGUF",
+  "downloads": 11281
+ }
+]

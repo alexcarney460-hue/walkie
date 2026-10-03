@@ -71,8 +71,11 @@ export interface TeamAgentsDeps {
   ask(question: string): Promise<string>;
   /** Is `claude` / `codex` installed, and signed in for this person (null: can't tell)? */
   checkRuntime(name: "claude" | "codex"): Promise<RuntimeCheck>;
-  /** Runs `walkie seats setup-user --apply` (its sudo prompt on this terminal); true when it succeeded. */
-  installSeatUsers(): Promise<boolean>;
+  /**
+   * Runs `walkie seats setup-user --apply` (its sudo prompt on this terminal); true when it succeeded. `codexRelease`: the person
+   * gave --codex-release, so the child gets it too (OpenAI's standalone Codex for the seat users, checksum-verified).
+   */
+  installSeatUsers(o?: { codexRelease?: boolean }): Promise<boolean>;
   /** Read the daemon's private local receipt after grant_exists; overridden by isolated tests. */
   readGrant?: () => Promise<unknown>;
   /** The company flow's ONE administrator step (root marker, and Walkie's SSH service when owner SSH is carried). Absent: no elevation is attempted. */
@@ -284,7 +287,10 @@ export async function teamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
   try {
     local = await enableSeats(ctx, {
       client, sameUser: bool(ctx.args, "same-user"), seatUsers, askClaudeToken: deps.interactive,
-      setupSeatUsers: async () => { const ok = await deps.installSeatUsers(); return ok ? { ok, applied: true } : { ok, applied: false, why: "seat users weren't set up" }; },
+      setupSeatUsers: async () => {
+        const ok = await deps.installSeatUsers({ codexRelease: bool(ctx.args, "codex-release") });
+        return ok ? { ok, applied: true } : { ok, applied: false, why: "seat users weren't set up" };
+      },
     });
   } catch (e) {
     ctx.out(c.yellow(`   team agents couldn't be turned on (${e instanceof Error ? e.message : String(e)}). Finish it: walkie seats enable`));
@@ -331,9 +337,14 @@ export async function checkRuntime(name: "claude" | "codex"): Promise<RuntimeChe
   return { installed: true, loggedIn: r.code === 0 };
 }
 
+/** The command that sets seat users up: `self` (this walkie) running `seats setup-user --apply`, and --codex-release when asked for. */
+export function setupUserArgv(self: string[], codexRelease: boolean): string[] {
+  return [...self, "seats", "setup-user", "--apply", ...(codexRelease ? ["--codex-release"] : [])];
+}
+
 /** This walkie (the installed binary, or bun + the CLI entry from source) running `seats setup-user --apply` here. */
-export async function installSeatUsers(): Promise<boolean> {
+export async function installSeatUsers(o: { codexRelease?: boolean } = {}): Promise<boolean> {
   const self = import.meta.dir.startsWith("/$bunfs") || basename(process.execPath).startsWith("walkie")
     ? [process.execPath] : [process.execPath, join(import.meta.dir, "..", "main.ts")];
-  return (await run([...self, "seats", "setup-user", "--apply"], { inherit: true })).code === 0;
+  return (await run(setupUserArgv(self, o.codexRelease === true), { inherit: true })).code === 0;
 }

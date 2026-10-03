@@ -1,0 +1,22 @@
+[
+ {
+  "_id": "6ab0ed56b0cbda9656f21b83",
+  "id": "chaoliangUNSW/Jev-Style-Qwen3.5-2B-Decision-GGUF",
+  "downloads": 8713
+ },
+ {
+  "_id": "69eafd3440ab1079cd90cc7d",
+  "id": "mradermacher/Qwen3.5-2B-Base-i1-GGUF",
+  "downloads": 1435
+ },
+ {
+  "_id": "6a532336372ee42b5388e8e1",
+  "id": "voodooquant/Qwen3.5-2B-MTP-Voodoo",
+  "downloads": 1049
+ },
+ {
+  "_id": "69a5938128d297574581e3d0",
+  "id": "titan0115/Qwen3.5-2B-Base",
+  "downloads": 944
+ }
+]

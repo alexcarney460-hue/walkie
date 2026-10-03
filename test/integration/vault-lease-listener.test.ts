@@ -45,3 +45,9 @@ test("the unix socket reaches the route (an unknown owner machine is 404, not th
   expect(err?.status).toBe(404);
   expect(err?.code).toBe("not_found");
 });
+
+test("a local socket caller cannot assert a seat launcher to gain the owner budget", async () => {
+  const err = await alex.client().vaultLease({ ...BODY, launcher: "alex" }).then(() => null, (e: unknown) => e as WalkieError);
+  expect(err?.status).toBe(400);
+  expect(err?.code).toBe("invalid");
+});

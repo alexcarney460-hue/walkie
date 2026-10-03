@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { HermesActivityProfiles } from "../protocol/hermes-activity.ts";
 import { SEAT_RUNTIMES_V1, SeatRepoId } from "../protocol/seats.ts";
+import { DEFAULT_LEASE_LIMIT, MAX_OWN_LEASE_LIMIT } from "./vault-lease-policy.ts";
 
 /**
  * Remote seats on THIS machine (PROTOCOL §11): off unless the person opts in (`walkie seats enable`, or
@@ -146,6 +147,8 @@ export const ConfigSchema = z.object({
   /** ACCOUNTS-2: this owner lets vault accounts whose policy is "shared" be handed to the named teammates. Off by
    *  default; the customer default stays owner-only. */
   vault_sharing: z.boolean().default(false),
+  /** Own-person fleet hand-outs per node/hour (also the burst); teammates retain the fixed 10/hour limit. */
+  vault_own_lease_limit: z.number().int().min(DEFAULT_LEASE_LIMIT).max(MAX_OWN_LEASE_LIMIT).catch(DEFAULT_LEASE_LIMIT),
   /** ACCOUNTS-2: this person may run on teammates' shared accounts — only when every own account is out (opt-in;
    *  `walkie accounts borrow on|off`). */
   borrow_shared: z.boolean().default(false),

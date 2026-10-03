@@ -1,0 +1,119 @@
+{
+ "_id": "6a8bffdb39eb84b2b2755a6e",
+ "id": "Qwen/Qwen3.8-Flash-Next",
+ "downloads": 1191745,
+ "likes": 5813,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "de4b8e4d43b917e7706784d8bb445c9af86a3540",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen4_exp",
+  "image-text-to-text",
+  "conversational",
+  "license:other",
+  "eval-results",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/Qwen3.8-Flash-Next.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "datacurve/deep-swe",
+     "task_id": "deep_swe"
+    },
+    "value": 58.7,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+     "name": "Qwen3.8-Flash-Next model card"
+    },
+    "notes": "harness: Claude Code / mini-SWE-agent (best of two). Reported as 'DeepSWE 1.1' on the card; 256K context."
+   },
+   "pullRequest": 12
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-Flash-Next.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 62.5,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+     "name": "Qwen3.8-Flash-Next model card"
+    },
+    "notes": "harness: Claude Code. 256K context; evaluated on the card's own refined version of the benchmark (problematic tasks corrected)."
+   },
+   "pullRequest": 12
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-Flash-Next.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Multilingual",
+     "task_id": "swe_bench_multilingual_%_resolved"
+    },
+    "value": 81,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+     "name": "Qwen3.8-Flash-Next model card"
+    },
+    "notes": "harness: mini-SWE-agent. 256K context."
+   },
+   "pullRequest": 12
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-Flash-Next.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 91.7,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+     "name": "Qwen3.8-Flash-Next model card"
+    }
+   },
+   "pullRequest": 12
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-Flash-Next.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 35.9,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+     "name": "Qwen3.8-Flash-Next model card"
+    },
+    "notes": "Judged by GPT-4o per the card, not the task's default o3-mini grader."
+   },
+   "pullRequest": 12
+  }
+ ],
+ "createdAt": "2026-08-24T08:24:59.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 179999981424,
+   "I64": 35
+  },
+  "total": 179999981459
+ }
+}

@@ -4,7 +4,7 @@
 // works on NodeView (dashboard + CLI).
 // Numbers and their sources: docs/PROTOCOL.md §3 "Local model suggestions".
 import { gb } from "../protocol/machine-stats-format.ts";
-import { machineBusy, type MachineAccel, type MachineMem, type MachineStats } from "../protocol/machine-stats.ts";
+import { loadUnknown, machineBusy, type MachineAccel, type MachineMem, type MachineStats } from "../protocol/machine-stats.ts";
 
 const GiB = 1024 ** 3;
 
@@ -50,10 +50,15 @@ const NVIDIA_BW: ReadonlyArray<[RegExp, number]> = [
   [/RTX 4070/i, 504], [/RTX 4060 Ti/i, 288], [/RTX 4060/i, 272],
   [/RTX 3090/i, 936], [/RTX 3080 Ti/i, 912], [/RTX 3080/i, 760], [/RTX 3070/i, 448], [/RTX 3060 Ti/i, 448], [/RTX 3060/i, 360],
   [/H100/i, 2000], [/A100/i, 1555], [/L40S/i, 864], [/RTX 6000 Ada/i, 960], [/RTX A6000/i, 768],
+  // WALK-81: the DGX Spark's GB10 shares 128 GB of LPDDR5X (8533 MT/s x 256 bit = 273 GB/s) with its CPU.
+  [/GB10/i, 273],
 ];
 
-/** Unknown Apple chip, NVIDIA GPU, laptop NVIDIA GPU, CPU-only: rough class figures, labelled estimates. */
-export const DEFAULT_BW = { apple: 100, nvidia: 400, nvidiaLaptop: 250, cpu: 60 } as const;
+/**
+ * Unknown Apple chip, NVIDIA GPU, laptop NVIDIA GPU, CPU-only, an NVIDIA integrated GPU other than the GB10 (Jetson:
+ * [UNCLEAR], taken as the Apple class): rough class figures, labelled estimates.
+ */
+export const DEFAULT_BW = { apple: 100, nvidia: 400, nvidiaLaptop: 250, nvidiaUnified: 100, cpu: 60 } as const;
 
 export type AccelKind = "apple" | "nvidia" | "cpu";
 
@@ -102,6 +107,9 @@ export interface MachineCapacity {
   /** The primary backend's bandwidth (GB/s) and whether it is this chip's figure. */
   bandwidth: number;
   bandwidthKnown: boolean;
+  /** Backend usable by the pinned runtime; absent metadata is conservatively CPU. */
+  runtimeKind?: AccelKind;
+  runtimeNote?: string;
   /** Plain-language caveats ("free VRAM not measured"). */
   notes: string[];
 }
@@ -142,11 +150,28 @@ function cpuBackend(mem: MachineMem): Backend {
 }
 
 /**
+ * WALK-81, an NVIDIA integrated GPU (DGX Spark's GB10, Jetson): it has no memory of its own (nvidia-smi prints [N/A]), the
+ * GPU uses the machine's memory like Apple Silicon does, so it is sized from MemTotal: "now" = total - used - 1 GiB, "if
+ * idle" = total - 4 GiB. Unlike Metal there is no share limit on what the GPU may use. The CPU stays a second backend.
+ */
+function nvidiaUnified(accel: MachineAccel, mem: MachineMem, base: Base): MachineCapacity {
+  const gpu = accel.gpus[0]!;
+  const known = NVIDIA_BW.find(([re]) => re.test(gpu.name))?.[1] ?? null;
+  const backend: Backend = {
+    kind: "nvidia", memory: "unified memory", usable: Math.max(0, mem.total - mem.used - RESERVE_BYTES),
+    usableIdle: Math.max(0, mem.total - IDLE_OS_BYTES), measured: true,
+    bandwidth: known ?? DEFAULT_BW.nvidiaUnified, bandwidthKnown: known !== null,
+  };
+  return assemble(base, `${gpu.name} · ${gbText(mem.total)} unified`, [backend, cpuBackend(mem)], []);
+}
+
+/**
  * NVIDIA: "now" = the free VRAM each GPU reported (nvidia-smi memory.free) less 1 GiB per GPU; "if idle" = total VRAM
  * less 1 GiB per GPU. Without a free-VRAM reading the GPU counts only in the "if idle" figure. System RAM on the CPU
  * is a second, independent backend.
  */
 function nvidia(accel: MachineAccel, mem: MachineMem, gpuFree: readonly number[] | undefined, base: Base): MachineCapacity {
+  if (accel.gpus.every((g) => g.unified)) return nvidiaUnified(accel, mem, base);
   const idle = accel.gpus.reduce((s, g) => s + Math.max(0, g.vram - GPU_RESERVE_BYTES), 0);
   const measured = !!gpuFree && gpuFree.length === accel.gpus.length;
   const now = measured ? accel.gpus.reduce((s, g, i) => s + Math.max(0, Math.min(gpuFree![i]!, g.vram) - GPU_RESERVE_BYTES), 0) : 0;
@@ -178,12 +203,30 @@ export function machineCapacity(n: CapacityInput): MachineCapacity | null {
   if (!mem || !(mem.total > 0)) return null;
   const accel = n.stats?.accel;
   const base: Base = { node_id: n.node_id, hostname: n.hostname, handle: n.handle };
-  const actual = (capacity: MachineCapacity): MachineCapacity => machineBusy(n.stats)
-    ? { ...capacity, usableIdle: capacity.usable,
-      backends: capacity.backends.map((b) => ({ ...b, usableIdle: b.usable,
-        ...(b.device ? { device: { ...b.device, usableIdle: b.device.usable } } : {}) })),
-      notes: [...capacity.notes, "Machine busy: idle capacity is unavailable"] }
-    : capacity;
+  // Busy, or load unknown (a stale process census with no agent counts): either way the "if idle" figure must not be offered.
+  const withheld = machineBusy(n.stats) ? "Machine busy: idle capacity is unavailable"
+    : loadUnknown(n.stats) ? "Machine load unknown (agent discovery is stale): idle capacity is unavailable" : null;
+  const effective = (capacity: MachineCapacity): MachineCapacity => {
+    // Keep this browser-safe policy aligned with run/runtime.ts targetFor (covered by runtime fixtures).
+    // Never infer a remote machine's OS/architecture from this process or from its GPU name.
+    const sys = n.stats?.sys;
+    const runtimeKind: AccelKind = sys?.os === "linux" && sys.arch === "x64" && capacity.kind === "nvidia"
+      ? "nvidia" : sys?.os === "darwin" && sys.arch === "arm64" && capacity.kind === "apple" ? "apple" : "cpu";
+    const runtimeNote = capacity.kind !== "cpu" && runtimeKind === "cpu"
+      ? !sys ? "System platform not reported: runtime capacity is counted as CPU only; GPU serving is unavailable."
+        : "The pinned runtime cannot use this GPU: runtime capacity is counted as CPU only; GPU serving is unavailable."
+      : undefined;
+    return { ...capacity, runtimeKind, runtimeNote };
+  };
+  const actual = (raw: MachineCapacity): MachineCapacity => {
+    const capacity = effective(raw);
+    return withheld
+      ? { ...capacity, usableIdle: capacity.usable,
+        backends: capacity.backends.map((b) => ({ ...b, usableIdle: b.usable,
+          ...(b.device ? { device: { ...b.device, usableIdle: b.device.usable } } : {}) })),
+        notes: [...capacity.notes, withheld] }
+      : capacity;
+  };
   if (accel && accel.gpus.length > 0) return actual(nvidia(accel, mem, n.stats?.gpu_free, base));
   if (accel?.unified) {
     // A user-set limit, else Metal's own budget (POOL-REAL-1, read from llama.cpp), else the community fraction.
@@ -200,4 +243,18 @@ export function machineCapacity(n: CapacityInput): MachineCapacity | null {
   }
   return actual(assemble(base, `${accel?.chip ? `${accel.chip} · ` : ""}CPU only · ${gbText(mem.total)}`, [cpuBackend(mem)],
     accel ? ["No GPU found: the model would run on the CPU (slow)"] : ["Hardware not reported (an older Walkie): counted as CPU only"]));
+}
+
+/** Effective pinned-runtime backend, kept separate from generic hardware capability. */
+export function runtimeBackend(m: MachineCapacity): Backend {
+  return m.backends.find((b) => b.kind === (m.runtimeKind ?? "cpu"))
+    ?? m.backends.find((b) => b.kind === "cpu")
+    ?? { kind: "cpu", memory: CPU_MEMORY, usable: 0, usableIdle: 0,
+      measured: false, bandwidth: DEFAULT_BW.cpu, bandwidthKnown: false };
+}
+
+/** GPU serving needs a measured accelerator supported by the pinned runtime. */
+export function serveBudget(m: MachineCapacity): number | null {
+  const b = runtimeBackend(m);
+  return b.kind !== "cpu" && b.measured ? b.usable : null;
 }

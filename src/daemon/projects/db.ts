@@ -14,6 +14,15 @@ const VISIBLE = "+kind = 'msg.post' AND redacted = 0 AND status = 'ok'";
 /** Accepted, or stored in full but hidden (a rank carrier for the fold: fold.ts `hidden`). */
 const STORED = "+kind = 'msg.post' AND redacted = 0 AND status IN ('ok', 'rejected')";
 
+/**
+ * The events of a project channel that are news about a card (cardEventsReceivedSince): bound as (channel, ts >=, received_at >=).
+ * A card op carrying a field beyond the bookkeeping ones, or a thread reply that is not a board op and not WalkieTalkie's own.
+ */
+const CARD_NEWS = `channel = ? AND ts >= ? AND received_at >= ? AND ${VISIBLE} AND (
+  (json_extract(body, '$.board.op') = 'card'
+    AND EXISTS (SELECT 1 FROM json_each(body, '$.board') k WHERE k.key NOT IN ('v', 'rev', 'op', 'after', 'pos', 'state')))
+  OR (+thread IS NOT NULL AND json_extract(body, '$.board') IS NULL AND author_agent IS NOT 'orchestrator'))`;
+
 /** First 16 hex of sha256(signature): how an op names its parent (fold.ts). */
 export function sigHash(sig: string): string {
   return createHash("sha256").update(sig).digest("hex").slice(0, 16);
@@ -113,6 +122,26 @@ export class ProjectsDb {
     ).all(channel).map((r) => opEventOf(r.json, r.status !== "ok"));
   }
 
+  /**
+   * The project root post as the folds read it (PROJECT-PAGES-1: the status page's facts rank against it). Null when the
+   * channel has no such post.
+   */
+  opEvent(id: string, channel: string): OpEvent | null {
+    const r = this.db.query<{ json: string; status: string }, [string, string]>(
+      `SELECT json, status FROM events WHERE id = ? AND +channel = ? AND ${STORED}`).get(id, channel);
+    return r ? opEventOf(r.json, r.status !== "ok") : null;
+  }
+
+  /**
+   * The status page ops of a project (PROJECT-PAGES-1): the posts in the project root's thread whose board op is `page`,
+   * accepted or stored hidden (rank carriers), as the page fold reads them.
+   */
+  pagePosts(channel: string, rootId: string): OpEvent[] {
+    return this.db.query<{ json: string; status: string }, [string, string]>(
+      `SELECT json, status FROM events WHERE thread = ? AND +channel = ? AND ${STORED} AND json_extract(body, '$.board.op') = 'page'`,
+    ).all(rootId, channel).map((r) => opEventOf(r.json, r.status !== "ok"));
+  }
+
   /** Whether `share` is an accepted artifact.share of `hash` in `channel` (a room version's bytes may be served). */
   shareAccepted(share: string, hash: string, channel: string): boolean {
     return !!this.db.query(
@@ -138,6 +167,64 @@ export class ProjectsDb {
   lastTs(channel: string): number {
     return this.db.query<{ t: number | null }, [string]>(
       `SELECT MAX(ts) AS t FROM events WHERE channel = ? AND ${VISIBLE}`).get(channel)?.t ?? 0;
+  }
+
+  /**
+   * What this daemon RECEIVED in the channel at or after `since` (its own clock: an origin's clock may be wrong, and an
+   * event can arrive long after it was written) that touches a card (PROJECT-REPORTS-1: what is news since a report):
+   * card ops that change something a report would say, so not a reorder or an archive alone, and comments, but not
+   * WalkieTalkie's own (its duties comment on cards every hour). Events written before `writtenAfter` are history, not
+   * news (a machine that just synced its first copy of a channel). Newest receipt first, one row per event.
+   */
+  cardEventsReceivedSince(channel: string, since: number, writtenAfter: number, limit: number): Array<{ id: string; card: string }> {
+    return this.db.query<{ id: string; card: string }, [string, number, number, number]>(
+      `SELECT id, COALESCE(thread, id) AS card FROM events WHERE ${CARD_NEWS} ORDER BY received_at DESC, id LIMIT ?`).all(channel, writtenAfter, since, limit);
+  }
+
+  /** How many events `cardEventsReceivedSince` would return without its limit. */
+  countCardEventsReceivedSince(channel: string, since: number, writtenAfter: number): number {
+    return this.db.query<{ n: number }, [string, number, number]>(`SELECT COUNT(*) AS n FROM events WHERE ${CARD_NEWS}`).get(channel, writtenAfter, since)?.n ?? 0;
+  }
+
+  /**
+   * Whether the project has an open card that `hidden` (judged on its labels, in JavaScript, so the rule is the one the
+   * reports use everywhere else) does not reject. Reads one small page at a time and stops at the first, so a big board
+   * with a visible card near the top costs one page.
+   */
+  hasOpenCardNotHidden(channel: string, hidden: (labels: readonly string[]) => boolean): boolean {
+    const page = this.db.query<{ id: string; labels: string | null }, [string, string]>(
+      `SELECT id, json_extract(json, '$.labels') AS labels FROM board_cards WHERE channel = ? AND state = 'open' AND id > ? ORDER BY id LIMIT 200`);
+    for (let after = ""; ;) {
+      const rows = page.all(channel, after);
+      for (const r of rows) {
+        let labels: unknown = [];
+        try { labels = r.labels ? JSON.parse(r.labels) : []; } catch { /* a card whose labels do not parse has none */ }
+        if (!hidden(Array.isArray(labels) ? labels.map(String) : [])) return true;
+      }
+      const last = rows[rows.length - 1];
+      if (!last || rows.length < 200) return false;
+      after = last.id;
+    }
+  }
+
+  /**
+   * The newest posts of the channel that carry a status report (PROJECT-REPORTS-1), written under the orchestrator's agent
+   * name by one of `authors` (the team's owners), newest first. A member's machine can sign as `orchestrator` too, so who
+   * signed is part of the question, not a check on its answer (a few forged posts must not crowd the real report out).
+   * Newest by the earlier of its origin's stamp and this daemon's receipt: a clock that ran ahead cannot keep an old report
+   * on top, and a machine syncing history for the first time does not put the oldest report there either.
+   */
+  statusReportPosts(channel: string, authors: readonly string[], limit: number): Event[] {
+    if (!authors.length) return [];
+    return this.db.query<{ json: string }, (string | number)[]>(
+      `SELECT json FROM events WHERE channel = ? AND ${VISIBLE} AND +thread IS NULL AND author_agent = 'orchestrator'
+       AND author_handle IN (${authors.map(() => "?").join(",")}) AND json_extract(body, '$.status_report.v') = 1
+       ORDER BY MIN(ts, received_at) DESC, id DESC LIMIT ?`).all(channel, ...authors, limit).map((r) => JSON.parse(r.json) as Event);
+  }
+
+  /** When this daemon received an event (its own clock), or null for one it does not hold. */
+  receivedAt(id: string): number | null {
+    return this.db.query<{ received_at: number }, [string]>("SELECT received_at FROM events WHERE id = ?").get(id)?.received_at ?? null;
   }
 
   /** Every accepted post of the channel, oldest first, as signed (the NDJSON export). */
@@ -273,6 +360,18 @@ export class ProjectsDb {
       `SELECT json FROM board_cards WHERE ${where.join(" AND ")} ORDER BY board, column_id, n LIMIT ?`).all(...args)
       .map((r) => JSON.parse(r.json) as CardView);
   }
+  /**
+   * What the status page counts (PROJECT-PAGES-1): every card of the project that is not deleted, as narrowly as it can be
+   * read: where it is, its state, when it last changed, whether it is blocked and its labels (as JSON; "[]" for none).
+   * No card is parsed whole.
+   */
+  cardsForCounts(channel: string): Array<{ board: string; column: string; state: string; updated: number; blocked: boolean; labels: string }> {
+    return this.db.query<{ board: string; col: string; state: string; updated: number; blocked: number | null; labels: string | null }, [string]>(
+      `SELECT board, column_id AS col, state, updated_ts AS updated, json_extract(json, '$.blocked') AS blocked,
+         COALESCE(json_extract(json, '$.labels'), '[]') AS labels FROM board_cards WHERE channel = ? AND state != 'deleted'`)
+      .all(channel).map((r) => ({ board: r.board, column: r.col, state: r.state, updated: r.updated, blocked: r.blocked === 1, labels: r.labels ?? "[]" }));
+  }
+
   /** Per board, column and state: how many cards and how many points (an estimate, else 1). */
   meterGroups(channel: string): Array<{ board: string; column_id: string; state: string; n: number; pts: number }> {
     return this.db.query<{ board: string; column_id: string; state: string; n: number; pts: number }, [string]>(

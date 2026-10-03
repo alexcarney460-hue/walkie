@@ -1,0 +1,48 @@
+{
+ "_id": "6a7f2d9752ecf5558942e80c",
+ "id": "lmstudio-community/Qwen3.8-27B-GGUF",
+ "sha": "5a7da681f60570ab5b439a587e912d2e5eddb582",
+ "downloads": 1353198,
+ "siblings": [
+  {
+   "rfilename": "Qwen3.8-27B-Q4_K_M.gguf",
+   "blobId": "9d18594302c795620949fac9fe03b68faef925d9",
+   "size": 16810714336,
+   "lfs": {
+    "sha256": "e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520",
+    "size": 16810714336,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Q6_K.gguf",
+   "blobId": "6042c8a8772eae1fdcbe65342ebd639a6a55fff5",
+   "size": 22430999776,
+   "lfs": {
+    "sha256": "6b1d4d0e66297a02878911203d076c9fb4e3bad6153510b958f24512dde28b04",
+    "size": 22430999776,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Q8_0.gguf",
+   "blobId": "deab47f8e73f0c6894b8e1d4d1305e0a7649a525",
+   "size": 29047084256,
+   "lfs": {
+    "sha256": "f0fc43cfd802bd87bc7b95f2120553a6407848e3229126b623cc397427857e8a",
+    "size": 29047084256,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "mmproj-Qwen3.8-27B-BF16.gguf",
+   "blobId": "c306790293284149e9aa2f6ba5b3340b9422cdd6",
+   "size": 931145856,
+   "lfs": {
+    "sha256": "97ba9d70e7407f08c880def231fd360a312c76d0053387733f10dcf6affd75a1",
+    "size": 931145856,
+    "pointerSize": 134
+   }
+  }
+ ]
+}

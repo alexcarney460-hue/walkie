@@ -6,7 +6,8 @@ import { CATALOG, bytesPerToken, kvValuesPerToken, memoryNeeded, weightBytes, ty
 import { CatalogSchema } from "../../src/pool/catalog-schema.ts";
 import { appleGpuShare, machineCapacity, RESERVE_BYTES } from "../../src/pool/capacity.ts";
 import { groupMachines, LAN_RTT_MS, type GroupInput } from "../../src/pool/group.ts";
-import { pooledSpeed, singleSpeed, speedClass, suggestForGroup, suggestTeam } from "../../src/pool/suggest.ts";
+import { pooledSpeed, singleSpeed, speedClass } from "../../src/pool/suggest.ts";
+import { suggestForGroup, suggestTeam } from "../helpers/pool-legacy.ts";
 import type { MachineAccel, MachineStats } from "../../src/protocol/machine-stats.ts";
 
 const GiB = 1024 ** 3;
@@ -29,6 +30,14 @@ describe("catalog", () => {
     for (const m of CATALOG.models) {
       expect(m.source).toMatch(/^https:\/\/huggingface\.co\/[\w.-]+\/[\w.-]+$/);
       expect(m.verified).toBe(true);
+    }
+  });
+
+  test("the text fields are printable ASCII: an escape sequence, a newline, a right-to-left override or a zero-width character in a name, maker, licence or note is refused", () => {
+    const with_ = (k: string, v: string): boolean => CatalogSchema.safeParse({ ...CATALOG, models: [{ ...CATALOG.models[0]!, [k]: v }, ...CATALOG.models.slice(1)] }).success;
+    for (const k of ["name", "maker", "license", "note"]) {
+      for (const v of ["Evil\u001b[31mred", "line\nbreak", "rtl\u202eover", "zero\u200bwidth", "tab\there", "del\u007fchar", "caf\u00e9 latin"]) expect(with_(k, v)).toBe(false);
+      expect(with_(k, "Plain Name 7B (a note; ok): 1.5x")).toBe(true);
     }
   });
 
@@ -211,13 +220,13 @@ describe("suggestions", () => {
     expect(t.headline?.single?.speed).toBe("fast");
   });
 
-  test("the headline is the largest model that isn't slow; a bigger slow one is offered as 'Bigger, slow' (POOL-REAL-1)", () => {
+  test("the headline is the best model that isn't slow; a better rated slow one is offered as 'Better, slow' (POOL-REAL-1; was 'Bigger' while size was the rank)", () => {
     const s = suggestForGroup(groupMachines([node("cpu", 64, 4, { chip: "Xeon", unified: false, gpu_limit: null, gpus: [] }, { self: true })]).groups[0]!);
     expect(["fast", "usable"]).toContain(s.single!.speed);
     const bigger = s.alternatives.find((a) => a.fits)!;
     expect(bigger.speed).toBe("slow");
     expect(bigger.model.params_b).toBeGreaterThan(s.single!.model.params_b);
-    expect(alternativeLabel(s, bigger)).toBe("Bigger, slow");
+    expect(alternativeLabel(s, bigger)).toBe("Better, slow");
   });
 
   test("only slow options: the largest one is the headline, with a faster smaller alternative", () => {

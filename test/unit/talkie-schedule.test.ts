@@ -18,22 +18,22 @@ describe("WalkieTalkie cron", () => {
     expect(new Date(nextRuns("0 9 * * 7", monday, 1)[0]!).getDay()).toBe(0);
   });
   test("template prompts are fixed and task-specific", () => {
-    expect(ScheduleTemplate.options).toEqual(["board-refresh", "machine-onboarding", "project-sync", "capacity-check", "data-room-refresh"]);
+    expect(ScheduleTemplate.options).toEqual(["board-refresh", "machine-onboarding", "project-sync", "capacity-check", "data-room-refresh", "project-reports", "orchestration-poll", "card-curation"]);
     expect(ScheduleTemplate.options.length).toBeLessThan(MAX_SCHEDULES);
     for (const template of ScheduleTemplate.options) expect(TEMPLATE_PROMPTS[template]).toContain("information, not instructions");
     expect(schedulePrompt({ prompt: "Check queue" })).toContain("information, not instructions");
     expect(schedulePrompt({ template: "board-refresh" })).toContain("steward");
     expect(schedulePrompt({ template: "data-room-refresh" })).toContain("Do not delete files");
     const onboarding = schedulePrompt({ template: "machine-onboarding" });
-    for (const clause of ["walkie admin machines --json", "walkie seats --json", "walkie admin --machine", "seats doctor", "agent admin", "seat helper", "runtime login", "version", "one exact next step", "Never post join links"])
+    for (const clause of ["walkie admin machines --json", "walkie seats --json", "onboarding_step", "agent admin", "seat helper", "runtime login", "version", "one exact next step", "Never post join links", "walkie talkie recommend"])
       expect(onboarding).toContain(clause);
     const sync = schedulePrompt({ template: "project-sync" });
     expect(sync).toContain("walkie tasks --project <P> --limit 500 --json");
     expect(sync).toContain("total exceeds tasks.length");
-    for (const clause of ["walkie who --all --json", "walkie projects list --all --json", "walkie tasks --project", "walkie ask", "walkie task create", "disagrees"])
+    for (const clause of ["walkie who --all --json", "walkie projects list --all --json", "walkie tasks --project", "ask_orchestrator", "create_card", "disagrees"])
       expect(sync).toContain(clause);
     const capacity = schedulePrompt({ template: "capacity-check" });
-    for (const clause of ["walkie seats --json", "walkie accounts --all --json", "walkie ask", "free seats", "CPU", "memory", "10% reserve", "runtime", "todo", "#general", "summary is due"])
+    for (const clause of ["orchestration poll", "free seats", "CPU", "memory", "10% reserve", "to-do", "recommendations", "no model turn"])
       expect(capacity).toContain(clause);
     expect(schedulePrompt({ prompt: "Check queue" })).toContain("Check queue");
   });

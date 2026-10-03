@@ -16,7 +16,7 @@ import {
 import type { TransportControl } from "./direct/link.ts";
 import { INVITE_PREFIX, directLogin } from "./invite.ts";
 import { mintInviteCode } from "./invite-mint.ts";
-import { addressedTo, getAskView, MAX_WAIT_S, parseAddress, waitForAsk } from "./asks.ts";
+import { addressedTo, getAskView, MAX_WAIT_S, namesHermesAgent, parseAddress, waitForAsk } from "./asks.ts";
 import { MAX_BLOB_BYTES, readBlob, sha256Hex, writeBlob } from "./blobs.ts";
 import { ActivateReq, activateOnAuthority, alreadyActive, checkActivatable } from "../license/activate.ts";
 import type { Core } from "./core.ts";
@@ -115,6 +115,30 @@ export function hasRoute(method: string, path: string): boolean {
   return routes.some((r) => r.method === method && r.re.test(path));
 }
 
+/**
+ * TALKIE-OPS-1: nothing a scheduled duty does changes anything. While one of WalkieTalkie's scheduled turns runs, and afterwards
+ * until that Claude child is replaced (a job it left running keeps its token), the child may write only what is not an action: a
+ * post in an existing channel, and a recommendation for a person to approve. Every other write that reaches `dispatch` (a card
+ * created, moved or commented on, a seat started or stopped, a command run on another machine, an ask, an answer, a status, a
+ * file, a setting, a schedule run, a new channel) is refused, so text injected through a card title has nothing to call. Routes
+ * the local API answers before `dispatch` do not pass through here: the dashboard login nonce and the desktop challenge are a
+ * person's alone and refuse the child outright, and sign-out and token rotation repeat this hold themselves (local-api.ts authRoute).
+ * A person's own conversation with WalkieTalkie (a new child) and a person at a terminal are not held back.
+ */
+const SCHEDULED_TURN_WRITES: ReadonlySet<string> = new Set(["POST /v1/post", "POST /v1/talkie/recs"]);
+/** The request is WalkieTalkie's child while it is held to a scheduled turn's limits (host.ts scheduledChildActive). */
+function scheduledChild(c: RouteCtx): boolean {
+  if (c.orchestratorToken === undefined) return false;
+  const host = hostFor(c.core);
+  return !!(host?.scheduledChildActive ? host.scheduledChildActive() : host?.scheduledTurnActive?.());
+}
+function refuseScheduledWrite(c: RouteCtx): void {
+  const method = c.req.method;
+  if (method === "GET" || method === "HEAD" || SCHEDULED_TURN_WRITES.has(`${method} ${c.url.pathname}`)) return;
+  if (!scheduledChild(c)) return;
+  throw new HttpError(403, "scheduled_turn_cannot_act", "a scheduled WalkieTalkie turn changes nothing: record what it would do with `walkie talkie recommend` and a person approves it");
+}
+
 export async function dispatch(c: RouteCtx): Promise<Response> {
   // A child token identifies the live orchestrator, regardless of a caller-supplied agent header.
   // Reject mismatches before routing, including reads, so neither policy nor view filters can be spoofed.
@@ -122,6 +146,7 @@ export async function dispatch(c: RouteCtx): Promise<Response> {
   if (child && (!hostFor(c.core)?.acceptsToken(c.orchestratorToken) || (c.agent !== undefined && c.agent !== ORCHESTRATOR_AGENT)))
     throw new HttpError(403, "forbidden", "the orchestrator token requires the orchestrator agent identity");
   const effective = child ? { ...c, agent: ORCHESTRATOR_AGENT, underAgent: true } : c;
+  if (child) refuseScheduledWrite(effective);
   if (effective.req.method !== "GET" && effective.req.method !== "HEAD") refuseReservedAgent(effective);
   for (const r of routes) {
     const m = r.re.exec(effective.url.pathname);
@@ -230,6 +255,9 @@ async function ensureChannel(c: RouteCtx, name: string): Promise<void> {
   const ch = c.core.roster.channels.get(name);
   if (!ch && name.startsWith("p-")) {
     throw new HttpError(409, "unknown_channel", `#${name}: channel names starting with p- are reserved for projects (walkie projects create <name>)`);
+  }
+  if (!ch && scheduledChild(c)) {
+    throw new HttpError(403, "scheduled_turn_cannot_act", `#${name} doesn't exist and a scheduled WalkieTalkie turn creates no channel: post in an existing one`);
   }
   if (!ch) {
     // `seats-<node>` is made by that machine's `walkie seats enable` only (PROTOCOL §11): a post never creates it.
@@ -652,6 +680,7 @@ route("POST", "/v1/ask", async (c) => {
   if (!memberByHandle(c.core.roster, target.handle) || memberByHandle(c.core.roster, target.handle)?.role === "removed") {
     throw new HttpError(404, "not_found", `no member @${target.handle}`);
   }
+  if (namesHermesAgent(c.core, target)) throw new HttpError(403, "forbidden", "Hermes agents are view only: they cannot answer asks");
   if (b.channel) {
     await ensureChannel(c, b.channel);
     const members = c.core.roster.channels.get(b.channel)?.members;
@@ -836,11 +865,15 @@ route("POST", "/v1/vault/lease", async (c) => {
   if (c.listener !== "unix") throw new HttpError(403, "forbidden", "this route is only served on the unix socket");
   requireTeam(c);
   if (!c.core.limiter.take("vault-lease-local", LOCAL_LEASE_BUCKET)) throw new HttpError(429, "rate_limited", "too many hand-outs; try later");
+  // A same-user teammate seat can reach this socket. Only SeatsHost may relay a signed seat event's launcher.
+  const raw = await readJson(c.req, 16 * 1024);
+  const local = LocalLeaseReq.omit({ launcher: true }).safeParse(raw);
+  if (!local.success) throw new HttpError(400, "invalid", "bad lease request");
   // The owner's machine over a transport both serve (pre.4 merge: a Walkie Direct owner too), like every peer call.
   const res = await requestLease(c.core, (_addr, body, node) => c.client.vaultLease(ownerAddr(c, node), body).catch((err: unknown) => {
     const e = err as { status?: number; code?: string; message?: string };
     throw new HttpError(e.status && e.status >= 400 && e.status < 600 ? e.status : 502, e.code ?? "unreachable", `the owner's machine refused: ${plainText(String(e.message ?? "unreachable"), 200)}`);
-  }), await readJson(c.req, 16 * 1024));
+  }), local.data);
   return new Response(JSON.stringify(res), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 });
 

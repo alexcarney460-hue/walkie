@@ -24,7 +24,7 @@ import {
 } from "../../protocol/seats.ts";
 import type { AccountView } from "../../protocol/accounts.ts";
 import { releaseLease, writeLease, type Lease } from "../../accounts/leases.ts";
-import { ACCOUNT_NOT_USABLE, planSeatAccount, seatCredentials, type AccountPlan, type PoolContext, type SeatCredentials } from "./account.ts";
+import { ACCOUNT_NOT_USABLE, planSeatAccount, sameAccountSource, seatCredentials, type AccountPlan, type PoolContext, type SeatCredentials } from "./account.ts";
 import { removeLeaseHome, sweepLeaseHomes, writeLeaseHome } from "../../accounts/vault/codex-lease-home.ts";
 import { codexBaseHome } from "../../accounts/vault/codex-home.ts";
 import {
@@ -49,9 +49,10 @@ import { userMessage } from "../orchestrator/claude-stream.ts";
 import { SeatLimit, planPauses, planStarts } from "./busy.ts";
 import { MAX_N, SEATS_GROUP, seatUserName, type AdminResult, type AdminVerb } from "./admin.ts";
 import { evaluateIsolation, runtimeCopyProblem, seatUserCheck, type Isolation } from "./isolation.ts";
+import { canonicalPath, readSeatRegistration, seatScopeFor, type RegistrationRead, type SeatScope } from "./instance.ts";
 import { RunnerChild, adminCall, runnerOp, type RunnerOpResult } from "./runner-child.ts";
 import type { UidOp } from "./runner-uid.ts";
-import { RUNNER_MAX_STAGED, RUNNER_PROTOCOL, RUNNER_PROTOCOL_V2, SEAT_TOKEN_FILE } from "./runner.ts";
+import { RUNNER_MAX_STAGED, RUNNER_PROTOCOL, RUNNER_PROTOCOL_V2, SEAT_TOKEN_FILE, type RunnerLogin } from "./runner.ts";
 import {
   DEFAULT_ADMIN, DEFAULT_RUNNER, SCHEDULER_FILES, adminGroupIds, listAcl, lookupOsUser, makeSeatSocketDir, removeSeatSocketDir, selfAdminArgv, selfRunnerArgv, sudoSwitch,
   verifySeatSocketDir, type OsUser,
@@ -67,12 +68,14 @@ import { createWorkerRoot, markWorkerStarting, readWorkerProcess, recordWorkerPr
 import { SeatStatusThrottle } from "./status-throttle.ts";
 import { CleanupQueue } from "./cleanup-queue.ts";
 import { postAudit } from "../admin/audit.ts";
-import { ambiguousLaunchers, channelFit, decideRun, decideStop, desiredMembers, launcherHandles, launcherPolicyEmpty, parseLaunchers, type SeatsPolicy } from "./rules.ts";
+import { ambiguousLaunchers, channelFit, decideRun, decideStop, desiredMembers, launcherAllowed, launcherHandles, launcherPolicyEmpty, parseLaunchers, type SeatsPolicy } from "./rules.ts";
 import {
-  KIMI_FULL_ACCESS_ONLY, claudeSeatArgs, claudeSeatParser, codexSeatArgs, codexSeatLine, findRuntime, grokCredentialOutput, grokGuardOutput, grokLoginPresent, grokSeatArgs, grokSeatHome, grokSeatParser, kimiSeatArgs, kimiSeatLine, loginEnv, seatEnvFile, seatSystemPrompt, withBinDir, type SeatSignal,
+  KIMI_FULL_ACCESS_ONLY, claudeSeatArgs, claudeSeatParser, codexSeatArgs, codexSeatLine, findRuntime, grokCredentialOutput, grokGuardOutput, grokLoginPresent, grokSeatArgs, grokSeatHome, grokSeatParser, kimiSeatArgs, kimiSeatLine, loginEnv, ownLoginOnly, seatEnvFile, seatSystemPrompt, withBinDir, type SeatSignal,
 } from "./runtime.ts";
 
 export interface SeatsOptions {
+  /** Tests: how long a paused seat's resume may wait on the seats channel or the roster before it is stopped (default 30 min). */
+  holdMaxMs?: number;
   /** Startup enrollment migration failed: this daemon must refuse every seat until restarted after repair. */
   enrollmentBlock?: string;
   /** Test seam for the person's Claude Code Keychain item. */
@@ -95,8 +98,16 @@ export interface SeatsOptions {
   userSwitch?: (user: string, runner: string[], purpose: "run" | UidOp) => string[];
   /** OS user lookup (tests: the fake helper's users; they can't create real ones). Default `id`. */
   lookupUser?: (name: string) => OsUser | null;
-  /** The root helper (admin.ts) as a function (tests: over a fake system); default `sudo -n <admin> seat-admin …`. */
-  admin?: (verb: AdminVerb, n: number) => Promise<AdminResult>;
+  /**
+   * The root helper (admin.ts) as a function (tests: over a fake system); default `sudo -n <admin> seat-admin …`.
+   * `idle`: `destroy <n> idle` (a leftover from the helper's list: refused while it runs anything, WALK-103).
+   */
+  admin?: (verb: AdminVerb, n: number, o?: { idle?: boolean }) => Promise<AdminResult>;
+  /**
+   * WALK-103: the root-owned record of which Walkie owns this machine's seat users (instance.ts). Default: the real
+   * record, read each time; with a test's `admin` and no record given, the fake helper is this daemon's own.
+   */
+  seatRegistration?: () => RegistrationRead;
   /** While busy, paused seats' users are stopped again this often (a SIGCONT from elsewhere is undone). Default 2 s. */
   busyReapplyMs?: number;
   /** Tests: the retry delay of the helper's pending-id reconciliation (default 30 s). */
@@ -126,6 +137,8 @@ interface Seat {
   order: number;
   launcher: string;
   run: AnySeatRun;
+  /** The signed launch request: its launcher is judged again just before the seat starts (WALK-74). */
+  request: Event;
   /** A v2 request's host-side state (FO-2), or null for v1. */
   v2: V2Seat | null;
   dir: string;
@@ -175,7 +188,7 @@ interface Seat {
   /** A v2 request refused while it prepared (a missing prerequisite, an account not usable): posted `refused`. */
   refusal: string | null;
   /** `local`: the host's person stopped it on this machine (its post-run git is aborted, like a revoke's). */
-  stop: { reason: "stopped" | "timeout" | "revoked" | "shutdown" | "unadmitted" | "reserve" | "account"; by?: string; local?: boolean } | null;
+  stop: { reason: "stopped" | "timeout" | "revoked" | "shutdown" | "unadmitted" | "reserve" | "account" | "launcher" | "held"; by?: string; local?: boolean; why?: string } | null;
   /** Aborted by a stop in any phase: preparing (env, clone), running, or the post-run git. */
   abort: AbortController;
   /** conclude() has started: the seat stays tracked (and counted) until its group is reaped and its state posted. */
@@ -188,6 +201,8 @@ interface Seat {
 /** A running seat as persisted: its child's pid (its process group) and that process's start time, when known. */
 export interface SavedSeat {
   id: string; dir: string; runtime?: SeatRuntime; pid?: number; started?: string; runner?: true; user?: number;
+  /** WALK-103 review: the daemon that ran it (its canonical socket path); absent in seats.json from before. */
+  instance?: string;
   /** Unique credential-root instance; absent in legacy saved seats. */
   root?: string;
   /** FO-2: a same-user v2 seat's brief in the person's tree, removed at the next start if this daemon died first. */
@@ -209,6 +224,13 @@ interface Persisted {
   launches?: Record<string, number[]>;
   /** Seat users made and not verified destroyed (a restart destroys them first); the highest id asked for. */
   users?: number[];
+  /** Of `users`, those found only in the helper's list: removed only while idle (WALK-103). */
+  recovered?: number[];
+  /**
+   * WALK-103 review: which daemon made each of `users` (its canonical socket path), so a copied seats.json (another
+   * Walkie's home copied, or one from before this record) never makes this daemon remove seat users it didn't make.
+   */
+  made_by?: Record<string, string>;
   user_high?: number;
   cleanup_unfinished_since?: number;
 }
@@ -216,6 +238,10 @@ type RootRecord = Pick<SavedSeat, "id" | "pid" | "started"> & { uncertain?: true
 
 /** A launch accepted while the machine is busy, waiting to start. */
 interface Queued { ev: Event; run: AnySeatRun; launcher: string; at: number }
+/** Launch refusals that are the launcher's own standing: found again before a paused seat resumes, they stop it. */
+const LAUNCHER_LOST: ReadonlySet<string> = new Set(["observer", "node_not_admitted", "not_a_launcher", "agent_not_allowed"]);
+/** How long a paused seat's resume may wait on the seats channel or the roster before it is stopped (WALK-74). */
+const HOLD_MAX_MS = 30 * 60_000;
 
 /** A v2 seat's host-side state (FO-2): its brief file, workspace, account and result file. */
 interface V2Seat {
@@ -234,6 +260,8 @@ interface V2Seat {
   branch: string | null;
   /** The account's run environment, a seat user's Codex auth, and the router lease held while it runs. */
   creds: SeatCredentials | null;
+  /** Where `creds` came from (the plan they were bound on): the final check and the watcher compare against it. */
+  bound?: Exclude<AccountPlan, { kind: "refused" }>;
   lease: Lease | null;
   cancelReserve?: () => void;
   cancelAccount?: () => void;
@@ -264,6 +292,8 @@ export const QUEUE_CAP = 32;
 const PUBLISH_MS = 100;
 
 /** What to do when the helper's list of seat users can't be read (doctor, pool refusal: Opus r11 LOW). */
+/** An installed seat-user runner older than this Walkie (it starts the runtime without waiting for the go-ahead). */
+export const RUNNER_OUT_OF_DATE = "the seat users' runner on this machine is older than this Walkie and started without its go-ahead (it got no login): run walkie seats setup-user --apply";
 export const HELPER_WAY_OUT = "sudo can't reach the seat user helper: run walkie seats setup-user --apply (it reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed";
 
 export interface SeatsDeps {
@@ -301,6 +331,21 @@ export class SeatsHost {
   private busyReapply: ReturnType<typeof setInterval> | null = null;
   /** Seat user ids made and not verified destroyed; the highest id ever asked for (ids only go up). */
   private readonly liveUsers = new Set<number>();
+  /**
+   * Of those, the ones found only in the helper's list (not made by this daemon's records: WALK-103): destroyed with
+   * `destroy <n> idle`, so the helper refuses while any process of one runs (retried with backoff, quarantined).
+   */
+  private readonly recoveredIdle = new Set<number>();
+  /** The legacy-scope note was logged (once per start). */
+  private legacyNoted = false;
+  /**
+   * WALK-103 review: seat users this daemon knows of but didn't make (a copied seats.json, one from before this update,
+   * or, with no record of the registered Walkie, the helper's list): never removed, nothing of them stopped; name → why.
+   */
+  private readonly foreignUsers = new Map<string, string>();
+  /** Leftovers the helper won't remove while something of them still runs (`destroy <n> idle` answered `running`). */
+  private readonly runningLeftovers = new Set<string>();
+  private instanceIdCache: string | null = null;
   /** The helper's pending ids being (or last) reconciled (reconcileHelper). */
   private helperReconciled: Promise<void> = Promise.resolve();
   /**
@@ -353,6 +398,13 @@ export class SeatsHost {
   private launchOrder = 0;
   /** Launches waiting while the machine is busy (or for a free seat after it resumed), oldest first. */
   private queue: Queued[] = [];
+  /** Paused seats whose resume waits for a refusal that settles by itself (WALK-74, unpause), stopped after holdMaxMs. */
+  private readonly held = new Map<string, { since: number; waiting: string; timer: ReturnType<typeof setTimeout> }>();
+  /**
+   * How seats ended whose final state could not be posted (the seats channel unfit at the time), for this machine's own
+   * view: its person still sees the end, and where the commits were kept. Bounded; gone at a restart.
+   */
+  private readonly endedLocally = new Map<string, { state: SeatState["state"]; reason: string; dir: string; commits?: number }>();
   private busy: SeatsBusy | null = null;
   private busyTimer: ReturnType<typeof setTimeout> | null = null;
   private publishTimer: ReturnType<typeof setTimeout> | null = null;
@@ -458,11 +510,34 @@ export class SeatsHost {
     return next;
   }
 
+  /**
+   * WALK-103: whose seat users the helper holds, from the root-owned record (instance.ts): this daemon's (`own`),
+   * another Walkie's (`other`: the helper is never asked), or unrecorded (`legacy`: an earlier setup).
+   */
+  private seatScope(): SeatScope {
+    if (!this.opts.seatRegistration && this.opts.admin) return { state: "own" };
+    return seatScopeFor((this.opts.seatRegistration ?? readSeatRegistration)(), this.core.paths.socket, process.getuid?.() ?? -1);
+  }
+
+  /** This daemon's identity in seats.json stamps (WALK-103 review): its canonical socket path, as the record names it. */
+  private get instanceId(): string { return this.instanceIdCache ??= canonicalPath(this.core.paths.socket); }
+
+  /** A seat user this daemon didn't make: never removed or stopped by it (WALK-103 review); shown in the views. */
+  private keepForeign(n: number, why: string): void {
+    const name = seatUserName(n);
+    if (this.foreignUsers.has(name)) return;
+    this.foreignUsers.set(name, why);
+    this.log.warn("seats_foreign_user_kept", { user: name, why });
+  }
+
   /** The root helper: `sudo -n <admin> seat-admin <create|destroy> <n>` (admin.ts); tests pass a fake. */
-  private adminOp(verb: AdminVerb, n: number): Promise<AdminResult | null> {
-    if (this.opts.admin) return this.opts.admin(verb, n).catch(() => null);
+  private adminOp(verb: AdminVerb, n: number, idle = false): Promise<AdminResult | null> {
+    // A daemon whose home isn't the registered one never asks the helper to list, make or remove seat users (WALK-103).
+    const scope = this.seatScope();
+    if (scope.state === "other") return Promise.resolve({ ok: false, code: "refused", scope: "other", why: scope.why });
+    if (this.opts.admin) return (idle ? this.opts.admin(verb, n, { idle: true }) : this.opts.admin(verb, n)).catch(() => null);
     const admin = this.current.admin ? [this.current.admin, "seat-admin"] : selfAdminArgv();
-    return adminCall(["sudo", "-n", ...admin, verb, ...(verb === "pending" ? [] : [String(n)])], 180_000,
+    return adminCall(["sudo", "-n", ...admin, verb, ...(verb === "pending" ? [] : [String(n)]), ...(verb === "destroy" && idle ? ["idle"] : [])], 180_000,
       undefined, undefined, verb === "destroy" ? () => {
         this.cleanupUnfinishedSince ??= Date.now();
         this.save(true);
@@ -504,6 +579,7 @@ export class SeatsHost {
   }
 
   private async reconcileHelper(): Promise<void> {
+    const scope = this.seatScope();
     const r = await this.adminOp("pending", 0);
     if (this.closing) {
       // The helper's ledger retains these ids. The next start lists them before it can create another user.
@@ -524,14 +600,26 @@ export class SeatsHost {
     if (r.residueSummary) this.residueSummary = r.residueSummary;
     // The pending list verifies ownership, not cleanup. An idle uid may still have jobs, an account, or readable files.
     let added = false;
+    const unknown: number[] = [];
     for (const n of r.ids) {
       if (!Number.isInteger(n) || n < 1) continue;
       if (n > this.userHigh) this.userHigh = n;
       if (this.liveUsers.has(n)) continue;
+      // WALK-103: an earlier setup doesn't record which Walkie owns these: never removed as this daemon's leftovers.
+      if (scope.state !== "own") {
+        unknown.push(n);
+        this.keepForeign(n, "in the seat user helper's list, not made by this Walkie, and the setup doesn't record which Walkie owns it");
+        continue;
+      }
       this.log.warn("seats_pending_recovered", { user: seatUserName(n) });
       this.liveUsers.add(n);
+      this.recoveredIdle.add(n);
       added = true;
       void this.destroyUser(n, true);
+    }
+    if (unknown.length && !this.legacyNoted) {
+      this.legacyNoted = true;
+      this.log.warn("seats_pending_cleanup_refused", { count: unknown.length, users: unknown.slice(0, 10).map(seatUserName), why: scope.state === "own" ? null : scope.why });
     }
     if (added || r.ids.length) this.save();
   }
@@ -602,8 +690,9 @@ export class SeatsHost {
   private async destroyOnce(n: number): Promise<CleanResult> {
     const name = seatUserName(n);
     let r: AdminResult | null;
-    try { r = await this.adminOp("destroy", n); }
+    try { r = await this.adminOp("destroy", n, this.recoveredIdle.has(n)); }
     catch (err) { r = { ok: false, why: scrub((err as Error).message) }; }
+    if (r?.code === "running") this.runningLeftovers.add(name); else this.runningLeftovers.delete(name);
     if (r?.code === "busy" && r.why === "busy: another cleanup helper is still running") {
       this.cleanupBusyAttempts++;
       if (this.cleanupBusyAttempts >= 2) this.cleanupBusySince ??= Date.now();
@@ -617,6 +706,7 @@ export class SeatsHost {
       this.quarantine.delete(name);
       this.quarantineWhy.delete(name);
       this.liveUsers.delete(n);
+      this.recoveredIdle.delete(n);
       this.save();
       if (!this.closing) this.rebalance();
       return { ok: true };
@@ -664,7 +754,7 @@ export class SeatsHost {
     if (this.denying || this.seats.size || this.queue.length) {
       return `${SEATS_POOL_CONFLICT}. Seats are still stopping here: wait until they have (walkie seats)`;
     }
-    const left = [...new Set([...this.quarantine, ...[...this.liveUsers].map(seatUserName)])].sort();
+    const left = [...new Set([...this.quarantine, ...[...this.liveUsers].map(seatUserName), ...this.foreignUsers.keys()])].sort();
     if (left.length) {
       return `${SEATS_POOL_CONFLICT}. Seat users not verified removed yet (${left.join(", ")}): something of them may still run; walkie seats says why`;
     }
@@ -721,7 +811,12 @@ export class SeatsHost {
 
   /** Daemon start: listen for requests; seats that ran when the daemon last stopped abruptly are reported failed. */
   init(): void {
-    const saved = this.load();
+    const loaded = this.load();
+    // WALK-103 review: seats a copied seats.json names that another daemon ran (stamped with its socket) aren't this
+    // daemon's to end, report, sweep or kill.
+    const elsewhere = loaded.running.filter((r) => r.instance !== undefined && r.instance !== this.instanceId);
+    for (const r of elsewhere) this.log.warn("seats_leftover_elsewhere", { id: r.id, ...(r.user !== undefined ? { user: seatUserName(r.user) } : {}) });
+    const saved = elsewhere.length ? { ...loaded, running: loaded.running.filter((r) => !elsewhere.includes(r)) } : loaded;
     this.cleanupUnfinishedSince = saved.cleanup_unfinished_since ?? null;
     for (const r of [...(saved.pending_roots ?? []), ...saved.running]) {
       const key = "root" in r && r.root ? r.root : r.id;
@@ -773,7 +868,17 @@ export class SeatsHost {
     // Nothing of a seat user outlives a daemon: every one made and not verified destroyed is destroyed now, counted
     // against the machine's seats until that is verified.
     const leftUsers = new Set([...(saved.users ?? []), ...saved.running.map((r) => r.user).filter((u): u is number => u !== undefined)]);
-    for (const n of leftUsers) { this.liveUsers.add(n); void this.destroyUser(n, true); }
+    for (const n of saved.recovered ?? []) if ((saved.users ?? []).includes(n)) this.recoveredIdle.add(n);
+    // WALK-103 review: only the seat users this daemon made (stamped with its socket) are destroyed as its own. Any other
+    // (a copied seats.json, or one from before the stamps) is the registered Walkie's to clean up: as a leftover found
+    // in the helper's list (idle only) when that is this daemon, never otherwise.
+    const scope = leftUsers.size ? this.seatScope() : null;
+    for (const n of leftUsers) {
+      const stamp = saved.made_by?.[String(n)];
+      if (stamp === this.instanceId) { this.liveUsers.add(n); void this.destroyUser(n, true); continue; }
+      if (scope?.state === "own") { this.liveUsers.add(n); this.recoveredIdle.add(n); void this.destroyUser(n, true); continue; }
+      this.keepForeign(n, stamp ? "made by another Walkie on this machine (named in a copy of its seats.json)" : "made before this Walkie recorded which seat users it made");
+    }
     if (this.ephemeral || this.helperInstalled()) this.startReconcile();
     this.initialized = true;
     this.unsubscribe = this.core.hub.subscribe((ev) => {
@@ -789,6 +894,12 @@ export class SeatsHost {
         this.log.warn("seats_unknown_runtime_home_preserved", { id: r.id, dir: r.dir, home: unknownHome });
       }
       // A seat user's seat: said stopped only once its user's destroy is verified (Codex r5 MEDIUM 3), never assumed.
+      if (r.runner && r.user !== undefined && this.foreignUsers.has(seatUserName(r.user))) {
+        // Not this daemon's (WALK-103 review): its user is left as it is, and so is its seat. A copy of another home
+        // shares that home's node key, so a "failed" posted here could end the original's live seat for the team.
+        this.log.warn("seats_leftover_kept", { id: r.id, user: seatUserName(r.user) });
+        continue;
+      }
       if (r.runner && r.user !== undefined) {
         void this.destroyUser(r.user).then((d) => {
           this.log.warn("seats_leftover", { id: r.id, user: r.user, destroyed: d.ok });
@@ -1068,7 +1179,20 @@ export class SeatsHost {
       ...(this.allowed && fit ? { channel_error: this.channelError ?? fit } : {}),
       running: this.seats.size, paused: this.pausedCount(), queued: this.queue.length, availability: this.availability(),
       ...(helperVersion ? { helper_version: helperVersion } : {}),
+      ...this.seatScopeView(),
     };
+  }
+
+  /** WALK-103: shown once seat users are set up here (or held) and the record isn't this daemon's. */
+  private seatScopeView(): Pick<SeatsLocalView, "seat_scope" | "foreign_users" | "leftovers_running"> {
+    const byId = (a: string, b: string) => Number(a.slice(8)) - Number(b.slice(8));
+    const extra = {
+      ...(this.foreignUsers.size ? { foreign_users: [...this.foreignUsers.keys()].sort(byId) } : {}),
+      ...(this.runningLeftovers.size ? { leftovers_running: [...this.runningLeftovers].filter((u) => this.quarantine.has(u)).sort(byId) } : {}),
+    };
+    if (!this.ephemeral && !this.helperInstalled() && !this.liveUsers.size && !this.foreignUsers.size) return extra;
+    const scope = this.seatScope();
+    return scope.state === "own" ? extra : { ...extra, seat_scope: { state: scope.state, why: scope.why } };
   }
 
   /** A stop from the host's own person (local API): any seat running (or paused, or queued) here. */
@@ -1249,8 +1373,77 @@ export class SeatsHost {
     });
   }
 
+  /**
+   * A paused seat whose resume waits (unpause): shown as waiting on this machine, and stopped after holdMaxMs if nothing
+   * settles it (its time limit does not run while it is paused; its launcher may not be able to reach it to stop it).
+   */
+  private hold(seat: Seat, why: string): void {
+    if (this.held.has(seat.id)) return;
+    this.log.info("seats_resume_held", { id: seat.id, reason: why });
+    const waiting = why.includes("seats channel") ? "waiting for the seats channel to be narrowed" : "waiting for its launcher's machine entry to match one machine";
+    const ms = this.opts.holdMaxMs ?? HOLD_MAX_MS;
+    const timer = setTimeout(() => {
+      if (!this.held.has(seat.id) || seat.stop || seat.concluding || !this.seats.has(seat.id)) return;
+      this.unhold(seat.id);
+      // Stopped only if it still waits on the channel or the roster: settled meanwhile (its person busy again, so no
+      // resume came to release it), busy and the usual rebalance decide, as for any paused seat.
+      const now = this.recheckLaunch(seat, "resumed");
+      if (now?.kind !== "held") { this.rebalance(); return; }
+      this.log.warn("seats_hold_expired", { id: seat.id, reason: now.why });
+      const span = ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
+      void this.stopSeat(seat, { reason: "held", why: `stopped after waiting ${span} ${waiting.replace(/^waiting /, "")}` });
+    }, ms);
+    timer.unref?.();
+    this.held.set(seat.id, { since: Date.now(), waiting, timer });
+  }
+
+  /**
+   * Held seats judged again after a roster change: one the change settled leaves the hold (shown paused for what still
+   * pauses it, its person being busy say), before the rebalance decides whether it continues.
+   */
+  private recheckHeld(): void {
+    for (const id of [...this.held.keys()]) {
+      const seat = this.seats.get(id);
+      if (!seat || seat.stop || seat.concluding || this.recheckLaunch(seat, "resumed")?.kind !== "held") this.unhold(id);
+    }
+  }
+
+  private unhold(id: string): void {
+    const h = this.held.get(id);
+    if (!h) return;
+    clearTimeout(h.timer);
+    this.held.delete(id);
+  }
+
+  /**
+   * This machine's own word on one of its seats, for its person's view (view.ts): a held resume (paused, waiting), or an
+   * end whose final state could not be posted. Null when the channel says it all.
+   */
+  localState(id: string): { state: SeatState["state"]; reason: string; dir?: string; commits?: number } | null {
+    const h = this.held.get(id);
+    if (h) return { state: "paused", reason: `${h.waiting} (held since ${new Date(h.since).toISOString()})` };
+    return this.endedLocally.get(id) ?? null;
+  }
+
   /** SIGCONT; its time limit runs again with what was left. */
   private unpause(seat: Seat): void {
+    // Its launcher is judged again before it continues (WALK-74): a seat paused (or started stopped) while its person
+    // was busy, whose launcher was removed, made an observer, revoked or taken off the launchers meanwhile, is stopped
+    // with the reason instead (its commits still come back to the channel, which no longer holds that launcher). A
+    // refusal that isn't the launcher's own (the seats channel momentarily too wide, an ambiguous machine entry) keeps
+    // it paused until a roster change settles it (onEvent rebalances). Still preparing: spawn() judges it.
+    const r = seat.child || seat.runner?.runtimePid ? this.recheckLaunch(seat, "resumed") : null;
+    if (r?.kind === "lost") {
+      this.unhold(seat.id);
+      this.log.info("seats_resume_refused", { id: seat.id, reason: r.why });
+      void this.stopSeat(seat, { reason: "launcher", why: r.why });
+      return;
+    }
+    if (r?.kind === "held") {
+      this.hold(seat, r.why);
+      return;
+    }
+    this.unhold(seat.id);
     seat.paused = false;
     seat.pauseVerified = false;
     if (!seat.child && !seat.runner?.runtimePid) return; // still preparing: spawn() starts it running and says so
@@ -1435,6 +1628,8 @@ export class SeatsHost {
     if (ev.kind === "channel.upsert" || ev.kind === "team.member" || ev.kind === "team.node") {
       this.checkAdmission();
       this.scheduleReconcile();
+      // A seat whose resume waits on the channel or the roster (WALK-74, unpause): judged again now.
+      if (this.held.size) { this.recheckHeld(); this.rebalance(); }
       return;
     }
     if (ev.kind !== "msg.post" || ev.channel !== this.channel || this.handled.has(ev.id)) return;
@@ -1565,9 +1760,9 @@ export class SeatsHost {
         if (me && !binding && (!expires || expires > Date.now())) {
           const current = planSeatAccount(seat.v2.run.account as string, { runtime: seat.v2.run.runtime, me,
             launcher: seat.launcher, vault: this.core.vault?.list() ?? [], pooled: this.deps.accounts?.() ?? [], pool: this.poolContext() });
-          // The holder's node is part of the binding: switching to a different copy requires a new lease.
-          if (current.kind === "peer" && initial.kind === "peer") return current.node === initial.node;
-          if (current.kind === "local" && initial.kind === "local") return current.entry.id === initial.entry.id;
+          // The holder's node, and a local entry's stored generation, are part of the binding: switching to a different
+          // copy, or to an account removed and added again, requires a new lease (Codex pre.12 audit r2).
+          if (current.kind !== "refused") return sameAccountSource(current, initial);
         }
         return false;
       },
@@ -1620,6 +1815,56 @@ export class SeatsHost {
       }
       default:
         return reason;
+    }
+  }
+
+  /**
+   * The seat's launch judged again (WALK-74), like a queued one (everything but its age), against the roster and this
+   * machine's launchers as they are now; null when it still passes. `lost`: the launcher's own standing refuses it
+   * (removed, an observer, its machine revoked, off the launchers), or (at start only) this machine's own policy does.
+   * `held`: a refusal that settles by itself (the seats channel momentarily unfit, as while it is being narrowed; a
+   * launcher machine entry that matches two machines): never a stop. Anything else at resume (seats off, a runtime no
+   * longer allowed, the host demoted) is left to the paths that already end every seat for it.
+   * The reason is short and whole (a seat's refusal keeps 280 characters): no fix command, the launcher can't run one.
+   */
+  private recheckLaunch(seat: Seat, when: "started" | "resumed"): { kind: "lost" | "held"; why: string } | null {
+    const me = this.core.myHandle();
+    const d = me ? decideRun(seat.request, { roster: this.core.roster, node: this.core.nodeId, me, policy: this.policy(), now: this.core.clock(), maxAgeMs: this.maxAge, queued: true }) : null;
+    if (d?.ok) return null;
+    let reason = !me ? "not_in_team" : d ? d.reason : "not_a_request";
+    // The channel is judged before the launcher (rules.ts common), and a launcher just made an observer or taken off
+    // the launchers is still in the channel until it is narrowed: at start, the launcher's own standing is judged too,
+    // so that window starts nothing for them (nothing has run, nothing leaks). At resume it waits for the narrowing.
+    if (when === "started" && reason.startsWith("channel_")) {
+      const own = launcherAllowed(seat.request, this.core.roster, this.policy());
+      if (own && LAUNCHER_LOST.has(own)) reason = own;
+    }
+    const why = `re-checked before it ${when}: ${this.lostText(reason, seat.request)}`;
+    if (reason.startsWith("channel_") || reason === "launcher_machine_ambiguous") return { kind: "held", why };
+    if (LAUNCHER_LOST.has(reason) || when === "started") return { kind: "lost", why };
+    return null;
+  }
+
+  /** A launch refusal found by a re-check, in one plain sentence. */
+  private lostText(reason: string, ev: Event): string {
+    const host = this.core.hostname;
+    const who = `@${ev.author.handle}`;
+    const spec = ev.author.agent !== undefined ? `${who}/${this.core.roster.nodes.get(ev.origin)?.hostname ?? "?"}/${ev.author.agent}` : who;
+    if (reason.startsWith("channel_")) return `the seats channel of ${host} no longer holds only its person and the launchers (${reason})`;
+    switch (reason) {
+      case "not_in_team": return "this machine is no longer in the team";
+      case "host_not_admitted": return "the host machine is no longer an admitted member of the team";
+      case "seats_not_allowed": return `seats are turned off on ${host}`;
+      case "observer": return `${who} is now an observer, and observers can't start seats`;
+      case "node_not_admitted": return `${who}'s machine is no longer admitted to the team (removed or revoked)`;
+      case "not_a_launcher": return `${who} is no longer one of ${host}'s launchers`;
+      case "agent_not_allowed": return `${spec} is no longer allowed to start seats on ${host}`;
+      case "launcher_machine_ambiguous": return `${spec} now matches more than one admitted machine`;
+      case "runtime_not_allowed": {
+        const body = seatOf(ev.body);
+        return `${host} no longer allows ${body?.op === "run" ? body.runtime : "that runtime"} seats`;
+      }
+      default: return reason;
     }
   }
 
@@ -1682,7 +1927,7 @@ export class SeatsHost {
       ? "switch WalkieTalkie back to Walkie platform access to use same-user machines"
       : this.current.allow ? this.iso.problem ?? this.socketProblem() ?? this.core.pool?.seatsConflict() ?? null : "seats are turned off on this machine");
     const seat: Seat = {
-      id: req.id, order: ++this.launchOrder, launcher, run, v2: isV2(run) ? newV2(run, req.id) : null, dir, cwd: dir, base: null, startedAt: Date.now(), child: null, runner: null, user: null, userN: null, lost: false, uncontrolled: false, waitedForCleanup: false, cleanupFailure: null, pauseVerified: false, childStarted: null, env: null, workerRoot: null,
+      id: req.id, order: ++this.launchOrder, launcher, run, request: req, v2: isV2(run) ? newV2(run, req.id) : null, dir, cwd: dir, base: null, startedAt: Date.now(), child: null, runner: null, user: null, userN: null, lost: false, uncontrolled: false, waitedForCleanup: false, cleanupFailure: null, pauseVerified: false, childStarted: null, env: null, workerRoot: null,
       timer: null, limit: new SeatLimit(run.timeout_s * 1000), paused: false, flushTimer: null, refusal: null,
       buf: [], posts: 0, lastText: "", projectedClaudeToken: null, grokOutputTail: "", activity: "", activityKind: null, lastOutputAt: 0, statusTimer: null,
       tail: "", truncated: 0, final: null, stop: null, abort: new AbortController(), concluding: false, done, finish,
@@ -1718,7 +1963,9 @@ export class SeatsHost {
       if (seat.stop) { await this.conclude(seat, null, ""); return; }
       if (ephemeral) {
         // The current access token is read just before the seat starts (Claude Code remains its only refresher).
-        if (run.runtime === "codex" && !seat.v2?.creds?.codexAuth && !this.codexAuthFile().codex_auth) {
+        // An account seat's login is leased later, after the launcher is re-checked. This machine's own auth.json
+        // is not that login, and its absence must not refuse the seat.
+        if (run.runtime === "codex" && !seat.v2?.run.account && !seat.v2?.creds?.codexAuth && !this.codexAuthFile().codex_auth) {
           throw new Error("this machine's Codex isn't signed in where a seat user can use it (no ~/.codex/auth.json): its person runs codex login (file credential store), then walkie seats doctor");
         }
         // A fresh user for this run, never used before and destroyed after it (Codex r5, Opus r5).
@@ -1757,9 +2004,9 @@ export class SeatsHost {
   }
 
   /**
-   * A v2 seat before its directory is used (FO-2): the brief (a blob this channel's request references), the
-   * account's credentials (checked again against this machine's vault policy), and, for a seat user, the workspace
-   * staged as a bundle of the exact commit (its runner clones it; it can't read the person's clone).
+   * A v2 seat before its directory is used (FO-2): the brief (a blob this channel's request references) and, for a
+   * seat user, the workspace staged as a bundle of the exact commit (its runner clones it; it can't read the person's
+   * clone). The account login is not requested here: that waits until the launcher is checked again (`bindAccount`).
    */
   private async prepareV2(seat: Seat, v: V2Seat, env: Record<string, string>, ephemeral: boolean): Promise<void> {
     const bytes = await this.fetchBundle(v.run.brief, seat.abort.signal, "brief");
@@ -1770,46 +2017,6 @@ export class SeatsHost {
     const enrollment = this.enrollmentRefusal(v.run);
     if (enrollment) throw new SeatRefusal(enrollment);
     if (refusal) throw new SeatRefusal(refusal);
-    if (v.run.account) {
-      const me = this.core.myHandle() as string;
-      const plan = planSeatAccount(v.run.account, { runtime: v.run.runtime, me, launcher: seat.launcher, vault: this.core.vault?.list() ?? [], pooled: this.deps.accounts?.() ?? [], pool: this.poolContext() });
-      if (plan.kind === "refused") throw new SeatRefusal(plan.why);
-      try {
-        v.creds = await seatCredentials(plan, me, ephemeral, {
-          claudeToken: (id) => (this.core.vault as NonNullable<Core["vault"]>).claudeToken(id),
-          lease: (id, node, provider) => this.leaseToken(id, node, seatAgentName(seat.id), provider),
-          leaseHome: (grant, auth) => {
-            sweepLeaseHomes(this.core.paths.home);
-            return writeLeaseHome(this.core.paths.home, codexBaseHome(this.core.paths.home, this.env, this.home), grant, auth);
-          },
-          accessOnlyCodex,
-        });
-      } catch (err) {
-        throw new SeatRefusal(`${ACCOUNT_NOT_USABLE}: ${scrub((err as Error).message).slice(0, 200)}`);
-      }
-      try {
-        v.lease = writeLease(this.core.paths.home, { ...v.creds.lease, pid: process.pid, agent: seatAgentName(seat.id) });
-      } catch (err) {
-        this.log.warn("seats_lease_failed", { id: seat.id, err: scrub((err as Error).message).slice(0, 200) });
-      }
-      if (plan.kind === "peer" && plan.pooled) {
-        v.cancelReserve = superviseReserve({
-          read: () => this.deps.accounts?.().find((a) => a.key === v.run.account && a.provider === plan.provider)?.usage ?? null,
-          refresh: async () => {
-            const node = this.core.roster.nodes.get(plan.node);
-            const addr = node ? this.deps.client.addrOf(node) : null;
-            const grant = v.creds?.lease.grant;
-            if (!addr || !grant) throw new Error("the lending machine or account grant is unavailable");
-            return (await this.deps.client.borrowedUsage(addr, plan.id, grant)).usage;
-          },
-          stop: () => this.stopSeat(seat, { reason: "reserve" }),
-          error: (err) => this.log.warn("seats_reserve_check", { id: seat.id, err: scrub(String(err)).slice(0, 200) }),
-          everyMs: this.opts.reserveCheckMs,
-        });
-      }
-      this.log.info("seats_account", { id: seat.id, account: v.creds.lease.account, from_node: v.creds.lease.from_node ?? null });
-      v.cancelAccount = this.watchAccount(seat, plan);
-    }
     const ws = v.run.workspace;
     if (!ephemeral || !ws) return;
     const got = await this.resolveWorkspace(seat, v, ws, env);
@@ -1878,15 +2085,241 @@ export class SeatsHost {
     return [...this.seats.values()].some((s) => s !== seat && s.v2?.clone === clone && s.v2.run.label === label && !!s.v2.run.workspace && s.v2.run.workspace.mode !== "fresh");
   }
 
+  /**
+   * Launcher standing at start. Lost refuses. Held, for a seat that would be handed an account, waits without
+   * leasing; a seat with no account still starts (a channel being narrowed does not refuse a launch already accepted).
+   */
+  private async allowLaunch(seat: Seat): Promise<void> {
+    const recheck = this.recheckLaunch(seat, "started");
+    if (!recheck) return;
+    if (recheck.kind === "lost") throw new SeatRefusal(recheck.why);
+    if (recheck.kind === "held" && seat.v2?.run.account) await this.waitToLaunch(seat);
+  }
+
+  /** Poll until the start-time hold clears, the launcher is refused, the seat is stopped, or the hold bound runs out. */
+  private async waitToLaunch(seat: Seat): Promise<void> {
+    const until = Date.now() + (this.opts.holdMaxMs ?? HOLD_MAX_MS);
+    for (;;) {
+      if (seat.stop || seat.concluding || seat.abort.signal.aborted) throw new Error("stopped");
+      const recheck = this.recheckLaunch(seat, "started");
+      if (!recheck) return;
+      if (recheck.kind === "lost") throw new SeatRefusal(recheck.why);
+      if (Date.now() >= until) throw new SeatRefusal(recheck.why);
+      await Bun.sleep(50);
+    }
+  }
+
+  /**
+   * The account login, requested only once the launcher may still start this seat. The hand-out stays in memory
+   * until the launcher and the account are checked again; only then is a lease home written. A hold drops that
+   * in-memory login (the hand-out is spent) and asks again after the channel fits. A second call does not lease
+   * again while the login is still held.
+   */
+  private async bindAccount(seat: Seat): Promise<void> {
+    const v = seat.v2;
+    if (!v?.run.account || v.creds) return;
+    for (;;) {
+      await this.allowLaunch(seat);
+      if (seat.stop || seat.abort.signal.aborted) throw new Error("stopped");
+      const me = this.core.myHandle() as string;
+      const plan = planSeatAccount(v.run.account, { runtime: v.run.runtime, me, launcher: seat.launcher, vault: this.core.vault?.list() ?? [], pooled: this.deps.accounts?.() ?? [], pool: this.poolContext() });
+      if (plan.kind === "refused") throw new SeatRefusal(plan.why);
+      let creds: SeatCredentials;
+      try {
+        // This seat's own mode (`seat.user`), not the live flag: another launch can re-evaluate that.
+        creds = await seatCredentials(plan, me, seat.user !== null, {
+          claudeToken: (id) => (this.core.vault as NonNullable<Core["vault"]>).claudeToken(id),
+          lease: (id, node, provider) => this.leaseToken(id, node, seatAgentName(seat.id), provider, seat.launcher),
+          deferLeaseHome: true,
+          accessOnlyCodex,
+        });
+      } catch (err) {
+        throw new SeatRefusal(`${ACCOUNT_NOT_USABLE}: ${scrub((err as Error).message).slice(0, 200)}`);
+      }
+      // Lost standing or an account this machine may no longer use: drop the login and ask for nothing further.
+      // The hand-out, if one returned, is spent. A hold keeps nothing and asks again once the channel fits.
+      if (this.borrowedGate(seat) === "held") {
+        creds = { env: {}, lease: { provider: creds.lease.provider, account: creds.lease.account } };
+        await this.waitToLaunch(seat);
+        continue;
+      }
+      // The source is the plan this login was leased on, with the generation the lending machine reported. It must still
+      // be the account's source before anything of it is written (a same-user Codex lease home: Codex pre.12 audit r3).
+      const bound = plan.kind === "peer" && creds.gen ? { ...plan, gen: creds.gen } : plan;
+      const moved = this.sourceRefusal(v, seat.launcher, bound, creds);
+      if (moved) throw new SeatRefusal(moved);
+      try { creds = this.materializeLeaseHome(seat, creds); }
+      catch (err) { throw new SeatRefusal(`${ACCOUNT_NOT_USABLE}: ${scrub((err as Error).message).slice(0, 200)}`); }
+      v.creds = creds;
+      v.bound = bound;
+      try {
+        v.lease = writeLease(this.core.paths.home, { ...v.creds.lease, pid: process.pid, agent: seatAgentName(seat.id) });
+      } catch (err) {
+        this.log.warn("seats_lease_failed", { id: seat.id, err: scrub((err as Error).message).slice(0, 200) });
+      }
+      if (plan.kind === "peer" && plan.pooled) {
+        v.cancelReserve = superviseReserve({
+          read: () => this.deps.accounts?.().find((a) => a.key === v.run.account && a.provider === plan.provider)?.usage ?? null,
+          refresh: async () => {
+            const node = this.core.roster.nodes.get(plan.node);
+            const addr = node ? this.deps.client.addrOf(node) : null;
+            const grant = v.creds?.lease.grant;
+            if (!addr || !grant) throw new Error("the lending machine or account grant is unavailable");
+            return (await this.deps.client.borrowedUsage(addr, plan.id, grant)).usage;
+          },
+          stop: () => this.stopSeat(seat, { reason: "reserve" }),
+          error: (err) => this.log.warn("seats_reserve_check", { id: seat.id, err: scrub(String(err)).slice(0, 200) }),
+          everyMs: this.opts.reserveCheckMs,
+        });
+      }
+      this.log.info("seats_account", { id: seat.id, account: v.creds.lease.account, from_node: v.creds.lease.from_node ?? null });
+      v.cancelAccount = this.watchAccount(seat, bound);
+      return;
+    }
+  }
+
+  /** Standing, then whether this machine may still use the account. `held`: drop the login and wait. */
+  private borrowedGate(seat: Seat): "ok" | "held" {
+    const recheck = this.recheckLaunch(seat, "started");
+    if (recheck?.kind === "lost") throw new SeatRefusal(recheck.why);
+    if (seat.v2) {
+      const accountProblem = this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher);
+      if (accountProblem) throw new SeatRefusal(accountProblem);
+    }
+    if (recheck?.kind === "held" && seat.v2?.run.account) return "held";
+    return "ok";
+  }
+
+  /**
+   * The last check before the process starts. True when a hold dropped the borrowed login: the caller asks again.
+   * A refusal after the lease home was written ends the seat, and that cleanup removes the home.
+   */
+  private async recheckBeforeStart(seat: Seat): Promise<boolean> {
+    if (this.borrowedGate(seat) !== "held") return false;
+    this.discardBorrowed(seat);
+    await this.waitToLaunch(seat);
+    return true;
+  }
+
+  /**
+   * Right before the process starts: a launcher who lost standing, or an account this machine no longer allows, refuses
+   * the seat. A hold (the seats channel being narrowed) does not refuse a launch already accepted, as before pre.12.
+   */
+  private finalGate(seat: Seat): void {
+    const why = this.finalRefusal(seat);
+    if (why) throw new SeatRefusal(why);
+  }
+
+  /** What finalGate refuses with, or null. Synchronous: nothing is awaited between it and the start it allows. */
+  private finalRefusal(seat: Seat): string | null {
+    const recheck = this.recheckLaunch(seat, "started");
+    if (recheck?.kind === "lost") return recheck.why;
+    if (!seat.v2) return null;
+    return this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher) ?? this.boundAccountRefusal(seat.v2, seat.launcher);
+  }
+
+  /**
+   * The login already held must still be the one the account names now (Codex pre.12 audit r2): not expired, from the
+   * same lending machine, and, for this machine's own vault entry, the same stored generation (an account removed and
+   * added again while the seat prepared is a new credential; the one held is not sent).
+   */
+  private boundAccountRefusal(v: V2Seat, launcher: string): string | null {
+    if (!v.run.account) return null;
+    // A seat that names an account starts only on a login bound to it (fail closed; no path is known to reach this).
+    if (!v.bound || !v.creds) return `${ACCOUNT_NOT_USABLE}: no login is held for the account this seat names`;
+    return this.sourceRefusal(v, launcher, v.bound, v.creds);
+  }
+
+  /** Why the login in `creds`, leased on `bound`, is no longer the one the account names (expired, or another source), or null. */
+  private sourceRefusal(v: V2Seat, launcher: string, bound: Exclude<AccountPlan, { kind: "refused" }>, creds: SeatCredentials): string | null {
+    if (!v.run.account) return null;
+    const expires = creds.expiresAt;
+    if (expires !== undefined && expires !== null && expires <= Date.now()) return "the owner's account lease expired before launch";
+    const me = this.core.myHandle();
+    if (!me) return `${ACCOUNT_NOT_USABLE}: this machine is not in the team`;
+    let vault: ReturnType<NonNullable<Core["vault"]>["list"]> = [];
+    try { vault = this.core.vault?.list() ?? []; } catch { return `${ACCOUNT_NOT_USABLE}: this machine's vault could not be read`; }
+    const current = planSeatAccount(v.run.account, { runtime: v.run.runtime, me, launcher, vault, pooled: this.deps.accounts?.() ?? [], pool: this.poolContext() });
+    if (current.kind === "refused") return current.why;
+    return sameAccountSource(current, bound) ? null
+      : `${ACCOUNT_NOT_USABLE}: the account changed while the seat was being prepared (removed and added again, or now lent by another machine); start the seat again`;
+  }
+
+  /**
+   * A seat user's runner has prepared the run (clone, branch, brief, help probe) and waits. The launcher and the account
+   * are judged once more and, with nothing awaited between that and the line, the login goes with `go` (Codex pre.12
+   * audit MUST 1). Refused or stopped meanwhile, the runner is aborted and no login reaches the seat user. False when
+   * the runtime won't start; conclude() reports the seat once the runner is gone.
+   */
+  private async goAhead(seat: Seat, runner: RunnerChild<SeatSignal[]>, login: RunnerLogin): Promise<boolean> {
+    if (!(await runner.prepared)) {
+      if (runner.ungated) {
+        // An installed runner older than this Walkie started the runtime without waiting for the go-ahead. It got no
+        // login (the spec carries none), so the run can't use an account; it is stopped now.
+        seat.final = { ok: false, text: RUNNER_OUT_OF_DATE };
+        runner.control("kill");
+      }
+      return false;
+    }
+    if (seat.stop || this.closing || seat.abort.signal.aborted) { runner.control("abort"); return false; }
+    const why = this.finalRefusal(seat);
+    if (why) {
+      seat.refusal = scrub(why).slice(0, 280);
+      seat.final = { ok: false, text: scrub(why) };
+      runner.control("abort");
+      return false;
+    }
+    runner.go(login);
+    return true;
+  }
+
+  /** Forget a borrowed login so no reference to it stays on disk or on the seat while a hold waits out. */
+  private discardBorrowed(seat: Seat): void {
+    const v = seat.v2;
+    if (!v) return;
+    v.cancelAccount?.();
+    v.cancelAccount = undefined;
+    v.cancelReserve?.();
+    v.cancelReserve = undefined;
+    if (v.lease) { releaseLease(this.core.paths.home, v.lease); v.lease = null; }
+    const borrowed = v.creds?.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (borrowed && seat.projectedClaudeToken === borrowed) seat.projectedClaudeToken = null;
+    if (v.creds?.leaseHome) {
+      try { removeLeaseHome(v.creds.leaseHome, this.core.paths.home); }
+      catch (err) { this.log.warn("seats_lease_home", { id: seat.id, err: scrub((err as Error).message).slice(0, 200) }); }
+    }
+    v.creds = null;
+    v.bound = undefined;
+  }
+
+  /** Write a same-user Codex lease home. Until this runs the login exists only in `creds`. */
+  private materializeLeaseHome(seat: Seat, creds: SeatCredentials): SeatCredentials {
+    if (seat.user !== null || creds.env.CODEX_HOME || !creds.codexAuth) return creds;
+    const grant = creds.lease.grant;
+    if (!grant) throw new Error("a leased Codex login needs a home of its own on this machine");
+    sweepLeaseHomes(this.core.paths.home);
+    const home = writeLeaseHome(this.core.paths.home, codexBaseHome(this.core.paths.home, this.env, this.home), grant, creds.codexAuth);
+    const stored: SeatCredentials = { ...creds, env: { ...creds.env, CODEX_HOME: home }, leaseHome: home };
+    delete stored.codexAuth;
+    return stored;
+  }
+
+  /** `claude --help` needs no login. Never a borrowed token, the host's token, or a home that holds one. */
+  private helpProbeEnv(base: Record<string, string>): Record<string, string> {
+    const env = { ...base };
+    for (const name of ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"]) delete env[name];
+    return env;
+  }
+
   /** A login handed out by the owner's machine for this seat (vault-lease.ts; never stored): a Claude setup-token or an access-only Codex auth.json. */
-  private async leaseToken(id: string, node: string, agent: string, provider: "claude" | "codex"): Promise<{ token?: string; codex_auth?: string; grant: string; expires_at?: number | null }> {
+  private async leaseToken(id: string, node: string, agent: string, provider: "claude" | "codex", launcher: string): Promise<{ token?: string; codex_auth?: string; grant: string; expires_at?: number | null; gen?: string }> {
     const client = this.deps.client as SeatsDeps["client"] & { addrOf?: (n: NodeRec) => PeerAddr | null; vaultLease?: PeerClient["vaultLease"] };
     const r = await requestLease(this.core, (_addr, body, n) => {
       const addr = client.addrOf ? client.addrOf(n) : { ip: n.ip, port: n.port };
       if (!addr) throw new Error("the owner's machine can't be reached from this machine");
       return this.deps.client.vaultLease(addr, body);
-    }, { account: id, node, agent: agent.slice(0, 48), ...(provider === "codex" ? { provider } : {}) });
-    return { ...(r.token ? { token: r.token } : {}), ...(r.codex_auth ? { codex_auth: r.codex_auth } : {}), grant: r.grant, expires_at: r.expires_at };
+    }, { account: id, node, agent: agent.slice(0, 48), launcher, ...(provider === "codex" ? { provider } : {}) });
+    return { ...(r.token ? { token: r.token } : {}), ...(r.codex_auth ? { codex_auth: r.codex_auth } : {}), grant: r.grant, expires_at: r.expires_at, ...(r.gen ? { gen: r.gen } : {}) };
   }
 
   /** The launcher's repo bundle, from this store or an online teammate; a stop (`signal`) ends the search at once. */
@@ -1928,13 +2361,45 @@ export class SeatsHost {
     // this seat only, which speaks as `seat-<id>` whatever the caller sends and can only post in its own thread. The
     // credential is a 0600 file in the seat's directory, named by WALKIE_SEAT_TOKEN_FILE: never in an environment,
     // where `ps -E` would show it to the machine's other processes (Opus r2 LOW 2).
-    // A v2 seat's account (FO-2): its credentials replace the machine's default login for this run only.
-    const credentials = seat.v2?.creds;
-    const runEnv = { ...base, ...(credentials?.env ?? {}), WALKIE_AGENT: seatAgentName(seat.id) };
-    const env = withBinDir(seat.workerRoot ? await this.sameUserEnv(seat, runEnv) : runEnv, bin);
+    if (seat.stop || this.closing) { await this.conclude(seat, null, ""); return; }
+    // Still an admitted, non-observer member before a login is requested (Codex r2 HIGH 1): a host demoted while
+    // this seat prepared starts nothing and is not leased.
+    const me = this.core.me();
+    if (!me || me.role === "observer") throw new Error("the host machine is no longer an admitted member of the team");
+    // The launcher (WALK-74), before any login is handed out. Lost standing refuses and requests nothing. A channel
+    // that is only being narrowed waits, and a seat with an account is not leased while it waits.
+    await this.allowLaunch(seat);
+    if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
+    if (seat.v2) {
+      const accountProblem = this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher);
+      if (accountProblem) throw new SeatRefusal(accountProblem);
+    }
     const mode = run.permission_mode ?? DEFAULT_SEAT_MODE;
     // v2: the brief is TASK.md in the work tree; the prompt is only the fixed pointer to it (never the brief).
     const text = seat.v2 ? (seat.v2.task?.prompt ?? SEAT_TASK_PROMPT) : (run as SeatRun).prompt;
+    // Ask, check again before anything is written, then check once more before the process. A hold drops the login
+    // and asks again after the channel fits. The help probe runs with no login, before that last check.
+    for (;;) {
+      if (seat.v2?.run.account) await this.bindAccount(seat);
+      if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
+      if (run.runtime === "claude" && !seat.user && this.permissionPrompts === null) {
+        const supported = await supportsPermissionPrompts(bin, this.helpProbeEnv(withBinDir(base, bin)), seat.abort.signal);
+        if (seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
+        this.permissionPrompts = supported;
+      }
+      if (seat.v2?.creds?.expiresAt && seat.v2.creds.expiresAt <= Date.now()) {
+        // After the login is bound, so an expiry on the hand-out can still refuse the seat (it is empty before then).
+        throw new SeatRefusal("the owner's account lease expired before launch");
+      }
+      if (seat.stop || this.closing) { await this.conclude(seat, null, ""); return; }
+      if (!(await this.recheckBeforeStart(seat))) break;
+      if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
+    }
+    // A v2 seat's account (FO-2): the credentials just bound replace the machine's default login for this run only.
+    const credentials = seat.v2?.creds;
+    const runEnv = { ...ownLoginOnly(base, run.runtime), ...(credentials?.env ?? {}), WALKIE_AGENT: seatAgentName(seat.id) };
+    const env = withBinDir(seat.workerRoot ? await this.sameUserEnv(seat, runEnv) : runEnv, bin);
+    if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
     let args: string[];
     let parse: (line: string) => SeatSignal[] | null;
     let grokHome: string | undefined;
@@ -1949,12 +2414,7 @@ export class SeatsHost {
       parse = grokSeatParser();
     } else if (run.runtime === "claude") {
       // A seat user's seat asks its runtime itself, as that user (the runner's probe): the daemon never runs a
-      // binary a seat user could have written (Codex r4 MEDIUM 5).
-      if (!seat.user && this.permissionPrompts === null) {
-        const supported = await supportsPermissionPrompts(bin, env, seat.abort.signal);
-        if (seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
-        this.permissionPrompts = supported;
-      }
+      // binary a seat user could have written (Codex r4 MEDIUM 5). The same-user probe already ran, without a login.
       args = claudeSeatArgs({
         session: randomUUID(), mode, ...(run.model ? { model: run.model } : {}), permissionPrompts: !seat.user && this.permissionPrompts === true,
         systemPrompt: seatSystemPrompt(seat.launcher, this.core.hostname),
@@ -1964,17 +2424,13 @@ export class SeatsHost {
       args = codexSeatArgs({ cwd: seat.user ? "{cwd}" : seat.cwd, mode, ...(run.model ? { model: run.model } : {}) });
       parse = codexSeatLine;
     }
-    if (seat.v2) {
-      const accountProblem = this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher);
-      if (accountProblem || (seat.v2.creds?.expiresAt && seat.v2.creds.expiresAt <= Date.now())) {
-        throw new SeatRefusal(accountProblem ?? "the owner's account lease expired before launch");
-      }
+    if (seat.v2?.creds?.expiresAt && seat.v2.creds.expiresAt <= Date.now()) {
+      throw new SeatRefusal("the owner's account lease expired before launch");
     }
-    if (seat.stop || this.closing) { await this.conclude(seat, null, ""); return; }
-    // Still an admitted, non-observer member at the last moment (Codex r2 HIGH 1): a host demoted while this seat
-    // prepared starts nothing.
-    const me = this.core.me();
-    if (!me || me.role === "observer") throw new Error("the host machine is no longer an admitted member of the team");
+    if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
+    // The last word before the process (WALK-74), after every await that builds its environment (sameUserEnv can wait
+    // on the Keychain): nothing awaits between this check and the start below.
+    this.finalGate(seat);
     // Kimi takes its (fixed) prompt on argv and nothing on stdin.
     const prompt = run.runtime === "claude" ? userMessage(text) : run.runtime === "kimi" || run.runtime === "grok" ? "" : text;
     const runtimeEnv = grokHome ? { ...env, GROK_HOME: grokHome } : env;
@@ -2025,11 +2481,21 @@ export class SeatsHost {
     if (seat.run.runtime === "claude" && !account && !this.claudeToken(env) && !claudeCredentials.claude_credentials) {
       throw new Error("this machine's Claude access token is unavailable or near expiry; use Claude Code on this machine to refresh its login, then try again");
     }
-    const runner = new RunnerChild<SeatSignal[]>(this.userArgv(user), {
-      rv: v ? RUNNER_PROTOCOL_V2 : RUNNER_PROTOCOL, dir_name: basename(seat.dir), bin, args, env: account ? env : this.withClaudeLogin(env, seat.run.runtime), token: this.api.issue(seat.id), socket: this.api.socket,
-      ...(seat.run.runtime === "claude" ? { probe_permission_prompts: true } : {}),
+    // The Keychain read above can wait: judge the launcher and the account once more before a runner starts (WALK-74).
+    this.finalGate(seat);
+    // The login stays with the daemon until the runner has prepared the run and goAhead() has judged the launcher and
+    // the account again (Codex pre.12 audit MUST 1): the spec carries none of it, its `go` line does.
+    const { CLAUDE_CODE_OAUTH_TOKEN: envToken, ...specEnv } = account ? env : this.withClaudeLogin(env, seat.run.runtime);
+    const login: RunnerLogin = {
+      // A Claude token goes only to a Claude seat (ownLoginOnly already keeps it out of the others' environment).
+      ...(envToken && seat.run.runtime === "claude" ? { env: { CLAUDE_CODE_OAUTH_TOKEN: envToken } } : {}),
       ...claudeCredentials,
       ...(seat.run.runtime === "codex" ? (account?.codexAuth ? { codex_auth: account.codexAuth } : account ? {} : this.codexAuthFile()) : {}),
+    };
+    const runner = new RunnerChild<SeatSignal[]>(this.userArgv(user), {
+      rv: v ? RUNNER_PROTOCOL_V2 : RUNNER_PROTOCOL, dir_name: basename(seat.dir), bin, args, env: specEnv, token: this.api.issue(seat.id), socket: this.api.socket,
+      gate: true,
+      ...(seat.run.runtime === "claude" ? { probe_permission_prompts: true } : {}),
       ...(v ? {
         task: v.brief as string, ...(v.branch ? { branch: v.branch } : {}),
         ...(v.run.result_file ? { result_file: v.run.result_file } : {}),
@@ -2047,6 +2513,7 @@ export class SeatsHost {
       else if (runner.error && !seat.final) seat.final = { ok: false, text: runner.error };
       void this.conclude(seat, code, runner.diagnostic);
     });
+    if (!(await this.goAhead(seat, runner, login))) return;
     const ready = await runner.ready;
     if (!ready) return; // the runner failed or was stopped first: conclude() reports it once it is gone
     seat.dir = ready.dir;
@@ -2315,11 +2782,12 @@ export class SeatsHost {
    * Just before a launch: the verdict of the runtime it launches, when it is stale (or was never made), is checked
    * again with the environment the seat is about to get. A Claude token that expired since the last check, or a
    * Codex sign-in that went away, is found by this launch, which refuses with its reason, and the next status read
-   * shows it. A seat that doesn't use the machine's Claude login (a named account, a token of its own) leaves it alone.
+   * shows it. A seat that doesn't use the machine's login (a named account, even before its credentials are bound,
+   * or a token of its own) leaves it alone: no Keychain read and no `codex login status`.
    */
   private async recheckLogin(seat: Seat, env: Record<string, string>): Promise<void> {
     const runtime = seat.run.runtime;
-    if (seat.stop || (runtime !== "claude" && runtime !== "codex") || seat.v2?.creds) return;
+    if (seat.stop || (runtime !== "claude" && runtime !== "codex") || seat.v2?.creds || seat.v2?.run.account) return;
     // Nor does a Claude seat that runs on the person's own configuration (it projects no token) read one.
     if (runtime === "claude" && (this.claudeToken(env) || (this.current.inherit_person_config && !this.ephemeral))) return;
     if (this.loginStale(runtime)) await this.refreshLogin(runtime, env);
@@ -2492,16 +2960,20 @@ export class SeatsHost {
         removeTask(seat.cwd, v.task);
       }
       let briefCommitted = false;
+      /** The commits' bundle, kept on this machine when it could not be shared (the channel unfit, or too large). */
+      let kept: string | null = null;
       if (!this.closing && !seat.abort.signal.aborted && seat.env && seat.child) {
         outcome = await seatOutcome(seat.cwd, seat.base, join(seat.dir, "result.bundle"), seat.env, seat.abort.signal, undefined, v?.dirs ?? undefined, v?.task?.file).catch(() => null);
         briefCommitted = outcome?.brief === true;
         if (outcome?.bundle) bundle = this.shareBundle(seat, readFile(outcome.bundle));
+        if (outcome?.bundle && !bundle && !briefCommitted) kept = outcome.bundle; // in the seat's directory, on this machine
       } else if (!this.closing && seat.runner && !seat.lost) {
         const o = await seat.runner.outcome; // computed by the runner, as the seat user (after an abort: the file only)
         const aborted = seat.abort.signal.aborted || o?.aborted === true;
         outcome = o && !aborted ? { commits: o.commits, dirty: o.dirty } : null;
         briefCommitted = o?.brief === true;
         if (o?.bundle && !aborted) bundle = this.shareBundle(seat, o.bundle);
+        if (o?.bundle && !aborted && !bundle && o.brief !== true) kept = this.keepBundle(seat, o.bundle); // the seat user's home is going
         if (v?.run.result_file) v.result = o?.file ? { bytes: o.file } : { error: o?.file_error ?? "not returned by the seat's runner" };
       }
       if (briefCommitted) this.log.warn("seats_brief_committed", { id: seat.id });
@@ -2518,6 +2990,14 @@ export class SeatsHost {
         ...(file ? { file } : {}), ...(fileError && state.state !== "refused" ? { file_error: fileError } : {}),
       });
       this.log.info("seats_ended", { id: seat.id, state: state.state, code, commits: outcome?.commits ?? 0 });
+      // The channel unfit (being narrowed, say): that post was withheld, so this machine's person still sees the end here.
+      const me = this.core.myHandle();
+      if (!me || !this.fit(me)) {
+        const reason = [state.reason, kept ? `its commits are kept on this machine: ${homeRelative(kept)}` : null].filter(Boolean).join(" · ");
+        if (this.endedLocally.size >= 100) this.endedLocally.delete(this.endedLocally.keys().next().value as string);
+        this.endedLocally.set(seat.id, { state: state.state, reason, dir: this.shownDir(seat), ...(outcome ? { commits: outcome.commits } : {}) });
+        this.log.warn("seats_end_kept_locally", { id: seat.id, state: state.state, kept: kept ? homeRelative(kept) : null });
+      }
     } catch (err) {
       this.log.warn("seats_conclude_failed", { id: seat.id, err: scrub((err as Error).message) });
       this.seatStatus(seat, seat.stop?.reason ?? "the seat ended");
@@ -2536,6 +3016,7 @@ export class SeatsHost {
         catch (error) { this.log.warn("seats_grok_home_cleanup", { id: seat.id, err: scrub((error as Error).message) }); }
       }
       this.seats.delete(seat.id);
+      this.unhold(seat.id);
       this.save();
       this.status();
       seat.finish();
@@ -2607,6 +3088,20 @@ export class SeatsHost {
     const tail = scrubSeatOutput(stderr, seat.projectedClaudeToken).trim().split("\n").slice(-1)[0] ?? "";
     const why = !seat.final?.ok && seat.final?.text ? seat.final.text : tail || (code === null ? "did not start" : `exit code ${code}`);
     return { state: "failed", reason: failureReason(why) };
+  }
+
+  /** A seat user's commits kept for this machine's person (its home is about to go): a 0600 file in the seats directory. */
+  private keepBundle(seat: Seat, bytes: Uint8Array): string | null {
+    try {
+      const dir = this.seatsDir();
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const file = join(dir, `${basename(seat.dir)}-result.bundle`);
+      writeFileSync(file, bytes, { mode: 0o600 });
+      return file;
+    } catch (err) {
+      this.log.warn("seats_bundle_keep_failed", { id: seat.id, err: scrub((err as Error).message).slice(0, 200) });
+      return null;
+    }
   }
 
   private shareBundle(seat: Seat, bytes: Uint8Array): string | undefined {
@@ -2765,11 +3260,14 @@ export class SeatsHost {
             ...(Number.isInteger(x.pid) && (x.pid as number) > 1 ? { pid: x.pid } : {}),
             ...(typeof x.started === "string" ? { started: x.started } : {}), ...(x.runner === true ? { runner: true as const } : {}),
             ...(Number.isInteger(x.user) ? { user: x.user } : {}),
+            ...(typeof x.instance === "string" ? { instance: x.instance } : {}),
             ...(validTaskRecord(x.task) ? { task: x.task } : {}),
             ...(validLaneRecord(x.lane) ? { lane: x.lane } : {}),
           })) : [],
         ...(busy ? { busy } : {}), launches,
         users: Array.isArray((raw as { users?: unknown }).users) ? ((raw as { users: unknown[] }).users).filter((x): x is number => Number.isInteger(x)) : [],
+        recovered: Array.isArray((raw as { recovered?: unknown }).recovered) ? ((raw as { recovered: unknown[] }).recovered).filter((x): x is number => Number.isInteger(x)) : [],
+        made_by: madeBy((raw as { made_by?: unknown }).made_by),
         user_high: Number.isInteger((raw as { user_high?: unknown }).user_high) ? (raw as { user_high: number }).user_high : 0,
         ...(typeof unfinished === "number" && Number.isFinite(unfinished) && unfinished > 0 ? { cleanup_unfinished_since: unfinished } : {}),
         ...(Array.isArray(queued) ? { queued: queued.filter((id): id is string => typeof id === "string" && /^[0-9a-f]{16}:\d+$/.test(id)).slice(0, QUEUE_CAP) } : {}),
@@ -2790,7 +3288,7 @@ export class SeatsHost {
       handled: Object.fromEntries(this.handled),
       ...(this.pendingRoots.size ? { pending_roots: [...this.pendingRoots.values()] } : {}),
       running: [...this.seats.values()].map((s) => ({
-        id: s.id, dir: s.dir, runtime: s.run.runtime, ...(s.workerRoot ? { root: s.workerRoot.key } : {}), ...(s.child ? { pid: s.child.pid } : {}), ...(s.childStarted ? { started: s.childStarted } : {}),
+        id: s.id, dir: s.dir, runtime: s.run.runtime, instance: this.instanceId, ...(s.workerRoot ? { root: s.workerRoot.key } : {}), ...(s.child ? { pid: s.child.pid } : {}), ...(s.childStarted ? { started: s.childStarted } : {}),
         ...(s.runner ? { runner: true as const } : {}), ...(s.userN !== null ? { user: s.userN } : {}),
         ...(s.v2?.clone && s.v2.dirs && s.v2.branch && !s.user ? { lane: { clone: s.v2.clone, branch: s.v2.branch } } : {}),
         ...(s.v2?.task && !s.user ? {
@@ -2801,6 +3299,10 @@ export class SeatsHost {
       ...(this.busy ? { busy: this.busy } : {}),
       ...(this.queue.length ? { queued: this.queue.map((q) => q.ev.id) } : {}),
       users: [...this.liveUsers], user_high: this.userHigh,
+      ...(this.recoveredIdle.size ? { recovered: [...this.recoveredIdle].filter((n) => this.liveUsers.has(n)) } : {}),
+      // Only the seat users this daemon made carry its stamp: a recovered one (found in the helper's list or another
+      // seats.json) stays unstamped, so the record never claims it (WALK-103 review).
+      ...(this.liveUsers.size ? { made_by: Object.fromEntries([...this.liveUsers].filter((n) => !this.recoveredIdle.has(n)).map((n) => [String(n), this.instanceId])) } : {}),
       ...(this.cleanupUnfinishedSince ? { cleanup_unfinished_since: this.cleanupUnfinishedSince } : {}),
       launches: Object.fromEntries([...this.launchesDay].map(([k, v]) => [k, v.filter((t) => Date.now() - t < 86_400_000)]).filter(([, v]) => (v as number[]).length)),
     };
@@ -2952,7 +3454,15 @@ function stopText(stop: NonNullable<Seat["stop"]>, run: AnySeatRun): Pick<SeatSt
     case "revoked": return { state: "stopped", reason: "seats were turned off on this machine" };
     case "shutdown": return { state: "stopped", reason: "the host's Walkie daemon stopped" };
     case "unadmitted": return { state: "stopped", reason: "the host machine is no longer an admitted member of the team" };
+    case "launcher": return { state: "stopped", reason: stop.why ?? "its launcher may no longer start seats here" };
+    case "held": return { state: "stopped", reason: stop.why ?? "it waited too long to continue" };
   }
+}
+
+/** seats.json `made_by`: seat user id → the canonical socket of the daemon that made it (WALK-103 review). */
+function madeBy(raw: unknown): Record<string, string> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  return Object.fromEntries(Object.entries(raw).filter(([n, v]) => /^[1-9]\d{0,4}$/.test(n) && typeof v === "string" && v.length < 1024).slice(0, 100_000));
 }
 
 /** seats.json `busy`, validated (null when absent or malformed). */

@@ -32,11 +32,12 @@ import type { RepoContext } from "../agent/identity.ts";
 import { SHARE_NOTHING, type SharePolicy } from "../agent/share-policy.ts";
 import { ACTIVITY_PHRASES, type StatusProvenance } from "../protocol/status-projection.ts";
 import { walkieHome } from "../client/index.ts";
-import { IDLE_ARCHIVE_MS } from "../protocol/agent-roster.ts";
+import { IDLE_ARCHIVE_MS, OFFLINE_GRACE_MS } from "../protocol/agent-roster.ts";
 import { isSeatAgent } from "../protocol/seats.ts";
 import type { BodyOf } from "../protocol/schemas.ts";
 import { CPU_BUSY_RATIO, CpuTracker, judge, SESSION_ID_RE, titleOf, type FileKind, type TailInfo } from "./activity.ts";
-import { DiscoveryFiles, type HookState } from "./discovery-files.ts";
+import { agentStatus } from "./agent-table.ts";
+import { DiscoveryFiles, LOOKUP_FAILED, type HookState } from "./discovery-files.ts";
 import type { Core } from "./core.ts";
 import { RESERVED_AGENTS } from "./local-routes.ts";
 import { FLEET_AGENT, STEWARD_AGENT } from "../protocol/projects/steward-core.ts";
@@ -44,6 +45,7 @@ import type { Logger } from "./logger.ts";
 import { SystemProcessProvider, type ProcessProvider, type ProcRow } from "./procs.ts";
 import { classifyAgent, hermesProcessOf, hermesProfileOf, modelServers, RELAUNCHING, runtimeName, wireRuntime, type AgentKind, type AgentRuntime, type Launch } from "./agent-procs.ts";
 import { hermesProfileLive, hermesProfileStatus, noteHermesCensus, offlineExitedHermesSessions, purgeEndedHermesSessions, shownCard, type HermesProcess } from "./hermes-status.ts";
+import { scrubHermesActivity } from "./hermes-scrub.ts";
 import { assignKimiSessions, ScanBudget, type KimiProc } from "./kimi-sessions.ts";
 import { observedAt } from "./views.ts";
 import { trackOp } from "./watchdog.ts";
@@ -96,6 +98,11 @@ const SWEEP_MAX_PER_TICK = 100;
 export const KIMI_RETRY_MS = 30_000;
 /** How long a session file that can't be read keeps its last verdict (then CPU decides, as for a session without one). */
 export const READ_FAIL_HOLD_MS = 10 * 60_000;
+/**
+ * A process-list census that keeps failing is held (flagged stale) this long; after that its counts are no longer a measurement
+ * and the machine publishes no agent counts at all (unknown), with the stale flag kept until a scan succeeds.
+ */
+export const CENSUS_MAX_AGE_MS = 5 * 60_000;
 /** File operations (stats, small reads) Kimi's session lookup may spend in one scan, across all its directories. */
 export const KIMI_OPS_PER_SCAN = 2_000;
 /** An enrichment provider that hangs must not hold the process census behind it. */
@@ -254,12 +261,24 @@ function pidName(rt: AgentRuntime, pid: number): string {
   return `${rt === "claude-code" ? "claude" : rt}-pid${pid}`;
 }
 
+const PLACEHOLDER_NAME = /^(claude|codex|kimi|grok|gemini|opencode)-pid[0-9]+$/;
+/**
+ * A process-only placeholder card whose every process this scan reported under another name: the process gained its name
+ * (a lookup that timed out earlier succeeded), so the placeholder is a duplicate of the named card, not a session that ended.
+ */
+function renamedPlaceholder(name: string, keys: ReadonlySet<string>, next: ReadonlyMap<string, ReadonlySet<string>>): boolean {
+  if (!PLACEHOLDER_NAME.test(name) || !keys.size) return false;
+  return [...keys].every((key) => [...next.values()].some((named) => named.has(key)));
+}
+
 /** Per process (pid + start): what earlier scans learned about it. */
 interface Entry {
   /** Last successful enrichment; a later failed lookup cannot erase a live agent's identity. */
   discovered?: DiscoveredAgent;
   ctx?: RepoContext; cwdAbs?: string; thread?: string; file?: string | null;
-  /** Next Codex rollout lookup after a missing file, and the delay to use after another miss. */
+  /** The Codex rollout path found among the process's open files, kept while the worker could not open it (retried each scan, no new listing). */
+  rollout?: string;
+  /** Next Codex rollout lookup after a CONFIRMED missing file, and the delay to use after another miss. */
   fileRetryAt?: number; fileRetryDelayMs?: number;
   /** Kimi (AGENT-SEE-1): when its session was last looked for, and the session's wire.jsonl and sessions directory. */
   kimiAt?: number; kimiPath?: string; kimiRoot?: string;
@@ -293,7 +312,7 @@ export class AgentDiscovery {
   /** The collection policy: re-read every scan (the daemon's config may change while it runs, Codex r3 #8). */
   private share: SharePolicy;
   private readonly sharePolicy: () => SharePolicy;
-  /** The Hermes profiles allowed to show activity text, as of the last scan: every other Hermes card shows its state only. */
+  /** The Hermes profiles allowed to show activity text, as of the last scan (read again when its results are applied): every other Hermes card shows its state only. */
   private hermesActivity: readonly string[];
   private readonly hermesActivityProfiles: () => readonly string[];
   private readonly home: string;
@@ -316,6 +335,8 @@ export class AgentDiscovery {
   private unexamined = new Set<string>();
   /** Sessions over the per-runtime cap in the last scan. */
   private unselected = 0;
+  /** When the process list last produced the published counts (this.now()). */
+  private censusAt = 0;
   private readonly scanBudgetMs: number;
   private readonly concurrency: number;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -486,11 +507,16 @@ export class AgentDiscovery {
   }
 
   private markCensusStale(): void {
-    if (!this.core.agentProcesses) return;
+    // Once the counts are unknown and flagged there is nothing left to hold or expire. A census that never completed (ps failed
+    // from the first scan, as after a restart on an overloaded machine) has no counts to hold: it is flagged at once, because
+    // that machine's load is unknown, not zero.
+    if (!this.core.agentProcesses && this.core.discoveryHealth?.stale) return;
     const wasStale = this.core.discoveryHealth?.stale;
+    const expired = !this.core.agentProcesses || this.now() - this.censusAt >= CENSUS_MAX_AGE_MS;
+    if (expired) this.core.agentProcesses = null;
     this.core.discoveryHealth = { incomplete: true,
       unreported: this.core.discoveryHealth?.unreported ?? 0, stale: true };
-    if (!wasStale) this.core.hub.nodesChanged();
+    if (!wasStale || expired) this.core.hub.nodesChanged();
   }
 
   private async scanOnce(onCensus?: () => void, active: () => boolean = () => true,
@@ -524,9 +550,10 @@ export class AgentDiscovery {
     this.unexamined = new Set();
     this.youngUnnamed = new Set();
     // What is known about a process (excluded, when examined: the rotation's history) is kept while it runs, whether
-    // or not this scan selects it, and forgotten when it exits (Codex r5 #2).
+    // or not this scan selects it, and forgotten when it exits (Codex r5 #2). Done here, from the process table alone: a
+    // scan cut by its hard limit never reaches its end, and with every scan cut the cache of exited processes grew forever.
+    for (const k of [...this.cache.keys()]) if (!running.has(k)) this.cache.delete(k);
     if (!candidates.length) {
-      for (const k of [...this.cache.keys()]) if (!running.has(k)) this.cache.delete(k);
       await this.files.retain(new Set(), deadline);
       return [];
     }
@@ -665,7 +692,6 @@ export class AgentDiscovery {
       if (f) usedFiles.add(f);
     }
     if (queue.length) this.warnScan("agent_discovery_budget_exhausted", { unexamined: queue.length, budget_ms: this.scanBudgetMs });
-    for (const k of [...this.cache.keys()]) if (!running.has(k)) this.cache.delete(k);
     await this.files.retain(usedFiles, deadline);
     return candidates.flatMap(({ p }) => {
       const a = out.get(`${p.pid}:${p.startedAt ?? 0}`);
@@ -745,11 +771,16 @@ export class AgentDiscovery {
         if (entry.file) kind = "kimi";
       } else if (entry.file === undefined) {
         // An older Kimi that holds its session file open.
-        const open = await readWithin(this.provider.openFiles(p.pid), [] as string[]).catch(() => [] as string[]);
+        // null: the listing got no answer (timed out, failed): leave the file unknown so the next scan looks again.
+        const open = await readWithin<string[] | null>(this.provider.openFiles(p.pid), null).catch((): null => null);
         if (!active()) return entry.seen ?? { working: false };
-        const files = await Promise.all(open.map((f) => this.files.openFile(f, deadline)));
-        if (!active()) return entry.seen ?? { working: false };
-        entry.file = files.find((f): f is string => !!f) ?? null;
+        if (open) {
+          const files = await Promise.all(open.map((f) => this.files.openFile(f, deadline)));
+          if (!active()) return entry.seen ?? { working: false };
+          const found = files.find((f): f is string => typeof f === "string");
+          // A worker that did not answer is not an answer: leave the file unknown so the next scan looks again.
+          if (found || !files.includes(LOOKUP_FAILED)) entry.file = found ?? null;
+        }
       }
     }
     const path = entry.file ?? null;
@@ -829,14 +860,22 @@ export class AgentDiscovery {
     if (rt === "gemini" || rt === "opencode" || rt === "hermes") return undefined;
     if (!entry.thread || !entry.file) {
       if (entry.fileRetryAt !== undefined && this.now() < entry.fileRetryAt) return entry.thread;
-      const files = await readWithin(this.provider.openFiles(p.pid), [] as string[]).catch(() => [] as string[]);
-      if (!active()) return undefined;
-      const rollout = files.find((f) => ROLLOUT_RE.test(f));
-      if (rollout) entry.thread = ROLLOUT_RE.exec(rollout)?.[1];
+      // The backoff below is for a file the lookup confirmed missing. A lookup that got no answer (the listing timed out or
+      // failed, the worker is down) says nothing about the file: it is tried again on the next scan, and the delay stays.
+      let rollout = entry.rollout;
+      if (!rollout) {
+        const open = await readWithin<string[] | null>(this.provider.openFiles(p.pid), null).catch((): null => null);
+        if (!active()) return undefined;
+        if (open === null) return entry.thread;
+        rollout = open.find((f) => ROLLOUT_RE.test(f));
+        if (rollout) { entry.thread = ROLLOUT_RE.exec(rollout)?.[1]; entry.rollout = rollout; }
+      }
       if (rollout) {
         const file = await this.files.openFile(rollout, deadline);
         if (!active()) return undefined;
+        if (file === LOOKUP_FAILED) return entry.thread;
         entry.file = file;
+        if (!file) delete entry.rollout; // missing: the next lookup lists the open files again
       }
       if (entry.file) {
         delete entry.fileRetryAt;
@@ -897,6 +936,7 @@ export class AgentDiscovery {
         const changed = JSON.stringify(this.core.agentProcesses) !== JSON.stringify(this.agentCounts)
           || JSON.stringify(this.core.modelServers) !== JSON.stringify(this.models.length ? this.models : null);
         this.core.agentProcesses = this.agentCounts;
+        this.censusAt = this.now();
         this.core.modelServers = this.models.length ? this.models : null;
         if (changed) this.core.hub.nodesChanged(); // the hub debounces node frames for open streams
       }, () => !abandoned && !this.stopped, (snapshot) => { partial = snapshot; });
@@ -969,6 +1009,9 @@ export class AgentDiscovery {
   private apply(scanned: readonly DiscoveredAgent[]): void {
     const core = this.core;
     if (!core.teamId || !core.me()) return;
+    // The scan awaited the process list, the environments and the hook states since refreshPolicy() read the allow list. A profile listed
+    // (or taken off) in the meantime is judged by the list as it is now, in every Hermes card this pass posts and in its scrub.
+    this.hermesActivity = this.hermesActivityProfiles();
     const now = this.now();
     const found = this.adopt(scanned, now);
     const next = new Map<string, Set<string>>();
@@ -993,7 +1036,7 @@ export class AgentDiscovery {
       // the last hook, a Hermes process that names the profile or names none.
       else if (name.startsWith("hermes-") && hermesProfileLive(core.store, name.slice(7), this.hermesCensus.processes,
         this.hermesCensus.capturedAt)) { next.set(name, keys); this.keepAlive(name, now); }
-      else this.markOffline(name, true);
+      else this.markOffline(name, true, renamedPlaceholder(name, keys, next) ? now : undefined);
     }
     this.live = next;
     try {
@@ -1011,7 +1054,7 @@ export class AgentDiscovery {
         const card = shownCard(hermesProfileStatus(core.store, profile), this.hermesActivity);
         core.statuses.submit(card.body.agent, card.body, card.provenance);
       }
-      this.scrubHermesActivity();
+      scrubHermesActivity(core, this.hermesActivity); // the daemon also does this on a timer of its own, whether or not discovery runs (hermes-scrub.ts)
     } catch (err) {
       this.log.warn("hermes_session_sweep_failed", { err: (err as Error).message });
     }
@@ -1020,21 +1063,6 @@ export class AgentDiscovery {
     this.runningNames = complete ? new Set(next.keys()) : null;
     this.sweep(found, now);
     this.saveOwned();
-  }
-
-  /**
-   * A Hermes card of this machine that shows an activity line for a profile outside the allow list (the profile was taken off it, or
-   * the setting turned invalid) is posted again with its state only: state only means no line, whatever the card showed before.
-   */
-  private scrubHermesActivity(): void {
-    const core = this.core;
-    for (const row of core.store.agentsWithPrefix(core.nodeId, "hermes-")) {
-      if (this.hermesActivity.includes(row.agent.slice("hermes-".length))) continue;
-      let body: Status;
-      try { body = JSON.parse(row.body) as Status; } catch { continue; }
-      if (body.runtime !== "other" || body.runtime_name !== "hermes" || body.activity === undefined) continue;
-      core.statuses.submit(row.agent, { agent: row.agent, state: body.state, runtime: "other", runtime_name: "hermes" }, {});
-    }
   }
 
   /**
@@ -1054,7 +1082,7 @@ export class AgentDiscovery {
     const claimed = new Set(found.map((a) => a.agent)); // named sessions' cards are theirs
     const cards = this.core.store.agents().flatMap((row) => {
       if (row.node !== this.core.nodeId || claimed.has(row.agent)) return [];
-      const prev = JSON.parse(row.body) as Status;
+      const prev = agentStatus(row) as Status; // parsed once per row (agent-table.ts); only read here
       if (now - observedAt(prev, row.ts) >= IDLE_ARCHIVE_MS) return [];
       // The card's directory as its writer reported it to this daemon (kept locally; cwd is not published by default).
       const cwd = this.core.localCwds?.get(row.agent) ?? prev.cwd;
@@ -1212,7 +1240,13 @@ export class AgentDiscovery {
     };
   }
 
-  private markOffline(name: string, exited: boolean): boolean {
+  /**
+   * `retiredAt`: this card was a process-only placeholder (`claude-pid<N>`) whose process now has a name of its own, so the
+   * placeholder is not an agent that exited but a duplicate. It goes offline already past the offline grace
+   * (observed_at, which views and archives count from), so it leaves the live roster at once instead of sitting beside
+   * the named card for OFFLINE_GRACE_MS.
+   */
+  private markOffline(name: string, exited: boolean, retiredAt?: number): boolean {
     if (daemonOwnsAgent(name)) return false;
     const row = this.core.store.agent(this.core.nodeId, name);
     const prev = row ? (JSON.parse(row.body) as Status) : null;
@@ -1220,7 +1254,8 @@ export class AgentDiscovery {
     const privateHermes = prev.runtime === "other" && prev.runtime_name === "hermes" && name.startsWith("hermes-")
       && !this.hermesActivity.includes(name.slice(7));
     this.post(name, privateHermes ? { agent: name, state: "offline", runtime: "other", runtime_name: "hermes" }
-      : { ...prev, state: "offline", activity: EXITED_ACTIVITY });
+      : { ...prev, state: "offline", activity: EXITED_ACTIVITY }, false,
+      retiredAt === undefined || privateHermes ? {} : { observedAt: retiredAt - OFFLINE_GRACE_MS });
     this.log.info(exited ? "agent_exited" : "agent_swept", { agent: name });
     return true;
   }
@@ -1280,7 +1315,7 @@ export class AgentDiscovery {
     for (const row of this.core.store.agents()) {
       if (n >= SWEEP_MAX_PER_TICK) break;
       if (row.node !== this.core.nodeId || alive.has(row.agent) || isSeatAgent(row.agent)) continue;
-      const prev = JSON.parse(row.body) as Status;
+      const prev = agentStatus(row) as Status; // parsed once per row (agent-table.ts); only read here
       const observed = observedAt(prev, row.ts);
       if (now - observed >= IDLE_ARCHIVE_MS) continue;
       if (prev.state === "offline") continue;
@@ -1310,9 +1345,9 @@ export class AgentDiscovery {
   }
 
   /** `own` false: a freshness-only re-send of another source's status, which keeps its authority (Codex r4 #5). */
-  private post(agent: string, body: Status, discovered = false, opts: { own?: boolean } = {}): void {
+  private post(agent: string, body: Status, discovered = false, opts: { own?: boolean; observedAt?: number } = {}): void {
     try {
-      const ev = this.core.statuses.submit(agent, body, this.provenanceOf(agent, body));
+      const ev = this.core.statuses.submit(agent, body, this.provenanceOf(agent, body), opts.observedAt);
       if (opts.own === false) {
         if (this.ownedMap().delete(agent)) this.ownedDirty = true;
         return;

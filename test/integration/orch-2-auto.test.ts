@@ -87,13 +87,17 @@ describe("one machine: auto-start, first run, crash, sticky stop, rename", () =>
   test("a crash restarts Claude with backoff and it keeps answering", async () => {
     const n = launches(c.root, "solo");
     const { message } = await solo.client("").orchestratorSay("crash now");
-    await waitFor(async () => launches(c.root, "solo") > n && (await view(solo)).state === "idle", { what: "restarted" });
+    // The restart waits out a backoff; on a loaded machine (a release gate) that can pass 10 s.
+    await waitFor(async () => launches(c.root, "solo") > n && (await view(solo)).state === "idle", { what: "restarted", timeoutMs: 30_000 });
     expect((await view(solo)).restarts).toBeGreaterThanOrEqual(1);
     const next = await solo.client("").orchestratorSay("hello again", message.thread);
     await waitFor(async () => (await solo.client("").orchestratorMessages({ limit: 500 })).messages.some((m) => m.reply_to === next.message.id), { what: "a reply after the crash" });
   }, 60_000);
 
   test("the rename: walkie talkie (and the alias walkie orchestrator) and who say WalkieTalkie", async () => {
+    // Running, whatever the crash test before it left (on a loaded machine it can end in "keeps failing").
+    if (!(await view(solo)).running) await solo.client("").orchestratorStart({});
+    await waitFor(async () => (await view(solo)).running && (await view(solo)).state === "idle", { what: "running", timeoutMs: 30_000 });
     const st = await cli(solo, ["talkie", "status", "--json"]);
     expect(st.code).toBe(0);
     expect((JSON.parse(st.out) as OrchestratorView).local).toMatchObject({ running: true, logins: ["claude"] });

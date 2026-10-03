@@ -44,4 +44,4 @@ test("P13b progress() completion cost vs channel size (real store, real routes)"
   console.log("P13b\n  " + out.join("\n  "));
   expect(completionCosts[2]!).toBeLessThan(completionCosts[1]! * 5 + 5);
   expect(w.audit()).toEqual([]);
-}, 120_000);
+}, 600_000); // the body measures ~160 s on a loaded Spark; 120 s made it fail inside a test shard

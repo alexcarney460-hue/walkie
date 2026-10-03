@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Armchair, CircleHelp, FileText, FolderKanban, Gauge, LayoutGrid, MessagesSquare, Moon, Plug, Search, Sparkles, Sun, Users } from "lucide-react";
+import { Armchair, CircleHelp, FileText, FolderKanban, Gauge, LayoutGrid, MessagesSquare, Moon, Newspaper, Plug, Search, Sparkles, Sun, Users } from "lucide-react";
 import { canAnswer, machineHue } from "../lib/format.ts";
 import { hueVar } from "./primitives.tsx";
 import { MachineStatsLine } from "./MachineStats.tsx";
@@ -22,6 +22,8 @@ export function Logo({ size = 22 }: { size?: number }) {
 
 const NAV: Array<{ view: View; label: string; short: string; key: string; icon: typeof LayoutGrid; tab?: false }> = [
   { view: "mission", label: "Mission Control", short: "Agents", key: "m", icon: LayoutGrid },
+  // Every reported project's plain-English status report (UPDATES-1); not a phone tab (six fit): the Projects page links to it there.
+  { view: "updates", label: "Updates", short: "Updates", key: "r", icon: Newspaper, tab: false },
   { view: "projects", label: "Projects", short: "Projects", key: "p", icon: FolderKanban },
   { view: "orchestrator", label: "WalkieTalkie", short: "Talkie", key: "o", icon: Sparkles },
   { view: "board", label: "Channels", short: "Channels", key: "b", icon: MessagesSquare },

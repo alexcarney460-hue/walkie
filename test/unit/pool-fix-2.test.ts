@@ -2,14 +2,17 @@
 // Apple Silicon CPU backend (Codex 3), plausibility caps (Opus 2), "free now" ≤ "if idle" (Opus 3), the clamped
 // GPU note (Opus 4), one alternative label (Opus 5), group attribution for a model (Opus 6), and the INFO items.
 import { describe, expect, test } from "bun:test";
-import { poolFromTeam, poolJson, renderPool } from "../../src/cli/commands/pool.ts";
+import { poolFromTeam as realPoolFromTeam, poolJson, renderPool } from "../../src/cli/commands/pool.ts";
 import { CATALOG } from "../../src/pool/catalog.ts";
 import { CPU_MEMORY, machineCapacity } from "../../src/pool/capacity.ts";
 import { alternativeLabel } from "../../src/pool/format.ts";
 import { groupMachines } from "../../src/pool/group.ts";
-import { suggestForGroup, suggestTeam, type GroupSuggestion, type Pick } from "../../src/pool/suggest.ts";
+import type { GroupSuggestion, Pick } from "../../src/pool/suggest.ts";
+import { LEGACY, suggestForGroup, suggestTeam } from "../helpers/pool-legacy.ts";
 import { MachineStats, type MachineAccel } from "../../src/protocol/machine-stats.ts";
 import type { NodeView, TeamView } from "../../src/protocol/schemas.ts";
+// The scenarios below name models of the frozen 13-model list (test/helpers/pool-legacy.ts).
+const poolFromTeam = (t: TeamView) => realPoolFromTeam(t, LEGACY);
 
 const GiB = 1024 ** 3;
 const apple = (chip: string): MachineAccel => ({ chip, unified: true, gpu_limit: null, gpus: [] });
@@ -22,7 +25,7 @@ const node = (hostname: string, total: number, used: number, accel: MachineAccel
 const team = (nodes: NodeView[]): TeamView => ({ id: "t", name: "acme", members: [], channels: [], authority: null, nodes } as unknown as TeamView);
 
 describe("Codex r2-3: Apple Silicon Metal and CPU backends are considered separately", () => {
-  test("32 GiB M-series, 4 GiB used: Metal 21.3 GiB, CPU 27 GiB, so Qwen3-32B Q4 (21.7 GiB) fits only on the CPU (offered as 'Bigger, slow', POOL-REAL-1)", () => {
+  test("32 GiB M-series, 4 GiB used: Metal 21.3 GiB, CPU 27 GiB, so Qwen3-32B Q4 (21.7 GiB) fits only on the CPU (offered as 'Better, slow', POOL-REAL-1)", () => {
     const mac = node("mac", 32, 4, apple("Apple M2 Pro"), {}, { self: true, rtt_ms: null });
     const cap = machineCapacity(mac)!;
     expect(cap.backends.map((b) => [b.kind, b.memory])).toEqual([["apple", "unified memory"], ["cpu", CPU_MEMORY]]);
@@ -36,7 +39,7 @@ describe("Codex r2-3: Apple Silicon Metal and CPU backends are considered separa
     expect(bigger.model.id).toBe("qwen3-32b");
     expect(bigger.quant).toBe("q4");
     expect(bigger.placement[0]?.memory).toBe(CPU_MEMORY);
-    expect(renderPool(poolFromTeam(team([mac])))).toMatch(/Bigger, slow +Qwen3 32B · 4-bit on mac \(CPU\) · slow, about [\d.]+ tokens\/s \(estimate\)/);
+    expect(renderPool(poolFromTeam(team([mac])))).toMatch(/Better, slow +Qwen3 32B · 4-bit on mac \(CPU\) · slow, about [\d.]+ tokens\/s \(estimate\)/);
   });
 
   test("a model that fits on Metal stays on Metal (the faster backend on a tie)", () => {
@@ -84,10 +87,10 @@ describe("Opus r2-3/4: honest figures", () => {
 });
 
 describe("Opus r2-5: one alternative label on the dashboard and the CLI", () => {
-  test("nothing on one machine but a split: the too-big pick is the 'Next size up', not the 'Smallest'", () => {
+  test("nothing on one machine but a split: the too-big pick is the 'Next one up', not the 'Smallest'", () => {
     const nofit = { fits: false } as Pick;
     const withSplit = { single: null, pooled: { fits: true } as Pick } as GroupSuggestion;
-    expect(alternativeLabel(withSplit, nofit)).toBe("Next size up");
+    expect(alternativeLabel(withSplit, nofit)).toBe("Next one up");
     expect(alternativeLabel({ single: null, pooled: null } as GroupSuggestion, nofit)).toBe("Smallest");
     expect(alternativeLabel(withSplit, { fits: true } as Pick)).toBe("Faster");
   });

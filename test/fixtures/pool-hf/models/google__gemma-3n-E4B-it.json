@@ -1,0 +1,59 @@
+{
+ "_id": "683f3c2354280d882006f816",
+ "id": "google/gemma-3n-E4B-it",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "683f3c15d1e73e29fefdee1f",
+    "id": "google/gemma-3n-E4B"
+   }
+  ]
+ },
+ "downloads": 13320,
+ "likes": 931,
+ "gated": "manual",
+ "pipeline_tag": "image-text-to-text",
+ "sha": "c1221e9c62e34a43ab7ffacd1be0ea71f126ef10",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "gemma3n",
+  "image-text-to-text",
+  "automatic-speech-recognition",
+  "automatic-speech-translation",
+  "audio-text-to-text",
+  "video-text-to-text",
+  "conversational",
+  "arxiv:1905.07830",
+  "arxiv:1905.10044",
+  "arxiv:1911.11641",
+  "arxiv:1904.09728",
+  "arxiv:1705.03551",
+  "arxiv:1911.01547",
+  "arxiv:1907.10641",
+  "arxiv:1903.00161",
+  "arxiv:2210.03057",
+  "arxiv:2502.12404",
+  "arxiv:2411.19799",
+  "arxiv:2009.03300",
+  "arxiv:2502.21228",
+  "arxiv:2311.12022",
+  "arxiv:2403.07974",
+  "arxiv:2108.07732",
+  "arxiv:2107.03374",
+  "base_model:google/gemma-3n-E4B",
+  "base_model:finetune:google/gemma-3n-E4B",
+  "license:gemma",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "createdAt": "2025-06-03T18:17:07.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 7849978192
+  },
+  "total": 7849978192
+ },
+ "evalResults": []
+}

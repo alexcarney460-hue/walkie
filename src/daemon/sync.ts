@@ -20,12 +20,32 @@ export interface SyncOptions {
   intervalMs?: number; livenessMs?: number; pushTimeoutMs?: number;
   /** Injectable clocks keep local stalls and elapsed liveness deterministic in tests. */
   now?: () => number; stallTotal?: () => number;
+  /**
+   * This daemon should run Walkie Direct but its endpoint is not up (DirectLink.pending; set once that exists, main.ts).
+   * While it holds, `unreached()` reports nothing: the machine reaches nobody over Direct, which is not a fact about the team.
+   */
+  directPending?: () => boolean;
 }
 
 export interface PeerState {
   lastSeen: number | null; rtt: number | null; lastSync: number | null; behind: number; skewMs?: number;
+  /**
+   * The START of the latest sync after which this node held everything the peer's version vector listed. The vector is
+   * read after that start, so everything the peer had logged by then is here. Unset until such a sync. Unlike `lastSync`
+   * (stamped when the pull ends) it never claims events the peer logged while the pull ran.
+   */
+  levelAt?: number | null;
   error?: string; running: boolean; chain: Promise<void>; queued: number; failedAt: number | null;
   lastSeenStall?: number;
+  /**
+   * When one of OUR calls last succeeded (a push, or a sync round), as `lastSeen` but never moved by the peer's own
+   * requests: whether the peer can be reached from here. Pushes and the `online` list served to others follow this, not
+   * the presence `lastSeen` (WALK-87).
+   */
+  lastReached?: number;
+  lastReachedStall?: number;
+  /** Only heard from so far (its own requests): none of our calls has been made to it, so a roster change still syncs it. */
+  heardOnly?: boolean;
   sshRevocationCap?: boolean;
   /** The peer's machine stats from its last `vv` answer (kept while it is offline; cleared when it stops sending them). */
   stats?: MachineStats;
@@ -44,6 +64,18 @@ const MAX_PULL_CURSORS = 4_096;
 /** Node ids a peer may report as online in `/peer/v1/vv` (relayed liveness, mixed teams). */
 const MAX_REPORTED_ONLINE = 1_024;
 
+/**
+ * PRESENCE RULE (WALK-87). A machine is online while it was reached within `livenessMs` of HEALTHY time: the time since
+ * the last contact, less what this daemon spent stalled (watchdog.ts) in between. A stall of this daemon is not evidence
+ * about any peer, so:
+ *  - a peer is never aged by the length of a stall of ours (`healthyElapsed`, also for the relayed reports);
+ *  - a call that failed or timed out across a stall of ours says nothing about the peer (`failed`);
+ *  - contact is the peer's request too, not only the reply to ours (`heard`): a peer that stalled shows online the moment
+ *    it speaks again. That is presence only: pushes, the `online` list we serve and round trip times follow our own calls.
+ * Agents follow their machine (`effectiveState`), so none of them turns offline because of the stall, and none is archived
+ * or pruned for it. (A working or waiting status nobody refreshed for 30 minutes still reads offline, as it always did:
+ * after a stall or sleep longer than that it does until the agent's next status.)
+ */
 export class SyncManager {
   private readonly peers = new Map<string, PeerState>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -64,6 +96,7 @@ export class SyncManager {
   private peerProofFlush: Promise<void> | null = null;
   private readonly now: () => number;
   private readonly stallTotal: () => number;
+  private readonly directPending: () => boolean;
 
   constructor(private readonly core: Core, private readonly client: PeerClient, opts: SyncOptions = {}) {
     this.intervalMs = opts.intervalMs ?? 15_000;
@@ -71,6 +104,7 @@ export class SyncManager {
     this.pushTimeoutMs = opts.pushTimeoutMs ?? 2_000;
     this.now = opts.now ?? Date.now;
     this.stallTotal = opts.stallTotal ?? (() => 0);
+    this.directPending = opts.directPending ?? (() => false);
     for (const { key, value } of core.store.listMeta("pending_peer_proof:")) {
       try {
         const parsed = PeerVvRelay.safeParse(JSON.parse(value));
@@ -104,12 +138,14 @@ export class SyncManager {
     return activeNodes(this.core.roster).filter((n) => n.node_id !== this.core.nodeId && this.reachable(n));
   }
 
+  /** The state of a peer for one of OUR calls to it (`heard` makes it for a peer's own request). */
   private stateOf(nodeId: string): PeerState {
     let s = this.peers.get(nodeId);
     if (!s) {
       s = { lastSeen: null, rtt: null, lastSync: null, behind: 0, running: false, chain: Promise.resolve(), queued: 0, failedAt: null };
       this.peers.set(nodeId, s);
     }
+    if (s.heardOnly) s.heardOnly = false;
     return s;
   }
 
@@ -155,6 +191,23 @@ export class SyncManager {
     return false;
   }
 
+  /**
+   * The active machines this one shares no transport with (a Tailscale-only machine and a Direct-only one, PROTOCOL §4
+   * "Mixed teams"; never itself), each with whether it shows online. Such a machine is online here only on the word of
+   * a machine that reaches it (`isOnline`; or for a moment after this one last reached it itself). Without that it
+   * shows offline and its agents are hidden on this machine. Not an observer's machine (an observer publishes no agent
+   * status, so nothing of theirs is hidden), and nothing at all while this daemon's own Walkie Direct endpoint is not up
+   * but should be (`directPending`): it then reaches no machine over Direct, whoever they are. One pass over the roster,
+   * no I/O.
+   */
+  unreached(now = this.now()): { node: NodeRec; vouched: boolean }[] {
+    if (this.directPending()) return [];
+    const roster = this.core.roster;
+    return activeNodes(roster)
+      .filter((n) => n.node_id !== this.core.nodeId && nodeMember(roster, n.node_id)?.role !== "observer" && !this.reachable(n))
+      .map((node) => ({ node, vouched: this.isOnline(node.node_id, now) }));
+  }
+
   /** Whether this node shares a transport with `n` (the client's addressing decides). */
   private reachable(n: NodeRec): boolean { return this.client.addrOf(n) !== null; }
 
@@ -164,16 +217,25 @@ export class SyncManager {
       && this.healthyElapsed(s.lastSeen, s.lastSeenStall ?? 0, now) < this.livenessMs;
   }
 
+  /** Whether one of our own calls reached the peer within the liveness window (healthy time): not moved by its requests. */
+  private reachedByUs(nodeId: string, now: number): boolean {
+    const s = this.peers.get(nodeId);
+    return s?.lastReached !== undefined && this.healthyElapsed(s.lastReached, s.lastReachedStall ?? 0, now) < this.livenessMs;
+  }
+
   private healthyElapsed(at: number, stallAt: number, now: number): number {
     return Math.max(0, now - at - Math.max(0, this.stallTotal() - stallAt));
   }
 
-  /** Nodes this machine reached itself within the liveness window (served in `/peer/v1/vv` as `online`). */
+  /**
+   * Nodes this machine reached itself (a call of OURS succeeded) within the liveness window, served in `/peer/v1/vv` as
+   * `online`. A peer that only called us is not in it: we cannot vouch to others that we can reach it.
+   */
   reachedPeers(now = this.now()): string[] {
-    return [...this.peers.keys()].filter((id) => this.reachedRecently(id, now)).slice(0, MAX_REPORTED_ONLINE);
+    return [...this.peers.keys()].filter((id) => this.reachedByUs(id, now)).slice(0, MAX_REPORTED_ONLINE);
   }
 
-  /** Measured round trips (ms) to the peers reached within the liveness window, at most MAX_PEER_RTT (WALKIE-POOL-2). */
+  /** Measured round trips (ms) to the peers our calls reached within the liveness window, at most MAX_PEER_RTT (WALKIE-POOL-2). */
   peerRtts(now = this.now()): Record<string, number> {
     const out: Record<string, number> = {};
     for (const id of this.reachedPeers(now).slice(0, MAX_PEER_RTT)) {
@@ -275,7 +337,10 @@ export class SyncManager {
   /** Roster changed: connect to peers we have never synced with; fill stubs that became visible. */
   rosterChanged(): void {
     if (this.stopped) return;
-    for (const n of this.peerNodes()) if (!this.peers.has(n.node_id)) void this.antiEntropy(n);
+    for (const n of this.peerNodes()) {
+      const s = this.peers.get(n.node_id);
+      if (!s || s.heardOnly) void this.antiEntropy(n);
+    }
     for (const n of this.peerNodes()) {
       const addr = this.client.addrOf(n);
       if (addr && this.isOnline(n.node_id) && this.core.fillableStubIds(1, n.node_id).length) {
@@ -296,10 +361,36 @@ export class SyncManager {
     if (changed) { this.core.hub.nodesChanged(); this.core.hub.agentsChanged(); this.core.hub.accountsChanged(); }
   }
 
+  /**
+   * A request from this peer reached us through the gate (a known machine of a current member, signature checked where it
+   * carries one): it is up and talking, as surely as a reply to one of ours. Its presence (`lastSeen`, what `isOnline` and
+   * the dashboards judge) moves to now, so a peer that stalled for a minute shows online again the moment it speaks (its
+   * first call after the stall), not at our next round, and the stall's own length is kept out of the window like any
+   * other (`healthyElapsed`). Presence only: what OUR calls found is left alone (`failedAt`, `error`, `lastReached`), so
+   * a peer that can reach us but that we cannot reach (Direct behind NAT, a one-way ACL) still gets no pushes, and is not
+   * vouched for to other machines or given a round trip time, until a call of ours succeeds. Only machines this one can
+   * reach itself; one it hears of only through relays stays judged by what those relays report.
+   */
+  heard(nodeId: string): void {
+    if (this.stopped || nodeId === this.core.nodeId) return;
+    const n = this.core.roster.nodes.get(nodeId);
+    if (!n || n.revoked || !nodeMember(this.core.roster, nodeId) || !this.reachable(n)) return;
+    let s = this.peers.get(nodeId);
+    if (!s) {
+      s = { lastSeen: null, rtt: null, lastSync: null, behind: 0, running: false, chain: Promise.resolve(), queued: 0, failedAt: null, heardOnly: true };
+      this.peers.set(nodeId, s);
+    }
+    s.lastSeen = this.now();
+    s.lastSeenStall = this.stallTotal();
+    if (this.lastOnline.get(nodeId) !== true) this.checkLiveness(); // it was shown offline (or never judged): tell the dashboards now
+  }
+
   private seen(nodeId: string): void {
     const s = this.stateOf(nodeId);
     s.lastSeen = this.now();
     s.lastSeenStall = this.stallTotal();
+    s.lastReached = s.lastSeen;
+    s.lastReachedStall = s.lastSeenStall;
     s.error = undefined;
     s.failedAt = null;
     this.checkLiveness();
@@ -363,8 +454,10 @@ export class SyncManager {
     const now = this.now();
     for (const n of targets) {
       const s = this.stateOf(n.node_id);
-      // Known-offline peer: skip; anti-entropy delivers when it comes back.
-      if (s.failedAt && !this.isOnline(n.node_id, now)) continue;
+      // A peer our last call failed to reach is skipped until one of our calls reaches it again (anti-entropy delivers then):
+      // it must be online AND reached by us lately. Its presence alone is not enough: it may well reach us without our
+      // reaching it (Direct behind NAT, a one-way ACL), and then every push would wait out its timeout.
+      if (s.failedAt && !(this.isOnline(n.node_id, now) && this.reachedByUs(n.node_id, now))) continue;
       if (s.queued >= MAX_QUEUED_PUSHES) continue;
       s.queued++;
       s.chain = s.chain.then(async () => {
@@ -429,6 +522,7 @@ export class SyncManager {
       await this.pullAll(addr, peerVv.vv, n.node_id);
       await this.fillStubs(addr, n.node_id).catch((err: Error) => this.core.log.warn("stub_fill_failed", { peer: n.node_id, err: err.message }));
       s.behind = this.behind(peerVv.vv);
+      if (s.behind === 0) s.levelAt = Math.max(s.levelAt ?? 0, w0);
       s.lastSync = Date.now();
       this.core.hub.nodesChanged();
     } catch (err) {

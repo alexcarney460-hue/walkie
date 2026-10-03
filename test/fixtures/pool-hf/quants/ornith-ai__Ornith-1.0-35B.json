@@ -1,0 +1,22 @@
+[
+ {
+  "_id": "6a43ee77e32b5af3d7e53f31",
+  "id": "mudler/Ornith-1.0-35B-APEX-GGUF",
+  "downloads": 4778
+ },
+ {
+  "_id": "6a4391a6938578634d2cf9f8",
+  "id": "jashepp/Ornith-1.0-35B-A3B-MXFP4_MOE_Hybrid-Imatrix-GGUF",
+  "downloads": 3089
+ },
+ {
+  "_id": "6a72910530ec8c16726827f5",
+  "id": "offmonreal/Ornith-1.0-35B-MaxQuality-MTP-GGUF",
+  "downloads": 1845
+ },
+ {
+  "_id": "6a7c30b85649ae07f26da72e",
+  "id": "pugant/Ornith-1.0-35B-ROCmFP4-STRIX_LEAN",
+  "downloads": 603
+ }
+]

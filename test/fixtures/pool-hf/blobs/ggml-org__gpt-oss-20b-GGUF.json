@@ -1,0 +1,38 @@
+{
+ "_id": "688dec3ebc727e7a313790d8",
+ "id": "ggml-org/gpt-oss-20b-GGUF",
+ "sha": "ef9b12f2ff56c69cf32153a02784e7a3c88bf524",
+ "downloads": 126144,
+ "siblings": [
+  {
+   "rfilename": "eagle3-gpt-oss-20b-BF16.gguf",
+   "blobId": "10c32c8b6f1777161b1088bf28dd383d8212be59",
+   "size": 1722588800,
+   "lfs": {
+    "sha256": "b82e890aa1a5bc6270ea39434e8995e9039b2d706aed4e6a9346e5cc60ab65aa",
+    "size": 1722588800,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "eagle3-gpt-oss-20b-Q8_0.gguf",
+   "blobId": "c0f200a116a2ccaba473fe6b8173da0a8787de0f",
+   "size": 921488000,
+   "lfs": {
+    "sha256": "6955f98a701e97a8c969f3ff33be8ba17b35bd60e5ac96258d2c42d710c7d63f",
+    "size": 921488000,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "gpt-oss-20b-MXFP4.gguf",
+   "blobId": "deda3c25c5da45a23db1c5d52a49e6c509da659b",
+   "size": 12109566624,
+   "lfs": {
+    "sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
+    "size": 12109566624,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

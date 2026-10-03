@@ -3,12 +3,14 @@ import { useSyncExternalStore } from "react";
 // Hash routing keeps the daemon's static server trivial (one index.html).
 //   #/machines/<node-id>   the machine page (WALKIE-UI-POLISH-1)
 //   #/mission[?tab=archive&machine=<host>]   #/board/<channel>[/<threadId>]   #/asks[?tab=]
+//   #/updates            every reported project's latest status report (UPDATES-1)
 //   #/artifacts          #/team     #/integrations   #/accounts   #/orchestrator[/<conversationId>]   #/seats
 //   #/projects           #/projects/<channel>[/<board id>][?card=<card id>]   (WALKIE-PROJECTS-1)
 //   #/projects/<channel>/room   the project's Data Room (DATA-ROOM-1)
+//   #/projects/<channel>/page[?group=<slug>]   the project's status page (PROJECT-PAGES-1), at a group of its screens
 //   any + ?agent=<id>
 
-export type View = "mission" | "projects" | "orchestrator" | "board" | "asks" | "artifacts" | "team" | "integrations" | "accounts" | "machine" | "seats";
+export type View = "mission" | "updates" | "projects" | "orchestrator" | "board" | "asks" | "artifacts" | "team" | "integrations" | "accounts" | "machine" | "seats";
 
 export interface Route {
   view: View;
@@ -25,9 +27,12 @@ export interface Route {
   card?: string;
   /** Projects: the project's Data Room tab instead of a board. */
   room?: boolean;
+  /** Projects: the project's status page instead of a board, and the group of screens it scrolls to. */
+  page?: boolean;
+  group?: string;
 }
 
-const VIEWS: View[] = ["mission", "projects", "orchestrator", "board", "asks", "artifacts", "team", "integrations", "accounts", "seats"];
+const VIEWS: View[] = ["mission", "updates", "projects", "orchestrator", "board", "asks", "artifacts", "team", "integrations", "accounts", "seats"];
 
 export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -53,9 +58,12 @@ export function parseHash(hash: string): Route {
   if (view === "projects") {
     if (parts[1]) route.channel = parts[1];
     if (parts[2] === "room") route.room = true;
+    else if (parts[2] === "page") route.page = true;
     else if (parts[2]) route.board = parts[2];
     const card = params.get("card");
     if (card) route.card = card;
+    const group = params.get("group");
+    if (group && route.page) route.group = group;
   }
   const agent = params.get("agent");
   if (agent) route.agent = agent;
@@ -76,10 +84,12 @@ export function hrefFor(r: Route): string {
   if (r.view === "projects" && r.channel) {
     path += `/${encodeURIComponent(r.channel)}`;
     if (r.room) path += "/room";
+    else if (r.page) path += "/page";
     else if (r.board) path += `/${encodeURIComponent(r.board)}`;
   }
   const params = new URLSearchParams();
   if (r.view === "projects" && r.card) params.set("card", r.card);
+  if (r.view === "projects" && r.page && r.group) params.set("group", r.group);
   if (r.tab) params.set("tab", r.tab);
   if (r.machine) params.set("machine", r.machine);
   if (r.agent) params.set("agent", r.agent);
@@ -96,7 +106,7 @@ let current = parseHash(window.location.hash);
 let currentHash = window.location.hash;
 
 /** A view-level location: the route without the agent drawer, so opening or closing a drawer is not a move. */
-function pageKey(r: Route): string {
+export function pageKey(r: Route): string {
   return hrefFor({ ...r, agent: undefined });
 }
 const TRAIL_MAX = 50;

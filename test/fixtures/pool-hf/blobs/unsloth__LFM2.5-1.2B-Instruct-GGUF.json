@@ -1,0 +1,58 @@
+{
+ "_id": "695c9b3b5478be093b12b3c2",
+ "id": "unsloth/LFM2.5-1.2B-Instruct-GGUF",
+ "sha": "b01cc872e5918b0fdec170003cd854851e3ed854",
+ "downloads": 36981,
+ "siblings": [
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-BF16.gguf",
+   "blobId": "ff89d02ec749e6be2cbb967507e3ef85ecf211fc",
+   "size": 2343326944,
+   "lfs": {
+    "sha256": "bc646c6f49514e86b91f8a4eeb2e6779c0f0dcb0d737b3ebb9ae79454053fbc2",
+    "size": 2343326944,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+   "blobId": "eb9f350f5973eada5cf880af5bd84296143425ba",
+   "size": 730895584,
+   "lfs": {
+    "sha256": "856aeee6d85ac684b1db8dee48795b44fc06731ecda03aee36ece682413a9b9a",
+    "size": 730895584,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q5_K_M.gguf",
+   "blobId": "2f4c3ecf4a8a1edf3eef807e28077a386069da11",
+   "size": 843355360,
+   "lfs": {
+    "sha256": "7ad5eef540097e1afc0118799e5d22005c0c1721cba0a2b01bed287e4888baaf",
+    "size": 843355360,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q6_K.gguf",
+   "blobId": "8ee64aca6bb23a9b29ffa5a615f3d49939654e64",
+   "size": 962843872,
+   "lfs": {
+    "sha256": "3d3bd155a8b063a2a40b3c63be218e868023d582391a4650e6467b9947459952",
+    "size": 962843872,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "LFM2.5-1.2B-Instruct-Q8_0.gguf",
+   "blobId": "56bd7eae96632f061b9bdb920cba8f85ac9cf27d",
+   "size": 1246254304,
+   "lfs": {
+    "sha256": "b808eead8d6061f71990ab7b144c5ca6650fad219aa7acc407fe5fb26abf3dc2",
+    "size": 1246254304,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

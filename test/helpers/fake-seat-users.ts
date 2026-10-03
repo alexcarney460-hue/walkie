@@ -82,6 +82,8 @@ export function fakeSeatWorld(root: string, walkieHome: string): FakeSeatWorld {
       verifyEmptyTalkieUid: () => ({ ok: true, left: [] }),
       talkieGenerationStopped: async () => ({ ok: true }),
       caller: () => process.getuid?.() ?? -1,
+      // The fake helper serves the test's daemon: it is the registered Walkie (WALK-103 tests override this).
+      seatInstance: () => ({ state: "registered" }),
       userMounts: () => { if (broken.has("mounts")) throw new Error("getmntinfo failed (broken)"); return [...w.mounts]; },
       unmount: (path) => { if (broken.has("unmount")) throw new Error("EBUSY (broken)"); w.mounts.delete(path); w.unmounted.push(path); },
       extraRoots: () => { if (broken.has("roots")) throw new Error("seat-roots.json is missing (broken)"); return [...w.extraRoots]; },

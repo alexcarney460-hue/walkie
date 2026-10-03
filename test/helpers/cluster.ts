@@ -57,6 +57,8 @@ export interface NodeSpec {
   peerLink?: PeerLinkOptions;
   /** Agent discovery with an injected process list; default off (tests never report this machine's processes). */
   discovery?: DiscoveryOptions | false;
+  /** How often the Hermes activity scrub runs (default 15 s, like production); it runs whether or not discovery does. */
+  hermesScrub?: { intervalMs?: number };
   /** Machine stats with injected readings; default off (tests never report this machine's memory or sensors). */
   machineStats?: SamplerOptions | false;
   /** Provider accounts with injected files/fetch; default off (tests never read this machine's logins). */
@@ -73,6 +75,11 @@ export interface NodeSpec {
    * loopback iroh options as a Direct node, used once `walkie direct enable` (or config `direct`) turns it on.
    */
   dual?: boolean;
+  /**
+   * The UDP address a Direct or dual node binds (default: loopback, any port). A test names one that cannot bind to hold
+   * the node's Walkie Direct endpoint down: the daemon starts anyway and keeps retrying (src/daemon/direct/link.ts).
+   */
+  directBind?: string;
   /** WALKIE-POOL-2 split runs: runtime directory, extra llama.cpp arguments, stage lease. */
   pool?: PoolOptions;
   /** Orchestrator supervisor options (a fake claude on the child's PATH, fast restarts). */
@@ -129,14 +136,15 @@ export class TestNode {
       integrations: this.spec.integrations ?? { autoRun: false },
       licenseRenew: false, adminNotice: this.spec.adminNotice ?? false, discovery: this.spec.discovery ?? false, machineStats: this.spec.machineStats ?? false, accounts: this.spec.accounts ?? false, ...(this.spec.peerLink ? { peerLink: this.spec.peerLink } : {}),
       ...(this.spec.enrollmentBackfill ? { enrollmentBackfill: this.spec.enrollmentBackfill } : {}),
+      ...(this.spec.hermesScrub ? { hermesScrub: this.spec.hermesScrub } : {}),
       ...(this.spec.orchestrator ? { orchestrator: this.spec.orchestrator } : {}),
       ...(this.spec.seats ? { seats: this.spec.seats } : {}),
       ...(this.spec.licenseVerifier ? { licenseVerifier: this.spec.licenseVerifier } : {}),
       ...(this.spec.clock ? { clock: this.spec.clock } : {}),
       ...(this.spec.mobile ? { mobile: this.spec.mobile } : {}),
       licenseService: this.spec.licenseService ?? { fetch: async () => { throw new Error("no license service in tests"); } },
-      ...(direct ? { direct: { preset: "minimal" as const, bindAddr: "127.0.0.1:0", addressBook: this.cluster.addressBook }, peerLink: { retryBaseMs: 60_000, retryMaxMs: 60_000 } } : {}),
-      ...(this.spec.dual ? { direct: { preset: "minimal" as const, bindAddr: "127.0.0.1:0", addressBook: this.cluster.addressBook } } : {}),
+      ...(direct ? { direct: { preset: "minimal" as const, bindAddr: this.spec.directBind ?? "127.0.0.1:0", addressBook: this.cluster.addressBook }, peerLink: { retryBaseMs: 60_000, retryMaxMs: 60_000 } } : {}),
+      ...(this.spec.dual ? { direct: { preset: "minimal" as const, bindAddr: this.spec.directBind ?? "127.0.0.1:0", addressBook: this.cluster.addressBook } } : {}),
       ...(this.spec.pool ? { pool: this.spec.pool } : {}),
       ...(this.spec.linearImport ? { linearImport: this.spec.linearImport } : {}),
       ...(this.spec.compute === false ? {} : { compute: this.spec.compute ?? { site: new ComputeSite({ base: "http://127.0.0.1",

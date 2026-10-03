@@ -3,9 +3,11 @@
 // from claude 2.1.283, see test/unit/orchestrator.test.ts) without any model. Put its directory first on PATH.
 //   FAKE_CLAUDE_STATE  directory for session transcripts (a --resume of an unknown session fails like the real one)
 //   FAKE_CLAUDE_LOG    file: one JSON line per launch ({argv, pid}) and per turn
+//   FAKE_CLAUDE_REJECT comma list of options this Claude is "too old" to know (e.g. --tools,--strict-mcp-config): given one it
+//                      exits at once with commander's `error: unknown option '<arg>'`, as an older claude does
 // A user message containing "crash" exits mid-reply; "leak" exits with a secret on stderr; "spawn" starts a
-// `sleep 300` descendant; "orphan" leaves a TERM-ignoring one and exits; "hang" never answers (not even an interrupt); "slow" streams for ~10 s (interruptible); "tool" runs a
-// Bash tool first; "commit" writes and commits a file in the working directory (remote seats); "check-home" logs a
+// `sleep 300` descendant; "orphan" leaves a TERM-ignoring one and exits; the word "hang" (not "changed") never answers (not even an interrupt); "slow" streams for ~10 s (interruptible); "tool" runs a
+// Bash tool first (unless the child was launched with `--tools=`, no tools at all: then there is none to run); "commit" writes and commits a file in the working directory (remote seats); "check-home" logs a
 // seat's home and per-run config; "history" answers with the session's turn count and first message; "HUGE" answers 1.5 MB; "TEAMPOST" posts to #general as the orchestrator; "ADDMACHINE <handle>" mints an add-machine link with the walkie CLI; "MANYTOOLS", "SECRETLINES" and "FLOOD" exercise the live-progress bounds; "demo" streams a Markdown
 // reply (heading, list, table, code) over ~FAKE_CLAUDE_DEMO_MS (default 4000) for dashboard screenshots; anything
 // else: "pong: <text>".
@@ -36,10 +38,15 @@ if (credentialsPath && existsSync(credentialsPath)) {
 }
 log({ argv, cwd: process.cwd(), walkie_agent: process.env.WALKIE_AGENT ?? null, claude_config: process.env.CLAUDE_CONFIG_DIR ?? null, env: SEEN.filter((k) => process.env[k] !== undefined), access_file: accessFile, refresh_file: refreshFile, credential_mode: credentialMode });
 
+for (const flag of (process.env.FAKE_CLAUDE_REJECT ?? "").split(",").filter(Boolean)) {
+  const given = argv.find((a) => a === flag || a.startsWith(`${flag}=`));
+  if (given) { process.stderr.write(`error: unknown option '${given}'\n`); process.exit(1); }
+}
 const need = ["-p", "--verbose", "--include-partial-messages"];
 for (const f of need) if (!argv.includes(f)) { process.stderr.write(`fake claude: missing ${f}\n`); process.exit(2); }
 const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 if (flag("--input-format") !== "stream-json" || flag("--output-format") !== "stream-json") { process.stderr.write("fake claude: stream-json only\n"); process.exit(2); }
+const noTools = argv.includes("--tools="); // launched with no tools (a duty that needs none): a tool keyword runs nothing
 const resume = flag("--resume");
 const session = resume ?? flag("--session-id");
 if (!session) { process.stderr.write("fake claude: no session\n"); process.exit(2); }
@@ -115,7 +122,7 @@ async function turn(text: string): Promise<void> {
     const p = Bun.spawn(["sleep", "300"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     log({ grandchild: p.pid });
   }
-  if (text.includes("hang")) { delta("working on it "); await new Promise(() => undefined); }
+  if (/\bhang\b/.test(text)) { delta("working on it "); await new Promise(() => undefined); }
   // "orphan": leaves a descendant that ignores SIGTERM and exits on its own (ORCH-FIX-2: the daemon's shutdown must
   // still wait for its SIGKILL).
   if (text.includes("orphan")) {
@@ -131,7 +138,7 @@ async function turn(text: string): Promise<void> {
     git("commit", "-q", "-m", "seat: add seat-output.txt");
     assistant([{ type: "tool_use", id: "t2", name: "Bash", input: { command: "git commit -m 'seat: add seat-output.txt'" } }]);
   }
-  if (text.includes("tool")) {
+  if (!noTools && text.includes("tool")) {
     assistant([{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo hi" } }]);
     // A subagent's text is not part of the reply.
     out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "SUBAGENT" } }, parent_tool_use_id: "t1" });

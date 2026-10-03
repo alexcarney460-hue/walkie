@@ -5,19 +5,32 @@
 // Operations are named by wrapping them in `trackOp` (route dispatch, the periodic jobs): it costs two clock reads per
 // call. An async operation's continuation after an `await` runs outside its wrapper, so the log also names the
 // operation that started last (`last_op`), usually the one that continued.
+//
+// Sleep is not a stall (WALK-87). The monotonic clock does not run while a laptop sleeps (macOS), the wall clock does:
+// a wall clock that gained time on the monotonic one between two ticks means the machine slept (or its clock was set
+// forward). A sleeping daemon is as unaware of its peers as a stalled one, so the time its peers' last contact is
+// measured in (sync.ts, wall clock) is discounted by the sleep too (`stallTotalMs`), or every machine would look offline
+// for a moment after the lid opens; but it is logged as `sleep_resume` and never shown as a lagging daemon (`recentLag`).
+// A wall clock set BACK and later forward again (a correction) must not read as a sleep: what it lost is credited
+// against what it gains later, so only time gained beyond that counts.
 import type { Logger } from "./logger.ts";
 
 /** A tick this late is a stall. */
 export const STALL_MS = 500;
 /** How often the loop is checked. */
 export const WATCH_INTERVAL_MS = 250;
+/** A wall clock that gains or loses more than this against the monotonic clock in one tick was slept through or set. */
+export const CLOCK_STEP_MS = 1_000;
+/** The most a backward step of the wall clock may later cancel from the time it gains, and for how long (monotonic ms). */
+export const MAX_STEP_CREDIT_MS = 3_600_000;
+export const STEP_CREDIT_TTL_MS = 600_000;
 
 export interface WatchdogOptions {
   stallMs?: number;
   intervalMs?: number;
   /** A monotonic clock in ms (tests). */
   now?: () => number;
-  /** Wall clock for the health response (tests). */
+  /** Wall clock (the health response, and noticing a sleep); tests fake it together with `now`. */
   wallNow?: () => number;
 }
 
@@ -26,6 +39,11 @@ interface Slow { readonly op: string; readonly ms: number; readonly at: number }
 export class LoopWatchdog {
   private timer: ReturnType<typeof setInterval> | null = null;
   private last = 0;
+  private lastWall = 0;
+  /** What the wall clock lost against the monotonic one (stepped back), not yet made up by a forward step. */
+  private stepCredit = 0;
+  /** When (monotonic) the credit was last added to: it lapses after STEP_CREDIT_TTL_MS. */
+  private stepCreditAt = 0;
   private readonly stack: string[] = [];
   private slowest: Slow | null = null;
   private lastOp: string | null = null;
@@ -47,6 +65,7 @@ export class LoopWatchdog {
   start(): void {
     if (this.timer) return;
     this.last = this.now();
+    this.lastWall = this.wallNow();
     this.timer = setInterval(() => this.check(), this.intervalMs);
     (this.timer as { unref?: () => void }).unref?.();
   }
@@ -79,14 +98,43 @@ export class LoopWatchdog {
     }
   }
 
+  /**
+   * How late the tick due now is, and how much the wall clock gained on the monotonic one since the last tick (slept):
+   * `stall` is the event loop's own lateness, `slept` what remains of the gain after a recent backward step is credited.
+   */
+  private measure(t = this.now(), wall = this.wallNow()): { stall: number; slept: number; credit: number; creditAt: number } {
+    const monotonic = t - this.last;
+    const drift = wall - this.lastWall - monotonic;
+    let credit = t - this.stepCreditAt > STEP_CREDIT_TTL_MS ? 0 : this.stepCredit;
+    let creditAt = this.stepCreditAt;
+    let slept = 0;
+    if (drift < -CLOCK_STEP_MS) { credit = Math.min(MAX_STEP_CREDIT_MS, credit - drift); creditAt = t; }
+    else if (drift > CLOCK_STEP_MS) {
+      const made = Math.min(drift, credit);
+      credit -= made;
+      slept = drift - made;
+    }
+    return { stall: monotonic - this.intervalMs, slept, credit, creditAt };
+  }
+
   /** One check (the interval's; tests call it directly): logs a stall when this tick is `stallMs` or more late. */
   check(): void {
     if (!this.timer) return;
     const t = this.now();
-    const lag = t - this.last - this.intervalMs;
+    const wall = this.wallNow();
+    const m = this.measure(t, wall);
     this.last = t;
+    this.lastWall = wall;
+    this.stepCredit = m.credit;
+    this.stepCreditAt = m.creditAt;
     const s = this.slowest;
     this.slowest = null;
+    if (m.slept >= this.stallMs) {
+      // Counted in what peers' last contact is discounted by, not in the lag shown on the dashboard.
+      this.totalLag += m.slept;
+      this.log.info("sleep_resume", { slept_ms: Math.round(m.slept) });
+    }
+    const lag = m.stall;
     if (lag < this.stallMs) return;
     this.totalLag += lag;
     this.recent = [...this.recent.filter((x) => this.wallNow() - x.at < 60_000), { at: this.wallNow(), lagMs: Math.round(lag) }];
@@ -100,9 +148,12 @@ export class LoopWatchdog {
     });
   }
 
-  /** Includes a late tick even when a sync callback runs before the watchdog timer after a stall. */
+  /** Includes a late tick (or a sleep) even when a sync callback runs before the watchdog timer after it. */
   stallTotalMs(): number {
-    if (this.timer && this.now() - this.last - this.intervalMs >= this.stallMs) this.check();
+    if (this.timer) {
+      const m = this.measure();
+      if (m.stall >= this.stallMs || m.slept >= this.stallMs) this.check();
+    }
     return this.totalLag;
   }
 

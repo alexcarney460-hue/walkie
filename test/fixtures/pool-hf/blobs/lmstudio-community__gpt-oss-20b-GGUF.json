@@ -1,0 +1,18 @@
+{
+ "_id": "68923e178f8b43b04da4d952",
+ "id": "lmstudio-community/gpt-oss-20b-GGUF",
+ "sha": "21f8a86825e36be34d24601e6d5ab45e2d366f4b",
+ "downloads": 102673,
+ "siblings": [
+  {
+   "rfilename": "gpt-oss-20b-MXFP4.gguf",
+   "blobId": "4daf00bcac02c41b2a458743e4e48503360aa3d7",
+   "size": 12109565632,
+   "lfs": {
+    "sha256": "65d06d31a3977d553cb3af137b5c26b5f1e9297a6aaa29ae7caa98788cde53ab",
+    "size": 12109565632,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

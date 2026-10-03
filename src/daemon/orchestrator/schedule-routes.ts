@@ -73,6 +73,11 @@ route("GET", "/v1/orchestrator/schedules/unresolved", (c) => {
   return json(manager.unresolvedPage(c.url.searchParams.get("after") ?? undefined, limit));
 });
 
+route("POST", "/v1/orchestrator/schedules/unresolved/ack-legacy", (c) => {
+  management(c, "acknowledged older WalkieTalkie schedule completion outcomes");
+  return json(schedules(c).acknowledgeLegacyOverflow());
+});
+
 route("GET", "/v1/orchestrator/schedules/next", (c) => {
   adminRead(c);
   const cron = c.url.searchParams.get("cron") ?? "";

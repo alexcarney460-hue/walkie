@@ -1,0 +1,68 @@
+{
+ "_id": "6a1378cde2d04d7730e17859",
+ "id": "LiquidAI/LFM2.5-8B-A1B-GGUF",
+ "sha": "49c14831707011e64d70b2ebd8462ba08d608434",
+ "downloads": 529071,
+ "siblings": [
+  {
+   "rfilename": "LFM2.5-8B-A1B-BF16.gguf",
+   "blobId": "0b9fc327cb5d52e3cf0301dd2f404f05b5cb8e4f",
+   "size": 16947260640,
+   "lfs": {
+    "sha256": "2b471037695ef5908cb88065c7ebb23fe285a07950d7433fabf0c865273728ab",
+    "size": 16947260640,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "LFM2.5-8B-A1B-F16.gguf",
+   "blobId": "36214569e881a84872112875e2c8ab83da1b34f5",
+   "size": 16947260640,
+   "lfs": {
+    "sha256": "c6eb857414327e26d32654d996838d305cb57c01c06def0894bde244f7baa159",
+    "size": 16947260640,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "LFM2.5-8B-A1B-Q4_K_M.gguf",
+   "blobId": "5cd9b16c0996455ac58f5ed88bf0ff7de06068de",
+   "size": 5155564768,
+   "lfs": {
+    "sha256": "4923ec14f06b968b74d663e5949867d2d9c3bf13a20b8be1a9f9af39989b2bb0",
+    "size": 5155564768,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "LFM2.5-8B-A1B-Q5_K_M.gguf",
+   "blobId": "163d9caddccb4a9796d15d6842dcd73256ad75e8",
+   "size": 6030339296,
+   "lfs": {
+    "sha256": "eb8bd10148ea21e195502d6d6a205983ba40815302068ce72eb160684df92b3e",
+    "size": 6030339296,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "LFM2.5-8B-A1B-Q6_K.gguf",
+   "blobId": "08b976dd237f2f20bf5ed247ff738bd7e2a89db9",
+   "size": 6959787232,
+   "lfs": {
+    "sha256": "7ccf57a2d410d8822d1560a1ca10c8318f3e15d6a8f6d42d1903d58e80ea20a6",
+    "size": 6959787232,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "LFM2.5-8B-A1B-Q8_0.gguf",
+   "blobId": "0997f86304cc64a58bedb35cf841ea1a23b5122e",
+   "size": 9010195680,
+   "lfs": {
+    "sha256": "33ab3b8ce6a964fb8ebac89360c9b3cf72c4fa418d5e4c0a94d46883124d5c02",
+    "size": 9010195680,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

@@ -1,0 +1,150 @@
+{
+ "_id": "6a11001ba8f0f4aacca069ec",
+ "id": "google/gemma-4-12B-it",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "6a11146a37f564db4d1d1ad0",
+    "id": "google/gemma-4-12B"
+   }
+  ]
+ },
+ "downloads": 1887250,
+ "likes": 1625,
+ "gated": false,
+ "pipeline_tag": "any-to-any",
+ "sha": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "gemma4_unified",
+  "image-text-to-text",
+  "any-to-any",
+  "arxiv:2607.02770",
+  "base_model:google/gemma-4-12B",
+  "base_model:finetune:google/gemma-4-12B",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/extractbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "llamaindex/ExtractBench",
+     "task_id": "mean"
+    },
+    "value": 45.39,
+    "date": "2026-08-24",
+    "source": {
+     "url": "https://huggingface.co/datasets/llamaindex/ExtractBench",
+     "name": "ExtractBench",
+     "user": "boyang-runllama"
+    },
+    "notes": "Pipeline name: gemma4_12b_vllm_extract_oneshot_structured_output_file"
+   },
+   "pullRequest": 51
+  },
+  {
+   "filename": ".eval_results/extractbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "llamaindex/ExtractBench",
+     "task_id": "short"
+    },
+    "value": 53.62,
+    "date": "2026-08-24",
+    "source": {
+     "url": "https://huggingface.co/datasets/llamaindex/ExtractBench",
+     "name": "ExtractBench",
+     "user": "boyang-runllama"
+    },
+    "notes": "Pipeline name: gemma4_12b_vllm_extract_oneshot_structured_output_file"
+   },
+   "pullRequest": 51
+  },
+  {
+   "filename": ".eval_results/hle.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 5.2,
+    "date": "2026-05-23",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-12B-it",
+     "name": "Model Card"
+    },
+    "notes": "No tools"
+   },
+   "pullRequest": 7
+  },
+  {
+   "filename": ".eval_results/aime_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/aime_2026",
+     "task_id": "MathArena/aime_2026"
+    },
+    "value": 77.5,
+    "date": "2026-05-23",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-12B-it",
+     "name": "Model Card"
+    },
+    "notes": "No tools"
+   },
+   "pullRequest": 6
+  },
+  {
+   "filename": ".eval_results/mmlu_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "TIGER-Lab/MMLU-Pro",
+     "task_id": "mmlu_pro"
+    },
+    "value": 77.2,
+    "date": "2026-05-23",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-12B-it",
+     "name": "Model Card"
+    }
+   },
+   "pullRequest": 4
+  },
+  {
+   "filename": ".eval_results/gpqa.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 78.8,
+    "date": "2026-05-23",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-12B-it",
+     "name": "Model Card"
+    }
+   },
+   "pullRequest": 3
+  }
+ ],
+ "createdAt": "2026-05-23T01:17:15.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 11959730224
+  },
+  "total": 11959730224
+ }
+}

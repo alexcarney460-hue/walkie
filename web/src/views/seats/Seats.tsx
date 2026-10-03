@@ -10,6 +10,7 @@ import { useStore } from "../../state/store.tsx";
 import { MessageBoundary } from "../orchestrator/Messages.tsx";
 import { BusyCard, busyCounts, clockTime } from "./BusyCard.tsx";
 import { AgentAdminCard } from "./AgentAdminCard.tsx";
+import { SeatOwnership } from "./SeatOwnership.tsx";
 
 const STATE_LABEL: Record<SeatView["state"], string> = {
   requested: "Requested", queued: "Queued", running: "Running", paused: "Paused", done: "Done", failed: "Failed", stopped: "Stopped", timeout: "Timed out",
@@ -83,6 +84,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
           <p>If one stays, see <a href="https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md#8-remote-seats-optional" target="_blank" rel="noopener noreferrer">seat troubleshooting</a>.</p>
         </div>
       ) : null}
+      <SeatOwnership local={local} />
       {local.allow ? (
         <>
           <dl className="int-facts">

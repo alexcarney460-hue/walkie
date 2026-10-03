@@ -1,0 +1,68 @@
+{
+ "_id": "696ec5c0982be58c02de6432",
+ "id": "bartowski/zai-org_GLM-4.7-Flash-GGUF",
+ "sha": "464d07505b441959737cd04d900f047469614c8d",
+ "downloads": 20249,
+ "siblings": [
+  {
+   "rfilename": "zai-org_GLM-4.7-Flash-IQ4_XS.gguf",
+   "blobId": "fd25a77e693af5ad24b72cd689142fe239035790",
+   "size": 16250044288,
+   "lfs": {
+    "sha256": "e6472e66ad5671d72142ca5f304fbace0c771f706ae081ecbbc17b7a2bb6cc09",
+    "size": 16250044288,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "zai-org_GLM-4.7-Flash-Q4_K_M.gguf",
+   "blobId": "d0f3bd6f57722ee1d952d604fb3d74319c14c58a",
+   "size": 18474983296,
+   "lfs": {
+    "sha256": "42c0c1a30fe2f30097ffedd554a94c2d6abc5f95b8a35ce99cd523f78ef6711b",
+    "size": 18474983296,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "zai-org_GLM-4.7-Flash-Q5_K_M.gguf",
+   "blobId": "4ee7ad48171f5526a8d5baebfecbd106fb5f161c",
+   "size": 21566252928,
+   "lfs": {
+    "sha256": "9e0156957bd07760644aa2a3b6d6791ac8796f2c1bc9c75a2cb07cef5ccb5764",
+    "size": 21566252928,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "zai-org_GLM-4.7-Flash-Q6_K.gguf",
+   "blobId": "f3e511c16dd7a9385074ab0fcb4a83320fdc53b2",
+   "size": 24825851776,
+   "lfs": {
+    "sha256": "4c80f55211d08ce7cc4b12d7a8fa1f10d6f7a634229c6cf9a7190565a2b5eee1",
+    "size": 24825851776,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "zai-org_GLM-4.7-Flash-Q8_0.gguf",
+   "blobId": "036d7c93c78e744dac83425af2725ddbd633f26a",
+   "size": 31842799488,
+   "lfs": {
+    "sha256": "f5a2fd2d73d43070c9c88c204ea7c196d8e9110092521320ddf7a80b7b673fe5",
+    "size": 31842799488,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "zai-org_GLM-4.7-Flash-bf16/zai-org_GLM-4.7-Flash-bf16-00001-of-00002.gguf",
+   "blobId": "aee7fc15d8af55b8819f0187cd0fc76b64269583",
+   "size": 39745402368,
+   "lfs": {
+    "sha256": "b542fa88e0314fc5d5058c7be6202b90ec44d8a423dac9e4a712247c2edad5d4",
+    "size": 39745402368,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

@@ -260,6 +260,11 @@ export function applyHermesStatus(store: Store, input: HermesStatus, now = Date.
   return { ...cardOf(event.profile, rows), recomputed };
 }
 
+/** Whether a status is a Hermes session's: runtime "other", runtime_name "hermes" (what hooks and discovery post; the dashboard shows it view only). */
+export function isHermesStatus(status: Pick<BodyOf<"agent.status">, "runtime" | "runtime_name">): boolean {
+  return status.runtime === "other" && status.runtime_name === "hermes";
+}
+
 /**
  * A card as it may be posted: its activity line, and where that came from, only for a profile that `activityProfiles` (config.json
  * hermes_activity_profiles) lists. Every other profile shows its state only. This is applied where cards are posted, not where rows are

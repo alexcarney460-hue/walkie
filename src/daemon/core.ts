@@ -86,8 +86,8 @@ const DRAIN_PAGE = 500;
  * marked (PROJECTS round 6); 7: team.integration is a roster kind (LICENSE-FIX-2 F3).
  */
 const VALIDITY_VERSION = "11";
-/** Which shapes `isBoardOp` counts (2: Data Room file ops too, DATA-ROOM-1): a change re-examines stored rows once. */
-const BOARD_OPS_CLASS = "2";
+/** Which shapes `isBoardOp` counts (3: status page ops too, PROJECT-PAGES-1; 2: Data Room file ops too, DATA-ROOM-1): a change re-examines stored rows once. */
+const BOARD_OPS_CLASS = "3";
 /**
  * Store meta key of the plan-clock floor (Core.planNow, audit M4; FINAL Fable 1): raised only by this
  * node's own clock and by the roster chain's entries (clamped). The key before this fix
@@ -164,7 +164,7 @@ export class Core {
   private readonly boardCurableBytes: number;
   /** Latest-wins status bursts are held and emitted when the per-agent bucket refills. */
   readonly statuses = new StatusCoalescer({
-    tryEmit: (agent, body, provenance, final = false) => {
+    tryEmit: (agent, body, provenance, final = false, observedAt) => {
       // A session's sub-agents share one more bucket (WALKIE-MISSION-SUB-1): many at once can't flood the team's log.
       // Checked first without taking, so a refusal there never spends the agent's own token.
       const shared = body.parent && !(body.parent === SEATS_AGENT && isSeatAgent(agent)) ? `subagents:${body.parent}` : null;
@@ -176,7 +176,7 @@ export class Core {
       if (!final && shared && !this.limiter.can(shared, sharedSpec)) return null;
       if (!final && !this.limiter.take(`status:${agent}`, this.limits.status)) return null;
       if (!final && shared) this.limiter.take(shared, sharedSpec);
-      return this.emit("agent.status", body, { agent, ...(provenance ? { provenance } : {}) });
+      return this.emit("agent.status", body, { agent, ...(provenance ? { provenance } : {}), ...(observedAt !== undefined ? { observedAt } : {}) });
     },
   });
   /** What agent statuses may carry (config.json share_prompts / share_activity / share_paths), re-read on change. */
@@ -268,6 +268,8 @@ export class Core {
   onPostChange: ((ev: Event, change: "accepted" | "hidden") => void) | null = null;
   /** Node ids this node reached itself lately (served as `online` in `/peer/v1/vv`, mixed teams). */
   reachedPeers: (() => string[]) | null = null;
+  /** Called for each peer request that passed the gate (peer-api.ts): the machine is up (sync.ts `heard`). */
+  onPeerContact: ((nodeId: string) => void) | null = null;
   /** Owner SSH remains closed until this process has reconciled the team's revocations. */
   sshTeamConfirmed: () => boolean = () => false;
   /** Fetches a share's bytes from the node that uploaded them, gaining provenance (mixed teams: peer-api.ts fetchThrough). */
@@ -320,6 +322,7 @@ export class Core {
     // pages (PRE4 delta). Rows it newly marks are re-judged below, which marks the final ones.
     // DATA-ROOM-1: `isBoardOp` also counts Data Room file ops (op "file") since this classification version, so every
     // stored `p-` post is examined once more (no honest older build signed one; a crafted one is re-judged below).
+    // PROJECT-PAGES-1: and status page ops (op "page"), the same way.
     if (this.store.getMeta("board_ops_class") !== BOARD_OPS_CLASS) this.store.deleteMeta("board_ops_rowid");
     const newlyMarked = this.store.classifyBoardOps(isBoardOp).marked;
     this.store.setMeta("board_ops_class", BOARD_OPS_CLASS);

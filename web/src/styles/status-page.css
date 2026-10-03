@@ -1,0 +1,178 @@
+/* ---- Status page (PROJECT-PAGES-1): the page non-technical teammates read ----
+ * Only the dashboard's theme tokens are used for colour, so the light and dark themes (tokens.css) both work; nothing here
+ * sets a colour of its own. Phone width: one column inside a 16px gutter. */
+
+/* One track as wide as the page and no wider: nothing inside (a long command to copy, a long word) can push the page sideways. */
+.spage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; max-width: 1180px; margin: 0 32px 40px 0; }
+.spage .cmd { height: auto; min-height: 32px; padding-block: 6px; align-items: flex-start; }
+.spage .cmd-code { white-space: normal; overflow-wrap: anywhere; word-break: break-word; text-overflow: clip; line-height: 1.5; text-align: left; }
+.spage-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding-top: 6px; }
+.spage-eyebrow {
+  margin: 0;
+  color: var(--accent-text);
+  font: 600 var(--fs-11) / 1.3 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.spage-headline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.7rem, 4.4vw, 2.9rem);
+  font-weight: 750;
+  line-height: 1.06;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+/* when the page changed and when its story was written: words, in the page's own size, not the eyebrow's small capitals */
+.spage-when { margin: 0; color: var(--text-2); font-size: var(--fs-14); line-height: 1.5; overflow-wrap: anywhere; }
+.spage-lede { margin: 0; max-width: 65ch; color: var(--text-2); font-size: var(--fs-16); line-height: 1.55; overflow-wrap: anywhere; }
+.spage-notice {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-control);
+  background: var(--amber-soft);
+  color: var(--text);
+  font-size: var(--fs-13);
+  overflow-wrap: anywhere;
+}
+
+/* the facts strip: one tile for each */
+.spage-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 0; }
+.spage-fact {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-control);
+  background: var(--surface);
+}
+.spage-fact dt { color: var(--text-3); font-size: var(--fs-11); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; overflow-wrap: anywhere; }
+.spage-fact dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-18);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+/* what is live, what lands next */
+.spage-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
+.spage-cols h3 { margin: 0 0 10px; color: var(--text-3); font: 700 var(--fs-12) / 1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.spage-cols ul { display: grid; gap: 6px; margin: 0; padding-left: 18px; list-style: disc; }
+.spage-cols li { overflow-wrap: anywhere; }
+.spage-cols p { margin: 0; font-size: var(--fs-13); }
+
+/* the index of groups: stays in view while the screens scroll past */
+.spage-index {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-block: 10px;
+  max-height: min(34vh, 260px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in oklch, var(--bg) 90%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.spage-index a {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.spage-index a:hover { border-color: var(--accent-line); }
+.spage-index a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.spage-index a[aria-current="location"] { border-color: var(--accent); background: var(--accent-soft); }
+.spage-count { margin-left: 6px; color: var(--text-3); font: 500 var(--fs-12) var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* the screens of a group */
+.spage-group { scroll-margin-top: 72px; }
+.spage-group h3 { margin: 0 0 14px; font-family: var(--font-display); font-size: var(--fs-22); font-weight: 750; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.spage-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 18px; align-items: start; margin: 0; padding: 0; list-style: none; }
+.spage-shot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-control);
+  background: var(--surface);
+}
+.spage-zoom { display: block; width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--line-soft); background: var(--surface-2); cursor: zoom-in; }
+.spage-zoom:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.spage-zoom img { display: block; width: 100%; height: auto; }
+.spage-shot.is-tall .spage-zoom { background: var(--surface-3); }
+.spage-shot.is-tall .spage-zoom img { width: auto; max-width: 100%; max-height: 420px; margin: 0 auto; }
+.spage-ph {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 120px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  text-align: center;
+}
+.spage-ph p { margin: 0; overflow-wrap: anywhere; }
+.spage-ph .skeleton { width: 100%; height: 100%; min-height: 96px; }
+.spage-shot figcaption { display: grid; gap: 6px; min-width: 0; padding: 12px 14px 14px; }
+.spage-cap-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.spage-cap-head b { font-family: var(--font-display); font-size: var(--fs-16); font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
+.spage-route { color: var(--text-3); font: var(--fs-12) / 1.3 var(--font-mono); overflow-wrap: anywhere; }
+.spage-about { margin: 0; overflow-wrap: anywhere; }
+.spage-note-line { margin: 0; color: var(--text-3); font-size: var(--fs-13); overflow-wrap: anywhere; }
+.spage-by { margin: 0; color: var(--text-3); font-size: var(--fs-12); overflow-wrap: anywhere; }
+.spage-chip {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: var(--r-chip);
+  font: 600 var(--fs-11) / 1 var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.spage-chip.is-ok { background: var(--signal-soft); color: var(--signal); }
+.spage-chip.is-warn { background: var(--amber-soft); color: var(--amber); }
+.spage-chip.is-idle { background: var(--surface-3); color: var(--text-3); }
+
+/* one screen, larger */
+.spage-dialog { max-width: min(96vw, 1600px); max-height: 94vh; padding: 0; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); color: var(--text); }
+.spage-dialog::backdrop { background: var(--scrim); }
+.spage-dialog-body { display: grid; gap: 10px; max-height: 94vh; padding: 12px 14px 14px; overflow: auto; }
+.spage-dialog-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.spage-dialog-head h4 { flex: 1; margin: 0; min-width: 0; font-family: var(--font-display); font-size: var(--fs-18); overflow-wrap: anywhere; }
+.spage-dialog img { display: block; max-width: 100%; max-height: 76vh; width: auto; height: auto; margin: 0 auto; object-fit: contain; border-radius: var(--r-chip); }
+
+.spage-foot { display: grid; gap: 6px; max-width: 70ch; padding-top: 12px; color: var(--text-3); font-size: var(--fs-13); }
+.spage-foot p { margin: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 860px) {
+  .spage { gap: 20px; }
+  /* the phone's own top bar is 48px and sticks above the page */
+  .spage-index { top: 48px; }
+  .spage-group { scroll-margin-top: 120px; }
+  .spage-facts { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .spage-group h3 { font-size: var(--fs-18); }
+}

@@ -2,6 +2,7 @@
 // right under the session. A sub-agent whose session isn't in the list (filtered out, or not reported) gets a card.
 import { memo } from "react";
 import type { AccountView, AgentView } from "../../api/types.ts";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { StatePill } from "../../components/primitives.tsx";
 import { ago, useNow } from "../../lib/time.ts";
 import { subagentLabel } from "../../../../src/protocol/subagents.ts";
@@ -64,12 +65,22 @@ const SubagentRow = memo(SubagentRowImpl);
 /** A session's card with its sub-agents listed under it (or a plain card when it has none shown). */
 export function AgentGroupView({ group, account, onOpen }: { group: AgentGroup; account?: AccountView; onOpen: (id: string) => void }) {
   const { agent, subs } = group;
-  if (!subs.length) return <AgentCard agent={agent} account={account} onOpen={onOpen} />;
+  // Each card and row is its own failure: one agent's odd data never takes its neighbours down (DASH-BLANK-1).
+  const card = (
+    <ErrorBoundary scope="item" name={`agent ${agent.agent}`} resetKeys={[agent, account?.key, account?.usage]}>
+      <AgentCard agent={agent} account={account} onOpen={onOpen} />
+    </ErrorBoundary>
+  );
+  if (!subs.length) return card;
   return (
     <div className="agent-group" data-testid={`agent-group-${agent.agent}`}>
-      <AgentCard agent={agent} account={account} onOpen={onOpen} />
+      {card}
       <ul className="subagent-list" aria-label={`${agent.agent === "seats" ? "Seats" : "Sub-agents"} of ${agent.agent}`}>
-        {subs.map((s) => <SubagentRow key={s.id} agent={s} onOpen={onOpen} />)}
+        {subs.map((s) => (
+          <ErrorBoundary key={s.id} scope="item" as="li" name={`sub-agent ${s.agent}`} resetKeys={[s]}>
+            <SubagentRow agent={s} onOpen={onOpen} />
+          </ErrorBoundary>
+        ))}
       </ul>
     </div>
   );

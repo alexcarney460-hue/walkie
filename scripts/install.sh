@@ -30,7 +30,7 @@ REPO="${WALKIE_REPO:-alexcarney460-hue/walkie-releases}"
 BIN_DIR="${WALKIE_BIN_DIR:-$HOME/.local/bin}"
 # The release a plain `curl … | sh` installs. Bump this one line when a new release should be what new machines get;
 # site/build.py reads it for the landing page's footer, so the page and the installer can't drift apart.
-DEFAULT_VERSION="v0.2.0-pre.11"
+DEFAULT_VERSION="v0.2.0-pre.12"
 VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"
 if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -n "${WALKIE_BASE_URL:-}" ]; then VERSION="$WALKIE_MIN_VERSION"; fi
 # The Walkie release-signing public key (EC P-256). Not the license key. Rotated only by a new installer.
@@ -102,13 +102,10 @@ case "$VERSION" in
   latest|v[0-9]*) ;;
   *) die "WALKIE_VERSION must be a release tag like v0.1.0 (or latest)" ;;
 esac
-# Pre-releases are built for Apple Silicon Macs and Linux only: say so instead of failing the download.
+# Report missing Intel assets from the resolved release manifest, not the pinned default.
 no_intel_build() {
   die "$1 has no Intel Mac build. Set WALKIE_VERSION=latest to install the latest full release instead (Tailscale teams only), or build from source."
 }
-if [ -z "${WALKIE_VERSION:-}" ] && [ -z "${WALKIE_BASE_URL:-}" ] && [ "$asset" = walkie-darwin-x86_64 ]; then
-  no_intel_build "$DEFAULT_VERSION"
-fi
 
 # The release asked for. With GitHub, "latest" is resolved to its tag first so the download and the
 # signed version line are bound to the same release; DEFAULT_VERSION is a tag and binds the same way. A mirror
@@ -136,8 +133,9 @@ trap cleanup EXIT INT TERM
 say "Downloading $asset ($VERSION)…"
 curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" || die "checksum download failed"
 # A release with no build for this machine says so before the binary download (the file is verified below; this
-# only refuses early).
-if ! grep -q " $asset\$" "$tmp/SHA256SUMS"; then
+# only refuses early). Both standard text (two spaces) and binary (space + *) checksum records
+# name the same asset, as in the CLI updater.
+if ! grep -Eq " [*]?$asset\$" "$tmp/SHA256SUMS"; then
   [ "$asset" = walkie-darwin-x86_64 ] && no_intel_build "$VERSION"
   die "$VERSION has no build for this machine ($asset)"
 fi
@@ -158,7 +156,7 @@ if [ -n "$expected" ]; then
 fi
 
 # 3. The binary must match the (now authenticated) checksums.
-sum_expected=$(grep " $asset\$" "$tmp/SHA256SUMS" | awk '{print $1}')
+sum_expected=$(grep -E " [*]?$asset\$" "$tmp/SHA256SUMS" | awk '{print $1}')
 [ -n "$sum_expected" ] || die "no checksum for $asset"
 if command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$tmp/walkie" | awk '{print $1}')
 else actual=$(sha256sum "$tmp/walkie" | awk '{print $1}'); fi

@@ -1,0 +1,674 @@
+[
+ {
+  "_id": "688b451a53e70a07b0669a7c",
+  "id": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "688b1597e5e83e19d1b3238a",
+     "id": "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+    }
+   ]
+  },
+  "downloads": 9061265,
+  "createdAt": "2025-07-31T10:27:38.000Z"
+ },
+ {
+  "_id": "6a84f2a4e3b80a40c641b592",
+  "id": "ornith-ai/Ornith-1.5-9B-GGUF",
+  "downloads": 5059834,
+  "createdAt": "2026-08-19T00:02:44.000Z"
+ },
+ {
+  "_id": "6aab2908d3d583554438fce8",
+  "id": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 3766691,
+  "createdAt": "2026-09-16T23:40:56.000Z"
+ },
+ {
+  "_id": "6a83fdf1993fbb53ef83dbb1",
+  "id": "ornith-ai/Ornith-1.5-35B-A3B-GGUF",
+  "downloads": 3596868,
+  "createdAt": "2026-08-18T06:38:41.000Z"
+ },
+ {
+  "_id": "6a3cb4edb9ef7094c0c80d35",
+  "id": "ornith-ai/Ornith-1.0-9B-GGUF",
+  "downloads": 2598613,
+  "createdAt": "2026-06-25T04:56:13.000Z"
+ },
+ {
+  "_id": "6a6f8659e6ac69f7540105e4",
+  "id": "CMSManhattan/JiRackUltra_1b",
+  "downloads": 2531292,
+  "createdAt": "2026-08-02T18:03:05.000Z"
+ },
+ {
+  "_id": "6a7e8ee8b77fccb497299fb3",
+  "id": "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 2206373,
+  "createdAt": "2026-08-14T03:43:36.000Z"
+ },
+ {
+  "_id": "6a3cb50c4f7477d7ac6fcb42",
+  "id": "ornith-ai/Ornith-1.0-35B-GGUF",
+  "downloads": 1699389,
+  "createdAt": "2026-06-25T04:56:44.000Z"
+ },
+ {
+  "_id": "69edc49ddc88b61a03fdee5a",
+  "id": "antirez/deepseek-v4-gguf",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69e864e440a44c9fb7c54efc",
+     "id": "deepseek-ai/DeepSeek-V4-Flash"
+    }
+   ]
+  },
+  "downloads": 1544968,
+  "createdAt": "2026-04-26T07:54:05.000Z"
+ },
+ {
+  "_id": "6a7f62fadca4ab8bcc0a546e",
+  "id": "0bserverx/Qwen3.8-27B-Heretic-Abliterated-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 1429480,
+  "createdAt": "2026-08-14T18:48:26.000Z"
+ },
+ {
+  "_id": "6a83fe028c218fa5b13de43c",
+  "id": "ornith-ai/Ornith-1.5-397B-GGUF",
+  "downloads": 1277835,
+  "createdAt": "2026-08-18T06:38:58.000Z"
+ },
+ {
+  "_id": "6a6e76471bc1abee8bbf03d0",
+  "id": "LiquidAI/LFM2.5-2.6B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a6929c85c8cc5852a1b3dab",
+     "id": "LiquidAI/LFM2.5-2.6B"
+    }
+   ]
+  },
+  "downloads": 1089642,
+  "createdAt": "2026-08-01T22:42:15.000Z"
+ },
+ {
+  "_id": "6a8ef65b58482bb8b9d2a681",
+  "id": "unsloth/GLM-5.3-Flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "downloads": 988928,
+  "createdAt": "2026-08-26T14:21:15.000Z"
+ },
+ {
+  "_id": "6a6fdea97017ac5c6e21deae",
+  "id": "CMSManhattan/JiRackUltra_14b",
+  "downloads": 971608,
+  "createdAt": "2026-08-03T00:19:53.000Z"
+ },
+ {
+  "_id": "6a85c354733ca524c25bd6b5",
+  "id": "OBLITERATUS/Qwen3.8-27B-OBLITERATED",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 806829,
+  "createdAt": "2026-08-19T14:53:08.000Z"
+ },
+ {
+  "_id": "6a3487efabb86916010f2c23",
+  "id": "yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "downloads": 724233,
+  "createdAt": "2026-06-19T00:06:07.000Z"
+ },
+ {
+  "_id": "6a8ee7c9cee02e94f11eb54d",
+  "id": "AtomicChat/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 616176,
+  "createdAt": "2026-08-26T13:19:05.000Z"
+ },
+ {
+  "_id": "6a8434c8d460f8a6c854bc7f",
+  "id": "z-lab/Qwen3.8-27B-DFlash2-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 542726,
+  "createdAt": "2026-08-18T10:32:40.000Z"
+ },
+ {
+  "_id": "6a1378cde2d04d7730e17859",
+  "id": "LiquidAI/LFM2.5-8B-A1B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a180e5a00cc0bea772f12d4",
+     "id": "LiquidAI/LFM2.5-8B-A1B"
+    }
+   ]
+  },
+  "downloads": 529071,
+  "createdAt": "2026-05-24T22:16:45.000Z"
+ },
+ {
+  "_id": "6815b8d70e2525074c399975",
+  "id": "Qwen/Qwen3-8B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "680da79d48c19d19cf82ab5e",
+     "id": "Qwen/Qwen3-8B"
+    }
+   ]
+  },
+  "downloads": 509997,
+  "createdAt": "2025-05-03T06:33:59.000Z"
+ },
+ {
+  "_id": "68923b71467354ab9147aa88",
+  "id": "unsloth/gpt-oss-20b-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "68913539bd3d0a833438591d",
+     "id": "openai/gpt-oss-20b"
+    }
+   ]
+  },
+  "downloads": 487590,
+  "createdAt": "2025-08-05T17:12:17.000Z"
+ },
+ {
+  "_id": "6a5618535d69526f3e503ff8",
+  "id": "AnkitAI/Parable-Qwen3-8B-Claude-Fable-5-GGUF",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "680da79d48c19d19cf82ab5e",
+     "id": "Qwen/Qwen3-8B"
+    }
+   ]
+  },
+  "downloads": 470265,
+  "createdAt": "2026-07-14T11:06:59.000Z"
+ },
+ {
+  "_id": "6a8f8a62b38f31b735f52fb5",
+  "id": "OBLITERATUS/Ornith-1.5-9B-OBLITERATED",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83f99c91917d42401beac3",
+     "id": "ornith-ai/Ornith-1.5-9B"
+    }
+   ]
+  },
+  "downloads": 459900,
+  "createdAt": "2026-08-27T00:52:50.000Z"
+ },
+ {
+  "_id": "6a29111236f02ab48e1a27e7",
+  "id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "downloads": 421540,
+  "createdAt": "2026-06-10T07:24:02.000Z"
+ },
+ {
+  "_id": "6a2b7d1187cdb824d82b4c21",
+  "id": "michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 368571,
+  "createdAt": "2026-06-12T03:29:21.000Z"
+ },
+ {
+  "_id": "6959afb601130378732081de",
+  "id": "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "695c573eb0c977b76e1a059e",
+     "id": "LiquidAI/LFM2.5-1.2B-Instruct"
+    }
+   ]
+  },
+  "downloads": 354945,
+  "createdAt": "2026-01-04T00:09:26.000Z"
+ },
+ {
+  "_id": "6a7244edb664134a5e88e1cd",
+  "id": "AtomicChat/Ling-3.0-flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a6f6cf134c714cf6381ccb4",
+     "id": "inclusionAI/Ling-3.0-flash"
+    }
+   ]
+  },
+  "downloads": 282399,
+  "createdAt": "2026-08-04T20:00:45.000Z"
+ },
+ {
+  "_id": "680fefed611b27241b74cbb9",
+  "id": "MaziyarPanahi/Qwen3-8B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "680da79d48c19d19cf82ab5e",
+     "id": "Qwen/Qwen3-8B"
+    }
+   ]
+  },
+  "downloads": 274411,
+  "createdAt": "2025-04-28T21:15:25.000Z"
+ },
+ {
+  "_id": "6a9906b4ecbf40f4c7afdb95",
+  "id": "CodeMasterCody3D/taardis-27b-full-ternary",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 269437,
+  "createdAt": "2026-09-03T05:33:40.000Z"
+ },
+ {
+  "_id": "6a74275ae95fa25467e5eeef",
+  "id": "ReadyArt/gemma-4-31B-it-scotoma-2-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a741bef0fc1c45c2599c4a4",
+     "id": "ReadyArt/gemma-4-31B-it-scotoma-2"
+    }
+   ]
+  },
+  "downloads": 253555,
+  "createdAt": "2026-08-06T06:19:06.000Z"
+ },
+ {
+  "_id": "6a7b230505020600a120ac1a",
+  "id": "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a6d98598cf49b059474f8ea",
+     "id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    }
+   ]
+  },
+  "downloads": 236307,
+  "createdAt": "2026-08-11T13:26:29.000Z"
+ },
+ {
+  "_id": "6a611068bb26432fa86525ee",
+  "id": "Myric/Laguna-S-2.1-APEX-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a54ef0b62869082b568f3ec",
+     "id": "poolside/Laguna-S-2.1"
+    }
+   ]
+  },
+  "downloads": 156391,
+  "createdAt": "2026-07-22T18:48:08.000Z"
+ },
+ {
+  "_id": "688e38419e09af7dc4aa07c9",
+  "id": "ggml-org/gpt-oss-120b-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "68913522f16f3c8aaffccf1f",
+     "id": "openai/gpt-oss-120b"
+    }
+   ]
+  },
+  "downloads": 150319,
+  "createdAt": "2025-08-02T16:09:37.000Z"
+ },
+ {
+  "_id": "6a85ba4073bb4348df8c4e8b",
+  "id": "LiquidAI/LFM2.5-2.6B-DSpark-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a7a147e8abd9b731dea13aa",
+     "id": "LiquidAI/LFM2.5-2.6B-DSpark"
+    }
+   ]
+  },
+  "downloads": 148185,
+  "createdAt": "2026-08-19T14:14:24.000Z"
+ },
+ {
+  "_id": "696ec8f2170fe37807eda878",
+  "id": "unsloth/GLM-4.7-Flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "696dcefa357a4070754b027e",
+     "id": "zai-org/GLM-4.7-Flash"
+    }
+   ]
+  },
+  "downloads": 146591,
+  "createdAt": "2026-01-20T00:14:42.000Z"
+ },
+ {
+  "_id": "6aa7d4d54bfad53ec36aa097",
+  "id": "antirez/qwen3.8-flash-next-gguf",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 130781,
+  "createdAt": "2026-09-14T11:04:53.000Z"
+ },
+ {
+  "_id": "688dec3ebc727e7a313790d8",
+  "id": "ggml-org/gpt-oss-20b-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "68913539bd3d0a833438591d",
+     "id": "openai/gpt-oss-20b"
+    }
+   ]
+  },
+  "downloads": 126144,
+  "createdAt": "2025-08-02T10:45:18.000Z"
+ },
+ {
+  "_id": "6a85ba58c71cc264ceb899ed",
+  "id": "LiquidAI/LFM2.5-8B-A1B-DSpark-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a7a147e67ac9cf881f23e85",
+     "id": "LiquidAI/LFM2.5-8B-A1B-DSpark"
+    }
+   ]
+  },
+  "downloads": 100068,
+  "createdAt": "2026-08-19T14:14:48.000Z"
+ },
+ {
+  "_id": "680f8fa2384885553e2167cf",
+  "id": "unsloth/Qwen3-8B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "680da79d48c19d19cf82ab5e",
+     "id": "Qwen/Qwen3-8B"
+    }
+   ]
+  },
+  "downloads": 91842,
+  "createdAt": "2025-04-28T14:24:34.000Z"
+ },
+ {
+  "_id": "6aac7ecc65a6e6b6779658c0",
+  "id": "dealignai/Bonsai-2-27B-Ternary-CRACK-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 82685,
+  "createdAt": "2026-09-17T23:59:08.000Z"
+ },
+ {
+  "_id": "6a919485074496b6c970d2ea",
+  "id": "agentionai/Qwen3.8-Flash-Next-ROCmFP4-FAST-imatrix-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 75821,
+  "createdAt": "2026-08-28T14:00:37.000Z"
+ },
+ {
+  "_id": "68923b51e5822b89fab7a1e7",
+  "id": "unsloth/gpt-oss-120b-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "68913522f16f3c8aaffccf1f",
+     "id": "openai/gpt-oss-120b"
+    }
+   ]
+  },
+  "downloads": 69074,
+  "createdAt": "2025-08-05T17:11:45.000Z"
+ },
+ {
+  "_id": "6a7c745186129bfa0228892b",
+  "id": "unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a6d98598cf49b059474f8ea",
+     "id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    }
+   ]
+  },
+  "downloads": 67083,
+  "createdAt": "2026-08-12T13:25:37.000Z"
+ },
+ {
+  "_id": "6ab50a6befcb990d1732efe3",
+  "id": "pentacoxian-dev/Qwen3.8-Flash-Next-IQ3E-Q8D-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 61314,
+  "createdAt": "2026-09-24T11:32:59.000Z"
+ },
+ {
+  "_id": "680f7b70e445a4be6af508b2",
+  "id": "bartowski/Qwen_Qwen3-8B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "680da79d48c19d19cf82ab5e",
+     "id": "Qwen/Qwen3-8B"
+    }
+   ]
+  },
+  "downloads": 45917,
+  "createdAt": "2025-04-28T12:58:24.000Z"
+ },
+ {
+  "_id": "6a809a442a801eb26750ef8b",
+  "id": "julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 43407,
+  "createdAt": "2026-08-15T16:56:36.000Z"
+ },
+ {
+  "_id": "680f7b852deb57008c82f3cb",
+  "id": "lmstudio-community/Qwen3-8B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "680da79d48c19d19cf82ab5e",
+     "id": "Qwen/Qwen3-8B"
+    }
+   ]
+  },
+  "downloads": 40070,
+  "createdAt": "2025-04-28T12:58:45.000Z"
+ },
+ {
+  "_id": "6aac7ecdb651b52db4d72c92",
+  "id": "dealignai/Bonsai-2-27B-1bit-CRACK-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 38921,
+  "createdAt": "2026-09-17T23:59:09.000Z"
+ },
+ {
+  "_id": "695c9b3b5478be093b12b3c2",
+  "id": "unsloth/LFM2.5-1.2B-Instruct-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "695c573eb0c977b76e1a059e",
+     "id": "LiquidAI/LFM2.5-1.2B-Instruct"
+    }
+   ]
+  },
+  "downloads": 36981,
+  "createdAt": "2026-01-06T05:18:51.000Z"
+ }
+]

@@ -1,9 +1,9 @@
 // Conservative editor for Hermes profile YAML. It changes only marked hook entries and refuses inline/ambiguous hooks.
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readSmallFile } from "../agent/safe-read.ts";
-import { walkieArgv, type InstallResult } from "./install.ts";
+import { replaceFileText, walkieArgv, type ErrorWords, type InstallResult, type SettingsIo } from "./install.ts";
 import { isMap, isScalar, isSeq, parseDocument, stringify, YAMLMap, type Pair } from "yaml";
 
 export const HERMES_EVENTS = ["on_session_start", "pre_llm_call", "pre_tool_call", "post_tool_call", "post_llm_call", "on_session_end", "on_session_finalize"] as const;
@@ -111,7 +111,28 @@ export function withHermesHooks(yaml: string, command: string, install: boolean)
   return addToHooks(stripped, command);
 }
 
-export async function installHermes(opts: { profiles: readonly string[]; dryRun: boolean; uninstall: boolean; root?: string }): Promise<InstallResult> {
+/** What the one write of a profile's config.yaml asks of the file system, injectable so a failure at each step can be tested. */
+export type HermesIo = SettingsIo;
+
+/** An error of the write names no path and no profile: the audit line of a failed install carries its text, and the line never names a profile. */
+const HERMES_WORDS: ErrorWords = {
+  notWritable: "Hermes profile config is not writable; no changes made",
+  cause: (error) => { const code = (error as NodeJS.ErrnoException).code; return typeof code === "string" ? code : ""; },
+  failed: (cause, outcome) => `could not write the Hermes profile config${cause ? ` (${cause})` : ""}; ${outcome}`,
+};
+
+/**
+ * The one write of a Hermes profile's config.yaml, used by `walkie hooks install|uninstall hermes`: the same replacement as the Claude
+ * settings file (replaceFileText in install.ts). Atomic, through a private temp file beside it renamed over it, so a crash, a full disk
+ * or a failing rename leaves the old file whole and the temp file removed; the file keeps its mode, owner and group; a hard-linked file
+ * is written in place, so its other names see the change; a read-only file is refused before anything is made; the old file is copied to
+ * `.bak-walkie-<ms>` first, and that copy is removed again if the write fails.
+ */
+export function writeHermesConfig(path: string, body: string, io?: HermesIo): void {
+  replaceFileText(path, () => body, HERMES_WORDS, io);
+}
+
+export async function installHermes(opts: { profiles: readonly string[]; dryRun: boolean; uninstall: boolean; root?: string; io?: HermesIo }): Promise<InstallResult> {
   if (!opts.profiles.length || opts.profiles.some((p) => !PROFILE.test(p))) throw new Error("choose valid Hermes profile names explicitly");
   const root = opts.root ?? join(homedir(), ".hermes");
   const command = walkieArgv().map((s) => "'" + s.replaceAll("'", "'\\''") + "'").join(" ") + " hook hermes";
@@ -128,8 +149,7 @@ export async function installHermes(opts: { profiles: readonly string[]; dryRun:
     changed.push(opts.dryRun ? `${path} (would write)` : path);
     if (opts.dryRun) continue;
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    if (existsSync(path)) copyFileSync(path, `${path}.bak-walkie-${Date.now()}`);
-    writeFileSync(path, next, { mode: 0o600 });
+    writeHermesConfig(path, next, opts.io);
   }
   return { changed, commands: [] };
 }

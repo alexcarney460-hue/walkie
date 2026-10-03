@@ -1,0 +1,48 @@
+{
+ "_id": "69cd72b518ee711e165c2d4e",
+ "id": "lmstudio-community/gemma-4-31B-it-GGUF",
+ "sha": "67a72ce462184ca84e9531dfe657ee73b4ecc89d",
+ "downloads": 36352,
+ "siblings": [
+  {
+   "rfilename": "gemma-4-31B-it-Q4_K_M.gguf",
+   "blobId": "e6a85f2a2cc6760bc8fa93cc2aa6d936cdc514d3",
+   "size": 18687063904,
+   "lfs": {
+    "sha256": "8f3479643461601703f717931e399cc440dbd5ada598c025d6296c8165d94be9",
+    "size": 18687063904,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gemma-4-31B-it-Q6_K.gguf",
+   "blobId": "14307cfd9dfdc569ce438de93fab6c778b8692bc",
+   "size": 25201483424,
+   "lfs": {
+    "sha256": "3baf863a64af732e1fc597baf1c6ea147d4b1c30f5d1203e0f8018ad258bb1ac",
+    "size": 25201483424,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gemma-4-31B-it-Q8_0.gguf",
+   "blobId": "d87b868c84e67a706119074fe017257362adeb57",
+   "size": 32635674272,
+   "lfs": {
+    "sha256": "b2c838c7128f7b61858986333d4d8283104102b0cca13acdc2e6422e93292f67",
+    "size": 32635674272,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "mmproj-gemma-4-31B-it-BF16.gguf",
+   "blobId": "8fabb2c1d18639355dd1aa7b36440dfb827d238e",
+   "size": 1200725984,
+   "lfs": {
+    "sha256": "5e32614a9cdeaf6e30c2f316f0ded1b8edfad1aed1150611fd0b7e0ce36d56af",
+    "size": 1200725984,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

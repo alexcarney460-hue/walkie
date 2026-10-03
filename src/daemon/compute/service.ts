@@ -4,7 +4,7 @@
 import { loadRenewToken } from "../../license/renew-token.ts";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  ACTIVE_STATES, RENTAL_CODE_TTL_MS, type CreditBlock, type LocalComputeState, type LocalRentReq, type Quotes, type RentalView,
+  ACTIVE_STATES, RENTAL_CODE_TTL_MS, type ComputeState, type CreditBlock, type LocalComputeState, type LocalRentReq, type Quotes, type RentalView,
   type RentResult,
 } from "../../protocol/compute.ts";
 import { RELEASE_TAG_RE, releaseTag } from "../../protocol/add-machine.ts";
@@ -14,8 +14,8 @@ import { mintInviteCode, type MintedInvite } from "../invite-mint.ts";
 import type { Logger } from "../logger.ts";
 import { VERSION } from "../version.ts";
 import { loadAccount, loadAccounts, loadRentals, loadPending, savePending, newRecord, saveAccounts, saveRentals, needsAccountScan,
-  markAccountsScanned, type RentalRecord, type StoredAccount } from "./files.ts";
-import { invitedNodes, nodeForInvites, revokeRentedNode, type RevokeDeps } from "./nodes.ts";
+  markAccountsScanned, RentalsFileError, type Rentals, type RentalRecord, type StoredAccount } from "./files.ts";
+import { invitedNodes, nodeForInvites, revocationConfirmed, revokeRentedNode, type RevokeDeps } from "./nodes.ts";
 import { ComputeSite, ComputeSiteError, type StopReply } from "./site.ts";
 import { rosterProof } from './team-proof.ts';
 import { verifyHandoverNotice, handoverNoticeText } from './handover-notice.ts';
@@ -28,6 +28,10 @@ export const POLL_JITTER_MS = 10_000;
 export const POLL_MAX_BACKOFF_MS = 30 * 60_000;
 /** An ended rental with no machine seen yet is watched this long more (its last code could still be used). */
 export const REVOKE_WATCH_MS = RENTAL_CODE_TTL_MS + 10 * 60_000;
+/** A revocation the authority accepted is not sent again for this long while this daemon's roster doesn't show it yet (sync is on its way). */
+export const ACCEPTED_WAIT_MS = 10 * 60_000;
+/** A refused revocation is asked again after 1 round, 2, 4, … up to this long (the owners' alert stays up meanwhile). */
+export const REFUSED_RETRY_MAX_MS = 60 * 60_000;
 
 export interface ComputeOptions {
   /** The site (tests inject base + fetch; production: SITE_ORIGIN or computeBaseFromEnv). */
@@ -43,6 +47,12 @@ export interface ComputeOptions {
 export interface ComputeDeps extends RevokeDeps {
   readonly log: Logger;
   readonly transport: () => TransportControl | undefined;
+  /**
+   * When this daemon last pulled the roster authority's whole log and was level with it (the authority itself: now), or
+   * null (not since it started, or behind). A rental that never showed a machine is closed only after such a sync that
+   * is later than its last usable code, so an admission this daemon has not received yet is not missed. Absent: never closed.
+   */
+  readonly authoritySyncedAt?: () => number | null;
 }
 
 /** What the daemon returns for a site refusal: the site's code, a plain message, its numeric details. */
@@ -74,6 +84,8 @@ export class ComputeService {
   private polling: Promise<void> | null = null;
   /** Serializes account creation and record writes (one daemon, one file). */
   private chain: Promise<unknown> = Promise.resolve();
+  /** Rentals and pending rents already refused for a lost owner role (logged once each, WALK-74). */
+  private readonly refused = new Set<string>();
 
   constructor(private readonly d: ComputeDeps, private readonly opts: ComputeOptions = {}) {
     this.site = opts.site ?? new ComputeSite();
@@ -146,19 +158,50 @@ export class ComputeService {
     const states = await Promise.all(ready.map(a => this.site.state(a.token).catch(asHttp)));
     const balance = states.reduce((n, s) => n + s.balance_micros, 0);
     const burn = states.reduce((n, s) => n + s.burn_per_hour_micros, 0);
+    const { recs, unreadable } = this.readRecords();
+    const localAlerts = this.localAlerts(recs, unreadable);
     return { ...states[0]!, balance_micros: balance, burn_per_hour_micros: burn, hours_left: burn ? balance / burn : null,
       status: states.some(s => s.status === 'frozen') ? 'frozen' : 'active',
-      rentals: this.withKnownNodes(states.flatMap(s => s.rentals)),
+      ...(localAlerts.length ? { alerts: [...new Set([...(states[0]!.alerts ?? []), ...localAlerts])] } : {}),
+      rentals: this.withKnownNodes(states.flatMap(s => s.rentals), recs),
       accounts: states.map(s => ({ account_id: s.account_id, status: s.status, balance_micros: s.balance_micros,
         burn_per_hour_micros: s.burn_per_hour_micros, hours_left: s.hours_left })) };
+  }
+
+  /** The records for what owners are shown. An unreadable file is reported (never thrown) so state still answers; the poller refuses to run on it. */
+  private readRecords(): { recs: Rentals; unreadable: boolean } {
+    try { return { recs: loadRentals(this.home), unreadable: false }; } catch (err) {
+      if (err instanceof RentalsFileError) return { recs: {}, unreadable: true };
+      throw err;
+    }
+  }
+
+  /**
+   * The alerts this daemon adds to the site's, from its own records (never from the site):
+   * - compute_records_unreadable: the records file can't be read, so every other alert here is unknown and revocations are paused;
+   * - revocation_refused / revocation_pending: an ended rental's machine is still on the team (see RentalRecord.revoke);
+   * - revocation_waiting_for_authority_sync: an ended rental that never showed a machine is past its window but this daemon has
+   *   not been level with the roster authority since (no shared transport to it, or it is offline), so it stays open.
+   */
+  private localAlerts(recs: Rentals, unreadable: boolean): NonNullable<ComputeState["alerts"]> {
+    if (unreadable) return ["compute_records_unreadable"];
+    const open = Object.values(recs).filter((r) => !r.closed);
+    const now = this.d.core.clock();
+    const syncedAt = this.d.authoritySyncedAt?.() ?? null;
+    const unseenPastWindow = open.some((r) => !r.revoke && !r.revoked && r.ended_at !== null && now > r.ended_at + REVOKE_WATCH_MS
+      && !(syncedAt !== null && syncedAt > r.ended_at + REVOKE_WATCH_MS));
+    return [
+      ...(open.some((r) => r.revoke?.state === "refused") ? ["revocation_refused" as const] : []),
+      ...(open.some((r) => r.revoke?.state === "pending") ? ["revocation_pending" as const] : []),
+      ...(unseenPastWindow ? ["revocation_waiting_for_authority_sync" as const] : []),
+    ];
   }
 
   /**
    * The node each rental became as the CHAIN says (the admission that used one of this daemon's invite ids for it);
    * the site's own node_id (what the rented box reported) only when the chain doesn't say yet.
    */
-  private withKnownNodes(rentals: readonly RentalView[]): RentalView[] {
-    const recs = loadRentals(this.home);
+  private withKnownNodes(rentals: readonly RentalView[], recs: Rentals): RentalView[] {
     const nodes = invitedNodes(this.d.core);
     return rentals.map((r) => {
       const rec = recs[r.id];
@@ -191,6 +234,10 @@ export class ComputeService {
    */
   async rent(handle: string, req: LocalRentReq): Promise<RentResult> {
     const version = this.pinnedVersion();
+    try { loadRentals(this.home); } catch (err) { // before anything is paid for: the new rental could not be recorded
+      if (err instanceof RentalsFileError) throw new HttpError(500, 'compute_records_unreadable', err.message);
+      throw err;
+    }
     await this.ensureAccount();
     const acc = this.account(req.account_id);
     if (!acc) throw new HttpError(404, 'not_found', 'compute account unavailable');
@@ -309,7 +356,11 @@ export class ComputeService {
   /** Whether there is anything to poll for: an account and a record that isn't closed. No network otherwise. */
   pending(): boolean {
     if (!this.account()) return false;
-    return needsAccountScan(this.home) || loadPending(this.home).length > 0 || Object.values(loadRentals(this.home)).some((r) => !r.closed);
+    if (needsAccountScan(this.home) || loadPending(this.home).length > 0) return true;
+    try { return Object.values(loadRentals(this.home)).some((r) => !r.closed); } catch (err) {
+      if (err instanceof RentalsFileError) return true; // needs attention
+      throw err;
+    }
   }
 
   /** One round (tests call it directly). Concurrent calls share the round in flight. */
@@ -322,7 +373,13 @@ export class ComputeService {
     await this.checkHandoverNotice();
     const accounts = this.accounts().filter(a => !a.handover_pending_until || this.d.core.clock() >= a.handover_pending_until);
     if (!accounts.length) return; // poll funded idle accounts for signed handover notices
+    loadRentals(this.home); // throws on a file this version can't read: nothing below may run on it and then write it back
+    const notOwner = this.notOwner();
+    if (!notOwner) this.refused.clear(); // an owner again: a later loss of the role is said again
     for (const pending of loadPending(this.home)) {
+      // A rent this machine's person asked for as an owner is sent again only while they still are one (WALK-74): kept,
+      // not dropped, so it is recovered (same key) if the role comes back.
+      if (notOwner) { this.refuseOnce(`pending:${pending.body.idempotency_key}`, "compute_rent_refused", { reason: notOwner }); continue; }
       try {
         const acc = this.account(pending.account_id);
         if (!acc) throw new Error('pending compute account unavailable');
@@ -350,10 +407,12 @@ export class ComputeService {
     await this.serial(async () => {
       const recs: Record<string, RentalRecord> = { ...loadRentals(this.home) };
       const now = this.d.core.clock();
+      // Read before the chain scan: every admission the authority had at that sync is in the scan that follows.
+      const syncedAt = this.d.authoritySyncedAt?.() ?? null;
       const nodes = invitedNodes(this.d.core);
       for (const [id, rec] of Object.entries(recs)) {
         if (rec.closed) continue;
-        recs[id] = await this.settle(id, rec, byId.get(id), nodes, now);
+        recs[id] = await this.settle(id, rec, byId.get(id), nodes, now, syncedAt);
       }
       for (const r of rentals) if (!recs[r.id] && ACTIVE_STATES.has(r.state)) recs[r.id] = { ...newRecord(r.tier, [], now), state: r.state };
       saveRentals(this.home, recs);
@@ -403,9 +462,28 @@ export class ComputeService {
     }
   }
 
+  /**
+   * Why this machine may no longer start rented machines, or null (WALK-74): renting is an owner's, so a queued rental
+   * (or a pending rent) asked for by an owner who has since been removed or made a member starts nothing.
+   */
+  private notOwner(): string | null {
+    const me = this.d.core.me?.();
+    if (!me) return "this machine is no longer an admitted member of the team, so its rentals are not started";
+    return me.role === "owner" ? null : `@${me.handle} is no longer a team owner (renting compute is an owner's), so this machine's rentals are not started`;
+  }
+
+  private refuseOnce(key: string, event: string, fields: Record<string, unknown>): void {
+    if (this.refused.has(key)) return;
+    if (this.refused.size >= 1024) this.refused.clear();
+    this.refused.add(key);
+    this.d.log.warn(event, fields);
+  }
+
   private async supplyCode(acc: StoredAccount, r: RentalView): Promise<void> {
     const handle = this.d.core.myHandle();
-    if (!handle) return;
+    const notOwner = this.notOwner();
+    // The rental waits on the site for a code: it is left there (never started here) and said once in the log.
+    if (!handle || notOwner) { this.refuseOnce(`rental:${r.id}`, "compute_start_refused", { rental: r.id, reason: notOwner ?? "this machine is not in the team" }); return; }
     const inv = await this.mint(handle);
     await this.record([r], { [r.id]: 0 }, [inv]);
     try {
@@ -418,21 +496,55 @@ export class ComputeService {
     }
   }
 
-  /** One record against the site's view: the node it became, and its revocation once it ended. */
-  private async settle(id: string, rec: RentalRecord, site: RentalView | undefined, nodes: ReadonlyMap<string, string>, now: number): Promise<RentalRecord> {
+  /**
+   * One record against the site's view: the node it became, and its revocation once it ended. The record is closed only
+   * when the roster confirms the machine revoked (a revocation that is merely queued, or refused, keeps it open and is
+   * tried again every round: the machine is still admitted) or, for a rental whose machine never shows up on the team, once
+   * its last code can no longer be used AND this daemon has since synced with the roster authority (a daemon that was
+   * asleep or cut off during the rental has not received the admission yet, and must not close the record before it does).
+   */
+  private async settle(id: string, rec: RentalRecord, site: RentalView | undefined, nodes: ReadonlyMap<string, string>, now: number, syncedAt: number | null): Promise<RentalRecord> {
     const state = site?.state ?? rec.state;
     const ended = state === "ended" || state === "failed" || (!site && rec.state !== "unknown");
     const node = rec.node_id ?? nodeForInvites(nodes, rec.invite_ids);
     const endedAt = ended ? (rec.ended_at ?? site?.ended_at ?? now) : null;
     let next: RentalRecord = { ...rec, state: ended && !site ? "ended" : state, node_id: node, ended_at: endedAt };
     if (!ended) return next;
-    if (node && !rec.revoked) {
-      const out = await revokeRentedNode(this.d, node);
-      this.d.log.info("compute_node_revoked", { rental: id, node, outcome: out });
-      next = { ...next, revoked: out !== "unknown_node" };
-    }
-    // Done once revoked; else watched until its last code can no longer be used (a late join is still revoked).
-    const watchOver = endedAt !== null && now - endedAt > REVOKE_WATCH_MS;
-    return next.revoked || watchOver ? { ...next, closed: true } : next;
+    if (node && !rec.revoked) next = await this.revokeEnded(id, node, next, now);
+    // A machine still admitted (queued or refused) is never given up on. One that isn't on the roster, or never joined, is
+    // watched until its last code can no longer be used (a late join is still revoked), and then until this daemon has
+    // synced with the authority after that moment.
+    const lastCodeUsable = (endedAt ?? now) + REVOKE_WATCH_MS;
+    const watchDone = now > lastCodeUsable && syncedAt !== null && syncedAt > lastCodeUsable;
+    return next.revoked || (watchDone && !next.revoke) ? { ...next, closed: true } : next;
+  }
+
+  /** Asks for the ended rental's machine to be revoked and records what the roster says; see RevokeOutcome. */
+  private async revokeEnded(id: string, node: string, rec: RentalRecord, now: number): Promise<RentalRecord> {
+    const prev = rec.revoke;
+    // Not sent again while the authority's accepted request is on its way here, or while a refusal is backing off; the
+    // roster is still checked every round, so a revocation done meanwhile (by an owner) is seen at once.
+    const hold = prev !== undefined && (prev.state === "refused" ? (prev.retry_at ?? 0) > now
+      : prev.accepted_at !== undefined && now - prev.accepted_at < ACCEPTED_WAIT_MS);
+    const { outcome, reason, accepted } = await revokeRentedNode(this.d, node, hold);
+    if (outcome === "held") return rec;
+    const attempts = (prev?.state === "refused" ? prev.attempts ?? 0 : 0) + 1;
+    const revoke = outcome === "refused"
+      ? { state: "refused" as const, reason, attempts, retry_at: now + Math.min(POLL_EVERY_MS * 2 ** (attempts - 1), REFUSED_RETRY_MAX_MS) }
+      : outcome === "queued" ? { state: "pending" as const, ...(accepted ? { accepted_at: now } : {}) } : undefined;
+    // Rounds repeat while it waits: log a queued or refused revocation when it first happens or changes, not every round.
+    const repeat = revoke !== undefined && prev?.state === revoke.state && prev.reason === revoke.reason;
+    if (!repeat) this.d.log.info("compute_node_revoked", { rental: id, node, outcome, ...(reason ? { reason } : {}) });
+    if (revoke?.state === "refused") this.alertRefused(id, node, reason ?? "refused");
+    const { revoke: _was, ...rest } = rec;
+    return { ...rest, revoked: revocationConfirmed(outcome), ...(revoke ? { revoke } : {}) };
+  }
+
+  /** One #general line per refused rental (the owners' record of why the machine is still on the team); retried until posted. */
+  private alertRefused(id: string, node: string, reason: string): void {
+    const marker = `compute-revoke-refused:${id}`;
+    if (this.d.core.store.getMeta(marker)) return;
+    const text = `A rented machine (rental ${id}, node ${node}) is still on the team after its rental ended and could not be removed automatically: ${reason}.`;
+    if (postAudit(this.d.core, text)) this.d.core.store.setMeta(marker, "1");
   }
 }

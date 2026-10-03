@@ -1,0 +1,47 @@
+[
+ {
+  "_id": "688e38419e09af7dc4aa07c9",
+  "id": "ggml-org/gpt-oss-120b-GGUF",
+  "downloads": 150319
+ },
+ {
+  "_id": "68923b51e5822b89fab7a1e7",
+  "id": "unsloth/gpt-oss-120b-GGUF",
+  "downloads": 69074
+ },
+ {
+  "_id": "68923ffa3dd49eda73cdc9e9",
+  "id": "lmstudio-community/gpt-oss-120b-GGUF",
+  "downloads": 21742
+ },
+ {
+  "_id": "698f83b861b2cd203fbd8d26",
+  "id": "HauhauCS/GPTOSS-120B-Uncensored-HauhauCS-Aggressive",
+  "downloads": 11864
+ },
+ {
+  "_id": "6895f1c4b8cf7290c86f11d4",
+  "id": "bartowski/openai_gpt-oss-120b-GGUF",
+  "downloads": 8735
+ },
+ {
+  "_id": "68924240b7bf2726abd25700",
+  "id": "DevQuasar/openai.gpt-oss-120b-GGUF",
+  "downloads": 1140
+ },
+ {
+  "_id": "68a468114331a559b29cef78",
+  "id": "tripolskypetr/gpt-oss-120b",
+  "downloads": 688
+ },
+ {
+  "_id": "6a7013a989beb4ee925a7eac",
+  "id": "Myric/gpt-oss-78B-GGUF",
+  "downloads": 652
+ },
+ {
+  "_id": "689248d4bc880f2f7653aa1b",
+  "id": "bartowski/openai_gpt-oss-120b-GGUF-MXFP4-Experimental",
+  "downloads": 284
+ }
+]

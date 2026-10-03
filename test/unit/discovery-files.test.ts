@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DiscoveryFiles, discoveryWorkerSpec } from "../../src/daemon/discovery-files.ts";
+import { DiscoveryFiles, discoveryWorkerSpec, LOOKUP_FAILED } from "../../src/daemon/discovery-files.ts";
 
 test("source checkout resolves the discovery worker next to its client", () => {
   expect(discoveryWorkerSpec()).toEndWith("/src/daemon/discovery-files-worker.ts");
@@ -17,14 +17,14 @@ test("a failing discovery worker backs off and warns once", async () => {
     expect(workers).toHaveLength(1);
     const first = files.openFile("/missing", Date.now() + 500);
     workers[0]!.onerror?.({} as ErrorEvent);
-    expect(await first).toBeNull();
-    for (let i = 0; i < 5; i++) expect(await files.openFile("/missing", Date.now() + 500)).toBeNull();
+    expect(await first).toBe(LOOKUP_FAILED);
+    for (let i = 0; i < 5; i++) expect(await files.openFile("/missing", Date.now() + 500)).toBe(LOOKUP_FAILED);
     expect(workers).toHaveLength(1);
     now += 100;
     const second = files.openFile("/missing", Date.now() + 500);
     expect(workers).toHaveLength(2);
     workers[1]!.onerror?.({} as ErrorEvent);
-    expect(await second).toBeNull();
+    expect(await second).toBe(LOOKUP_FAILED);
     expect(warnings).toEqual(["agent_discovery_worker_unavailable"]);
   } finally { files.close(); }
 });
@@ -63,7 +63,7 @@ test("a silent worker times out at startup and expired calls leave no queued IDs
   const workers: FakeWorker[] = [];
   const warnings: string[] = [];
   const files = new DiscoveryFiles(false, { warn: (message) => { warnings.push(message); }, info: () => {} }, {
-    retryBaseMs: 20,
+    retryBaseMs: 20, startupTimeoutMs: 500,
     spawn: () => { const worker = new FakeWorker(); workers.push(worker); return worker as unknown as Worker; },
   });
   try {
@@ -85,7 +85,7 @@ test("a worker that never acknowledges policy is replaced without a queued call"
   const workers: FakeWorker[] = [];
   const warnings: string[] = [];
   const files = new DiscoveryFiles(false, { warn: (message) => { warnings.push(message); }, info: () => {} }, {
-    retryBaseMs: 20,
+    retryBaseMs: 20, startupTimeoutMs: 500,
     spawn: () => { const worker = new FakeWorker(); workers.push(worker); return worker as unknown as Worker; },
   });
   try {

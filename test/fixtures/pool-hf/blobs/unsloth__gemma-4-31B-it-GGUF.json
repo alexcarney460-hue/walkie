@@ -1,0 +1,83 @@
+{
+ "_id": "69cd2e52ea37eb5eb635f98a",
+ "id": "unsloth/gemma-4-31B-it-GGUF",
+ "sha": "c1ac76e99d5513b141e8adde7288b85c3f9c32ec",
+ "downloads": 331551,
+ "siblings": [
+  {
+   "rfilename": "BF16/gemma-4-31B-it-BF16-00001-of-00002.gguf",
+   "blobId": "40a0285dbd07e96695d231214a4795fb46992178",
+   "size": 49950156960,
+   "lfs": {
+    "sha256": "9aa27a4f71ce16ed6edda262b517e34d4301fd6506be773c0004eb2e021d4e14",
+    "size": 49950156960,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/gemma-4-31B-it-BF16-00002-of-00002.gguf",
+   "blobId": "7c5a0e522ada1879aa987c3ee7aec30e845ed93e",
+   "size": 11463033568,
+   "lfs": {
+    "sha256": "eca9083855ec546e8cbad372e4348e7f9a118a4925fb108052621252dcb43504",
+    "size": 11463033568,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "MTP/mtp-gemma-4-31B-it-BF16.gguf",
+   "blobId": "b2d470b6b23b6dc1bc3f65c21ad083abecf098ed",
+   "size": 954843264,
+   "lfs": {
+    "sha256": "8e6211a54648eca5af909bddf9331b447203b1a7febae6831491367afb61da7f",
+    "size": 954843264,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "MTP/mtp-gemma-4-31B-it-F16.gguf",
+   "blobId": "cac3c3ee1f756f23f55d6bb2469ee834a3d3ad19",
+   "size": 954843264,
+   "lfs": {
+    "sha256": "c19d08440ed71bc0fb57b8d09f5eef925c13ad19b2bdbb6e7784e75740e1b3ad",
+    "size": 954843264,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "MTP/mtp-gemma-4-31B-it-Q8_0.gguf",
+   "blobId": "c10e13b1e16c4e1c05856ec97532d595e84e77a6",
+   "size": 514687104,
+   "lfs": {
+    "sha256": "5ae8b0117bed601e8924c6305bd5b0585de361d51f0e77091bcb4252cf1f27de",
+    "size": 514687104,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "config.json",
+   "blobId": "67a81f9b6148f54e34ef04cb5ecd5e4c3d3ee493",
+   "size": 4702
+  },
+  {
+   "rfilename": "gemma-4-31B-it-Q4_K_M.gguf",
+   "blobId": "fecb016a5bc0ffac885a967f8e673f4973b31f3b",
+   "size": 18323733440,
+   "lfs": {
+    "sha256": "38bd64c852c4b460434cc7162fa9bdcf242faf86502581a754cb72956bb17f84",
+    "size": 18323733440,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gemma-4-31B-it-Q8_0.gguf",
+   "blobId": "eb50693e866f82e3775620ba2556b8d3bc12ac9e",
+   "size": 32635677632,
+   "lfs": {
+    "sha256": "d5808e5874e660a85ab45b2da00c9e3b4a003621249a333772232d1a703e4d67",
+    "size": 32635677632,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

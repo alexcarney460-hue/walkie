@@ -32,8 +32,11 @@ export interface ProcessProvider {
   envNames?(pids: readonly number[], names: readonly string[]): Promise<Map<number, string[]>>;
   /** The process's working directory. */
   cwd(pid: number): Promise<string | undefined>;
-  /** Paths of the files the process holds open. */
-  openFiles(pid: number): Promise<string[]>;
+  /**
+   * Paths of the files the process holds open. null: the lookup got no answer (the command timed out, its output was over the
+   * cap, it could not start, or /proc/<pid>/fd could not be read); [] is a real answer, "holds nothing open".
+   */
+  openFiles(pid: number): Promise<string[] | null>;
   /**
    * Claude Code's own record of a running session (<config dir>/sessions/<pid>.json, the config dir being the
    * session's CLAUDE_CONFIG_DIR, default ~/.claude): its session id and start.
@@ -275,18 +278,16 @@ export class SystemProcessProvider implements ProcessProvider {
     return line ? line.slice(1) : undefined;
   }
 
-  async openFiles(pid: number): Promise<string[]> {
+  async openFiles(pid: number): Promise<string[] | null> {
     if (this.linux) {
-      try {
-        const fds = await readdir(`/proc/${pid}/fd`);
-        const paths = await Promise.all(fds.map(async (fd) => readlink(`/proc/${pid}/fd/${fd}`).catch(() => null)));
-        return paths.filter((path): path is string => path !== null);
-      } catch {
-        return [];
-      }
+      let fds: string[];
+      try { fds = await readdir(`/proc/${pid}/fd`); } catch { return null; }
+      const paths = await Promise.all(fds.map(async (fd) => readlink(`/proc/${pid}/fd/${fd}`).catch(() => null)));
+      return paths.filter((path): path is string => path !== null);
     }
     const out = await runBounded(["lsof", "-a", "-p", String(pid), "-Fn"]);
-    return (out ?? "").split("\n").filter((l) => l.startsWith("n/")).map((l) => l.slice(1));
+    if (out === null) return null;
+    return out.split("\n").filter((l) => l.startsWith("n/")).map((l) => l.slice(1));
   }
 
   async claudeSession(pid: number, configDir?: string): Promise<{ sessionId: string; startedAt?: number } | undefined> {

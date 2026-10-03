@@ -1,0 +1,68 @@
+{
+ "_id": "680f7b70e445a4be6af508b2",
+ "id": "bartowski/Qwen_Qwen3-8B-GGUF",
+ "sha": "0b69f75b7472688e6808490aa2b85efdb81b5ce7",
+ "downloads": 45917,
+ "siblings": [
+  {
+   "rfilename": "Qwen_Qwen3-8B-IQ4_XS.gguf",
+   "blobId": "7808d1248f9aef85074cd1540e0a433cf591f6f4",
+   "size": 4561839648,
+   "lfs": {
+    "sha256": "0f69fe02ca9764c93bcc12ac96509bee53488114d6a7fe47764f80990c28751a",
+    "size": 4561839648,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3-8B-Q4_K_M.gguf",
+   "blobId": "3ed7b3f0c5367f485369de354755cf7d9d254e88",
+   "size": 5027784224,
+   "lfs": {
+    "sha256": "54fffa050078e984116639c83dfb64b5aa6d4cd474e018b076777c632bbccccd",
+    "size": 5027784224,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3-8B-Q5_K_M.gguf",
+   "blobId": "e60b767587ae5a4d04f45fd4a0c881f059a71d50",
+   "size": 5851112992,
+   "lfs": {
+    "sha256": "fa45032e10b515a10374426bee3a41d5340aa78b67f0bed503469479a9772d9b",
+    "size": 5851112992,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3-8B-Q6_K.gguf",
+   "blobId": "07f4ec26562503ac7673b78617690316b799407b",
+   "size": 6725899808,
+   "lfs": {
+    "sha256": "69a45d3c366bab1736b201fdb21eb9d58160999a0f330a79d2c096f50de8985d",
+    "size": 6725899808,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3-8B-Q8_0.gguf",
+   "blobId": "e198b45c8d9e946a0b30ee88ade1723e0b05f84b",
+   "size": 8709518880,
+   "lfs": {
+    "sha256": "edbd7ae01df991a2d4061e61451ad3d6829d8ca19f7cc846f7177499ac280c33",
+    "size": 8709518880,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3-8B-bf16.gguf",
+   "blobId": "b730d0478b0bdfce2b5c8de466f9e651515a8774",
+   "size": 16388044064,
+   "lfs": {
+    "sha256": "3eaf8da180bdfef9b16b22c4a9460872e8dcaaf315ee7e29413c9f8baa5fe6b8",
+    "size": 16388044064,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

@@ -114,7 +114,7 @@ export interface RunGuard {
 export async function runAdminArgv(
   core: Core, argv: readonly string[], actor: string, notify: string | null, timeoutS: number, guard: RunGuard = {},
 ): Promise<RunOutcome> {
-  const run = beginRun(core, { actor, notify, callerNode: guard.callerNode, callerHandle: guard.callerHandle });
+  const run = beginRun(core, { actor, notify, callerNode: guard.callerNode, callerHandle: guard.callerHandle, ...(guard.authorized ? { authorized: guard.authorized } : {}) });
   try {
     const child = Bun.spawn([...walkieArgv(), ...argv], { stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env: runEnv(core, run.token) });
     const group = (sig: "SIGTERM" | "SIGKILL") => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* gone */ } } };

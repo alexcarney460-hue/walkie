@@ -3,7 +3,7 @@
 // the runner's framed stdout back into the runtime's lines, its readiness, exit code and post-run outcome, and
 // controls the runtime's process group through it (the daemon can't signal another user's processes).
 import { stderrDiagnostic } from "../orchestrator/process.ts";
-import { RUNNER_MAX_BUNDLE, RUNNER_PROTOCOL, type RunnerSpec } from "./runner.ts";
+import { RUNNER_MAX_BUNDLE, RUNNER_PROTOCOL, type RunnerLogin, type RunnerSpec } from "./runner.ts";
 import { MAX_RESULT_FILE } from "../../protocol/seats.ts";
 import type { AdminResult } from "./admin.ts";
 import type { UidOp } from "./runner-uid.ts";
@@ -37,6 +37,17 @@ export class RunnerChild<S> {
   private stderrCut = false;
   private closed = false;
   private resolveReady: (r: RunnerReady | null) => void = () => undefined;
+  private resolvePrepared: (ok: boolean) => void = () => undefined;
+  private readonly gated: boolean;
+  /**
+   * A gated run (spec.gate): true once the runner says it is prepared and waits for `go`; false when it failed, was
+   * stopped or ended first, or started its runtime without waiting (`ungated`: an installed runner older than this
+   * Walkie, which got no login). Always true at once for an ungated spec.
+   */
+  readonly prepared: Promise<boolean>;
+  /** The runner started its runtime without the `prepared` a gated spec asks for: an older installed copy. */
+  ungated = false;
+  private saidPrepared = false;
   private resolveExit: (code: number | null) => void = () => undefined;
   private resolveOutcome: (o: RunnerOutcome | null) => void = () => undefined;
   /** The runtime has started (its group's leader pid, the seat's directories), or null when the runner failed first. */
@@ -62,6 +73,9 @@ export class RunnerChild<S> {
     private readonly onSignal: (s: S) => void, private readonly parse: (line: string) => S | null,
   ) {
     this.ready = new Promise((r) => { this.resolveReady = r; });
+    this.gated = spec.gate === true;
+    this.prepared = new Promise((r) => { this.resolvePrepared = r; });
+    if (!this.gated) this.resolvePrepared(true);
     this.exited = new Promise((r) => { this.resolveExit = r; });
     this.outcome = new Promise((r) => { this.resolveOutcome = r; });
     // sudo gets a minimal environment (it resets it anyway); everything the seat needs is in the spec.
@@ -85,6 +99,7 @@ export class RunnerChild<S> {
       await Bun.sleep(0);
       this.closed = true;
       if (!this.reportedExit && this.runtimePid !== null) this.lost = true;
+      this.resolvePrepared(false);
       this.resolveReady(null);
       this.resolveExit(null);
       this.resolveOutcome(null);
@@ -129,6 +144,16 @@ export class RunnerChild<S> {
     } catch { /* the runner is gone */ }
   }
 
+  /** A gated run's go-ahead with its login (one line; nothing is sent once the runner is gone). */
+  go(login: RunnerLogin): void {
+    if (this.closed || !this.gated) return;
+    try {
+      const sink = this.proc.stdin as import("bun").FileSink;
+      sink.write(`go ${JSON.stringify(login)}\n`);
+      sink.flush();
+    } catch { /* the runner is gone */ }
+  }
+
   /** Stops the runtime's group (SIGCONT + SIGTERM, then SIGKILL) and waits for the runner to report and exit. */
   async close(): Promise<void> {
     if (this.closed) return;
@@ -150,8 +175,11 @@ export class RunnerChild<S> {
   }
 
   private onRunner(msg: Record<string, unknown>): void {
+    if (msg.prepared === true) { this.saidPrepared = true; this.resolvePrepared(true); return; }
     const ready = msg.ready as Record<string, unknown> | undefined;
     if (ready && typeof ready.dir === "string" && typeof ready.cwd === "string" && Number.isInteger(ready.pid)) {
+      // A gated spec's runner that never said `prepared` did not wait for the go-ahead (an older installed copy).
+      if (this.gated && !this.saidPrepared) { this.ungated = true; this.resolvePrepared(false); }
       this.runtimePid = ready.pid as number;
       this.resolveReady({ dir: ready.dir, cwd: ready.cwd, base: typeof ready.base === "string" ? ready.base : null, pid: ready.pid as number });
       return;
@@ -178,7 +206,7 @@ export class RunnerChild<S> {
       });
       return;
     }
-    if (typeof msg.error === "string") { this.error = msg.error.slice(0, 300); this.resolveReady(null); }
+    if (typeof msg.error === "string") { this.error = msg.error.slice(0, 300); this.resolvePrepared(false); this.resolveReady(null); }
   }
 
   private async readStdout(): Promise<void> {

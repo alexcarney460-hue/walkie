@@ -1,8 +1,9 @@
 // WALKIE-POOL-2 Part A: "with all our machines together": the whole team's compute combined, wherever the machines
 // are, the head with the smallest total round trip, and what this machine can start now (sharing machines only).
 import { describe, expect, test } from "bun:test";
-import { canServe, rttBetween, suggestCombined, UNMEASURED_RTT_MS } from "../../src/pool/combined.ts";
-import { HOP_OVERHEAD_MS, RPC_ROUND_TRIPS_PER_TOKEN, EFFICIENCY, suggestTeam } from "../../src/pool/suggest.ts";
+import { canServe, rttBetween, UNMEASURED_RTT_MS } from "../../src/pool/combined.ts";
+import { suggestCombined, suggestTeam } from "../helpers/pool-legacy.ts";
+import { HOP_OVERHEAD_MS, RPC_ROUND_TRIPS_PER_TOKEN, EFFICIENCY } from "../../src/pool/suggest.ts";
 import type { GroupInput } from "../../src/pool/group.ts";
 import type { MachineAccel, MachineStats } from "../../src/protocol/machine-stats.ts";
 import type { PoolShare } from "../../src/protocol/pool.ts";
@@ -23,11 +24,11 @@ const nid = (h: string): string => h.padEnd(16, "0").slice(0, 16);
 /** The real fleet's shape: five machines at four sites, 20-40 ms apart over Tailscale / Walkie Direct. */
 function fleet(pool: Partial<Record<string, PoolShare>> = {}): GroupInput[] {
   return [
-    node("a1ex", 16, 9, apple("Apple M5"), { self: true, rtt_ms: 0, pool: pool.a1ex ?? { share: false, cap: null, runtime: false, busy: false } }),
-    node("b0b0", 36, 14, apple("Apple M3 Pro"), { rtt_ms: 24, ...(pool.b0b0 ? { pool: pool.b0b0 } : {}) }),
-    node("c0ffee", 64, 12, { chip: "AMD Ryzen 9 7950X", unified: false, gpu_limit: null, gpus: [{ name: "NVIDIA GeForce RTX 4090", vram: 24 * GiB }] }, { rtt_ms: 31, ...(pool.c0ffee ? { pool: pool.c0ffee } : {}) }, { gpu_free: [22 * GiB] }),
+    node("a1ex", 16, 9, apple("Apple M5"), { self: true, rtt_ms: 0, pool: pool.a1ex ?? { share: false, cap: null, runtime: false, busy: false } }, { sys: { os: "darwin", arch: "arm64", cpus: 8, load1: 0 } }),
+    node("b0b0", 36, 14, apple("Apple M3 Pro"), { rtt_ms: 24, ...(pool.b0b0 ? { pool: pool.b0b0 } : {}) }, { sys: { os: "darwin", arch: "arm64", cpus: 12, load1: 0 } }),
+    node("c0ffee", 64, 12, { chip: "AMD Ryzen 9 7950X", unified: false, gpu_limit: null, gpus: [{ name: "NVIDIA GeForce RTX 4090", vram: 24 * GiB }] }, { rtt_ms: 31, ...(pool.c0ffee ? { pool: pool.c0ffee } : {}) }, { gpu_free: [22 * GiB], sys: { os: "linux", arch: "x64", cpus: 16, load1: 0 } }),
     node("d00d", 16, 7, { chip: "Intel(R) Core(TM) Ultra 7 155H", unified: false, gpu_limit: null, gpus: [] }, { rtt_ms: 38, ...(pool.d00d ? { pool: pool.d00d } : {}) }),
-    node("e1e1", 24, 10, apple("Apple M4"), { rtt_ms: 27, ...(pool.e1e1 ? { pool: pool.e1e1 } : {}) }),
+    node("e1e1", 24, 10, apple("Apple M4"), { rtt_ms: 27, ...(pool.e1e1 ? { pool: pool.e1e1 } : {}) }, { sys: { os: "darwin", arch: "arm64", cpus: 8, load1: 0 } }),
   ];
 }
 

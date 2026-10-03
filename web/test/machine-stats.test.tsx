@@ -69,6 +69,24 @@ test("machine row shows process count, load averages, CPU busy and free memory",
   expect(out).toContain("Busy · 22 agents · load 146.0/296.0/373.0 · CPU 91% · 12.0 used, 4.0 GB free");
 });
 
+test("a quiet machine reads Idle; with its process census stale and no agent counts it reads Load unknown, never Idle", () => {
+  const quiet = { at: Date.now(), mem: { total: 16 * GB, used: 4 * GB, swap_used: 0, pressure: "normal" as const }, temp_c: 40,
+    sys: { os: "darwin" as const, arch: "arm64" as const, cpus: 14, load1: 0.2, load5: 0.2, load15: 0.2, cpu_busy_pct: 3 } };
+  const idle = html(node({ stats: quiet }));
+  expect(idle).toContain("Idle · load 0.2/0.2/0.2 · CPU 3%");
+  const staleDiscovery = { incomplete: true, unreported: 0, stale: true };
+  const unknown = html(node({ stats: { ...quiet, discovery: staleDiscovery } }));
+  expect(unknown).toContain("Load unknown · load 0.2/0.2/0.2 · CPU 3%");
+  expect(unknown).not.toContain("Idle");
+  expect(unknown).toContain(">discovery stale<"); // the chip beside it says why
+  // No load figures at all, only a stale census: the label still appears (it used to vanish with no sys and no counts).
+  const bare = html(node({ stats: { at: Date.now(), mem: null, temp_c: null, discovery: staleDiscovery } }));
+  expect(bare).toContain('data-testid="machine-load">Load unknown');
+  // Held counts (the census is stale but younger than five minutes) are a measurement: Busy stays Busy.
+  const held = html(node({ stats: { ...quiet, discovery: staleDiscovery, agent_processes: [{ name: "codex" as const, count: 20 }] } }));
+  expect(held).toContain("Busy · 20 agents");
+});
+
 test("WALKIE-TEMP-WSL: the temperature shows its source; a GPU fallback is labelled GPU; Windows zones in the tooltip", () => {
   const cpu = html(node({ stats: { at: 1, mem: null, temp_c: 86.1, temp_src: "cpu", temp_zones: [{ name: "TZ00", c: 27.9 }, { name: "THRM", c: 86.1 }], gpu_temp: [61] } }));
   expect(cpu).toContain('86 °C <span class="ms-src" data-testid="temp-src">CPU</span>');

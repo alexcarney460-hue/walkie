@@ -22,13 +22,14 @@ let mod: {
   StaticStore: (p: { state: State; children: ReactNode }) => ReactNode; initialState: State;
   reducer: typeof import("../src/state/reducer.ts").reducer;
   buildActivity: typeof import("../src/views/mission/activity-items.ts").buildActivity;
+  useNow: typeof import("../src/lib/time.ts").useNow;
 };
 beforeAll(async () => {
-  const [mc, fr, st, rd, ai] = await Promise.all([
+  const [mc, fr, st, rd, ai, tm] = await Promise.all([
     import("../src/views/mission/MissionControl.tsx"), import("../src/views/FirstRun.tsx"), import("../src/state/store.tsx"),
-    import("../src/state/reducer.ts"), import("../src/views/mission/activity-items.ts"),
+    import("../src/state/reducer.ts"), import("../src/views/mission/activity-items.ts"), import("../src/lib/time.ts"),
   ]);
-  mod = { MissionControl: mc.MissionControl, SignedOut: fr.SignedOut, BootError: fr.BootError, StaticStore: st.StaticStore, initialState: rd.initialState, reducer: rd.reducer, buildActivity: ai.buildActivity };
+  mod = { MissionControl: mc.MissionControl, SignedOut: fr.SignedOut, BootError: fr.BootError, StaticStore: st.StaticStore, initialState: rd.initialState, reducer: rd.reducer, buildActivity: ai.buildActivity, useNow: tm.useNow };
 });
 
 const NOW = Date.now();
@@ -71,11 +72,22 @@ test("Mission Control order: working agents (with a live count per machine), the
   expect(out).not.toContain("acct-mini");
 });
 
+/**
+ * The dashboard's shared clock as a page reads it (one render of the hook). It moves only while something is subscribed, so in a
+ * process that has run other tests for a while it is behind the wall clock; a test that asks "how long has this been true" has to
+ * measure from the clock the page uses, not from Date.now(), or its answer depends on how long the suite has been running.
+ */
+function sharedNow(): number {
+  const Probe = () => <>{mod.useNow()}</>;
+  return Number(renderToStaticMarkup(<Probe />));
+}
+
 test("cards show how long the current line has been true ('Running a command · 8m 03s'), not the last update", () => {
   go("#/mission");
-  const out = render(state({ agents: [agent("atlas", "seat-1", "working", { updated_at: NOW - 5_000, activity_since: NOW - (8 * 60 + 3) * 1000, state_since: NOW - 40 * MIN })] }), <mod.MissionControl />);
-  expect(out).toMatch(/data-testid="time-in-state"[^>]*>.*8m 0\ds/); // the shared 1 s clock may lag the test by a tick
-  expect(out).toMatch(/Working for (39m 5\ds|40m)/);
+  const base = sharedNow();
+  const out = render(state({ agents: [agent("atlas", "seat-1", "working", { updated_at: base - 5_000, activity_since: base - (8 * 60 + 3) * 1000, state_since: base - 40 * MIN })] }), <mod.MissionControl />);
+  expect(out).toMatch(/data-testid="time-in-state"[^>]*>.*8m 03s/); // exactly, from the page's own clock: no tolerance for a lagging clock is needed
+  expect(out).toMatch(/Working for 40m 00s/);
 });
 
 test("AgentSince: a re-posted status keeps its start; a new line or state starts again; a change without a status starts now", () => {

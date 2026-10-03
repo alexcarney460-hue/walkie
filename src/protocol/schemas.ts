@@ -498,6 +498,14 @@ export interface NodeView {
    * machines that serve both, and `online` is what they report).
    */
   via?: TransportKind | "relay";
+  /**
+   * v0.2 mixed teams, a peer only: present when this machine shares no transport with it (`via` is "relay"). It shows
+   * online, and its agents show here, only while a machine that reaches it vouches for it: `vouched` false means no
+   * machine does now, so it shows offline (`online` is false too) and its agents are hidden on this machine. Absent for
+   * an observer's machine (an observer publishes no agent status, so nothing of theirs is hidden), and for every peer
+   * while this machine's own Walkie Direct endpoint is not up but should be (starting, or failing to bind).
+   */
+  unreached?: { vouched: boolean };
   online: boolean; last_seen: number | null; rtt_ms: number | null; self: boolean;
   /** This node is the team's roster authority (PROTOCOL §2). */
   authority?: boolean;

@@ -1,0 +1,32 @@
+[
+ {
+  "_id": "6a1378cde2d04d7730e17859",
+  "id": "LiquidAI/LFM2.5-8B-A1B-GGUF",
+  "downloads": 529071
+ },
+ {
+  "_id": "6a1958280fdefd634d109827",
+  "id": "unsloth/LFM2.5-8B-A1B-GGUF",
+  "downloads": 20246
+ },
+ {
+  "_id": "6a1a3e2a68425ef2b9201cd7",
+  "id": "gaston-parravicini/LFM2.5-8B-A1B-Uncensored-Gaston-GGUF",
+  "downloads": 10405
+ },
+ {
+  "_id": "6a18d460e6af9733dfed79eb",
+  "id": "mudler/LFM2.5-8B-A1B-APEX-GGUF",
+  "downloads": 3354
+ },
+ {
+  "_id": "6aabd0f283a80aecb6e47feb",
+  "id": "virtuanista/LFM2.5-8B-A1B-Uncensored-GGUF",
+  "downloads": 1840
+ },
+ {
+  "_id": "6a18909aff69506d7e18ac68",
+  "id": "RemySkye/LFM2.5-8B-A1B-i1-GGUF",
+  "downloads": 1429
+ }
+]

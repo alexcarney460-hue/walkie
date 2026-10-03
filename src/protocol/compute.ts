@@ -99,7 +99,9 @@ export type RentalView = z.infer<typeof RentalView>;
 
 export const ComputeState = z.object({
   handover_notice: z.string().max(4096).optional(),
-  alerts: z.array(z.enum(["tick_stale", "termination_delayed"])).optional(),
+  /** The site's alerts, plus (added by the owner's own daemon, never by the site) a rented machine still on the team after its rental ended. */
+  alerts: z.array(z.enum(["tick_stale", "termination_delayed", "revocation_pending", "revocation_refused",
+    "revocation_waiting_for_authority_sync", "compute_records_unreadable"])).optional(),
   account_id: z.string().regex(/^ca_[0-9a-f]{16}$/),
   team_id: z.string().regex(/^[0-9a-f]{16}$/),
   status: z.enum(["active", "frozen"]),
@@ -113,6 +115,16 @@ export const ComputeState = z.object({
     balance_micros: Micros, burn_per_hour_micros: Micros, hours_left: z.number().nullable() }).strict()).optional(),
 }).strict();
 export type ComputeState = z.infer<typeof ComputeState>;
+
+/** What owners are told for each alert (the dashboard's Machines list and `walkie compute list`). */
+export const COMPUTE_ALERT_TEXT: Readonly<Record<NonNullable<ComputeState["alerts"]>[number], string>> = {
+  tick_stale: "Compute monitoring is delayed. New rentals are paused.",
+  termination_delayed: "Shutdown is delayed. Billing continues until deletion is confirmed.",
+  revocation_pending: "A rented machine is still on the team after its rental ended. Walkie removes it as soon as the team's roster authority is reachable.",
+  revocation_refused: "A rented machine is still on the team after its rental ended and couldn't be removed automatically. The reason is posted in #general.",
+  revocation_waiting_for_authority_sync: "An ended rental can't be closed yet: this machine hasn't been able to sync with the team's roster authority since it ended, so a machine that joined late could still be on the team. Check that the authority machine is online and reachable (walkie doctor).",
+  compute_records_unreadable: "Walkie can't read its record of rented machines, so ended rentals aren't being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Walkie never overwrites it.",
+};
 
 /**
  * GET /v1/compute/state (the daemon) before this machine has a compute account (nothing rented or bought here yet):

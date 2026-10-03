@@ -1,0 +1,407 @@
+{
+ "_id": "68913539bd3d0a833438591d",
+ "id": "openai/gpt-oss-20b",
+ "downloads": 6706838,
+ "likes": 5112,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "6cee5e81ee83917806bbde320786a8fb61efebee",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "gpt_oss",
+  "text-generation",
+  "vllm",
+  "conversational",
+  "arxiv:2508.10925",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "8-bit",
+  "mxfp4",
+  "deploy:sagemaker",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/openai-gpt-oss-20b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "LiquidAI/ifstruct-v1.0",
+     "task_id": "ifstruct_v1"
+    },
+    "value": 91.95,
+    "date": "2026-06-30",
+    "source": {
+     "url": "https://www.liquid.ai/blog/ifstruct-v1.0",
+     "name": "Liquid AI \u2014 IFStruct v1.0 blog (gpt-oss-20b)"
+    }
+   },
+   "pullRequest": 263
+  },
+  {
+   "filename": ".eval_results/gpqa-diamond.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 58.5858585859,
+    "date": "2026-04-19",
+    "source": {
+     "url": "https://huggingface.co/datasets/evaleval/EEE_datastore/blob/192329fb7d6b15b7b0936a1a58ae862aa7e8ba24/flat/objects/6f/c3/6fc3630c-36f0-4ba9-9f34-3c9f73dec76a.json",
+     "name": "EvalEval"
+    },
+    "notes": "GPQA Diamond"
+   },
+   "pullRequest": 256
+  },
+  {
+   "filename": ".eval_results/mmlu_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "TIGER-Lab/MMLU-Pro",
+     "task_id": "mmlu_pro"
+    },
+    "value": 73.6,
+    "source": {
+     "url": "https://huggingface.co/datasets/evaleval/EEE_datastore/blob/192329fb7d6b15b7b0936a1a58ae862aa7e8ba24/flat/objects/ca/ef/caef6dbc-0f07-4491-9009-2b0d26dc9724.json",
+     "name": "EvalEval"
+    },
+    "date": "2026-06-30T12:49:00.000Z"
+   },
+   "pullRequest": 256
+  },
+  {
+   "filename": ".eval_results/lexam.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "LEXam-Benchmark/LEXam",
+     "task_id": "open_question"
+    },
+    "value": 32.12,
+    "source": {
+     "url": "https://lexam-benchmark.github.io/",
+     "name": "LEXam Leaderboard"
+    },
+    "date": "2026-06-02T09:57:20.000Z"
+   },
+   "pullRequest": 255
+  },
+  {
+   "filename": ".eval_results/lexam.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "LEXam-Benchmark/LEXam",
+     "task_id": "mcq_4_choices"
+    },
+    "value": 40.78,
+    "source": {
+     "url": "https://lexam-benchmark.github.io/",
+     "name": "LEXam Leaderboard"
+    },
+    "date": "2026-06-02T09:57:20.000Z"
+   },
+   "pullRequest": 255
+  },
+  {
+   "filename": ".eval_results/swe_bench_verified_medium.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 53.2,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: medium"
+   },
+   "pullRequest": 247
+  },
+  {
+   "filename": ".eval_results/swe_bench_verified_low.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 37.4,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: low"
+   },
+   "pullRequest": 246
+  },
+  {
+   "filename": ".eval_results/swe_bench_verified_high.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 60.7,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: high"
+   },
+   "pullRequest": 245
+  },
+  {
+   "filename": ".eval_results/hle_medium_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 8.8,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: medium, With tools"
+   },
+   "pullRequest": 244
+  },
+  {
+   "filename": ".eval_results/hle_medium.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 7,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: medium"
+   },
+   "pullRequest": 243
+  },
+  {
+   "filename": ".eval_results/hle_low_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 6.3,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: low, With tools"
+   },
+   "pullRequest": 242
+  },
+  {
+   "filename": ".eval_results/hle_low.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 4.2,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: low"
+   },
+   "pullRequest": 241
+  },
+  {
+   "filename": ".eval_results/hle_high_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 17.3,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: high, With tools"
+   },
+   "pullRequest": 240
+  },
+  {
+   "filename": ".eval_results/hle_high.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 10.9,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: high"
+   },
+   "pullRequest": 239
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond_medium_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 67.1,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: medium, With tools"
+   },
+   "pullRequest": 238
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond_medium.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 66,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: medium"
+   },
+   "pullRequest": 237
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond_low_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 58,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: low, With tools"
+   },
+   "pullRequest": 236
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond_low.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 56.8,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: low"
+   },
+   "pullRequest": 235
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond_high_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 74.2,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: high, With tools"
+   },
+   "pullRequest": 234
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond_high.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 71.5,
+    "date": "2025-08-05",
+    "source": {
+     "url": "https://arxiv.org/abs/2508.10925",
+     "name": "GPT-OSS Model Card",
+     "user": "SaylorTwift"
+    },
+    "notes": "Reasoning: high"
+   },
+   "pullRequest": 233
+  }
+ ],
+ "createdAt": "2025-08-04T22:33:29.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 1804459584,
+   "U8": 19110297600
+  },
+  "total": 20914757184
+ }
+}

@@ -1,0 +1,32 @@
+[
+ {
+  "_id": "685d3c0352e700d127394d36",
+  "id": "unsloth/gemma-3n-E4B-it-GGUF",
+  "downloads": 36812
+ },
+ {
+  "_id": "685da4994850f1cfef7eaaae",
+  "id": "bartowski/google_gemma-3n-E4B-it-GGUF",
+  "downloads": 2769
+ },
+ {
+  "_id": "6868cd6d621315e4225de1dc",
+  "id": "second-state/gemma-3n-E4B-it-GGUF",
+  "downloads": 1029
+ },
+ {
+  "_id": "686373ae8908adfda36685c8",
+  "id": "Sci-fi-vy/gemma-3n-E4B-it-GGUF",
+  "downloads": 823
+ },
+ {
+  "_id": "685e853ac1c01939b2f63d39",
+  "id": "tripolskypetr/gemma-3n-e4b-it",
+  "downloads": 767
+ },
+ {
+  "_id": "686608992d37b9f2fcbcc189",
+  "id": "mradermacher/gemma-3n-E4B-it-GGUF",
+  "downloads": 698
+ }
+]

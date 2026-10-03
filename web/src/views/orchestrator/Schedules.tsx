@@ -8,6 +8,9 @@ const TEMPLATES = [
   ["project-sync", "Project sync"],
   ["capacity-check", "Capacity check"],
   ["data-room-refresh", "Data room refresh"],
+  ["project-reports", "Project status reports"],
+  ["orchestration-poll", "Orchestration poll"],
+  ["card-curation", "Card curation"],
 ] as const;
 
 export function ScheduleItems({ schedules, onToggle, onRun }: { schedules: Schedule[]; onToggle: (s: Schedule) => void; onRun: (s: Schedule) => void }) {
@@ -53,7 +56,7 @@ export function SchedulesPanel() {
     if (!name.trim() || !times.length || busy) return;
     setBusy(true); setError("");
     try {
-      await api.scheduleAdd({ name: name.trim(), cron, task: template === "free-form" ? { prompt: prompt.trim() } : { template: template as "board-refresh" | "machine-onboarding" | "project-sync" | "capacity-check" | "data-room-refresh" } });
+      await api.scheduleAdd({ name: name.trim(), cron, task: template === "free-form" ? { prompt: prompt.trim() } : { template: template as typeof TEMPLATES[number][0] } });
       setName(""); setPrompt(""); await reload();
     } catch (err) { setError(friendlyError(err)); }
     finally { setBusy(false); }

@@ -7,11 +7,12 @@ import { redactSecrets } from "../../protocol/safety.ts";
 import { containsJoinCredential, containsJoinCredentialBytes } from "../../protocol/join-credential.ts";
 import type { BodyOf, Event } from "../../protocol/schemas.ts";
 import {
-  currentVersion, PIN_FETCH, PIN_INLINE_FILE, PIN_INLINE_TOTAL, ROOM_LIMITS, versionCount, roomFileView, roomOpText, roomOrder,
+  currentVersion, PIN_FETCH, PIN_INLINE_FILE, PIN_INLINE_TOTAL, ROOM_LIMITS, versionCount, roomFileView, roomOpText, roomOrder, shownTimeline,
   type ContextFile, type RoomFileDetail, type RoomFileState, type RoomFileView, type RoomVersion, type TaskContext,
 } from "../../protocol/projects/room.ts";
 import { binaryByType, looksText, scanUpload, textByType } from "../../protocol/projects/room-scan.ts";
-import { boardBodyFits, FileName, FileOp, MAX_BOARD_OP_BYTES, MIME_RE, type ProjectView } from "../../protocol/projects/schema.ts";
+import { boardBodyFits, FileName, FileOp, MAX_BOARD_OP_BYTES, MIME_RE, type ProjectView, type ScreenMetaT } from "../../protocol/projects/schema.ts";
+import { sameScreen } from "../../protocol/projects/page.ts";
 import { readBlob, sha256Hex, writeBlob } from "../blobs.ts";
 import { blobServable } from "../blob-auth.ts";
 import { HttpError } from "../http.ts";
@@ -84,7 +85,7 @@ export function fileDetail(w: WriteCtx, channel: string, ref: string): RoomFileD
   return {
     file: view(w, p.channel, f, cardIds(w, p.channel)),
     versions: f.versions.map((v) => ({ ...v, available: available(w, p.channel, v) })),
-    timeline: f.timeline,
+    timeline: shownTimeline(f.timeline),
   };
 }
 
@@ -115,6 +116,8 @@ export interface AddFile {
   file?: string;
   /** A person uploads it although the secret scan found something (the bytes are never changed). */
   allowSecrets?: boolean;
+  /** PROJECT-PAGES-1: make the file a screen of the project's status page, with these details (already validated by the caller). */
+  screen?: ScreenMetaT;
 }
 
 export interface AddResult {
@@ -171,6 +174,7 @@ export function addFile(w: WriteCtx, channel: string, bytes: Uint8Array, req: Ad
     if (available(w, p.channel, cur)) w.core.store.addProvenance(p.channel, hash);
     const extra: Record<string, unknown> = {
       ...(cardId && !target.cards.includes(cardId) ? { attach: [cardId] } : {}), ...(req.pin && !target.pinned ? { pin: true } : {}),
+      ...(req.screen && !sameScreen(target.screen, req.screen) ? { screen: req.screen } : {}),
     };
     if (Object.keys(extra).length) roomPost(w, p.channel, roomOpText(target.name, extra), { v: 1, rev: target.rev + 1, op: "file", after: target.head, ...extra }, target.id);
     const f = settle(w, p.channel, target.id);
@@ -188,9 +192,10 @@ export function addFile(w: WriteCtx, channel: string, bytes: Uint8Array, req: Ad
   const size = bytes.byteLength;
   const version = (target?.versions.length ?? 0) + 1;
   const content = { hash, size, mime };
+  const screen = req.screen && !(target && sameScreen(target.screen, req.screen)) ? { screen: req.screen } : {};
   const board = target
-    ? { v: 1, rev: target.rev + 1, op: "file", after: target.head, ...content, ...(cardId && !target.cards.includes(cardId) ? { attach: [cardId] } : {}), ...(req.pin && !target.pinned ? { pin: true } : {}) }
-    : { v: 1, rev: 0, op: "file", name, ...content, ...(req.pin ? { pin: true } : {}), ...(cardId ? { attach: [cardId] } : {}) };
+    ? { v: 1, rev: target.rev + 1, op: "file", after: target.head, ...content, ...(cardId && !target.cards.includes(cardId) ? { attach: [cardId] } : {}), ...(req.pin && !target.pinned ? { pin: true } : {}), ...screen }
+    : { v: 1, rev: 0, op: "file", name, ...content, ...(req.pin ? { pin: true } : {}), ...(cardId ? { attach: [cardId] } : {}), ...screen };
   // Validated with a placeholder share before anything is signed: a refused op must leave no share behind.
   if (!FileOp.safeParse({ ...board, share: "0000000000000000:1" }).success) throw new HttpError(400, "invalid", "this file can't be added (a field is out of range)");
   writeBlob(w.core.paths.blobs, bytes);
@@ -209,6 +214,22 @@ function settle(w: WriteCtx, channel: string, id: string): RoomFileView {
   const f = w.idx.room(channel).find((x) => x.id === id);
   if (!f) throw new HttpError(500, "internal", "the Data Room change wasn't folded");
   return view(w, channel, f, cardIds(w, channel));
+}
+
+/**
+ * PROJECT-PAGES-1: a file's screen register on the project's status page: any member's, a person or their named agent
+ * (it changes what the page shows, never the file); `null` takes the file off the page and leaves it in the room.
+ * Returns the file's view; a register that already says it is not written again.
+ */
+export function setScreen(w: WriteCtx, channel: string, ref: string, screen: ScreenMetaT | null): RoomFileView {
+  namedAgent(w);
+  const p = visibleProject(w, channel);
+  if (p.state !== "active") throw new HttpError(409, "conflict", `project ${p.name} is ${p.state}`);
+  w.idx.flushAll();
+  const f = findFile(w, p.channel, ref);
+  if (sameScreen(f.screen, screen)) return view(w, p.channel, f, cardIds(w, p.channel));
+  roomPost(w, p.channel, roomOpText(f.name, { screen }), { v: 1, rev: f.rev + 1, op: "file", after: f.head, screen }, f.id);
+  return settle(w, p.channel, f.id);
 }
 
 export interface ChangeFile {

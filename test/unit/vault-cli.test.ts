@@ -12,6 +12,8 @@ import { importClaudeLogin } from "../../src/accounts/vault/import.ts";
 import { poolNoticeLines } from "../../src/cli/commands/accounts-pool.ts";
 import type { Ctx } from "../../src/cli/context.ts";
 import { setTtyForTests, type Tty } from "../../src/cli/tty.ts";
+import { adoptRemoteRun, resetRemoteRunForTests } from "../../src/client/remote-run.ts";
+import { loadConfig } from "../../src/daemon/config.ts";
 
 const TOKEN = ("sk" + "-ant-oat01-FAKECLITOKEN0123456789abcdefghijklmnop");
 let home = "";
@@ -48,6 +50,57 @@ function ctx(pos: string[], flags: Record<string, string | true> = {}, json = fa
 }
 
 describe("people only", () => {
+  test("daemon startup uses the default for an invalid own-fleet field", () => {
+    const path = join(home, "config.json");
+    for (const value of [undefined, 0, 257, 10.5, "80", null]) {
+      writeFileSync(path, JSON.stringify({ vault_own_lease_limit: value }));
+      expect(loadConfig(path, false).vault_own_lease_limit).toBe(10);
+    }
+    writeFileSync(path, JSON.stringify({ vault_own_lease_limit: 128 }));
+    expect(loadConfig(path, false).vault_own_lease_limit).toBe(128);
+    writeFileSync(path, "{bad");
+    expect(() => loadConfig(path, false)).toThrow(/not valid JSON/);
+  });
+
+  test("remote administration cannot change the owner-local limit", async () => {
+    const path = join(home, "config.json");
+    writeFileSync(path, JSON.stringify({ vault_own_lease_limit: 10 }));
+    adoptRemoteRun({ WALKIE_ADMIN_TOKEN: "a".repeat(48), WALKIE_AGENT: "remote-admin" });
+    try {
+      await expect(vaultCommand(ctx(["lease-limit", "80"]).c, "lease-limit")).rejects.toThrow(/local to the account owner/);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ vault_own_lease_limit: 10 });
+    } finally { resetRemoteRunForTests(); }
+  });
+
+  test("own-fleet lease limit is bounded, confirmed, and preserves unrelated configuration", async () => {
+    const path = join(home, "config.json");
+    writeFileSync(path, JSON.stringify({ seats: { allow: true, max: 16 }, vault_sharing: false }));
+    setTtyForTests(scripted(["y"]));
+    const chosen = ctx(["lease-limit", "128"], {}, true);
+    expect(await vaultCommand(chosen.c, "lease-limit")).toBe(0);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seats: { allow: true, max: 16 }, vault_sharing: false, vault_own_lease_limit: 128 });
+    expect(JSON.parse(chosen.out[0]!)).toEqual({ owner_launched_seat_per_node_per_hour: 128,
+      own_person_total_per_vault_holder_per_hour: 256, other_launchers_and_older_peers_per_node_per_hour: 10 });
+    for (const value of ["0", "257", "10.5", "80oops"]) {
+      await expect(vaultCommand(ctx(["lease-limit", value]).c, "lease-limit")).rejects.toThrow(/10..256/);
+    }
+    setTtyForTests(scripted(["n"]));
+    expect(await vaultCommand(ctx(["lease-limit", "256"]).c, "lease-limit")).toBe(1);
+    expect(JSON.parse(readFileSync(path, "utf8")).vault_own_lease_limit).toBe(128);
+  });
+
+  test("own-fleet limit refuses malformed config and respects agent admin off", async () => {
+    const path = join(home, "config.json");
+    writeFileSync(path, "{bad");
+    setTtyForTests(scripted(["y"]));
+    await expect(vaultCommand(ctx(["lease-limit", "80"]).c, "lease-limit")).rejects.toThrow(/malformed/);
+    expect(readFileSync(path, "utf8")).toBe("{bad");
+    writeFileSync(path, JSON.stringify({ agent_admin: false }));
+    setTtyForTests(null);
+    await expect(vaultCommand(ctx(["lease-limit", "80"]).c, "lease-limit")).rejects.toThrow(/agent admin is off/);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ agent_admin: false });
+  });
+
   test("AGENT-ADMIN-1: an agent session (or no terminal) goes ahead as its person's agent; CODEX_HOME alone is not an agent", () => {
     const bare = { args: { pos: [], flags: new Map() } as Args };
     const noAgent = () => new Map<number, ProcRow>([[process.ppid, { ppid: 1, command: "-zsh" }], [1, { ppid: 0, command: "/sbin/launchd" }]]);
@@ -260,4 +313,3 @@ describe("RESET-CLOCK-1 / COMPANY POOL at the command line", () => {
     expect(poolNoticeLines({ policy: "company", at: 9, by: "alex" }, home).length).toBe(2); // turned on again later
   });
 });
-

@@ -1,0 +1,78 @@
+{
+ "_id": "69ccf46adde35a707bce8754",
+ "id": "ggml-org/gemma-4-E4B-it-GGUF",
+ "sha": "b8093469224f83f5c38f691eb906c380e9e63114",
+ "downloads": 1218580,
+ "siblings": [
+  {
+   "rfilename": "gemma-4-E4B-it-BF16.gguf",
+   "blobId": "38e6cdae3b9d5ddc9ff077f45e0d4ddd20605c46",
+   "size": 15053097408,
+   "lfs": {
+    "sha256": "f0669d20ec5bd5a1a0b38707e25e441f8bc1f52d8a0ef2f0168f67fd4664f5de",
+    "size": 15053097408,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gemma-4-E4B-it-Q8_0.gguf",
+   "blobId": "8179a05ff3d18be74c2d3aaaf24d369166be5de8",
+   "size": 8031242688,
+   "lfs": {
+    "sha256": "34be82b17b4942d389b9b527170c4b058027abdd32531fda063d3d97dd8ce80a",
+    "size": 8031242688,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "mmproj-gemma-4-E4B-it-BF16.gguf",
+   "blobId": "608433e06c07a16efd0a8e763a1646d2b29ebf34",
+   "size": 991552256,
+   "lfs": {
+    "sha256": "f77995e4b6a569ab8f0d1bfdb7e8da4a0fa5b9e6f309b9bf3bdb76164d75e29f",
+    "size": 991552256,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "mmproj-gemma-4-E4B-it-Q8_0.gguf",
+   "blobId": "0b22d152116dfe86e803c19b52b73e762a1f1462",
+   "size": 559874816,
+   "lfs": {
+    "sha256": "197f49a93027f9843772bd24a6a9e0be2a32a788de5a3def330e9c585d86edd1",
+    "size": 559874816,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "mtp-gemma-4-E4B-it-BF16.gguf",
+   "blobId": "1dde8f7513b949ce136888a2cfc91afb04c988a3",
+   "size": 171766880,
+   "lfs": {
+    "sha256": "5fe3a6c5ebd2f241d9f27d2529fbf023564a6ac4c3db501fa7837887f37ece77",
+    "size": 171766880,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "mtp-gemma-4-E4B-it-Q4_0.gguf",
+   "blobId": "e2472a13f825d96b8461c71eefda5b6161e7e7fa",
+   "size": 59678240,
+   "lfs": {
+    "sha256": "d19a11e4fd5019967d9296f77f4d3e139c8903909f70c3a9cf009c9af4b9b88d",
+    "size": 59678240,
+    "pointerSize": 133
+   }
+  },
+  {
+   "rfilename": "mtp-gemma-4-E4B-it-Q8_0.gguf",
+   "blobId": "8eb9266f021960aa53bfbccf4a735eff505baef4",
+   "size": 98653280,
+   "lfs": {
+    "sha256": "f38ae62962657c7a6303c49bbb147e9ae23634e911cfa532fac0818c2e18b665",
+    "size": 98653280,
+    "pointerSize": 133
+   }
+  }
+ ]
+}

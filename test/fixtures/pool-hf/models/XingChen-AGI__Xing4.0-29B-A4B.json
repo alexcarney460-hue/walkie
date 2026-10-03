@@ -1,0 +1,30 @@
+{
+ "_id": "6aaa3ad8ceedd411a4fa2255",
+ "id": "XingChen-AGI/Xing4.0-29B-A4B",
+ "downloads": 48705,
+ "likes": 1824,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "baae3c3e813cad5f888f1f485cfff659c89076c5",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "xing4_0",
+  "text-generation",
+  "conversational",
+  "custom_code",
+  "arxiv:2512.24157",
+  "arxiv:2507.18013",
+  "license:apache-2.0",
+  "region:us"
+ ],
+ "createdAt": "2026-09-16T06:44:40.000Z",
+ "safetensors": {
+  "parameters": {
+   "F32": 2736,
+   "BF16": 31215028352
+  },
+  "total": 31215031088
+ },
+ "evalResults": []
+}

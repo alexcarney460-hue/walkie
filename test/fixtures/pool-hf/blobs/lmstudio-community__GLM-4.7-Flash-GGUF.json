@@ -1,0 +1,38 @@
+{
+ "_id": "696eb741454ebbfcc960d742",
+ "id": "lmstudio-community/GLM-4.7-Flash-GGUF",
+ "sha": "b58019be521f54a64160968f3c37a55174b1f186",
+ "downloads": 43213,
+ "siblings": [
+  {
+   "rfilename": "GLM-4.7-Flash-Q4_K_M.gguf",
+   "blobId": "10b8feb7c71e1d1cbd337457908f18b526b63f04",
+   "size": 18132721120,
+   "lfs": {
+    "sha256": "a53ccc46b2a48e4b29b97f1d5828902a9d8701e74c3f7c2f5331c136b66c728b",
+    "size": 18132721120,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "GLM-4.7-Flash-Q6_K.gguf",
+   "blobId": "b60d9fcb443052c571fe7abb215b4b98f84c0b78",
+   "size": 24614785504,
+   "lfs": {
+    "sha256": "75a969298efbca9fb55107d57cff76cf8502572600a8ad0790e257f674934fb1",
+    "size": 24614785504,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "GLM-4.7-Flash-Q8_0.gguf",
+   "blobId": "d75a2cdb4301327ebb0f3138335560e9ee2a88b4",
+   "size": 31842799072,
+   "lfs": {
+    "sha256": "adb099a69b45c5cec51929bb81c8e44260e3cfb24453eafcfbd3a14a471fb365",
+    "size": 31842799072,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

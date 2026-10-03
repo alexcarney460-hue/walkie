@@ -462,6 +462,19 @@ export interface SeatsLocalView {
   retired_residue?: { homes: number; vaults: number; knownBytes: number };
   /** Why new seat users wait: the helper's pending ids couldn't be listed at start (retried every 30 s). */
   reconcile_error?: string;
+  /**
+   * WALK-103: this machine's seat users belong to another Walkie on it (`other`: this one never asks the helper), or
+   * their setup predates the record of which Walkie owns them (`legacy`: only seat users this one made are removed).
+   * Absent when they are this Walkie's, or seat users aren't set up here.
+   */
+  seat_scope?: { state: "other" | "legacy"; why: string };
+  /**
+   * WALK-103 review: seat users this Walkie knows of but didn't make (named in a copied seats.json or one from before
+   * this update, or, without the record, found in the helper's list): it never removes them or stops their processes.
+   */
+  foreign_users?: string[];
+  /** Leftover seat users the helper won't remove while something of them still runs: each holds a seat slot until then. */
+  leftovers_running?: string[];
   /** Why each one isn't verified removed (the user helper's answer), when it said. */
   quarantine_why?: Record<string, string>;
   /** Current serialized destroy, for a doctor warning once it has run for over 60 seconds. */

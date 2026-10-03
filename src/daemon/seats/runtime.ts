@@ -486,6 +486,16 @@ export function findRuntime(runtime: SeatRuntime, path: string | undefined, home
   return null;
 }
 
+/**
+ * A seat carries only its own runtime's login: the machine's Claude token (the daemon's environment or the seat env
+ * file) never reaches a Codex, Kimi or Grok seat, whatever account that seat runs on (Codex pre.12 audit MUST 2).
+ */
+export function ownLoginOnly(env: Readonly<Record<string, string>>, runtime: SeatRuntime): Record<string, string> {
+  if (runtime === "claude") return { ...env };
+  const { CLAUDE_CODE_OAUTH_TOKEN: _notThisRuntime, ...rest } = env;
+  return rest;
+}
+
 /** PATH for the child: the runtime's directory first, then the environment's PATH. */
 export function withBinDir(env: Record<string, string>, bin: string): Record<string, string> {
   const dirs = [dirname(bin), ...(env.PATH ?? "").split(delimiter).filter(Boolean)];

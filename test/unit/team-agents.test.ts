@@ -10,12 +10,12 @@ import { join } from "node:path";
 import { WalkieClient } from "../../src/client/index.ts";
 import { parseArgs, UsageError } from "../../src/cli/args.ts";
 import type { Ctx } from "../../src/cli/context.ts";
-import { TEAM_AGENTS_QUESTION, companyConsentText, readSavedGrant, teamAgentsQuestion, seatsSupported, teamAgentsStep, type RuntimeCheck, type SeatsLocal, type TeamAgentsDeps } from "../../src/cli/commands/team-agents.ts";
+import { TEAM_AGENTS_QUESTION, companyConsentText, readSavedGrant, setupUserArgv, teamAgentsQuestion, seatsSupported, teamAgentsStep, type RuntimeCheck, type SeatsLocal, type TeamAgentsDeps } from "../../src/cli/commands/team-agents.ts";
 import { fakeDaemon, type FakeDaemon } from "../helpers/fake-daemon.ts";
 import { Cluster, type TestNode } from "../helpers/cluster.ts";
 import { PROFILES } from "../../src/daemon/provision/profiles.ts";
 
-const BOOLEANS = new Set(["allow-team-agents", "no-team-agents", "for-agent", "seat-users", "same-user", "company-machine"]);
+const BOOLEANS = new Set(["allow-team-agents", "no-team-agents", "for-agent", "seat-users", "same-user", "company-machine", "codex-release"]);
 const DEVELOPER_PROFILE = { id: "developer-worker" as const, version: PROFILES["developer-worker"].version };
 const ME = { team: { id: "t", name: "acme" }, handle: "arvid", role: "member", node: { id: "recipient-node", hostname: "arvid-mac" } };
 
@@ -313,6 +313,19 @@ describe("the consent question", () => {
     expect(r.posted).toEqual([{ allow: true, mode: "seat_users", same_user: false, ephemeral: true }]);
     expect(x.calls.sudo).toBe(1);
     await expect(run(["--seat-users"], deps().d)).rejects.toBeInstanceOf(UsageError);
+  });
+  test("--codex-release goes on to the seat users' setup (the child `seats setup-user --apply`), and only when it was given (WALK-93)", async () => {
+    const seen: unknown[] = [];
+    const record = async (o?: { codexRelease?: boolean }) => { seen.push(o); return true; };
+    const plain = await run(["--allow-team-agents", "--seat-users"], deps({ interactive: false, installSeatUsers: record }).d);
+    const asked = await run(["--allow-team-agents", "--seat-users", "--codex-release"], deps({ interactive: false, installSeatUsers: record }).d);
+    expect([plain.outcome, asked.outcome]).toEqual(["allowed", "allowed"]);
+    expect(seen).toEqual([{ codexRelease: false }, { codexRelease: true }]);
+  });
+  test("the setup child's command line: `seats setup-user --apply`, with --codex-release only when asked (WALK-93)", () => {
+    expect(setupUserArgv(["/usr/local/bin/walkie"], false)).toEqual(["/usr/local/bin/walkie", "seats", "setup-user", "--apply"]);
+    expect(setupUserArgv(["/usr/local/bin/walkie"], true)).toEqual(["/usr/local/bin/walkie", "seats", "setup-user", "--apply", "--codex-release"]);
+    expect(setupUserArgv(["bun", "/src/cli/main.ts"], true)).toEqual(["bun", "/src/cli/main.ts", "seats", "setup-user", "--apply", "--codex-release"]);
   });
   test("AGENT-ADMIN-1: an agent's terminal is never asked; it applies the flag it was given (and not while agent admin is off)", async () => {
     const home = mkdtempSync("/tmp/walkie-ta-");

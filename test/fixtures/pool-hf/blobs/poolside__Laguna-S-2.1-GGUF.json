@@ -1,0 +1,48 @@
+{
+ "_id": "6a54c30598352655b7526ae7",
+ "id": "poolside/Laguna-S-2.1-GGUF",
+ "sha": "19036076775e9ba6758595f78af99cb976ef8ff0",
+ "downloads": 607089,
+ "siblings": [
+  {
+   "rfilename": "laguna-s-2.1-DFlash-BF16.gguf",
+   "blobId": "0f114681671ca92f30a62168575a1f41136ad819",
+   "size": 2233764224,
+   "lfs": {
+    "sha256": "2ee8aa30338d6599bc7a8ce008cc57c56f2c2b2fdc21f6db9ecda203c751bfd4",
+    "size": 2233764224,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "laguna-s-2.1-F16.gguf",
+   "blobId": "4b6097e481135ce5e3a81bf17d8fc032fd505579",
+   "size": 235202258240,
+   "lfs": {
+    "sha256": "2036c9dcf70f59738d480d1da2a2a59c0a3a3c5bd4ab8c43a61d77fba031e1f8",
+    "size": 235202258240,
+    "pointerSize": 137
+   }
+  },
+  {
+   "rfilename": "laguna-s-2.1-Q4_K_M.gguf",
+   "blobId": "d8beee00f62cc2ad4457f60c2b326c627a2b2a23",
+   "size": 96031829760,
+   "lfs": {
+    "sha256": "a8b55c75714ea73fd90ec85de5defdc0b8d88ca0ad2108343cdd8fc22f7583e4",
+    "size": 96031829760,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "laguna-s-2.1-Q8_0.gguf",
+   "blobId": "af88e40e53d631f60e93cfb4ca7e69d45b08ff89",
+   "size": 128750823168,
+   "lfs": {
+    "sha256": "d946b221d69f2c5f87a986952bcd3cfb75831e5a6a2184e626e361663e1bfe2b",
+    "size": 128750823168,
+    "pointerSize": 137
+   }
+  }
+ ]
+}

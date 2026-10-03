@@ -1,0 +1,68 @@
+{
+ "_id": "6a7c745186129bfa0228892b",
+ "id": "unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+ "sha": "f2d3fe3694501008786e81e5f20360cbf715496a",
+ "downloads": 67083,
+ "siblings": [
+  {
+   "rfilename": "BF16/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16-00001-of-00002.gguf",
+   "blobId": "aa00634f993803d354cd05627c6d5d1ca75b3817",
+   "size": 49188446304,
+   "lfs": {
+    "sha256": "580e6f5953388597301cc33535d6b122cc09cdae34c42223c36760dda3cb4c7b",
+    "size": 49188446304,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16-00002-of-00002.gguf",
+   "blobId": "a5c2525e5616219411e25f67a0259c03d84ec1d4",
+   "size": 16663738752,
+   "lfs": {
+    "sha256": "0132e191571a14d23f1af07487cf58b3a7e05fd53535b868ed6e3ad29cad3e8f",
+    "size": 16663738752,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf",
+   "blobId": "767fd294cfc562483c7e217d5ad1d57aa32af3ba",
+   "size": 23210817600,
+   "lfs": {
+    "sha256": "c5a1433ecfb206d63be963faaa81d7c1170cb13abb14c73390968fe7c79a99f6",
+    "size": 23210817600,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+   "blobId": "50afb797dfbf6fd039582cb911ce236719be273e",
+   "size": 35004643392,
+   "lfs": {
+    "sha256": "dc5276dd0619c04e277504d2358a793e31ccbe39e894d767d0d14f2a221e2ca4",
+    "size": 35004643392,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_M.gguf",
+   "blobId": "9470e998240c214b5bc4fb47433fcd0d82a38512",
+   "size": 25266255936,
+   "lfs": {
+    "sha256": "edcb5d4650796ed2fb412498de6f83b585862312c747ddb74f0ea04b22206181",
+    "size": 25266255936,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q5_K_M.gguf",
+   "blobId": "bf2f995c6ffac4d89ba57f71311181a0cf35dfec",
+   "size": 30215272512,
+   "lfs": {
+    "sha256": "bed813b0482622ccd484a996000b2f289c6508dea0504ee56159445d71e46c6f",
+    "size": 30215272512,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

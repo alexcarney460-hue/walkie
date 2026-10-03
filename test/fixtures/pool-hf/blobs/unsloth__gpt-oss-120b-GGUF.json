@@ -1,0 +1,93 @@
+{
+ "_id": "68923b51e5822b89fab7a1e7",
+ "id": "unsloth/gpt-oss-120b-GGUF",
+ "sha": "ff1a82da6ad466e32284fa3d2b86694db3204789",
+ "downloads": 69074,
+ "siblings": [
+  {
+   "rfilename": "Q4_K_M/gpt-oss-120b-Q4_K_M-00001-of-00002.gguf",
+   "blobId": "0912e9229177178a13358cb4922ee3071b4b957f",
+   "size": 49630904192,
+   "lfs": {
+    "sha256": "b1d7474caa92717b8a7f75e3c1d1006eb40f3bd3591522e5a2b095f36b12757d",
+    "size": 49630904192,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q4_K_M/gpt-oss-120b-Q4_K_M-00002-of-00002.gguf",
+   "blobId": "6b91189cc0989186c116f8e36297187f383f748b",
+   "size": 13137819360,
+   "lfs": {
+    "sha256": "b7cc4f7dd8dfd252900d79ab462abc0ad4bf06e4bcf0e59e491b6625bfee36e6",
+    "size": 13137819360,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q5_K_M/gpt-oss-120b-Q5_K_M-00001-of-00002.gguf",
+   "blobId": "f9928e4beaeee0ecffcca01e19aa9477706e824c",
+   "size": 49735482752,
+   "lfs": {
+    "sha256": "e1ef438d377487c275133bbb716680827c81d0b30eaa7d3d0721fa32fd69050a",
+    "size": 49735482752,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q5_K_M/gpt-oss-120b-Q5_K_M-00002-of-00002.gguf",
+   "blobId": "201a5bd55a58b146ed490f96ef5b665a2b8e67da",
+   "size": 13154039520,
+   "lfs": {
+    "sha256": "fda83a6e64d6a9263bbcc5b628f880c406dbb5a19e444d2f25c1d044227a3306",
+    "size": 13154039520,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q6_K/gpt-oss-120b-Q6_K-00001-of-00002.gguf",
+   "blobId": "bfc4acdcb2cdb978a82c06e918cbdb8881b484f9",
+   "size": 49524505312,
+   "lfs": {
+    "sha256": "d587b3d0ee6facb24e232fa8a80ea595f3a07e5d2ccdb53713892d6aac42c97c",
+    "size": 49524505312,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q6_K/gpt-oss-120b-Q6_K-00002-of-00002.gguf",
+   "blobId": "f47620c804df865b51a12eedd1b90c63db8d49ca",
+   "size": 13759991648,
+   "lfs": {
+    "sha256": "21d2eeab91956981335304e6f35c4cbcbe4556277a35efaf823a923ad1f82d67",
+    "size": 13759991648,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/gpt-oss-120b-Q8_0-00001-of-00002.gguf",
+   "blobId": "3ab959bd6ec68ea005c096d107432d34f6532a0e",
+   "size": 49607357152,
+   "lfs": {
+    "sha256": "2df55ef7d0ee02bd941f8b1190cf537bf5bc7d161ed4b7a369f58a022c77d6f3",
+    "size": 49607357152,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/gpt-oss-120b-Q8_0-00002-of-00002.gguf",
+   "blobId": "17785ee3dab11a245fe33cf92261b5775de855a5",
+   "size": 13779990368,
+   "lfs": {
+    "sha256": "0f6f066d1686419c28d771ef593f26e8b515e077c7b96542c13980f743c00eb3",
+    "size": 13779990368,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "config.json",
+   "blobId": "f73a56c3f0399ee752d405d09d330005207936b9",
+   "size": 2114
+  }
+ ]
+}

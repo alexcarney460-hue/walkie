@@ -35,10 +35,15 @@ export function needsPerson(state: AgentState): boolean {
 
 /** Idle past IDLE_ARCHIVE_MS or offline past OFFLINE_GRACE_MS (since its last status); never while sub-agents work. */
 export function isArchived(a: RosterEntry, now = Date.now()): boolean {
-  if ((a.subagents?.working ?? 0) > 0) return false;
-  const age = now - a.updated_at;
-  if (a.effective_state === "offline") return age >= OFFLINE_GRACE_MS;
-  if (a.effective_state === "idle") return age >= IDLE_ARCHIVE_MS;
+  return isArchivedAt(a.effective_state, a.updated_at, now, a.subagents?.working ?? 0);
+}
+
+/** `isArchived` for a state and a time (no entry object to build: the daemon asks it for every row of a roster read). */
+export function isArchivedAt(state: AgentState, updatedAt: number, now = Date.now(), workingSubagents = 0): boolean {
+  if (workingSubagents > 0) return false;
+  const age = now - updatedAt;
+  if (state === "offline") return age >= OFFLINE_GRACE_MS;
+  if (state === "idle") return age >= IDLE_ARCHIVE_MS;
   return false;
 }
 
@@ -81,5 +86,6 @@ export function matchesSearch(a: { agent: string; hostname: string; status: { ti
   const needle = q.trim().toLowerCase();
   if (!needle) return true;
   const s = a.status;
-  return [a.agent, a.hostname, s.title, s.task, s.repo, s.branch, s.activity].some((v) => !!v && v.toLowerCase().includes(needle));
+  // Ignore malformed peer text before rendering: item boundaries cannot catch errors in the list's filter.
+  return [a.agent, a.hostname, s.title, s.task, s.repo, s.branch, s.activity].some((v) => typeof v === "string" && v.toLowerCase().includes(needle));
 }

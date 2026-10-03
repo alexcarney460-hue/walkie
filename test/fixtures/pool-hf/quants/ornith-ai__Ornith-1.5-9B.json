@@ -1,0 +1,27 @@
+[
+ {
+  "_id": "6a874bd0e72cd2d1f422fdd6",
+  "id": "dealignai/Ornith-1.5-9B-UNCENSORED-GGUF",
+  "downloads": 600013
+ },
+ {
+  "_id": "6a8f8a62b38f31b735f52fb5",
+  "id": "OBLITERATUS/Ornith-1.5-9B-OBLITERATED",
+  "downloads": 459900
+ },
+ {
+  "_id": "6a85870481630ae4dbea9966",
+  "id": "AtomicChat/Ornith-1.5-9B-GGUF",
+  "downloads": 49053
+ },
+ {
+  "_id": "6a85f7b72e0e7e7e3dc7cf07",
+  "id": "bartowski/Ornith-1.5-9B-GGUF",
+  "downloads": 26422
+ },
+ {
+  "_id": "6a8750b4735ca17b00ac735c",
+  "id": "protoLabsAI/Ornith-1.5-9B-MTP-GGUF",
+  "downloads": 17460
+ }
+]

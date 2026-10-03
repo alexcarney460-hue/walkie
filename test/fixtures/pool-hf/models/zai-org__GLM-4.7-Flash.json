@@ -1,0 +1,86 @@
+{
+ "_id": "696dcefa357a4070754b027e",
+ "id": "zai-org/GLM-4.7-Flash",
+ "downloads": 1809855,
+ "likes": 1858,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "7dd20894a642a0aa287e9827cb1a1f7f91386b67",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "glm4_moe_lite",
+  "text-generation",
+  "conversational",
+  "en",
+  "zh",
+  "arxiv:2508.06471",
+  "license:mit",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/gpqa.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 75.2,
+    "date": "2026-01-27",
+    "source": {
+     "url": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+     "name": "Model Card",
+     "user": "burtenshaw"
+    }
+   }
+  },
+  {
+   "filename": ".eval_results/hle.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 14.4,
+    "date": "2026-01-28",
+    "source": {
+     "url": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+     "name": "Model Card",
+     "user": "burtenshaw"
+    }
+   }
+  },
+  {
+   "filename": ".eval_results/swe_bench_verified.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 59.2,
+    "source": {
+     "url": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+     "name": "Model Card",
+     "user": "nielsr"
+    },
+    "date": "2026-03-18T09:46:31.000Z"
+   },
+   "pullRequest": 69
+  }
+ ],
+ "createdAt": "2026-01-19T06:28:10.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 31221485568,
+   "F32": 3008
+  },
+  "total": 31221488576
+ }
+}

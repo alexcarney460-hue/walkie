@@ -5,16 +5,26 @@ import { Download, Play, Share2, Square } from "lucide-react";
 import type { NodeView } from "../api/types.ts";
 import { friendlyError } from "../api/client.ts";
 import { poolApi, type PoolLocalView, type RunView } from "../api/pool.ts";
+import { CATALOG, type Catalog } from "../../../src/pool/catalog.ts";
 import { suggestCombined, type CombinedPick, type CombinedSuggestion } from "../../../src/pool/combined.ts";
-import { acrossText, perTokenText, pickTitle, SHARE_WARNING, SPEED_HINT, tpsText } from "../../../src/pool/format.ts";
+import { acrossText, hfUrl, perTokenText, pickTitle, runtimeCaveat, SHARE_WARNING, SPEED_HINT, tpsText } from "../../../src/pool/format.ts";
 import { CopyCommand } from "./primitives.tsx";
 
 const GiB = 1024 ** 3;
 const gbText = (b: number): string => (b / GiB >= 10 ? `${Math.round(b / GiB)} GB` : `${(Math.round((b / GiB) * 10) / 10).toFixed(1)} GB`);
 const ACTIVE = new Set<RunView["state"]>(["downloading", "starting", "loading", "serving", "stopping"]);
 
-export function useCombined(nodes: readonly NodeView[]): CombinedSuggestion {
-  return useMemo(() => suggestCombined(nodes), [nodes]);
+/** What the team's machines could run together, ranked from `cat` (the list the suggestions use). */
+export function useCombined(nodes: readonly NodeView[], cat: Catalog = CATALOG): CombinedSuggestion {
+  return useMemo(() => suggestCombined(nodes, { cat }), [nodes, cat]);
+}
+
+/**
+ * What can really be started now: only the models in Walkie's pinned list can (each file is checked against a sha256),
+ * so the Run button comes from the built-in list even when the suggestions are ranked from the Hugging Face one.
+ */
+export function useStartable(nodes: readonly NodeView[], cat: Catalog, cs: CombinedSuggestion): CombinedSuggestion {
+  return useMemo(() => (cat === CATALOG ? cs : suggestCombined(nodes)), [nodes, cat, cs]);
 }
 
 /** This machine's split-run state, polled: every 2 s while a run is active, else every 15 s. */
@@ -146,7 +156,7 @@ function ShareSwitch({ view, onChange, onInstall, busy }: { view: PoolLocalView;
 }
 
 /** The headline: the whole team's compute combined, and the split run that goes with it. */
-export function CombinedBlock({ cs, detail }: { cs: CombinedSuggestion; detail?: boolean }) {
+export function CombinedBlock({ cs, startable, detail }: { cs: CombinedSuggestion; startable: CombinedSuggestion; detail?: boolean }) {
   const pool = usePool();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -157,7 +167,7 @@ export function CombinedBlock({ cs, detail }: { cs: CombinedSuggestion; detail?:
   };
   const p = cs.pick;
   const run = pool.view?.run ?? null;
-  const r = cs.runnable;
+  const r = startable.runnable;
   return (
     <div className="lm-all">
       <p className="lm-all-label">With all our machines together</p>
@@ -166,13 +176,14 @@ export function CombinedBlock({ cs, detail }: { cs: CombinedSuggestion; detail?:
       ) : (
         <>
           <p className="lm-all-model">
-            <span className="lm-all-title">{pickTitle(p)}</span>
+            {hfUrl(p.model) ? <a className="lm-all-title text-link" href={hfUrl(p.model)} target="_blank" rel="noreferrer noopener">{pickTitle(p)}</a> : <span className="lm-all-title">{pickTitle(p)}</span>}
             <Speed pick={p} />
             <span className="lm-all-speed tnum">{tpsText(p.tokensPerSec)}, {acrossText(p)}</span>
           </p>
           <Placement pick={p} notSharing={cs.notSharing} />
           <p className="lm-all-note">
             {perTokenText(p)} · estimate{!p.head.self && p.fromHere ? ` · started from this machine: ${tpsText(p.fromHere.tokensPerSec)}` : ""}
+            {runtimeCaveat(p) ? ` · speed ${runtimeCaveat(p)}` : ""}
           </p>
           {detail && <p className="lm-all-note">{p.why}.</p>}
         </>
@@ -188,8 +199,8 @@ export function CombinedBlock({ cs, detail }: { cs: CombinedSuggestion; detail?:
             </button>
           ) : null}
           {r && <span className="lm-run-est tnum">{tpsText(r.tokensPerSec)} (estimate)</span>}
-          {cs.runnableNote && <p className="lm-run-note">{cs.runnableNote}.</p>}
-          {cs.sharing.length > 0 && <p className="lm-run-note"><Share2 size={11} strokeWidth={1.75} aria-hidden="true" /> Sharing now: {cs.sharing.join(", ")}.</p>}
+          {startable.runnableNote && <p className="lm-run-note">{startable.runnableNote}.</p>}
+          {startable.sharing.length > 0 && <p className="lm-run-note"><Share2 size={11} strokeWidth={1.75} aria-hidden="true" /> Sharing now: {startable.sharing.join(", ")}.</p>}
         </div>
       ) : null}
       {pool.view && <ShareSwitch view={pool.view} busy={busy} onChange={(on, max) => void act(() => poolApi.share(on, max))} onInstall={() => void act(() => poolApi.install())} />}

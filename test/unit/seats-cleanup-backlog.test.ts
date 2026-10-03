@@ -60,7 +60,7 @@ test("doctor shows an overdue in-flight user and an unfinished outer-bound helpe
 
 test("repeated busy lock replies stay retryable and doctor names the running helper", async () => {
   const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
-  Object.assign(host, { quarantine: new Set(["walkie-s1"]), quarantineWhy: new Map(), liveUsers: new Set([1]),
+  Object.assign(host, { quarantine: new Set(["walkie-s1"]), quarantineWhy: new Map(), liveUsers: new Set([1]), recoveredIdle: new Set<number>(), runningLeftovers: new Set<string>(),
     seats: new Map(), closing: false, save: () => true, rebalance: () => undefined,
     log: { warn: () => undefined }, cleanupBusyAttempts: 0, cleanupBusySince: null,
     adminOp: async () => ({ ok: false, code: "busy", why: "busy: another cleanup helper is still running" }) });
@@ -121,7 +121,7 @@ test("host counts every failed destroy until ok:true", async () => {
   let rebalanced = 0;
   Object.assign(host, {
     quarantine, quarantineWhy: new Map(),
-    liveUsers: new Set([1]), seats: new Map(), closing: false, save: () => true, rebalance: () => { rebalanced++; },
+    liveUsers: new Set([1]), recoveredIdle: new Set<number>(), runningLeftovers: new Set<string>(), seats: new Map(), closing: false, save: () => true, rebalance: () => { rebalanced++; },
     log: { warn: () => undefined },
     adminOp: async () => ({ ok: false, processesGone: true, why: "services remain" }),
   });
@@ -189,7 +189,7 @@ test("host reconciles 62 idle users into one slow cleanup lane and drains to zer
   Object.assign(host, {
     current: { max: 2 }, opts: {}, core: { hostname: "fleet-mac" },
     quarantine: new Set<string>(), quarantineWhy: new Map(),
-    liveUsers: new Set<number>(), userHigh: 0, closing: false, reconciled: false, reconcileError: null,
+    liveUsers: new Set<number>(), recoveredIdle: new Set<number>(), runningLeftovers: new Set<string>(), seatScope: () => ({ state: "own" }), userHigh: 0, closing: false, reconciled: false, reconcileError: null,
     seats: new Map([["running", { launcher: "alex" }]]), launches: new Map(), launchesDay: new Map(), busy: null, queue: [],
     liveSeats: () => [], save: () => true, rebalance: () => undefined,
     log: { info: () => undefined, warn: () => undefined },

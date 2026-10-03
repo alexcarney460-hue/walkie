@@ -50,9 +50,12 @@ walkie version
 ```
 
 Later, `walkie update` fetches the newest release the same way (signature, signed version, checksum), keeps a copy
-of the old binary, and puts it back if the new one doesn't report the signed version. It never downgrades unless
-you pass `--allow-downgrade`. With the service installed it then restarts the daemon and waits up to 30 s for it to
-answer as the new version; if it doesn't, `walkie update` says so and exits non-zero (the binary stays updated).
+of the old binary, and puts it back if the new one doesn't report the signed version. A stable install takes GitHub's
+latest release; a pre-release install follows the version the site's installer offers (the one `curl … | sh` would
+install, because GitHub's latest release never lists a pre-release), and if it can't read the site it changes nothing
+and names the installer command. It never downgrades unless you pass `--allow-downgrade`. With the service installed it
+then restarts the daemon and waits up to 30 s for it to answer as the new version; if it doesn't, `walkie update` says
+so and exits non-zero (the binary stays updated).
 
 ## 2. Run the daemon as a service
 
@@ -155,7 +158,9 @@ directory paths unless you opt in, in `~/.walkie/config.json` (the daemon picks 
   offline) and never an activity line, whatever `share_activity` says and whatever the profile is called. List the profiles
   with `walkie hooks install hermes --profiles <hooked> --activity name[,name]`; `--activity ""` clears the list, and an
   install without `--activity` leaves it alone. The command is gated and audited like any hooks change. A missing or invalid
-  value (a name Walkie cannot carry, more than 64 names, anything but a list) lists no profile.
+  value (a name Walkie cannot carry, more than 64 names, anything but a list) lists no profile. The daemon applies a change
+  within about 15 seconds, with agent discovery on or off: a card that still shows a line for a profile taken off the list is
+  posted again with its state only.
 
 Titles your agents set with `walkie_set_status`, and titles you type with `walkie status "…"`, are always shared;
 prompt text is not. (The tool tells agents so: describe the kind of work, never paste prompt text, customer names,
@@ -229,7 +234,23 @@ walkie tasks --mine                          # your cards across projects
 walkie task WR-2                             # the card, its signed history, the agents on it
 walkie task start WR-2 · walkie task done WR-2 · walkie task block WR-2 waiting on legal
 walkie projects export WR --format csv -o wr.csv
+walkie projects report WR on                 # WalkieTalkie writes a plain-English status report each hour something changes (owners and the project's creator; off to stop)
+walkie projects fact WR "Live build" "ddee2f0bca"          # a fact on the project's status page (members and their agents; six at most; --remove takes one off)
+walkie projects screen WR ./shot.png --title "Dispatch board" --group "Carrier" --status works --about "The board of booked loads." --route /carrier/dispatch
 ```
+
+**The status page.** Turn the hourly report on (the switch in the Projects list, or `walkie projects report WR on`) and the
+project gets a **Status page** (a tab on the project and a link on its row in the Projects list): the page your
+non-technical teammates read, with a plain headline and two sentences from WalkieTalkie's report, a strip of facts, what is
+live and what lands next, and the project's screens grouped by who uses them, each with a status chip (Works, Partial, Empty
+state, Not built yet) and a line about what it shows. It reads on a phone and in the dark and light themes. Walkie counts
+some facts itself (cards done in the last 24 hours and the last 7 days, in progress, in review, blocked or waiting, agents working and on how
+many machines, when the project last changed; a card labelled `confidential` is never counted); the others are set by the
+project's people and agents with `walkie projects fact`. Agents add screenshots with `walkie projects screen` (a PNG, JPEG
+or WebP up to 8 MB; the same group and title replaces the screen) and take one off with `--remove --group <g> --title <t>`;
+`walkie projects fact WR` and `walkie projects screen WR` list what is there. A page with no screens says so and shows the
+command to add one. A project whose report is off keeps no page (anything an agent prepared is shown once it is turned on).
+The page is plain text: a link, a join code or a secret in a fact or a sentence is refused, and nothing on it is a link.
 
 Agents get MCP tools (`walkie_tasks`, `walkie_task`, `walkie_task_start`, `_review`, `_done`, `_block`, `_comment`,
 `walkie_task_create`); an agent shows up on a card when its task, branch name (`feat/wr-2-pricing`), working directory
@@ -317,6 +338,49 @@ The Accounts page shows a **Switchable** badge on vault accounts and every wrapp
 ```bash
 walkie dashboard
 ```
+
+### Talkie recommendations
+
+WalkieTalkie's scheduled duties recommend; a person decides. The dashboard's WalkieTalkie tab shows the
+recommendations above the schedules when no conversation is open (New chat), grouped as Work to start, Cards to
+move, Reviews waiting, Stalled, and Machines to set up, every open one before any answered one. Each has a one-line
+reason, its evidence folded under it, and Approve and Dismiss buttons; for someone who may not answer it the buttons
+are disabled and the reason is shown. Each one that sends or does something in your name shows it word for word: an ask's message
+(a fixed sentence for its topic, with the card's title as plain data on its own line, never text a model wrote), a card
+to create's title, a setup step's command, a seat's machine. Approving sends exactly what you saw: if it changed in the
+meantime (the card was renamed, another machine would be chosen), the approval is refused and you review it again. What WalkieTalkie
+wrote itself in a scheduled run is shown quoted and marked as not sent. A seat goes only to a machine whose person can see the project, and approving is
+refused if the card is no longer one for a seat (blocked, confidential, assigned, waiting on someone, or an agent is on
+it). Setup steps run a command on another machine, so they are approved in a terminal, not the dashboard. An answer updates only that row. When an answer fails, the row stays blocked until a manual refresh
+succeeds, and Walkie never re-sends the answer on its own. Refresh is unavailable while an answer is still in
+flight. The same list and answers are in the terminal:
+
+```text
+walkie talkie recs
+walkie talkie recs --all --json
+walkie talkie approve <id> --note "Reviewed the evidence"
+walkie talkie dismiss <id> --note "Not needed now"
+```
+
+Use the recommendation ID from the list. Notes are optional and limited to 200 characters; answer commands also
+accept `--json`. The list prints the same outgoing text and quoted words as the dashboard, and says how many open
+ones it did not list; `approve` prints what it will do and asks you to type `yes` first. Listing with `--json` returns
+`{ recs }` (plus `more_open` when open ones were left out); `--all` adds resolved/expired records after the open
+ones, within the daemon's read limits, not full history. Agents may list visible suggestions but cannot approve or dismiss them.
+`walkie talkie recommend '<JSON object>' [--json]` records structured input only for an authenticated WalkieTalkie
+caller; it does not let a person or an ordinary agent become WalkieTalkie.
+
+The intended workflow is to review a recommendation's reason and evidence, then approve or dismiss as a person
+at the local terminal or dashboard. Agents and paired phones cannot approve/dismiss. Observers cannot act;
+owners-only records and setup steps need an owner; each underlying action also enforces its existing permissions.
+An approval can fail after a partial effect, so inspect the card, seat or other action before retrying.
+
+The poll default runs every five minutes. Curation runs at minutes 03, 10, 17, 24, 31, 38, 45 and 52, with an
+eleven-minute hour-boundary gap. Both produce suggestions without starting the suggested seats or moving cards.
+Older Capacity check and Board refresh also recommend at their existing cadence; owners can remove redundant
+schedules. These are schedule targets, not a guarantee of exact execution times.
+See [the API contract](PROTOCOL.md#talkie-recommendations-talkie-ops-1) and
+[the specification](plans/TALKIE-OPS-1.md) for how the duties decide what to recommend.
 
 ## 6. Plan and license
 
@@ -410,8 +474,8 @@ says which to turn off (`walkie pool share off` / `walkie pool stop` before seat
    and prints what it did and whether the machine is ready (`walkie seats doctor` checks it again any time). Joining
    with `--allow-team-agents` (`… | sh -s -- --invite wk1… --allow-team-agents`, or `walkie join … --allow-team-agents`)
    selects company same-user mode on a new machine; add `--seat-users` to the installer, `walkie join` or `walkie setup`
-   to select seat-user hardening during the same consent. `walkie setup` asks after
-   you join someone else's team. On a Mac whose Claude login is only in the
+   to select seat-user hardening during the same consent (and `--codex-release` with it to give the seat users OpenAI's
+   standalone Codex, below). `walkie setup` asks after you join someone else's team. On a Mac whose Claude login is only in the
    Keychain: `claude setup-token | walkie seats enable --yes --claude-token-stdin`.
 2. Let Walkie give every seat a fresh OS user of its own, made for it and destroyed after it, never reused (asks for
    your password through sudo; macOS or Linux):
@@ -423,12 +487,37 @@ says which to turn off (`walkie pool share off` / `walkie pool stop` before seat
 
    It makes the group `walkie-seats`, a root-owned `/usr/local/libexec/walkie` with root-owned copies of walkie as
    `walkie-seat-runner` and `walkie-seat-admin` (the helper that creates and destroys seat users) and of your
-   `claude`/`codex` binaries in `runtimes/` (an npm `codex` script is listed for you to install where seat users can
-   run it), and one sudoers file, checked with `visudo -c` before and after: your user may run exactly
-   `walkie-seat-runner seat-runner` as a member of `walkie-seats`, and exactly `walkie-seat-admin seat-admin create
-   <n>` / `destroy <n>` as root, without a password. It keeps `~/.walkie` at 0700, checks it all and turns seat users
-   on. Each seat then runs as `walkie-s<n>` (uid 600000+n, n always new) under `/Users/walkie-s<n>/walkie-seats/`.
-   Re-run `--apply` after `walkie update` (and after updating `claude`/`codex`) so the copies match.
+   `claude`/`codex` binaries in `runtimes/`, and one sudoers file, checked with `visudo -c` before and after: your
+   user may run exactly `walkie-seat-runner seat-runner` as a member of `walkie-seats`, and exactly
+   `walkie-seat-admin seat-admin create <n>` / `destroy <n>` as root, without a password. It keeps `~/.walkie` at
+   0700, checks it all and turns seat users on. Each seat then runs as `walkie-s<n>` (uid 600000+n, n always new)
+   under `/Users/walkie-s<n>/walkie-seats/`. Re-run `--apply` after `walkie update` (and after updating
+   `claude`/`codex`) so the copies match; a rerun after a failed one reuses the group, directories and copies that
+   are already there.
+
+   A `claude` or `codex` that is a script launcher (an npm install) rather than a single binary can't be copied, and
+   setup says how to fix it. For Claude, install Claude Code's standalone build
+   (`curl -fsSL https://claude.ai/install.sh | bash`), open a new terminal (the search for `claude` stops at the first
+   one on your PATH, so an older npm install that comes first has to go: `npm uninstall -g @anthropic-ai/claude-code`)
+   and run `walkie seats setup-user --apply` again. For Codex, run
+   `walkie seats setup-user --apply --codex-release`, which downloads OpenAI's standalone Codex and checks it against
+   the checksum the release publishes, or install the standalone binary yourself and run
+   `walkie seats setup-user --apply` again. (`walkie seats enable --seat-users --codex-release` does the same only on a
+   machine that has no seat users yet: once they are set up, `enable` skips the setup, so use `setup-user --apply`.)
+
+   **Which sudo.** Setup runs `sudo --version` and says which sudo it found. The original sudo's rules include two
+   `Defaults!<runner or helper> !requiretty` lines (some systems want a terminal for sudo, and seats have none).
+   sudo-rs, the default `sudo` on Ubuntu 25.10 and later, has no such setting and refuses a file that names it
+   (`unknown setting: 'requiretty'`), so for it the two lines are left out. When the sudo isn't recognized the lines
+   are kept and, only if `visudo` answers with exactly that error, the rules are written again without them and
+   checked once more. A sudo-rs older than 0.2.13 (Ubuntu 25.10 ships 0.2.8) reads the `*` that ends the helper's
+   rules (`seat-admin create *`) as a plain character, so it parses them and then refuses every seat user: setup
+   stops there before changing anything and says so. Use sudo-rs 0.2.13 or later where available. On Ubuntu 25.10,
+   switch to the original sudo with `sudo apt install sudo && sudo update-alternatives --set sudo /usr/bin/sudo.ws`,
+   then run `walkie seats setup-user --apply` again. Alternatively, run seats as your own user
+   (`walkie seats enable --same-user`). After installing the rules setup also runs the helper once through
+   `sudo -k -n` with `create 0` (0 is no id: the helper refuses it and makes nothing) to see that this sudo really lets
+   a helper command with an argument through without a password.
 3. **Claude login.** Claude seats run on this machine's own Claude login (your subscription): its
    `CLAUDE_CODE_OAUTH_TOKEN` (in your environment or the seat env file, `~/.walkie/seat-env`) or, without one, its `~/.claude/.credentials.json`,
    handed to each run only and gone with its user. A running seat can read that login. If your login is only in the
@@ -587,4 +676,4 @@ walkie daemon uninstall
 rm -rf ~/.walkie ~/.local/bin/walkie
 ```
 
-Hook installers back up your settings first, to `settings.json.bak-walkie-<ts>` and `config.toml.bak-walkie-<ts>`. Claude's `settings.json` (`walkie hooks install claude`, and `grok`, whose shared hooks live there) is written atomically: the new content goes into a temp file beside it and is renamed over it, so a failure leaves the old file whole; its mode, its indentation and a dotfiles symlink are kept (a file with other hard links is written in place); it is backed up only when the install really changes it, and that backup is removed again if the write then fails; and a read-only file is refused before anything is made.
+Hook installers back up your settings first, to `settings.json.bak-walkie-<ts>`, `config.toml.bak-walkie-<ts>` and `config.yaml.bak-walkie-<ts>`. Claude's `settings.json` (`walkie hooks install claude`, and `grok`, whose shared hooks live there) and a Hermes profile's `config.yaml` (`walkie hooks install hermes`) are written atomically: the new content goes into a temp file beside it and is renamed over it, so a failure leaves the old file whole; its mode, owner and group are kept (a file with other hard links is written in place), and `settings.json` also keeps its indentation and a dotfiles symlink (a Hermes `config.yaml` that is a symlink is refused); it is backed up only when the install really changes it, and that backup is removed again if the write then fails; and a read-only file is refused before anything is made.

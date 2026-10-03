@@ -4,7 +4,11 @@
 import { randomBytes } from "node:crypto";
 import type { Core } from "../core.ts";
 
-export interface RemoteRun { readonly actor: string; readonly notify: string | null; readonly callerNode?: string; readonly callerHandle?: string }
+export interface RemoteRun {
+  readonly actor: string; readonly notify: string | null; readonly callerNode?: string; readonly callerHandle?: string;
+  /** Whether the remote caller may still administer this machine: asked again at each admin step (WALK-74). */
+  readonly authorized?: () => boolean;
+}
 
 const runs = new WeakMap<Core, Map<string, RemoteRun>>();
 

@@ -7,10 +7,11 @@ import type { StatusProvenance } from "../protocol/status-projection.ts";
 import { trackOp } from "./watchdog.ts";
 
 type Status = BodyOf<"agent.status">;
-interface Held { body: Status; provenance?: StatusProvenance }
+interface Held { body: Status; provenance?: StatusProvenance; observedAt?: number }
 
 export interface StatusSink {
-  tryEmit(agent: string, body: Status, provenance?: StatusProvenance, final?: boolean): Event | null; // null = rate limited
+  /** null = rate limited. `observedAt`: when the status was really observed, when that is not now (see Core.emit). */
+  tryEmit(agent: string, body: Status, provenance?: StatusProvenance, final?: boolean, observedAt?: number): Event | null;
 }
 
 /** Global cap on held statuses (and their timers): rotating agent names can't grow memory without bound. */
@@ -23,11 +24,11 @@ export class StatusCoalescer {
   constructor(private readonly sink: StatusSink, private readonly retryMs = 250) {}
 
   /** The event when emitted now; null when held for a trailing emit. */
-  submit(agent: string, body: Status, provenance?: StatusProvenance): Event | null {
-    const event = this.timers.has(agent) ? null : this.sink.tryEmit(agent, body, provenance);
+  submit(agent: string, body: Status, provenance?: StatusProvenance, observedAt?: number): Event | null {
+    const event = this.timers.has(agent) ? null : this.sink.tryEmit(agent, body, provenance, false, observedAt);
     if (event) return event;
     this.held.delete(agent); // re-insert: Map order is the LRU order
-    this.held.set(agent, { body, ...(provenance ? { provenance } : {}) });
+    this.held.set(agent, { body, ...(provenance ? { provenance } : {}), ...(observedAt !== undefined ? { observedAt } : {}) });
     if (!this.timers.has(agent)) this.schedule(agent);
     this.evict();
     return null;
@@ -67,7 +68,7 @@ export class StatusCoalescer {
       const held = this.held.get(agent);
       if (!held) return;
       try {
-        if (trackOp("status_flush", () => this.sink.tryEmit(agent, held.body, held.provenance))) this.held.delete(agent);
+        if (trackOp("status_flush", () => this.sink.tryEmit(agent, held.body, held.provenance, false, held.observedAt))) this.held.delete(agent);
         else this.schedule(agent);
       } catch {
         this.held.delete(agent); // daemon stopping; status is ephemeral

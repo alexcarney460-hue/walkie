@@ -89,12 +89,20 @@ function build(path: string): Store {
   return s;
 }
 
-/** Runs `fn` twice (the first warms the cache) and returns the second run's time in ms. */
+/**
+ * Runs `fn` once to warm the cache, then five more times, and returns the fastest of those runs in ms: what the query costs,
+ * not a moment the machine was busy with something else (in a release test shard on a loaded Mac single runs of queries
+ * that take a few ms on their own measured 95–715 ms). The budget is unchanged, and EXPLAIN below still checks the plans.
+ */
 function warm(fn: () => unknown): number {
   fn();
-  const t0 = performance.now();
-  fn();
-  return performance.now() - t0;
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < 5; i++) {
+    const t0 = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
 }
 
 /** The query plans of the statements `fn` runs against `db` (EXPLAIN QUERY PLAN with the same arguments). */

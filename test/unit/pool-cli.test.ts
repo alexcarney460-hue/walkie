@@ -1,6 +1,7 @@
 // WALKIE-POOL-LLM-1 B6: `walkie pool` text and JSON from a team view.
 import { expect, test } from "bun:test";
-import { poolFromTeam, poolJson, renderPool } from "../../src/cli/commands/pool.ts";
+import { poolFromTeam as realPoolFromTeam, poolJson, renderPool } from "../../src/cli/commands/pool.ts";
+import { LEGACY } from "../helpers/pool-legacy.ts";
 import type { NodeView, TeamView } from "../../src/protocol/schemas.ts";
 
 const GiB = 1024 ** 3;
@@ -10,6 +11,8 @@ const node = (hostname: string, over: Partial<NodeView>, total: number, used: nu
   stats: { at: 1, temp_c: 50, mem: { total: total * GiB, used: used * GiB, swap_used: 0, pressure: "normal" }, accel: { chip, unified: true, gpu_limit: null, gpus: [] } },
   ...over,
 });
+// The scenario assertions below name models of the frozen 13-model list (see test/helpers/pool-legacy.ts).
+const poolFromTeam = (t: TeamView) => realPoolFromTeam(t, LEGACY);
 const team = (nodes: NodeView[]): TeamView => ({ id: "t", name: "acme", members: [], channels: [], authority: null, nodes } as unknown as TeamView);
 
 const lan = team([

@@ -1,0 +1,148 @@
+{
+ "_id": "6a60010d445a807efed16b43",
+ "id": "unsloth/Laguna-S-2.1-GGUF",
+ "sha": "750f92f90cf54159c4d7a610cb7b3e74498e75c6",
+ "downloads": 16253,
+ "siblings": [
+  {
+   "rfilename": "BF16/Laguna-S-2.1-BF16-00001-of-00005.gguf",
+   "blobId": "878278ca2dfea565764a770b5bdfca28875350d1",
+   "size": 49981785952,
+   "lfs": {
+    "sha256": "9c1f46a6a9936f24427ed256ce578fda41ee4610f3acc1b7e1fe2d2354e12217",
+    "size": 49981785952,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Laguna-S-2.1-BF16-00002-of-00005.gguf",
+   "blobId": "a809ba0482c85b33bf42f603b0da6b888efe876f",
+   "size": 49928997248,
+   "lfs": {
+    "sha256": "e7317a28f2036f5459f5d5f81008eb8ff25fe7d3d05a9040cc3647d9105b6f9c",
+    "size": 49928997248,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Laguna-S-2.1-BF16-00003-of-00005.gguf",
+   "blobId": "1f8ba2645ea3f2f66e0c3b944c952a2016838f23",
+   "size": 49928997248,
+   "lfs": {
+    "sha256": "e49e5bf2c0c674fcfdaca2fe72b6edefbfa9ac0af11568f44af0e0a7478452e0",
+    "size": 49928997248,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Laguna-S-2.1-BF16-00004-of-00005.gguf",
+   "blobId": "a85eb6496da095823b25392bab09489717a5b7bc",
+   "size": 49928997248,
+   "lfs": {
+    "sha256": "87e673332099b71a5d0c822b2dea09b3786a99498e0e8fdbfee4fdd673cd6796",
+    "size": 49928997248,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Laguna-S-2.1-MXFP4_MOE-00001-of-00003.gguf",
+   "blobId": "95c6c4c92aafacd0ca5540484150fa715462d518",
+   "size": 3683648,
+   "lfs": {
+    "sha256": "c95d102099ca90cdb88ccf30b265bf4ea808fe74a41be1542f5b5acd6f3dfbc9",
+    "size": 3683648,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Laguna-S-2.1-MXFP4_MOE-00002-of-00003.gguf",
+   "blobId": "4414734cf1e10eb72c2aa57e451c59d42594a952",
+   "size": 49884202016,
+   "lfs": {
+    "sha256": "7d858609c5ef6af45814ccf28d42ba22366c3baf966125c280ea488b4d04a661",
+    "size": 49884202016,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Laguna-S-2.1-MXFP4_MOE-00003-of-00003.gguf",
+   "blobId": "401a9f909de6120d4c172e9244161ef9ef6db8f0",
+   "size": 21192030528,
+   "lfs": {
+    "sha256": "e76cbc706d10271a32cc3c6db7bfe8c5c2b77a42479bd2750bfaa2b15f67d52a",
+    "size": 21192030528,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Laguna-S-2.1-Q8_0-00001-of-00004.gguf",
+   "blobId": "38173cd9e8e337f05309df5119920863dfef7013",
+   "size": 3683648,
+   "lfs": {
+    "sha256": "0c3a90890963fe61b4b09ad9f16d894f31918f038ee11323449c9040c05f5289",
+    "size": 3683648,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "Q8_0/Laguna-S-2.1-Q8_0-00002-of-00004.gguf",
+   "blobId": "cb1cdc23588ad11d65189d46d536ab59fb89ce42",
+   "size": 49317489568,
+   "lfs": {
+    "sha256": "8bf26fce82066f509d169d2e74c45ce62b94e9c2ed128784c367d9ca3979c77f",
+    "size": 49317489568,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Laguna-S-2.1-Q8_0-00003-of-00004.gguf",
+   "blobId": "fb3c19bdba181c979a64b2390b1f705dd0283f3d",
+   "size": 49337085920,
+   "lfs": {
+    "sha256": "1aca2966d50c8ddc81a96644a6e3494aa6ee9fc554505972a95c12454e838608",
+    "size": 49337085920,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Laguna-S-2.1-Q8_0-00004-of-00004.gguf",
+   "blobId": "007f2ebb7be333e48480c017d2ac173914c39e9b",
+   "size": 26364600960,
+   "lfs": {
+    "sha256": "1ffa8d1ecdf5ff8f6d511d27a8cea95dfbbc0b47412c13ee73009d1fe69d1452",
+    "size": 26364600960,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Laguna-S-2.1-UD-Q4_K_M-00001-of-00003.gguf",
+   "blobId": "b6a26f00c409312ced4984503bfe79238d34662e",
+   "size": 3683648,
+   "lfs": {
+    "sha256": "0cfaf46917260d253773e5e2fab64329fa5c9c60fdf0db0f59f31205b5f5dd32",
+    "size": 3683648,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Laguna-S-2.1-UD-Q4_K_M-00002-of-00003.gguf",
+   "blobId": "d94cc18d18e144744d92cf7068d49227dd242b6a",
+   "size": 49930584576,
+   "lfs": {
+    "sha256": "94f075774ca99355f6146acf6292f689fbe92d1adfd06059f6ebabc0e6eb8a71",
+    "size": 49930584576,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Laguna-S-2.1-UD-Q4_K_M-00003-of-00003.gguf",
+   "blobId": "dbff3a5d6ecc0a482305f1b8832d3e2a7e3583e5",
+   "size": 23184915328,
+   "lfs": {
+    "sha256": "0d730b919a0591739091f135cde53c28631c89d0221482778f6fc70a3101eb49",
+    "size": 23184915328,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

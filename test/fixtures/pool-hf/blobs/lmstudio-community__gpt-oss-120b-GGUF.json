@@ -1,0 +1,28 @@
+{
+ "_id": "68923ffa3dd49eda73cdc9e9",
+ "id": "lmstudio-community/gpt-oss-120b-GGUF",
+ "sha": "ffa0c82eff830f6644fa19b14ef2c0e11f7cd1e8",
+ "downloads": 21742,
+ "siblings": [
+  {
+   "rfilename": "gpt-oss-120b-MXFP4-00001-of-00002.gguf",
+   "blobId": "b1641c6fb9c4e4d07c6e1f0dcbf3fb701dffab9b",
+   "size": 39815566336,
+   "lfs": {
+    "sha256": "01d8a3bc7efdaa331112e8a0a42ec9046fcee2a1dce910452aafaccb996759f3",
+    "size": 39815566336,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "gpt-oss-120b-MXFP4-00002-of-00002.gguf",
+   "blobId": "e45f7df7134c8551e88c42f566560bfc8249e314",
+   "size": 23571779104,
+   "lfs": {
+    "sha256": "b7bf9fba295115d0e32951ce54911b3020dd92459b88a3908ad58479be6f7676",
+    "size": 23571779104,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

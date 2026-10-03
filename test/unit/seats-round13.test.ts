@@ -126,7 +126,7 @@ test("a tombstoned home releases its host slot only after helper success", async
   w.sys.sweepAsUser = async () => ({ ok: true, left: [], residuePaths: [mail], residueProofs: proof(mail) });
   const host = Object.create(SeatsHost.prototype) as Record<string, unknown>;
   Object.assign(host, {
-    quarantine: new Set(["walkie-s1"]), quarantineWhy: new Map(), liveUsers: new Set([1]),
+    quarantine: new Set(["walkie-s1"]), quarantineWhy: new Map(), liveUsers: new Set([1]), recoveredIdle: new Set<number>(), runningLeftovers: new Set<string>(),
     residueSummary: { homes: 0, vaults: 0, knownBytes: 0 }, closing: false,
     save: () => true, rebalance: () => undefined, log: { info: () => undefined, warn: () => undefined },
     adminOp: async () => destroySeatUser(1, w.sys),

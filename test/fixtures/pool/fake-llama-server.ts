@@ -1,7 +1,8 @@
 // A stand-in llama-server for served-model tests (POOL-REAL-1): the OpenAI-compatible endpoints the proxy forwards,
 // plus endpoints it must NOT reach (/slots with a "secret" prompt, /props). Requires llama-server's own API key
-// (--api-key-file) on everything but /health, like llama-server. Writes its argv to $HOME/fake-llama-args.json.
-import { readFileSync, writeFileSync } from "node:fs";
+// (--api-key-file) on everything but /health, like llama-server. Writes its argv to $HOME/fake-llama-args.json; /health
+// answers 503 (loading) while $HOME/hold-health exists.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const argv = process.argv.slice(2);
@@ -19,7 +20,8 @@ Bun.serve({
   port: Number(arg("--port")),
   async fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname === "/health") return json({ status: "ok" });
+    // Still loading while $HOME/hold-health exists (a test holds the model in its loading phase).
+    if (url.pathname === "/health") return existsSync(join(process.env.HOME ?? "/tmp", "hold-health")) ? json({ status: "loading model" }, 503) : json({ status: "ok" });
     if (req.headers.get("authorization") !== `Bearer ${key}`) return json({ error: { message: "Invalid API Key" } }, 401);
     if (url.pathname === "/slots") return json([{ id: 0, prompt: "SECRET PROMPT OF ANOTHER CLIENT" }]);
     if (url.pathname === "/props") return json({ secret: true });

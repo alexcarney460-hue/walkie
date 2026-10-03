@@ -6,10 +6,31 @@ import type { KimiSession } from "./kimi-sessions.ts";
 import type { Logger } from "./logger.ts";
 
 const FILE_TIMEOUT_MS = 500;
+/**
+ * How long a new worker has to acknowledge its policy message. Separate from FILE_TIMEOUT_MS (one read): a worker's first load
+ * is not a read. A freshly updated binary pages its embedded modules in from a cold disk, and a loaded machine starts the
+ * thread late, so 500 ms replaced a healthy worker at daemon start and enrichment waited out the 1 s retry. A worker that
+ * never acknowledges is still replaced, just later.
+ */
+const STARTUP_TIMEOUT_MS = 5_000;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 60_000;
 const RETIRE_GRACE_MS = 5_000;
+/**
+ * Workers set aside (abandoned) because they ignored terminate() (blocked inside a native read), at most. Past this many, the
+ * next worker that ignores terminate() is not set aside: it stays the one still being waited on and no further worker is built
+ * until one exits. So a hung filesystem costs at most three stuck threads (two abandoned plus the one still being waited on)
+ * and no more.
+ */
+const MAX_ABANDONED = 2;
 declare const WALKIE_EMBEDDED: boolean | undefined;
+/** What a pending operation resolves with when no worker answered it in time (never a value a worker sent). */
+const FAILED = Symbol("discovery-files-failed");
+/**
+ * `openFile` returns this when the worker could not answer (timed out, replaced, unavailable, deadline passed): a statement
+ * about the worker, not about the file. Only a null or a path is the worker's answer.
+ */
+export const LOOKUP_FAILED = Symbol("discovery-lookup-failed");
 type Pending = { resolve: (value: unknown) => void; op: string; args: unknown[]; deadline: number;
   expiry: ReturnType<typeof setTimeout>; timer?: ReturnType<typeof setTimeout>; sent: boolean;
   settled: boolean; retries: number };
@@ -24,12 +45,17 @@ export interface DiscoveryFilesOptions {
   spawn?: () => Worker;
   now?: () => number;
   retryBaseMs?: number;
+  /** Tests: the worker's startup acknowledgement deadline and the wait before a worker that ignores terminate() is abandoned. */
+  startupTimeoutMs?: number;
+  retireGraceMs?: number;
 }
 
 export class DiscoveryFiles {
   private worker: Worker | null = null;
   private ready = false;
   private retiring: Worker | null = null;
+  /** Workers that ignored terminate() past the grace period; each is removed when it finally exits. */
+  private readonly abandoned = new Set<Worker>();
   private retireTimer: ReturnType<typeof setTimeout> | null = null;
   private policyTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly pending = new Map<number, Pending>();
@@ -47,12 +73,16 @@ export class DiscoveryFiles {
   private readonly spawnWorker: () => Worker;
   private readonly now: () => number;
   private readonly retryBaseMs: number;
+  private readonly startupTimeoutMs: number;
+  private readonly retireGraceMs: number;
 
   constructor(detail: boolean, private readonly log?: Pick<Logger, "warn" | "info">, opts: DiscoveryFilesOptions = {}) {
     this.detail = detail;
     this.spawnWorker = opts.spawn ?? (() => new Worker(discoveryWorkerSpec()));
     this.now = opts.now ?? Date.now;
     this.retryBaseMs = opts.retryBaseMs ?? RETRY_BASE_MS;
+    this.startupTimeoutMs = opts.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
+    this.retireGraceMs = opts.retireGraceMs ?? RETIRE_GRACE_MS;
     this.trySpawn();
   }
 
@@ -82,11 +112,13 @@ export class DiscoveryFiles {
       this.pending.delete(id);
       this.activeId = null;
       this.failures = 0;
-      if (!pending.settled) pending.resolve(error || Date.now() >= pending.deadline ? null : value);
+      this.warned = false; // a later outage warns again
+      if (!pending.settled) pending.resolve(Date.now() >= pending.deadline ? FAILED : error ? null : value);
       this.pump();
     };
     worker.onerror = () => this.replace(worker, true);
     worker.addEventListener("close", () => {
+      if (this.abandoned.delete(worker)) { this.trySpawn(); return; }
       if (this.retiring === worker) {
         this.retiring = null;
         if (this.retireTimer) clearTimeout(this.retireTimer);
@@ -96,7 +128,7 @@ export class DiscoveryFiles {
     });
     try {
       worker.postMessage({ id: 0, op: "policy", args: [this.detail] });
-      this.policyTimer = setTimeout(() => this.replace(worker, true), FILE_TIMEOUT_MS);
+      this.policyTimer = setTimeout(() => this.replace(worker, true), this.startupTimeoutMs);
     }
     catch (error) { void worker.terminate(); throw error; }
     return worker;
@@ -133,7 +165,7 @@ export class DiscoveryFiles {
       if (id === timedOutId || pending.settled || Date.now() >= pending.deadline || pending.retries >= 1) {
         clearTimeout(pending.expiry);
         this.pending.delete(id);
-        if (!pending.settled) pending.resolve(null);
+        if (!pending.settled) pending.resolve(FAILED);
       } else if (id === activeId) {
         pending.sent = false;
         pending.retries++;
@@ -144,11 +176,31 @@ export class DiscoveryFiles {
     if (failed) this.failed(timedOutId ? "worker operation timed out" : "worker failed to load or exited");
     if (worker && !exited) {
       this.retiring = worker;
-      this.retireTimer = setTimeout(() => this.failed("worker did not terminate"), RETIRE_GRACE_MS);
-      this.retireTimer.unref?.();
+      this.armRetireTimer(worker);
       try { void worker.terminate(); } catch { /* keep the retiring worker as the outstanding operation */ }
     }
     else this.trySpawn();
+  }
+
+  private armRetireTimer(worker: Worker): void {
+    this.retireTimer = setTimeout(() => this.retireExpired(worker), this.retireGraceMs);
+    this.retireTimer.unref?.();
+  }
+
+  /**
+   * The worker still has not exited after terminate(): a native read that ignores it. Waiting for it forever would switch
+   * enrichment off until the daemon restarted, so it is abandoned (it keeps running, unreferenced, and is dropped from the
+   * set when it exits) and a replacement is built after the usual backoff. At most MAX_ABANDONED are set aside at once; a
+   * further stuck worker is waited on instead (looked at again each grace period), so the bound is MAX_ABANDONED + 1 threads.
+   */
+  private retireExpired(worker: Worker): void {
+    if (this.retiring !== worker) return;
+    this.retireTimer = null;
+    // Already at the limit of threads left behind: keep waiting on this one (looked at again each grace period).
+    if (this.abandoned.size >= MAX_ABANDONED) { this.armRetireTimer(worker); return; }
+    this.abandoned.add(worker);
+    this.retiring = null;
+    this.failed("worker did not terminate");
   }
 
   private pump(): void {
@@ -160,7 +212,7 @@ export class DiscoveryFiles {
       if (Date.now() >= pending.deadline) {
         clearTimeout(pending.expiry);
         this.pending.delete(id);
-        if (!pending.settled) pending.resolve(null);
+        if (!pending.settled) pending.resolve(FAILED);
         continue;
       }
       pending.sent = true;
@@ -174,29 +226,31 @@ export class DiscoveryFiles {
   }
 
   private call<T>(op: string, args: unknown[], fallback: T, deadline: number): Promise<T> {
-    // A blocked native read can ignore terminate(). Keep one abandoned worker at most;
-    // later scans retain their census cards and skip file enrichment until it exits.
-    if (this.closed || this.retiring || Date.now() >= deadline) return Promise.resolve(fallback);
+    return new Promise<T>((resolve) => this.enqueue(op, args, deadline,
+      (value) => resolve(value === FAILED || value === null ? fallback : value as T)));
+  }
+
+  private enqueue(op: string, args: unknown[], deadline: number, done: (value: unknown) => void): void {
+    // A blocked native read can ignore terminate(): while that worker is retiring (until it exits, or the grace period
+    // ends and it is abandoned) scans retain their census cards and skip file enrichment.
+    if (this.closed || this.retiring || Date.now() >= deadline) { done(FAILED); return; }
     this.trySpawn();
-    if (!this.worker && !this.retiring && this.now() < this.retryAt) return Promise.resolve(fallback);
-    return new Promise<T>((resolve) => {
-      const id = ++this.nextId;
-      const expiry = setTimeout(() => {
-        const pending = this.pending.get(id);
-        if (!pending || pending.settled) return;
-        pending.settled = true;
-        pending.resolve(null);
-        if (!pending.sent) {
-          this.pending.delete(id);
-          const index = this.queue.indexOf(id);
-          if (index !== -1) this.queue.splice(index, 1);
-        }
-      }, Math.max(1, deadline - Date.now()));
-      this.pending.set(id, { resolve: (value) => resolve(value === null ? fallback : value as T),
-        op, args, deadline, expiry, sent: false, settled: false, retries: 0 });
-      this.queue.push(id);
-      this.pump();
-    });
+    if (!this.worker && !this.retiring && this.now() < this.retryAt) { done(FAILED); return; }
+    const id = ++this.nextId;
+    const expiry = setTimeout(() => {
+      const pending = this.pending.get(id);
+      if (!pending || pending.settled) return;
+      pending.settled = true;
+      pending.resolve(FAILED);
+      if (!pending.sent) {
+        this.pending.delete(id);
+        const index = this.queue.indexOf(id);
+        if (index !== -1) this.queue.splice(index, 1);
+      }
+    }, Math.max(1, deadline - Date.now()));
+    this.pending.set(id, { resolve: done, op, args, deadline, expiry, sent: false, settled: false, retries: 0 });
+    this.queue.push(id);
+    this.pump();
   }
 
   policy(detail: boolean): void {
@@ -219,7 +273,11 @@ export class DiscoveryFiles {
   claudeTranscript(config: string, cwd: string | undefined, session: string, now: number, deadline: number): Promise<string | null> {
     return this.call("claudeTranscript", [config, cwd, session, now], null, deadline);
   }
-  openFile(path: string, deadline: number): Promise<string | null> { return this.call("openFile", [path], null, deadline); }
+  /** The path when it opens, null when it does not (the worker's answer), LOOKUP_FAILED when no worker answered. */
+  openFile(path: string, deadline: number): Promise<string | null | typeof LOOKUP_FAILED> {
+    return new Promise((resolve) => this.enqueue("openFile", [path], deadline,
+      (value) => resolve(value === FAILED ? LOOKUP_FAILED : value as string | null)));
+  }
   kimiFile(path: string, root: string, deadline: number): Promise<string | null> { return this.call("kimiFile", [path, root], null, deadline); }
   readAsync(path: string, kind: FileKind, cwd: string, deadline: number): Promise<{ mtime: number; info: TailInfo } | null> {
     return this.call("read", [path, kind, cwd], null, deadline);
@@ -246,7 +304,7 @@ export class DiscoveryFiles {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.expiry);
       if (pending.timer) clearTimeout(pending.timer);
-      if (!pending.settled) pending.resolve(null);
+      if (!pending.settled) pending.resolve(FAILED);
     }
     this.pending.clear();
     this.queue.length = 0;

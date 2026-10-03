@@ -1,0 +1,103 @@
+{
+ "_id": "6a8d39822a943ad8a2f2ea50",
+ "id": "zai-org/GLM-5.3-Flash",
+ "downloads": 5068972,
+ "likes": 2648,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "eb9eb208eb0d988989d07a6a12d0fdeb5f52574a",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "glm5_next",
+  "image-text-to-text",
+  "conversational",
+  "en",
+  "zh",
+  "arxiv:2602.15763",
+  "license:mit",
+  "eval-results",
+  "endpoints_compatible",
+  "fp8",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/GLM-5.3-Flash.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 84.3,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/zai-org/GLM-5.3-Flash",
+     "name": "GLM-5.3-Flash model card"
+    }
+   }
+  },
+  {
+   "filename": ".eval_results/GLM-5.3-Flash.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "datacurve/deep-swe",
+     "task_id": "deep_swe"
+    },
+    "value": 63.4,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/zai-org/GLM-5.3-Flash",
+     "name": "GLM-5.3-Flash model card"
+    },
+    "notes": "Reported as DeepSWE v1.1 on the model card, run via the mini-swe-agent harness with 400K context."
+   }
+  },
+  {
+   "filename": ".eval_results/GLM-5.3-Flash.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 55.3,
+    "date": "2026-08-26",
+    "source": {
+     "url": "https://huggingface.co/zai-org/GLM-5.3-Flash",
+     "name": "GLM-5.3-Flash model card"
+    },
+    "notes": "HLE with tools (full set) and a 300K-context management strategy, not the no-tools default; judged by GPT-5.6-luna (medium)."
+   }
+  },
+  {
+   "filename": ".eval_results/real5_omnidocbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "PaddlePaddle/Real5-OmniDocBench",
+     "task_id": "overall"
+    },
+    "value": 90.76,
+    "source": {
+     "url": "https://huggingface.co/datasets/PaddlePaddle/Real5-OmniDocBench",
+     "name": "Real5-OmniDocBench Leaderboard",
+     "user": "PaddlePaddle"
+    },
+    "date": "2026-09-12T04:11:41.000Z"
+   },
+   "pullRequest": 49
+  }
+ ],
+ "createdAt": "2026-08-25T06:43:14.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 6926096640,
+   "F8_E4M3": 314396639232,
+   "F32": 295518
+  },
+  "total": 321323031390
+ }
+}

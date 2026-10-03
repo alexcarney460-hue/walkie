@@ -1,0 +1,108 @@
+{
+ "_id": "6a18283973882ba820f3dab6",
+ "id": "stepfun-ai/Step-3.7-Flash-GGUF",
+ "sha": "0b69336d2fd2adfdef9c66e425f7778196c31482",
+ "downloads": 4610,
+ "siblings": [
+  {
+   "rfilename": "BF16/Step3.7-flash-bf16-00001-of-00009.gguf",
+   "blobId": "87676705e55e7e51b43dba3ffb9549f06f641ede",
+   "size": 44661465152,
+   "lfs": {
+    "sha256": "6099791a9fc408d99ca0881499a7e36dda2858ea873e3bdde1031612ef378b96",
+    "size": 44661465152,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Step3.7-flash-bf16-00002-of-00009.gguf",
+   "blobId": "7806827da9aec4ab4e48338f5ce84e7ac96564e8",
+   "size": 46506622944,
+   "lfs": {
+    "sha256": "2c04e0dbb2cd57d86392c561cbe386c231163c2bb41c63f431eb96123b8fd771",
+    "size": 46506622944,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Step3.7-flash-bf16-00003-of-00009.gguf",
+   "blobId": "0f0e4fdf1c15dc0ddcaf916052b2343dc93e0368",
+   "size": 46439251968,
+   "lfs": {
+    "sha256": "f3c9de8afcb02046c026112023877d5b908eb6a5d8d27c7a0ffe8cc3b7f4a697",
+    "size": 46439251968,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Step3.7-flash-bf16-00004-of-00009.gguf",
+   "blobId": "4a7a2287a3570a2d136b78f57eef1c02d7a086f0",
+   "size": 46506622976,
+   "lfs": {
+    "sha256": "72c57f5ff06e9c3bd91df218e7118c636abd1a36d217b2852b744ac1ed77e539",
+    "size": 46506622976,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-flash-Q8_0-00001-of-00005.gguf",
+   "blobId": "9bfb7948675722141019b771cc39d745b5351976",
+   "size": 46446888192,
+   "lfs": {
+    "sha256": "fea0d62416de3f5b8a2197493b425175c9101f510658ce5dbf7f40a1f5c8b862",
+    "size": 46446888192,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-flash-Q8_0-00002-of-00005.gguf",
+   "blobId": "9300793ffbe5f73044ec3ce77078be521a25b59d",
+   "size": 46094750560,
+   "lfs": {
+    "sha256": "4ad7b46d4f1e1ea4daab26d32339862fa2e481dc9082b08047ec39e67f0004db",
+    "size": 46094750560,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-flash-Q8_0-00003-of-00005.gguf",
+   "blobId": "6ffd539a8cf64ad34350de9bf2c9490aa7ad2f35",
+   "size": 46099485664,
+   "lfs": {
+    "sha256": "ffd0512aaa25f29e26b72e75dea939413621202e9e873647312137d64f9a6ad8",
+    "size": 46099485664,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-flash-Q8_0-00004-of-00005.gguf",
+   "blobId": "6f1c27490249796c1dec50d7b885235eb0a69bae",
+   "size": 46175264256,
+   "lfs": {
+    "sha256": "be2519ee22cc0c838e7d365bd612e5bbbdb51868275dd01d9b0f690fd7b8dc56",
+    "size": 46175264256,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-flash-Q8_0-00005-of-00005.gguf",
+   "blobId": "94c15840c48c57a5f0557cd5b25070d6199854db",
+   "size": 24601482592,
+   "lfs": {
+    "sha256": "aeaae2a031515155e87b81ae00dc6698bc7c6162590f05989bace811f61192cc",
+    "size": 24601482592,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step3.7-flash-mtp-Q8_0.gguf",
+   "blobId": "71f989d12cf7ffe34104e953d9fcdb03225b3529",
+   "size": 3707276416,
+   "lfs": {
+    "sha256": "469a81667a6cd6d87a85d501d57155fd90cee5af7010fd289c5169881763fd57",
+    "size": 3707276416,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

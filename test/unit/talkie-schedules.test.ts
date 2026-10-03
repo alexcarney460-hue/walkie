@@ -46,22 +46,25 @@ describe("replicated schedules", () => {
     f.runner.leaseFailure = () => new PeerCallError(404, "not_found", "missing schedule-defaults route");
     expect(new Schedules(f.core, f.runner).status()).toBe("scheduled duties start when the roster authority runs pre.10; update the authority first");
   });
-  test("fresh authority installs all five named defaults within the cap", async () => {
+  test("fresh authority installs all eight named defaults within the cap", async () => {
     const f = fixture([]);
     const schedules = new Schedules(f.core, f.runner);
     await schedules.defaultsForAuthority();
     expect(schedules.list().map((s) => [s.name, s.cron, s.task])).toEqual([
       ["Board refresh", "0 * * * *", { template: "board-refresh" }],
       ["Capacity check", "*/15 * * * *", { template: "capacity-check" }],
+      ["Card curation", "3,10,17,24,31,38,45,52 * * * *", { template: "card-curation" }],
       ["Data room refresh", "0 9 * * *", { template: "data-room-refresh" }],
       ["Machine onboarding", "*/15 * * * *", { template: "machine-onboarding" }],
+      ["Orchestration poll", "*/5 * * * *", { template: "orchestration-poll" }],
+      ["Project status reports", "7 * * * *", { template: "project-reports" }],
       ["Project sync", "0 * * * *", { template: "project-sync" }],
     ]);
     expect(schedules.list().length).toBeLessThan(MAX_SCHEDULES);
     const count = f.events.length;
     await schedules.defaultsForAuthority();
     expect(f.events).toHaveLength(count);
-    expect(schedules.list()).toHaveLength(5);
+    expect(schedules.list()).toHaveLength(8);
   });
   test("existing schedule channel keeps its owner-defined set", async () => {
     const f = fixture();

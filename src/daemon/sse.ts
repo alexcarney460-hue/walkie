@@ -45,6 +45,29 @@ export interface OpenOptions {
 
 const enc = new TextEncoder();
 
+/**
+ * How long to wait before the next agents flush: the debounce, stretched while flushes are slow so that they never take
+ * more than about a fifth of the loop (`LOAD_FACTOR` times the last one's duration), and at most `MAX_FLUSH_DELAY_MS`.
+ * A machine short of memory runs every flush slowly; flushing as often as it asks for would leave the daemon nothing else
+ * to do. Dashboards then see the roster a little later, never wrongly.
+ */
+export const LOAD_FACTOR = 4;
+export const MAX_FLUSH_DELAY_MS = 2_000;
+export function flushDelay(debounceMs: number, lastFlushMs: number): number {
+  return Math.max(debounceMs, Math.min(MAX_FLUSH_DELAY_MS, Math.round(lastFlushMs * LOAD_FACTOR)));
+}
+
+/** A roster view's JSON text, made once per view object (the roster hands out the same object while an agent is unchanged). */
+const viewJson = new WeakMap<AgentView, string>();
+function jsonOfView(a: AgentView): string {
+  let text = viewJson.get(a);
+  if (text === undefined) {
+    text = JSON.stringify(a);
+    viewJson.set(a, text);
+  }
+  return text;
+}
+
 /** A roster row's identity on the wire (agents.delta upsert / remove): the machine's node id and the agent name. */
 export function agentRowKey(a: Pick<AgentView, "node" | "agent">): string {
   return `${a.node}/${a.agent}`;
@@ -69,7 +92,10 @@ export class Hub {
   private rev = 0;
   private snapshot: AgentsPayload | null = null;
 
-  constructor(heartbeatMs = 15_000, private readonly debounceMs = 250) {
+  /** How long the last agents flush took (ms): the next one waits for `flushDelay` of it. */
+  private lastFlushMs = 0;
+
+  constructor(heartbeatMs = 15_000, private readonly debounceMs = 250, private readonly clock: () => number = () => performance.now()) {
     this.heartbeat = setInterval(() => this.broadcastRaw(": hb\n\n"), heartbeatMs);
   }
 
@@ -126,9 +152,18 @@ export class Hub {
     if (this.agentsTimer) return;
     this.agentsTimer = setTimeout(() => {
       this.agentsTimer = null;
-      if (this.clients.size) trackOp("stream_agents", () => this.flushAgents("timer"));
-    }, this.debounceMs);
+      if (!this.clients.size) return;
+      const t0 = this.clock();
+      try {
+        trackOp("stream_agents", () => this.flushAgents("timer"));
+      } finally {
+        this.lastFlushMs = this.clock() - t0;
+      }
+    }, flushDelay(this.debounceMs, this.lastFlushMs));
   }
+
+  /** The wait before the next agents flush (ms), for the load the last one showed (tests). */
+  get agentsFlushDelayMs(): number { return flushDelay(this.debounceMs, this.lastFlushMs); }
 
   /**
    * Reads the roster now and makes it the new baseline: whole-snapshot clients get it all, delta clients get the rows
@@ -143,7 +178,7 @@ export class Hub {
     const payload = this.providers.agents();
     // Keyed by node id + agent (agentRowKey), never the display id: two machines of one person can share a hostname
     // and so a display id (Codex r1 #1), which would merge their rows and lose or duplicate one on the client.
-    const rows = new Map(payload.agents.map((a) => [agentRowKey(a), JSON.stringify(a)]));
+    const rows = new Map(payload.agents.map((a) => [agentRowKey(a), jsonOfView(a)]));
     const upsert: AgentView[] = payload.agents.filter((a) => this.baseline.get(agentRowKey(a)) !== rows.get(agentRowKey(a)));
     const remove = [...this.baseline.keys()].filter((id) => !rows.has(id));
     const archiveKey = JSON.stringify([payload.archive, payload.archive_rev ?? null]);

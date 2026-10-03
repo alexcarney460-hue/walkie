@@ -1,0 +1,37 @@
+[
+ {
+  "_id": "69ccf46adde35a707bce8754",
+  "id": "ggml-org/gemma-4-E4B-it-GGUF",
+  "downloads": 1218580
+ },
+ {
+  "_id": "69cd2ebc3dc1641e52e18d1d",
+  "id": "unsloth/gemma-4-E4B-it-GGUF",
+  "downloads": 616439
+ },
+ {
+  "_id": "69cd7252ff5b35d37e42bffa",
+  "id": "lmstudio-community/gemma-4-E4B-it-GGUF",
+  "downloads": 459476
+ },
+ {
+  "_id": "69ce92a571a1122a5fdd0c53",
+  "id": "bartowski/google_gemma-4-E4B-it-GGUF",
+  "downloads": 35605
+ },
+ {
+  "_id": "69dee862f5f5a426fc250b1c",
+  "id": "OBLITERATUS/gemma-4-E4B-it-OBLITERATED",
+  "downloads": 33800
+ },
+ {
+  "_id": "69d5dfdade8b204b187f9df7",
+  "id": "batiai/gemma-4-E4B-it-GGUF",
+  "downloads": 7018
+ },
+ {
+  "_id": "6a32bdd43dbed1d1c2f4c152",
+  "id": "AtomicChat/gemma-4-E4B-it-GGUF",
+  "downloads": 4479
+ }
+]

@@ -1,0 +1,148 @@
+{
+ "_id": "6a1f21b2da5f8c053f979e9e",
+ "id": "bartowski/Step-3.7-Flash-GGUF",
+ "sha": "e4f2a9e7e65462dcea257e1450db8361f906fb31",
+ "downloads": 1639,
+ "siblings": [
+  {
+   "rfilename": "Step-3.7-Flash-IQ4_XS/Step-3.7-Flash-IQ4_XS-00001-of-00003.gguf",
+   "blobId": "c4dad150d6a8482f232abeb6a6abb9ea900f45af",
+   "size": 39472374784,
+   "lfs": {
+    "sha256": "c90db2731f71bd28af0292e2d080224b700d883de3cf4b679a27a5dcbe6dec67",
+    "size": 39472374784,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-IQ4_XS/Step-3.7-Flash-IQ4_XS-00002-of-00003.gguf",
+   "blobId": "f4349c8e99c1657e07357f8c997c0962a601a4c2",
+   "size": 39866436544,
+   "lfs": {
+    "sha256": "c8fc71b114dd59906fd2473faaedfb043de4291184dbde024f9aea27946568a6",
+    "size": 39866436544,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-IQ4_XS/Step-3.7-Flash-IQ4_XS-00003-of-00003.gguf",
+   "blobId": "3ba1ed2c229451f7700e8752f81ef923012118bb",
+   "size": 27966204224,
+   "lfs": {
+    "sha256": "c42c01a8cb7afae079a1eefc81efd483b9d1846deadc21f5665b317f873e7d44",
+    "size": 27966204224,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q4_K_M/Step-3.7-Flash-Q4_K_M-00001-of-00004.gguf",
+   "blobId": "6bfb7687315a71eea19fc89f388fcfe69c44dde8",
+   "size": 39578012320,
+   "lfs": {
+    "sha256": "bbb659c5e7ee1d5d37643980ea2651636212e79f4b569269dbc6aa6939124a92",
+    "size": 39578012320,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q4_K_M/Step-3.7-Flash-Q4_K_M-00002-of-00004.gguf",
+   "blobId": "548dbe5f0a606a678f59bce8f404c5ad930f7d0f",
+   "size": 39359148896,
+   "lfs": {
+    "sha256": "5d080fde475a9fcdab3695fb5a409ceb8d6f29afdc001f1b5af20fe919441145",
+    "size": 39359148896,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q4_K_M/Step-3.7-Flash-Q4_K_M-00003-of-00004.gguf",
+   "blobId": "66a442f6d5e31fa43720d436931ceaa6baf9e4b7",
+   "size": 39603351904,
+   "lfs": {
+    "sha256": "df9ad87a1a2bf4ccfe3c149838821abc9284c1913bfe2a3c570ea44bc45aea0e",
+    "size": 39603351904,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q4_K_M/Step-3.7-Flash-Q4_K_M-00004-of-00004.gguf",
+   "blobId": "5ed647ae8d384d866e1856a5a51c65240d7f7bed",
+   "size": 3080632896,
+   "lfs": {
+    "sha256": "f30bd1db17990f85ea87f90bb0c2ac9559f0b27ef0b1d504e0e95efa09f9ba6f",
+    "size": 3080632896,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q5_K_M/Step-3.7-Flash-Q5_K_M-00001-of-00004.gguf",
+   "blobId": "5ca139eaf9a0186166f9822b569e462639852eb8",
+   "size": 39273877824,
+   "lfs": {
+    "sha256": "706ca503fd2fdba7bc5c636822effd39716c80f4bf7c2bfa9d671af3508f84d4",
+    "size": 39273877824,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q8_0/Step-3.7-Flash-Q8_0-00001-of-00006.gguf",
+   "blobId": "b8ee513de4818b8b6f2d83d1907c899b9b62d0d0",
+   "size": 39805767520,
+   "lfs": {
+    "sha256": "cadbdc45c94a438e4eb0c7b98cd1801bd1ad568edf230bbacf27a8381c356b96",
+    "size": 39805767520,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q8_0/Step-3.7-Flash-Q8_0-00002-of-00006.gguf",
+   "blobId": "7326afb55a4168da47f55d189bccfbf4650db078",
+   "size": 39534143008,
+   "lfs": {
+    "sha256": "6f0cb50e8a13a3ea6acbf056a9e2e475cea67ddc2b70c33e4201f5ba6e86876c",
+    "size": 39534143008,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q8_0/Step-3.7-Flash-Q8_0-00003-of-00006.gguf",
+   "blobId": "14eed14b039a5d7fd9c8fbf443f8bf98454f2833",
+   "size": 39534143008,
+   "lfs": {
+    "sha256": "75f221894c087710a9e0482171255fdaddd051f70fe914719eb30cd7867834de",
+    "size": 39534143008,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q8_0/Step-3.7-Flash-Q8_0-00004-of-00006.gguf",
+   "blobId": "9bc90b47ef2b5883385ce11dfc41c7cad86b0783",
+   "size": 39534143008,
+   "lfs": {
+    "sha256": "931aba7d4f970b21ea5e72c864f3075099fb47e38f79b4a6952aed92fe9e7986",
+    "size": 39534143008,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q8_0/Step-3.7-Flash-Q8_0-00005-of-00006.gguf",
+   "blobId": "a16f521b3c43a0728a680f274dd6d297d2e46b7c",
+   "size": 39534143008,
+   "lfs": {
+    "sha256": "038dddedea3406d9df253d99eb2160ebf006547b384fa2c8cb15fb530f4349bc",
+    "size": 39534143008,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Step-3.7-Flash-Q8_0/Step-3.7-Flash-Q8_0-00006-of-00006.gguf",
+   "blobId": "62071cdb7f0abfacaa3e77d24358470450e21a2b",
+   "size": 14055649952,
+   "lfs": {
+    "sha256": "cb026efb90fb4ffd4bdb036cacb6696dc6c967565bbe84f47a154360895762f0",
+    "size": 14055649952,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

@@ -3,6 +3,7 @@
 // before POOL-2 don't send it and strip it when they receive it (zod objects drop unknown keys). PROTOCOL §3
 // "Split runs".
 import { z } from "zod";
+import type { Catalog } from "../pool/catalog.ts";
 
 const Bytes = z.number().int().nonnegative().max(2 ** 52);
 
@@ -194,4 +195,20 @@ export interface PoolLocalView {
   prepare?: PrepareView | null;
   prepared?: string[];
   install?: InstallView | null;
+}
+
+/**
+ * `GET /v1/pool/models` (LOCAL-MODELS-HF-1): the model list the suggestions use and where it came from. The daemon reads
+ * Hugging Face when a person opens the suggestions and the list is missing or over a day old; until then (or when it
+ * cannot) this is the built-in list or the previous one, with `note` saying why. `catalog` is left out with `?brief=1`.
+ */
+export interface PoolModelsView {
+  source: "huggingface" | "built-in";
+  state: "fresh" | "stale" | "built-in";
+  /** When the Hugging Face list was read (ms epoch); null for the built-in list. */
+  checked_at: number | null;
+  note: string | null;
+  /** A read of Hugging Face is running now: ask again in a few seconds. */
+  refreshing: boolean;
+  catalog?: Catalog;
 }

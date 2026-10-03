@@ -5,13 +5,17 @@
 // machine's seats at it.
 import { closeSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { RELEASE_BUILD } from "../../license/service.ts";
 import { defaultHome } from "../../daemon/paths.ts";
+import { socketPath } from "../../client/index.ts";
+import { canonicalPath, readSeatRegistration, seatRegistrationText, type SeatRegistration } from "../../daemon/seats/instance.ts";
+import { pendingProbeProblem } from "../../daemon/seats/doctor.ts";
 import { SEATS_GROUP } from "../../daemon/seats/admin.ts";
 import { codexReleaseEnabled, downloadReal, fetchJsonReal, stageCodexRuntime } from "../../daemon/seats/codex-release.ts";
 import {
-  DEFAULT_ADMIN, DEFAULT_RUNNER, RUNTIMES_DIR, SEAT_ROOTS_FILE, adminGroupIds, homeProblem, runnerPathProblem, seatOwnerProblem, seatUserPlan, worldWritableDirs,
+  DEFAULT_ADMIN, DEFAULT_RUNNER, RUNTIMES_DIR, SEAT_ROOTS_FILE, adminGroupIds, checkSudoRules, detectSudo, homeProblem, lookupOsUser, runnerPathProblem, seatOwnerProblem, seatUserPlan,
+  worldWritableDirs, type SudoInfo,
 } from "../../daemon/seats/seat-user.ts";
 import { isShim } from "../../switch/shims.ts";
 import { bool, UsageError } from "../args.ts";
@@ -83,9 +87,10 @@ export function desktopSeatOwner(uid: number | undefined, env: NodeJS.ProcessEnv
 /**
  * Plans (and with `apply` runs, with the person's own sudo, then checks) what lets every seat run as a fresh OS user.
  * `plan`: print the plan first (setup-user does; `walkie seats enable` prints only the steps as it runs them).
+ * `sudo`: the sudo to plan for (tests; the container check): this machine's own is looked up when it isn't given.
  * `ok` false with `why` when it was refused or failed (already printed).
  */
-export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boolean; plan: boolean }): Promise<{ ok: boolean; applied: boolean; why?: string }> {
+export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boolean; plan: boolean; sudo?: SudoInfo }): Promise<{ ok: boolean; applied: boolean; why?: string }> {
   const { apply, accept } = o;
   const local = await ctx.client().seats().then((v) => v.local).catch(() => null);
   // A signed desktop app may run this fixed transaction as root after one macOS authorization dialog.
@@ -102,7 +107,8 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
     // verified against its own published checksums, in place of whatever `codex` a Homebrew/npm install left on
     // PATH. Off by default: nativeRuntime("codex") above keeps deciding it. Never fatal by itself — a failure here
     // (offline, no matching asset, a bad checksum) falls back to nativeRuntime and is only a warning.
-    if (codexReleaseEnabled(process.env, bool(ctx.args, "codex-release"))) {
+    const codexRelease = codexReleaseEnabled(process.env, bool(ctx.args, "codex-release"));
+    if (codexRelease) {
       try {
         const staged = await stageCodexRuntime({ destDir: join(tmp, "codex-release"), fetchJson: fetchJsonReal, download: downloadReal });
         runtimes.codex = staged.path;
@@ -113,14 +119,31 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
       }
     }
     const extraRoots = worldWritableDirs(); // swept too (Opus r7 6)
+    // WALK-103: the Walkie these seat users are for (this daemon: the socket this command talks to), recorded root-owned
+    // so the helper serves only it and no second daemon of this person's (a test, another WALKIE_HOME) can remove them.
+    const uid = rootOwner ? lookupOsUser(me.username)?.uid : process.getuid?.();
+    if (uid === undefined || !Number.isSafeInteger(uid) || uid < 0) {
+      const why = `can't tell ${me.username}'s user id: not set up`;
+      ctx.err(c.red(why));
+      return { ok: false, applied: false, why };
+    }
+    const walkieHome = process.env.WALKIE_HOME ?? defaultHome();
+    const registration: SeatRegistration = { v: 1, user: me.username, uid, home: resolve(walkieHome), socket: canonicalPath(socketPath()) };
     const plan = seatUserPlan({
       platform: process.platform, daemonUser: me.username, source: RELEASE_BUILD ? process.execPath : "<the walkie release binary>",
-      groupId: process.platform === "darwin" && !groupExists ? freeMacGroupId() : 0, walkieHome: process.env.WALKIE_HOME ?? defaultHome(),
+      groupId: process.platform === "darwin" && !groupExists ? freeMacGroupId() : 0, walkieHome,
       sudoersTmp: join(tmp, "walkie-seats"), runtimes, home: me.homedir,
       homeProblem: homeProblem(me.homedir, statSync(me.homedir), []), acceptReadableHome: accept,
       extraRoots, rootsTmp: join(tmp, SEAT_ROOTS_FILE), ownerTmp: join(tmp, "seat-owner"),
+      instanceTmp: join(tmp, "seat-instance"), instanceHome: registration.home,
+      sudo: o.sudo ?? detectSudo(), codexReleaseTried: codexRelease,
     });
     writeFileSync(join(tmp, "seat-owner"), `${me.username}\n`, { mode: 0o644 });
+    writeFileSync(join(tmp, "seat-instance"), seatRegistrationText(registration), { mode: 0o644 });
+    const before = readSeatRegistration();
+    if (before.state === "present" && before.registration.socket !== registration.socket) {
+      ctx.out(c.yellow(`note: this machine's seat users belong to the Walkie at ${before.registration.home} now; applying moves them to this one (${registration.home}), and that Walkie stops listing, making or removing them`));
+    }
     writeFileSync(join(tmp, "walkie-seats"), plan.sudoers, { mode: 0o644 });
     writeFileSync(join(tmp, SEAT_ROOTS_FILE), `${JSON.stringify(extraRoots)}\n`, { mode: 0o644 });
     const steps = plan.steps.filter((s) => !s.group || !groupExists);
@@ -130,11 +153,19 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
       ctx.out(c.dim("A seat then can't reach your Walkie (its socket and token stay in your 0700 ~/.walkie), your home (closed to other"));
       ctx.out(c.dim("users), another seat, or a later one: its user, with every process, schedule, service and file of it, is removed."));
       for (const s of steps) ctx.out(`  ${s.sudo ? "sudo " : ""}${shell(s.argv)}  ${c.dim(`# ${s.what}`)}`);
+      ctx.out(c.dim(`  ${plan.sudoNote}`));
       ctx.out(c.dim(`  the sudo rules (${plan.sudoersPath}):`));
       for (const l of plan.sudoers.trim().split("\n")) ctx.out(c.dim(`    ${l}`));
       ctx.out(c.dim(`Seats run the root-owned runtime copies in ${RUNTIMES_DIR}; re-run --apply after updating walkie, claude or codex.`));
+    } else {
+      ctx.out(c.dim(plan.sudoNote));
     }
     for (const w of plan.warnings) ctx.out(c.yellow(`note: ${w}`));
+    // Not overridable like the readable home: rules this sudo can't match would only refuse every seat, later and more confusingly.
+    if (plan.sudoProblem) {
+      ctx.err(c.red(`not applied: ${plan.sudoProblem}`));
+      return { ok: !apply, applied: false, why: plan.sudoProblem };
+    }
     if (plan.blocked) {
       ctx.err(c.red(`not applied: ${plan.blocked}`));
       ctx.err(c.dim("Close it (chmod 700 ~) and run this again, or accept that seat users read it: --accept-readable-home"));
@@ -161,8 +192,26 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
       ctx.err(c.dim(`→ ${s.what}`));
       const tool = process.platform === "darwin" ? ({ dscl: "/usr/bin/dscl", install: "/usr/bin/install", chown: "/usr/sbin/chown", mkdir: "/bin/mkdir", chmod: "/bin/chmod", visudo: "/usr/sbin/visudo", sudo: "/usr/bin/sudo" } as Record<string, string>)[s.argv[0] as string] : undefined;
       const argv = tool ? [tool, ...s.argv.slice(1)] : s.argv;
-      const p = Bun.spawnSync(s.sudo && process.getuid?.() !== 0 ? ["/usr/bin/sudo", ...(unattended ? ["-n"] : []), ...argv] : argv, { stdin: unattended ? "ignore" : "inherit", stdout: "inherit", stderr: "inherit" });
-      if (p.exitCode !== 0) { ctx.err(c.red(`failed: ${s.sudo ? "sudo " : ""}${shell(s.argv)}`)); return { ok: false, applied: false, why: `failed: ${s.what}` }; }
+      const full = s.sudo && process.getuid?.() !== 0 ? ["/usr/bin/sudo", ...(unattended ? ["-n"] : []), ...argv] : argv;
+      const stdin = unattended ? "ignore" : "inherit";
+      let ok: boolean;
+      if (s.sudoersCheck) {
+        // A sudo that doesn't know `requiretty` (sudo-rs) says so; then, and only then, the rules are written again without it.
+        const capture = () => Bun.spawnSync(full, { stdin, stdout: "pipe", stderr: "pipe" });
+        const last: { p: ReturnType<typeof capture> | null } = { p: null };
+        const without = plan.sudoersWithoutRequiretty;
+        const rules = checkSudoRules(
+          () => { const p = capture(); last.p = p; return { ok: p.exitCode === 0, output: `${p.stdout}${p.stderr}` }; },
+          without === null ? null : () => writeFileSync(join(tmp, "walkie-seats"), without, { mode: 0o644 }),
+        );
+        if (rules.regenerated) ctx.out(c.yellow("note: this sudo doesn't know the requiretty setting (it is sudo-rs): the sudo rules were written again without it"));
+        if (last.p?.stdout.length) ctx.out(last.p.stdout.toString().trimEnd());
+        if (last.p?.stderr.length) ctx.err(last.p.stderr.toString().trimEnd());
+        ok = rules.ok;
+      } else {
+        ok = Bun.spawnSync(full, { stdin, stdout: "inherit", stderr: "inherit" }).exitCode === 0;
+      }
+      if (!ok) { ctx.err(c.red(`failed: ${s.sudo ? "sudo " : ""}${shell(s.argv)}`)); return { ok: false, applied: false, why: `failed: ${s.what}` }; }
     }
     // Checked, not assumed: the runner's and helper's whole paths are root's, the admin groups can be read, and sudo
     // reaches the helper without a password (its answer to `pending` is the point).
@@ -172,9 +221,26 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
     }
     if (adminGroupIds() === null) { ctx.err(c.red("the administrative groups can't be read: seats would not run")); return { ok: false, applied: false, why: "administrative groups unreadable" }; }
     const owner = desktopSeatOwner(process.getuid?.(), process.env);
-    const probe = Bun.spawnSync(owner ? ["/usr/bin/sudo", "-u", owner.username, "/usr/bin/sudo", "-n", DEFAULT_ADMIN, "seat-admin", "pending"] : ["/usr/bin/sudo", "-n", DEFAULT_ADMIN, "seat-admin", "pending"], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const asOwner = (argv: string[]) => (owner ? ["/usr/bin/sudo", "-u", owner.username, ...argv] : argv);
+    const probe = Bun.spawnSync(asOwner(["/usr/bin/sudo", "-n", DEFAULT_ADMIN, "seat-admin", "pending"]), { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     if (!probe.stdout.toString().startsWith("{")) {
       const why = `sudo -n ${DEFAULT_ADMIN} seat-admin didn't answer: check ${plan.sudoersPath} (${probe.stderr.toString().trim().slice(0, 200)})`;
+      ctx.err(c.red(why));
+      return { ok: false, applied: false, why };
+    }
+    // This command isn't the daemon, so the helper refuses to list for it (WALK-103) but says whether its ledger reads.
+    const ledger = pendingProbeProblem(probe.stdout.toString().trim());
+    if (ledger !== null && ledger !== "no answer") {
+      const why = `${DEFAULT_ADMIN} answered, but ${ledger}`;
+      ctx.err(c.red(why));
+      return { ok: false, applied: false, why };
+    }
+    // `pending` takes no argument, the helper's other commands do (`create <n>`): run one with an argument the helper refuses (0 is no
+    // id: it answers {"ok":false,…} and does nothing). A sudo that parses the rules and still refuses them (sudo-rs before 0.2.13)
+    // would otherwise look ready. -k: not on a password cached from the steps above.
+    const create = Bun.spawnSync(asOwner(["/usr/bin/sudo", "-k", "-n", DEFAULT_ADMIN, "seat-admin", "create", "0"]), { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    if (!create.stdout.toString().startsWith("{")) {
+      const why = `sudo here won't run ${DEFAULT_ADMIN} seat-admin create <n> without a password (${create.stderr.toString().trim().slice(0, 200) || "no answer"}): ${plan.sudoersPath} is installed, but no seat user could be made through it. If this is sudo-rs older than 0.2.13, update it; or run seats as your own user: walkie seats enable --same-user`;
       ctx.err(c.red(why));
       return { ok: false, applied: false, why };
     }

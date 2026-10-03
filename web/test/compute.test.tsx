@@ -228,6 +228,20 @@ test("Machines (owner): Add compute, the rented chip with Stop on the rented mac
   expect(out.match(/Rented · /g)).toHaveLength(2); // joined and queued rentals both retain shutdown controls
 });
 
+test("Machines (owner): alerts say what is wrong, including an ended rental's machine still on the team", () => {
+  mod.api.computeStore.seed({ status: "ready", state: { ...STATE, alerts: ["tick_stale", "termination_delayed", "revocation_pending", "revocation_refused", "revocation_waiting_for_authority_sync", "compute_records_unreadable"] }, quotes: QUOTES, error: null });
+  go("#/team");
+  const out = render(state("owner", "maren"), <mod.Team />);
+  expect(out).toContain("Compute monitoring is delayed. New rentals are paused.");
+  expect(out).toContain("Shutdown is delayed. Billing continues until deletion is confirmed.");
+  expect(out).toContain("A rented machine is still on the team after its rental ended. Walkie removes it as soon as the team&#x27;s roster authority is reachable.");
+  expect(out).toContain("A rented machine is still on the team after its rental ended and couldn&#x27;t be removed automatically. The reason is posted in #general.");
+  expect(out).toContain("An ended rental can&#x27;t be closed yet: this machine hasn&#x27;t been able to sync with the team&#x27;s roster authority");
+  expect(out).toContain("Walkie can&#x27;t read its record of rented machines, so ended rentals aren&#x27;t being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Walkie never overwrites it.");
+  expect(out.match(/role="alert"/g)).toHaveLength(6);
+  seed();
+});
+
 test("Mission Control (owner): WalkieTalkie, Add compute, and the rented machine render together", () => {
   seed();
   go("#/mission");

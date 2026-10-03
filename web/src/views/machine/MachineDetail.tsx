@@ -9,11 +9,13 @@ import type { AccountView, AgentView, AskView, NodeView } from "../../api/types.
 import { AccountTile, accountForAgent } from "../../components/Accounts.tsx";
 import { AskAnswer } from "../../components/AskAnswer.tsx";
 import { PickRow } from "../../components/LocalModels.tsx";
+import { useModels, type ModelsInput } from "../../lib/models.ts";
 import { Avatar, EmptyState, ErrorState, RelTime, hueVar } from "../../components/primitives.tsx";
 import { askBody, canAnswer, displayName, effectiveAskState, machineHue, STATE_RANK } from "../../lib/format.ts";
 import { getRoute, goBack, hrefFor, navigate, useRoute } from "../../lib/route.ts";
 import { agoLong, useNow } from "../../lib/time.ts";
 import { useStore } from "../../state/store.tsx";
+import { bestLabel, rankingNote } from "../../../../src/pool/format.ts";
 import { suggestTeam } from "../../../../src/pool/suggest.ts";
 import { AgentCard } from "../mission/AgentCard.tsx";
 import { MachineGauges } from "./MachineGauges.tsx";
@@ -174,8 +176,12 @@ function AccountsSection({ accounts, now }: { accounts: AccountView[]; now: numb
   );
 }
 
-function LocalModelSection({ node }: { node: NodeView }) {
-  const s = useMemo(() => suggestTeam([node]).headline, [node]);
+/** What this one machine could run (the machine page); exported for the tests and the phone-width render check. */
+export function LocalModelSection({ node, models: override }: { node: NodeView; models?: ModelsInput }) {
+  const models = useModels(override);
+  const cat = models.view.catalog;
+  const ranking = rankingNote(cat);
+  const s = useMemo(() => suggestTeam([node], { cat }).headline, [node, cat]);
   if (!node.stats) return null;
   return (
     <section className="section lm-card mdx-lm" aria-labelledby="mdx-lm-h">
@@ -183,10 +189,12 @@ function LocalModelSection({ node }: { node: NodeView }) {
         <h2 className="lm-card-title" id="mdx-lm-h">What it could run on its own</h2>
         <span className="lm-est">estimate</span>
       </header>
+      {ranking && <p className="lm-card-note lm-ranking-note">{ranking}.</p>}
       {s?.single ? (
         <ul className="lm-picks">
-          <PickRow label="On this machine" pick={s.single} />
-          {s.ifIdle && <PickRow label="If idle" pick={s.ifIdle} />}
+          <PickRow label={`${bestLabel(s.single.model)} on this machine`} pick={s.single} cat={cat} />
+          {s.faster && <PickRow label="Faster" pick={s.faster} cat={cat} />}
+          {s.ifIdle && <PickRow label="If idle" pick={s.ifIdle} cat={cat} />}
         </ul>
       ) : (
         <p className="panel-empty">Nothing in the catalog fits in the memory free on {node.hostname} right now.</p>

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { signEvent } from "../../src/daemon/keys.ts";
+import { PEER_BODY_MAX } from "../../src/daemon/peer-api.ts";
 import { newPeerNonce, signPeerRequest } from "../../src/daemon/peer-sig.ts";
 import { eventId } from "../../src/protocol/ids.ts";
 import { PROTOCOL_VERSION, type UnsignedEvent } from "../../src/protocol/schemas.ts";
@@ -84,9 +85,18 @@ describe("peer API gate", () => {
     expect(visible.events.some((e) => (e.body as { text?: string }).text === "forged")).toBe(false);
   });
 
-  test("oversized peer body is refused", async () => {
-    const res = await peerFetch(alex, kira, "/peer/v1/events", { method: "POST", body: "x".repeat(1_100_000) });
-    expect([413, 400]).toContain(res.status);
+  test("an oversized peer body is refused with 413, at the app's own cap and at the server's", async () => {
+    // One byte over the app's cap is inside the server's slack (cap + 1 KB), so only the app's own check can refuse it; a
+    // 400 here would mean the cap is gone and the body reached the JSON parser.
+    const justOver = await peerFetch(alex, kira, "/peer/v1/events", { method: "POST", body: "x".repeat(PEER_BODY_MAX + 1) });
+    expect(justOver.status).toBe(413);
+    expect(((await justOver.json()) as { error: { code: string } }).error.code).toBe("too_large");
+    const wayOver = await peerFetch(alex, kira, "/peer/v1/events", { method: "POST", body: "x".repeat(PEER_BODY_MAX + 4_096) });
+    expect(wayOver.status).toBe(413);
+    // Control: exactly at the cap the body is read, and being no JSON it is a 400 about its content, never about its size.
+    const atCap = await peerFetch(alex, kira, "/peer/v1/events", { method: "POST", body: "x".repeat(PEER_BODY_MAX) });
+    expect(atCap.status).toBe(400);
+    expect(((await atCap.json()) as { error: { code: string } }).error.code).toBe("invalid");
   });
 });
 

@@ -1,0 +1,1199 @@
+[
+ {
+  "_id": "6a838b56859b6056ecfa5667",
+  "id": "cdiamond/Qwen3.8-27B-iMatrix-NVFP4-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 4173935,
+  "createdAt": "2026-08-17T22:29:42.000Z"
+ },
+ {
+  "_id": "6a832587e74e9a9edfb67ff9",
+  "id": "HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 2053544,
+  "createdAt": "2026-08-17T15:15:19.000Z"
+ },
+ {
+  "_id": "6a81b8bfa514d4eed962e012",
+  "id": "huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 2039470,
+  "createdAt": "2026-08-16T13:18:55.000Z"
+ },
+ {
+  "_id": "6a5c53b3dd4adc6511a71e1b",
+  "id": "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a7540d25d3ee4a18936b47e",
+     "id": "DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP"
+    }
+   ]
+  },
+  "downloads": 1891994,
+  "createdAt": "2026-07-19T04:33:55.000Z"
+ },
+ {
+  "_id": "6a9678354e2541b828b4a40e",
+  "id": "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8cf4424d6320019d7c4e9d",
+     "id": "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NM-DAU"
+    }
+   ]
+  },
+  "downloads": 1817224,
+  "createdAt": "2026-09-01T07:01:09.000Z"
+ },
+ {
+  "_id": "6a91d58bed327671e1699008",
+  "id": "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 1679425,
+  "createdAt": "2026-08-28T18:38:03.000Z"
+ },
+ {
+  "_id": "6a8edc2c225d22c0ee0fdab6",
+  "id": "unsloth/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 1562076,
+  "createdAt": "2026-08-26T12:29:32.000Z"
+ },
+ {
+  "_id": "6a1977c791f1a95deb74b2fa",
+  "id": "unsloth/gemma-4-12b-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "downloads": 1481600,
+  "createdAt": "2026-05-29T11:25:59.000Z"
+ },
+ {
+  "_id": "6a8c929a3e848c987cdeec8d",
+  "id": "peculiar-ragdoll/Tiel-Coder-35B-A3B-GGUF-MTP",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83faa6daa1fa3722f97f36",
+     "id": "ornith-ai/Ornith-1.5-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 1475820,
+  "createdAt": "2026-08-24T18:51:06.000Z"
+ },
+ {
+  "_id": "69ceedbf0689e4caa5ab755f",
+  "id": "HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive",
+  "downloads": 1318602,
+  "createdAt": "2026-04-02T22:29:19.000Z"
+ },
+ {
+  "_id": "69a2f5edef408247323ee7f4",
+  "id": "unsloth/Qwen3.5-9B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 1311522,
+  "createdAt": "2026-02-28T14:04:29.000Z"
+ },
+ {
+  "_id": "69e066230bd313faad5d76e7",
+  "id": "unsloth/Qwen3.6-35B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 1308144,
+  "createdAt": "2026-04-16T04:31:31.000Z"
+ },
+ {
+  "_id": "6a7f364cccffc05984ed3c4f",
+  "id": "peculiar-ragdoll/Dirk-Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 1227399,
+  "createdAt": "2026-08-14T15:37:48.000Z"
+ },
+ {
+  "_id": "6a01d228550577cadfac8843",
+  "id": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 1102796,
+  "createdAt": "2026-05-11T12:57:12.000Z"
+ },
+ {
+  "_id": "6a6b255da4637ab176bb8777",
+  "id": "unsloth/Inkling-Small-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a67dcc8207183934704404f",
+     "id": "thinkingmachines/Inkling-Small"
+    }
+   ]
+  },
+  "downloads": 1073247,
+  "createdAt": "2026-07-30T10:20:13.000Z"
+ },
+ {
+  "_id": "69a52438a50ce97141e4a0eb",
+  "id": "unsloth/Qwen3.5-4B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a1adef9060862380ddaff7",
+     "id": "Qwen/Qwen3.5-4B"
+    }
+   ]
+  },
+  "downloads": 1021613,
+  "createdAt": "2026-03-02T05:46:32.000Z"
+ },
+ {
+  "_id": "6a7f31a8d0b754daf3d51692",
+  "id": "ggml-org/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 1006096,
+  "createdAt": "2026-08-14T15:18:00.000Z"
+ },
+ {
+  "_id": "6a9e86d1dab7f88030e2af20",
+  "id": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 952084,
+  "createdAt": "2026-09-07T09:41:37.000Z"
+ },
+ {
+  "_id": "6a7607fc2f16fd3ce367e2bb",
+  "id": "bartowski/endless-frontier_BigBang-v1-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a6f349cd33881d640b7bee6",
+     "id": "endless-frontier/BigBang-v1"
+    }
+   ]
+  },
+  "downloads": 950741,
+  "createdAt": "2026-08-07T16:29:48.000Z"
+ },
+ {
+  "_id": "6a0540c89c42a63f2c011cb4",
+  "id": "datalab-to/surya-ocr-2-gguf",
+  "downloads": 927360,
+  "createdAt": "2026-05-14T03:26:00.000Z"
+ },
+ {
+  "_id": "69e17b9e48b1ac4c5ec71427",
+  "id": "HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 911715,
+  "createdAt": "2026-04-17T00:15:26.000Z"
+ },
+ {
+  "_id": "6a3947825cc4ec067c8e0a4c",
+  "id": "HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "downloads": 863034,
+  "createdAt": "2026-06-22T14:32:34.000Z"
+ },
+ {
+  "_id": "6a849035fcf5142100762676",
+  "id": "byteshape/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 620194,
+  "createdAt": "2026-08-18T17:02:45.000Z"
+ },
+ {
+  "_id": "69cd2ebc3dc1641e52e18d1d",
+  "id": "unsloth/gemma-4-E4B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a5ebb435468e1470916cd0",
+     "id": "google/gemma-4-E4B-it"
+    }
+   ]
+  },
+  "downloads": 616439,
+  "createdAt": "2026-04-01T14:42:04.000Z"
+ },
+ {
+  "_id": "6a874bd0e72cd2d1f422fdd6",
+  "id": "dealignai/Ornith-1.5-9B-UNCENSORED-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83f99c91917d42401beac3",
+     "id": "ornith-ai/Ornith-1.5-9B"
+    }
+   ]
+  },
+  "downloads": 600013,
+  "createdAt": "2026-08-20T18:47:44.000Z"
+ },
+ {
+  "_id": "6a7f38b6483eb93f2a5f6001",
+  "id": "bartowski/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 477275,
+  "createdAt": "2026-08-14T15:48:06.000Z"
+ },
+ {
+  "_id": "6a8076cedec2241021b96942",
+  "id": "empero-ai/Qwen3.8-27B-Ridge-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 439286,
+  "createdAt": "2026-08-15T14:25:18.000Z"
+ },
+ {
+  "_id": "69cd2e52ea37eb5eb635f98a",
+  "id": "unsloth/gemma-4-31B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69b1b2ec895b2d5026e6bc2e",
+     "id": "google/gemma-4-31B-it"
+    }
+   ]
+  },
+  "downloads": 331551,
+  "createdAt": "2026-04-01T14:40:18.000Z"
+ },
+ {
+  "_id": "6a9abcf3a0a4fe024b25fd77",
+  "id": "Jackrong/Qwopus3.8-27B-Flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 287411,
+  "createdAt": "2026-09-04T12:43:31.000Z"
+ },
+ {
+  "_id": "69f22df4e0c88c9638262e75",
+  "id": "Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a2f5d3a50ce97141b9e391",
+     "id": "unsloth/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 258596,
+  "createdAt": "2026-04-29T16:12:36.000Z"
+ },
+ {
+  "_id": "6a19843ef4090276d1c9589a",
+  "id": "unsloth/Step-3.7-Flash-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a110d5abf07261a989071d8",
+     "id": "stepfun-ai/Step-3.7-Flash"
+    }
+   ]
+  },
+  "downloads": 242191,
+  "createdAt": "2026-05-29T12:19:10.000Z"
+ },
+ {
+  "_id": "6a297260e4bc5e82fb1ad6ca",
+  "id": "unsloth/diffusiongemma-26B-A4B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a2809ac4e0fb5767246c7d6",
+     "id": "google/diffusiongemma-26B-A4B-it"
+    }
+   ]
+  },
+  "downloads": 226794,
+  "createdAt": "2026-06-10T14:19:12.000Z"
+ },
+ {
+  "_id": "69e0f0f03ee9bc5ee6957725",
+  "id": "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 190210,
+  "createdAt": "2026-04-16T14:23:44.000Z"
+ },
+ {
+  "_id": "6a8ecac19808154a6906b9bd",
+  "id": "orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 184752,
+  "createdAt": "2026-08-26T11:15:13.000Z"
+ },
+ {
+  "_id": "6a9cea389d04f655f2d624e4",
+  "id": "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 183862,
+  "createdAt": "2026-09-06T04:21:12.000Z"
+ },
+ {
+  "_id": "69e376b02ae0a29851d85511",
+  "id": "ggml-org/Qwen3.6-35B-A3B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 154018,
+  "createdAt": "2026-04-18T12:18:56.000Z"
+ },
+ {
+  "_id": "6ab7939bff5de70b9ff8761d",
+  "id": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 148142,
+  "createdAt": "2026-09-26T09:42:51.000Z"
+ },
+ {
+  "_id": "6a8f8ec7f0e47dd74dee8695",
+  "id": "bartowski/orcarouter_Qwen3.8-27B-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83bdd45235f3a3672c77d7",
+     "id": "orcarouter/Qwen3.8-27B-Uncensored"
+    }
+   ]
+  },
+  "downloads": 147870,
+  "createdAt": "2026-08-27T01:11:35.000Z"
+ },
+ {
+  "_id": "6a8167f07e5b0adb68f9fcf0",
+  "id": "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 143711,
+  "createdAt": "2026-08-16T07:34:08.000Z"
+ },
+ {
+  "_id": "6ab2ab0dfe5614d2e08dbff8",
+  "id": "agentionai/Qwen3.8-27B-AP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 119696,
+  "createdAt": "2026-09-22T16:21:33.000Z"
+ },
+ {
+  "_id": "69a1bc2b43e9556fae48e36d",
+  "id": "bartowski/Qwen_Qwen3.5-9B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 115696,
+  "createdAt": "2026-02-27T15:45:47.000Z"
+ },
+ {
+  "_id": "6a0c4f4c7e02aab1c28f4821",
+  "id": "huihui-ai/Huihui-Qwen3.6-35B-A3B-abliterated-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 101982,
+  "createdAt": "2026-05-19T11:53:48.000Z"
+ },
+ {
+  "_id": "6a3c6badf45388626e883cee",
+  "id": "HauhauCS/Gemma4-31B-QAT-Uncensored-HauhauCS-Balanced-MTP",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69b1b2ec895b2d5026e6bc2e",
+     "id": "google/gemma-4-31B-it"
+    }
+   ]
+  },
+  "downloads": 83618,
+  "createdAt": "2026-06-24T23:43:41.000Z"
+ },
+ {
+  "_id": "6a917d36353ae3d2f0bca822",
+  "id": "bartowski/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 72687,
+  "createdAt": "2026-08-28T12:21:10.000Z"
+ },
+ {
+  "_id": "6a047df735125438ed2a1d14",
+  "id": "unsloth/Qwen3.5-9B-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 66413,
+  "createdAt": "2026-05-13T13:34:47.000Z"
+ },
+ {
+  "_id": "6a85870481630ae4dbea9966",
+  "id": "AtomicChat/Ornith-1.5-9B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83f99c91917d42401beac3",
+     "id": "ornith-ai/Ornith-1.5-9B"
+    }
+   ]
+  },
+  "downloads": 49053,
+  "createdAt": "2026-08-19T10:35:48.000Z"
+ },
+ {
+  "_id": "6a7c86dadd8c6c90a8e71c89",
+  "id": "AtomicChat/Qwen3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 47446,
+  "createdAt": "2026-08-12T14:44:42.000Z"
+ },
+ {
+  "_id": "69ce92d4588265df1fab5d2d",
+  "id": "bartowski/google_gemma-4-31B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69b1b2ec895b2d5026e6bc2e",
+     "id": "google/gemma-4-31B-it"
+    }
+   ]
+  },
+  "downloads": 38825,
+  "createdAt": "2026-04-02T16:01:24.000Z"
+ },
+ {
+  "_id": "6a20746f26fac447c54bc312",
+  "id": "bartowski/gemma-4-12B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "downloads": 37694,
+  "createdAt": "2026-06-03T18:37:35.000Z"
+ },
+ {
+  "_id": "685d3c0352e700d127394d36",
+  "id": "unsloth/gemma-3n-E4B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "683f3c2354280d882006f816",
+     "id": "google/gemma-3n-E4B-it"
+    }
+   ]
+  },
+  "downloads": 36812,
+  "createdAt": "2025-06-26T12:24:35.000Z"
+ },
+ {
+  "_id": "69ce92a571a1122a5fdd0c53",
+  "id": "bartowski/google_gemma-4-E4B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a5ebb435468e1470916cd0",
+     "id": "google/gemma-4-E4B-it"
+    }
+   ]
+  },
+  "downloads": 35605,
+  "createdAt": "2026-04-02T16:00:37.000Z"
+ },
+ {
+  "_id": "6aa1b66094123133167cbb52",
+  "id": "RentedNoodle/Qwen3.8-27B-OrcaRouter-GSQ-RCO-IQ3_XXS-Uncensored",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83bdd45235f3a3672c77d7",
+     "id": "orcarouter/Qwen3.8-27B-Uncensored"
+    }
+   ]
+  },
+  "downloads": 34892,
+  "createdAt": "2026-09-09T19:41:20.000Z"
+ },
+ {
+  "_id": "69ccf4754603a0959d971bd7",
+  "id": "ggml-org/gemma-4-31B-it-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69b1b2ec895b2d5026e6bc2e",
+     "id": "google/gemma-4-31B-it"
+    }
+   ]
+  },
+  "downloads": 33447,
+  "createdAt": "2026-04-01T10:33:25.000Z"
+ },
+ {
+  "_id": "6a9de977fb2b3ccc30c17912",
+  "id": "ivanfioravanti/Qwen3.8-Flash-Next-DS4-IQ2",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 31775,
+  "createdAt": "2026-09-06T22:30:15.000Z"
+ },
+ {
+  "_id": "69a6a7c0ae4e7dd37aeedff2",
+  "id": "lukey03/Qwen3.5-9B-abliterated-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 30755,
+  "createdAt": "2026-03-03T09:20:00.000Z"
+ },
+ {
+  "_id": "6a85ccb65f70052ea03d1e6c",
+  "id": "tooltd/Qwen3.8-27B-IQ4-XS-16GB-VRAM-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 30373,
+  "createdAt": "2026-08-19T15:33:10.000Z"
+ },
+ {
+  "_id": "6a954c3292de0e20d7c5bc1c",
+  "id": "orcarouter/GLM-5.3-Flash-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "downloads": 29031,
+  "createdAt": "2026-08-31T09:41:06.000Z"
+ },
+ {
+  "_id": "6a9274f332a924cb8c6e67ca",
+  "id": "jcbtc/Qwen3.8-Flash-CIRU-STRIX-IU4",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 28458,
+  "createdAt": "2026-08-29T05:58:11.000Z"
+ },
+ {
+  "_id": "6a869475554b80012a02eb22",
+  "id": "0xKitkat/Ornith-1.5-35B-A3B-Uncensored-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 27869,
+  "createdAt": "2026-08-20T05:45:25.000Z"
+ },
+ {
+  "_id": "6a881f5340216fed3d1111a8",
+  "id": "QQZ2026/Qwen3.8-27B-ZeroRefusal-UD-IQ4_XS-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 26722,
+  "createdAt": "2026-08-21T09:50:11.000Z"
+ },
+ {
+  "_id": "6aa680cd26bbc82b745637ca",
+  "id": "pfeifferj/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 26503,
+  "createdAt": "2026-09-13T10:54:05.000Z"
+ },
+ {
+  "_id": "6a85f7b72e0e7e7e3dc7cf07",
+  "id": "bartowski/Ornith-1.5-9B-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83f99c91917d42401beac3",
+     "id": "ornith-ai/Ornith-1.5-9B"
+    }
+   ]
+  },
+  "downloads": 26422,
+  "createdAt": "2026-08-19T18:36:39.000Z"
+ },
+ {
+  "_id": "6a9e0c77e5cda2a8ce08192c",
+  "id": "5oo6w32cu/Qwen3.8-27B-Uncensored-Q8_0-GGUF",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a83bdd45235f3a3672c77d7",
+     "id": "orcarouter/Qwen3.8-27B-Uncensored"
+    }
+   ]
+  },
+  "downloads": 25850,
+  "createdAt": "2026-09-07T00:59:35.000Z"
+ },
+ {
+  "_id": "6aa1b5f7e59f463e8074fee5",
+  "id": "agentionai/Signal-3.8-27B-GGUF",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 25114,
+  "createdAt": "2026-09-09T19:39:35.000Z"
+ },
+ {
+  "_id": "6aa684a93eaa602a16ca209d",
+  "id": "pfeifferj/GLM-5.3-Flash-GSQ-RCO-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8d39822a943ad8a2f2ea50",
+     "id": "zai-org/GLM-5.3-Flash"
+    }
+   ]
+  },
+  "downloads": 24744,
+  "createdAt": "2026-09-13T11:10:33.000Z"
+ },
+ {
+  "_id": "69ba135a06c4236621f50b65",
+  "id": "Jackrong/Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF",
+  "baseModels": {
+   "relation": "adapter",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 23681,
+  "createdAt": "2026-03-18T02:52:10.000Z"
+ },
+ {
+  "_id": "6a7f8f6fe0a94628c9ff49c9",
+  "id": "dealignai/Qwen3.8-27B-UNCENSORED-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 23350,
+  "createdAt": "2026-08-14T21:58:07.000Z"
+ },
+ {
+  "_id": "6ab0652e40bcb88107c54f43",
+  "id": "EldanRing/Winnow-12B",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a11001ba8f0f4aacca069ec",
+     "id": "google/gemma-4-12B-it"
+    }
+   ]
+  },
+  "downloads": 21482,
+  "createdAt": "2026-09-20T22:58:54.000Z"
+ },
+ {
+  "_id": "6ab51514cd21e1f407b2ae8c",
+  "id": "EldanRing/Winnow-E4B",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "69a5ebb435468e1470916cd0",
+     "id": "google/gemma-4-E4B-it"
+    }
+   ]
+  },
+  "downloads": 19346,
+  "createdAt": "2026-09-24T12:18:28.000Z"
+ },
+ {
+  "_id": "69a6566a41e5e425ed9414f8",
+  "id": "Jackrong/Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-GGUF",
+  "baseModels": {
+   "relation": "adapter",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 17494,
+  "createdAt": "2026-03-03T03:32:58.000Z"
+ },
+ {
+  "_id": "6a8750b4735ca17b00ac735c",
+  "id": "protoLabsAI/Ornith-1.5-9B-MTP-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83f99c91917d42401beac3",
+     "id": "ornith-ai/Ornith-1.5-9B"
+    }
+   ]
+  },
+  "downloads": 17460,
+  "createdAt": "2026-08-20T19:08:36.000Z"
+ },
+ {
+  "_id": "6a80a384a31d18344bc5a2c9",
+  "id": "joyfox/Qwen3.8-27B-Uncensored-JoyFox-Aggressive",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 16983,
+  "createdAt": "2026-08-15T17:36:04.000Z"
+ },
+ {
+  "_id": "6a9ebb3c98662ffcb07cef0b",
+  "id": "apetersson/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 16972,
+  "createdAt": "2026-09-07T13:25:16.000Z"
+ },
+ {
+  "_id": "6a7b6f1f8270d9832e03bb42",
+  "id": "peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-GGUF-MTP",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 14778,
+  "createdAt": "2026-08-11T18:51:11.000Z"
+ },
+ {
+  "_id": "6a7f3a7e28d48b8b5b889c9d",
+  "id": "Abiray/Qwen3.8-27B-Q4_K_M-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 14394,
+  "createdAt": "2026-08-14T15:55:42.000Z"
+ },
+ {
+  "_id": "6aa3eacdf1345629511ad355",
+  "id": "agentionai/Signal-3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 13540,
+  "createdAt": "2026-09-11T11:49:33.000Z"
+ },
+ {
+  "_id": "69afd31197e57fcb354ccda2",
+  "id": "prithivMLmods/Gliese-Qwen3.5-9B-Abliterated-Caption",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69a194f2d29af86e5f085743",
+     "id": "Qwen/Qwen3.5-9B"
+    }
+   ]
+  },
+  "downloads": 13343,
+  "createdAt": "2026-03-10T08:15:13.000Z"
+ },
+ {
+  "_id": "6a907a9e2f6af93259faccae",
+  "id": "ggml-org/Qwen3.8-Flash-Next-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a8bffdb39eb84b2b2755a6e",
+     "id": "Qwen/Qwen3.8-Flash-Next"
+    }
+   ]
+  },
+  "downloads": 11281,
+  "createdAt": "2026-08-27T17:57:50.000Z"
+ },
+ {
+  "_id": "6a6fff517017ac5c6e254b0a",
+  "id": "joyfox/JoyFox-Qwen3.6-35B-A3B-RP-Aggressive",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "69df2937a1a44a4df58e0dd5",
+     "id": "Qwen/Qwen3.6-35B-A3B"
+    }
+   ]
+  },
+  "downloads": 10515,
+  "createdAt": "2026-08-03T02:39:13.000Z"
+ },
+ {
+  "_id": "6a89aed657c484c50f080e64",
+  "id": "QuaduxIT/Qwen3.8-27B-Whitehat-GGUF",
+  "baseModels": {
+   "relation": "finetune",
+   "models": [
+    {
+     "_id": "6a72f2e302294c7d32dd278e",
+     "id": "Qwen/Qwen3.8-27B"
+    }
+   ]
+  },
+  "downloads": 10437,
+  "createdAt": "2026-08-22T14:14:46.000Z"
+ },
+ {
+  "_id": "6a86b0abee8030e5238b9748",
+  "id": "Thunder13240/Ornith-1.5-9B-heretic-GGUF",
+  "baseModels": {
+   "relation": "quantized",
+   "models": [
+    {
+     "_id": "6a83f99c91917d42401beac3",
+     "id": "ornith-ai/Ornith-1.5-9B"
+    }
+   ]
+  },
+  "downloads": 10411,
+  "createdAt": "2026-08-20T07:45:47.000Z"
+ }
+]

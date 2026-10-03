@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Hash, Lock, MessagesSquare } from "lucide-react";
 import type { ChannelView } from "../../api/types.ts";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { EmptyState, ErrorState, SkeletonRows } from "../../components/primitives.tsx";
 import { hrefFor, navigate, useRoute } from "../../lib/route.ts";
 import { unreadCount } from "../../state/reducer.ts";
@@ -108,7 +109,13 @@ function Feed({ channel }: { channel: ChannelView }) {
               const prev = data.roots[i - 1];
               const prevHasThread = prev ? (data.threads.get(prev.id)?.count ?? 0) > 0 : false;
               const compact = !!prev && !prevHasThread && e.kind === "msg.post" && prev.kind === "msg.post" && prev.author.handle === e.author.handle && prev.author.agent === e.author.agent && e.ts - prev.ts < GROUP_WINDOW_MS;
-              return <MessageItem key={e.id} event={e} compact={compact} thread={data.threads.get(e.id)} onOpenThread={openThread} active={route.thread === e.id} />;
+              const thread = data.threads.get(e.id);
+              const active = route.thread === e.id;
+              return (
+                <ErrorBoundary key={e.id} scope="item" name={`message ${e.id}`} resetKeys={[e, thread, compact, active]}>
+                  <MessageItem event={e} compact={compact} thread={thread} onOpenThread={openThread} active={active} />
+                </ErrorBoundary>
+              );
             })}
           </div>
         )}

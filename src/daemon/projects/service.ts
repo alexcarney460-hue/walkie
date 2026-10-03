@@ -13,6 +13,7 @@ import { upgradeUrl } from "../../license/plans.ts";
 import { boardAddonUrl } from "../../license/site.ts";
 import { isPersonAddress } from "../../protocol/projects/fold.ts";
 import { cardOpText } from "../../protocol/projects/format.ts";
+import { statusReportDenial } from "../../protocol/projects/status-report.ts";
 import { keyBetween } from "../../protocol/projects/position.ts";
 import {
   BOARDS_INCLUDED, boardBodyFits, CardOp, DEFAULT_COLUMNS, MAX_BOARD_OP_BYTES, FREE_PROJECTS, MAX_CARDS_PER_PROJECT, MAX_LIVE_CARDS_PER_BOARD, MAX_PROJECTS,
@@ -310,6 +311,8 @@ export interface UpdateProject {
   automations?: Automations; state?: "active" | "archived" | "deleted"; private?: boolean;
   /** FO-6: the board steward on or off for this project, and the machine whose loop keeps it. */
   steward?: "on" | "off"; steward_node?: string;
+  /** PROJECT-REPORTS-1: WalkieTalkie's hourly status report for this project, on or off. */
+  status_report?: "hourly" | "off";
 }
 
 /** Settings, archive / delete, visibility: the project's admins (owners and its creator), people only. */
@@ -320,6 +323,11 @@ export function updateProject(w: WriteCtx, channel: string, req: UpdateProject):
 
 async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject): Promise<ProjectView> {
   const p = visibleProject(w, channel);
+  if (req.status_report !== undefined) {
+    // The status report's switch says why it refuses (an observer's reason differs from another member's).
+    const why = statusReportDenial(me(w).role, me(w).handle, p.creator);
+    if (why) throw new HttpError(403, "forbidden", why);
+  }
   if (!isAdmin(w, p)) throw new HttpError(403, "forbidden", "only the project's creator or an owner can change its settings");
   if (req.prefix && req.prefix !== p.prefix && visibleProjects(w).some((x) => x.prefix === req.prefix && x.state !== "deleted")) {
     throw new HttpError(409, "conflict", `another project already uses the prefix ${req.prefix}`);
@@ -348,6 +356,7 @@ async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject
     const after = s.project?.head;
     const what = changes.state === "deleted" ? "deleted" : changes.state === "archived" ? "archived" : changes.state === "active" ? "restored"
       : Object.keys(changes).length === 1 && changes.steward ? `board steward turned ${String(changes.steward)}`
+      : Object.keys(changes).length === 1 && changes.status_report ? `status report turned ${changes.status_report === "hourly" ? "on" : "off"}`
       : Object.keys(changes).length === 1 && changes.steward_node !== undefined ? "board steward machine set" : `settings changed (${Object.keys(changes).join(", ")})`;
     post(w, channel, `Project "${p.name}" ${what}`, { v: 1, rev, op: "project", ...(after ? { after } : {}), ...changes }, { thread: p.id });
   }

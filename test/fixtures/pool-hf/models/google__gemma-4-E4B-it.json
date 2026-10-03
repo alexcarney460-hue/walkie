@@ -1,0 +1,152 @@
+{
+ "_id": "69a5ebb435468e1470916cd0",
+ "id": "google/gemma-4-E4B-it",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "69a5ebc1499f4be0895ba715",
+    "id": "google/gemma-4-E4B"
+   }
+  ]
+ },
+ "downloads": 4365754,
+ "likes": 1629,
+ "gated": false,
+ "pipeline_tag": "any-to-any",
+ "sha": "ee0ef6023621cff504d758262d4e04895a5af4a2",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "gemma4",
+  "image-text-to-text",
+  "any-to-any",
+  "arxiv:2607.02770",
+  "base_model:google/gemma-4-E4B",
+  "base_model:finetune:google/gemma-4-E4B",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:sagemaker",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/extractbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "llamaindex/ExtractBench",
+     "task_id": "mean"
+    },
+    "value": 69.64,
+    "date": "2026-08-24",
+    "source": {
+     "url": "https://huggingface.co/datasets/llamaindex/ExtractBench",
+     "name": "ExtractBench",
+     "user": "boyang-runllama"
+    },
+    "notes": "Pipeline name: gemma4_e4b_vllm_extract_oneshot_structured_output_file"
+   },
+   "pullRequest": 47
+  },
+  {
+   "filename": ".eval_results/extractbench.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "llamaindex/ExtractBench",
+     "task_id": "short"
+    },
+    "value": 81.1,
+    "date": "2026-08-24",
+    "source": {
+     "url": "https://huggingface.co/datasets/llamaindex/ExtractBench",
+     "name": "ExtractBench",
+     "user": "boyang-runllama"
+    },
+    "notes": "Pipeline name: gemma4_e4b_vllm_extract_oneshot_structured_output_file"
+   },
+   "pullRequest": 47
+  },
+  {
+   "filename": ".eval_results/google-gemma-4-E4B-it.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "LiquidAI/ifstruct-v1.0",
+     "task_id": "ifstruct_v1"
+    },
+    "value": 76.65,
+    "date": "2026-06-30",
+    "source": {
+     "url": "https://www.liquid.ai/blog/ifstruct-v1.0",
+     "name": "Liquid AI \u2014 IFStruct v1.0 blog (gemma-4-E4B-it)"
+    }
+   },
+   "pullRequest": 38
+  },
+  {
+   "filename": ".eval_results/aime_2026.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "MathArena/aime_2026",
+     "task_id": "MathArena/aime_2026"
+    },
+    "value": 42.5,
+    "date": "2026-03-02",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-E4B-it",
+     "name": "Model Card",
+     "user": "SaylorTwift"
+    }
+   },
+   "pullRequest": 4
+  },
+  {
+   "filename": ".eval_results/gpqa_diamond.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 58.6,
+    "date": "2026-04-02",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-E4B-it",
+     "name": "Model Card",
+     "user": "merve"
+    }
+   },
+   "pullRequest": 2
+  },
+  {
+   "filename": ".eval_results/mmlu_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "TIGER-Lab/MMLU-Pro",
+     "task_id": "mmlu_pro"
+    },
+    "value": 69.4,
+    "date": "2026-04-02",
+    "source": {
+     "url": "https://huggingface.co/google/gemma-4-E4B-it",
+     "name": "Model Card",
+     "user": "merve"
+    }
+   },
+   "pullRequest": 2
+  }
+ ],
+ "createdAt": "2026-03-02T19:57:40.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 7996156490
+  },
+  "total": 7996156490
+ }
+}

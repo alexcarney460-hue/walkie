@@ -11,15 +11,15 @@ function memLog(): { log: Logger; lines: Line[] } {
   return { log: { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") }, lines };
 }
 
-/** A watchdog on a hand-driven clock: `busy(ms)` is an operation that holds the loop that long. */
+/** A watchdog on hand-driven clocks (the monotonic one and the wall clock advance together): `busy(ms)` is an operation that holds the loop that long. */
 function manual(stallMs = 500, intervalMs = 250) {
-  const clock = { t: 1_000 };
+  const clock = { t: 1_000, wall: 1_700_000_000_000 };
   const { log, lines } = memLog();
-  const w = new LoopWatchdog(log, { stallMs, intervalMs, now: () => clock.t });
+  const w = new LoopWatchdog(log, { stallMs, intervalMs, now: () => clock.t, wallNow: () => clock.wall });
   w.start();
   stops.push(() => w.stop());
-  const busy = (ms: number) => { clock.t += ms; };
-  const tick = () => { clock.t += intervalMs; w.check(); };
+  const busy = (ms: number) => { clock.t += ms; clock.wall += ms; };
+  const tick = () => { busy(intervalMs); w.check(); };
   return { w, clock, lines, busy, tick };
 }
 
@@ -68,17 +68,65 @@ describe("LoopWatchdog", () => {
   });
 
   test("reports the largest recent local stall and expires it after a minute", () => {
-    let wall = 10_000;
-    const clock = { t: 1_000 };
-    const { log } = memLog();
-    const w = new LoopWatchdog(log, { now: () => clock.t, wallNow: () => wall });
-    w.start();
-    stops.push(() => w.stop());
-    clock.t += 20_250;
+    const { w, clock, busy } = manual();
+    busy(20_250);
     expect(w.stallTotalMs()).toBe(20_000);
-    expect(w.recentLag()).toEqual({ max_ms: 20_000, at: 10_000 });
-    wall += 60_000;
+    expect(w.recentLag()).toEqual({ max_ms: 20_000, at: clock.wall });
+    // A minute of healthy ticks (the clocks advance together, each tick on time): the stall is no longer recent.
+    for (let i = 0; i < 240; i++) { busy(250); w.check(); }
     expect(w.recentLag()).toBeNull();
+  });
+
+  test("a sleep the monotonic clock does not see (a laptop's lid) discounts presence but is no lagging daemon", () => {
+    const { w, clock, lines, busy } = manual();
+    busy(250);
+    expect(w.stallTotalMs()).toBe(0);
+    clock.wall += 600_000; // ten minutes asleep: the monotonic clock stood still
+    expect(w.stallTotalMs()).toBe(600_000); // peers' last contact is discounted by it…
+    expect(w.recentLag()).toBeNull(); // …but the dashboard is not told the daemon lagged
+    expect(lines.map((l) => [l.level, l.msg, l.fields])).toEqual([["info", "sleep_resume", { slept_ms: 600_000 }]]);
+    // Counted once: the next healthy tick adds nothing.
+    busy(250);
+    expect(w.stallTotalMs()).toBe(600_000);
+  });
+
+  test("a real stall is still a stall, and counts once when the wall clock agrees with the monotonic one", () => {
+    const { w, lines, busy } = manual();
+    busy(3_250);
+    expect(w.stallTotalMs()).toBe(3_000);
+    expect(lines.map((l) => l.msg)).toEqual(["event_loop_stall"]);
+    expect(w.recentLag()?.max_ms).toBe(3_000);
+  });
+
+  test("a wall clock set back and then forward again is not a sleep", () => {
+    const { w, clock, lines, busy } = manual();
+    busy(250);
+    clock.wall -= 300_000; // stepped back five minutes (a clock correction)
+    busy(250);
+    w.check();
+    expect(w.stallTotalMs()).toBe(0);
+    busy(250);
+    clock.wall += 300_000; // …and the correction forward again
+    expect(w.stallTotalMs()).toBe(0);
+    expect(w.recentLag()).toBeNull();
+    expect(lines).toEqual([]);
+    // What a later real sleep adds beyond what was credited still counts.
+    clock.wall += 120_000;
+    expect(w.stallTotalMs()).toBe(120_000);
+  });
+
+  test("a wall clock set forward with nothing credited reads as a sleep; a step back lapses after ten minutes", () => {
+    const { w, clock, busy } = manual();
+    busy(250);
+    clock.wall += 90_000;
+    expect(w.stallTotalMs()).toBe(90_000);
+    clock.wall -= 200_000; // stepped back…
+    busy(250);
+    w.check();
+    for (let i = 0; i < 2_400; i++) { busy(250); w.check(); } // …ten minutes pass…
+    busy(250);
+    clock.wall += 200_000; // …and a forward jump the credit no longer covers
+    expect(w.stallTotalMs()).toBe(90_000 + 200_000);
   });
 
   test("track returns what the operation returns and rethrows what it throws", () => {
@@ -90,7 +138,7 @@ describe("LoopWatchdog", () => {
   test("an injected late tick is caught and named through trackOp without CPU load", () => {
     const { log, lines } = memLog();
     let now = 0;
-    const w = startWatchdog(log, { stallMs: 150, intervalMs: 20, now: () => now });
+    const w = startWatchdog(log, { stallMs: 150, intervalMs: 20, now: () => now, wallNow: () => 1_700_000_000_000 + now });
     stops.push(() => stopWatchdog(w));
     trackOp("slow_operation", () => { now += 300; });
     now += 20;

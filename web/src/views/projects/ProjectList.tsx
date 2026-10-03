@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download, FolderKanban, Lock, Plus } from "lucide-react";
+import { ChevronRight, Download, FolderKanban, Lock, Newspaper, Plus } from "lucide-react";
 import type { AgentView, ProjectView } from "../../api/types.ts";
 import { PageHeader } from "../../components/Shell.tsx";
 import { Avatar, EmptyState, ErrorState, RelTime, SkeletonRows, hueVar } from "../../components/primitives.tsx";
@@ -11,6 +11,23 @@ import { useStore } from "../../state/store.tsx";
 import { CreateProject } from "./CreateProject.tsx";
 import { LinearImport } from "./LinearImport.tsx";
 import { Meter } from "./Meter.tsx";
+import { reportMode } from "../../lib/status-report.ts";
+import { ProjectReportToggle } from "./StatusReportSwitch.tsx";
+import { reportedProjects } from "../../lib/updates.ts";
+
+/** The way to the Updates page (UPDATES-1) at the top of the list: on a phone the tab bar has no room for it. */
+export function UpdatesLink({ projects }: { projects: readonly ProjectView[] }) {
+  const n = reportedProjects(projects).length;
+  return (
+    <a className="updates-link" href={hrefFor({ view: "updates" })}>
+      <Newspaper size={16} strokeWidth={1.75} aria-hidden="true" />
+      <span className="updates-link-text">
+        <strong>Updates</strong> · {n ? `plain-English status reports on ${n} project${n === 1 ? "" : "s"}` : "plain-English status reports, once a project's hourly report is on"}
+      </span>
+      <ChevronRight size={16} strokeWidth={1.75} aria-hidden="true" />
+    </a>
+  );
+}
 
 /** Up to four live agents on a project (avatars), then a count. */
 export function AgentFaces({ agents, max = 4 }: { agents: readonly AgentView[] | undefined; max?: number }) {
@@ -30,7 +47,7 @@ export function AgentFaces({ agents, max = 4 }: { agents: readonly AgentView[] |
 
 function ProjectRow({ p, agents }: { p: ProjectView; agents: AgentView[] | undefined }) {
   return (
-    <li>
+    <li className="project-item">
       <a className="project-row" href={hrefFor({ view: "projects", channel: p.channel })}>
         <span className="project-prefix mono" style={hueVar("--th", tagHue(p.prefix))}>{p.prefix}</span>
         <span className="project-main">
@@ -48,6 +65,14 @@ function ProjectRow({ p, agents }: { p: ProjectView; agents: AgentView[] | undef
         <Meter meter={p.meter} />
         <span className="project-activity muted"><RelTime ts={p.last_activity} /></span>
       </a>
+      {/* Beside the link, not inside it: a control must not sit within another interactive element. */}
+      <div className="project-report">
+        <ProjectReportToggle project={p} />
+        {/* The status page (PROJECT-PAGES-1) exists for a project whose hourly report is on; with it off nothing new shows. */}
+        {reportMode(p) === "hourly" && p.state === "active" && (
+          <a className="project-page-link" href={hrefFor({ view: "projects", channel: p.channel, page: true })}>Status page</a>
+        )}
+      </div>
     </li>
   );
 }
@@ -83,6 +108,7 @@ export function ProjectList() {
         </EmptyState>
       ) : (
         <>
+          <UpdatesLink projects={live} />
           {groups.map((g) => (
             <section key={g.folder || "(none)"} className="project-folder" aria-label={g.folder || "No folder"}>
               <h2 className="section-title">{g.folder || "No folder"}</h2>

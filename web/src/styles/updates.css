@@ -1,0 +1,55 @@
+/* ---- the Updates page (UPDATES-1): every reported project's latest plain-English status report ---- */
+.updates-lead { max-width: 72ch; margin: -8px 0 20px; color: var(--text-2); font-size: var(--fs-13); }
+.update-list { display: grid; gap: 16px; margin-bottom: 24px; }
+.update {
+  padding: 14px 18px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.update-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 10px; }
+.update-title { font-family: var(--font-display); font-size: var(--fs-16); font-weight: 650; letter-spacing: -0.012em; min-width: 0; }
+.update-folder { color: var(--text-3); font-weight: 500; }
+.update-meta { margin-left: auto; color: var(--text-3); font-size: var(--fs-12); }
+.update-body { font-size: var(--fs-14); line-height: 1.55; }
+/* The report's own section headings sit under the project's name, not above it. */
+.update-body :is(.mdr-h1, .mdr-h2, .mdr-h3, .mdr-h4, h1, h2, h3, h4) { margin: 14px 0 4px; font-size: var(--fs-14); font-weight: 650; letter-spacing: 0; }
+.update-body > :first-child { margin-top: 0; }
+.update-empty { margin: 0; color: var(--text-3); font-size: var(--fs-13); }
+.update-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 0; font-size: var(--fs-12); }
+.update-links a,
+.updates-off a,
+.updates-link { color: var(--accent-text); font-weight: 500; }
+.update-links a:hover,
+.updates-off a:hover { text-decoration: underline; }
+.update-links a { display: inline-flex; align-items: center; min-height: 44px; }
+.update-links a:focus-visible,
+.updates-off a:focus-visible,
+.updates-off summary:focus-visible,
+.updates-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-chip); }
+.updates-off { color: var(--text-2); font-size: var(--fs-13); }
+/* A list item keeps the open/close marker; the padding makes it a 44 px target. */
+.updates-off summary { display: list-item; padding-block: 13px; cursor: pointer; font-weight: 500; }
+.updates-off ul { display: grid; gap: 2px; margin-top: 6px; }
+.updates-off li a { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* The way to the page from the Projects list (the phone tab bar has no room for it). */
+.updates-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-card);
+  background: var(--accent-soft);
+  font-size: var(--fs-13);
+}
+.updates-link-text { flex: 1; min-width: 0; color: var(--text); font-weight: 400; }
+.updates-link-text strong { font-weight: 650; }
+
+@media (max-width: 860px) {
+  .update { padding: 12px 14px 10px; }
+  .update-meta { margin-left: 0; width: 100%; }
+}

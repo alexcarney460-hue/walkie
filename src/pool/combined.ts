@@ -1,4 +1,4 @@
-// "With all our machines together" (WALKIE-POOL-2): the largest open-weight model the team's online machines could
+// "With all our machines together" (WALKIE-POOL-2): the best open-weight model the team's online machines could
 // run split across all of them, wherever they are, and what can be started from this machine right now (this machine
 // plus the machines whose owners share them, each within its cap). Estimates only; `walkie pool run` / the dashboard's
 // "Run it split" starts one (src/pool/run/).
@@ -11,11 +11,11 @@
 // between two other machines come from their own published measurements (`stats.peer_rtt`), else the upper bound
 // rtt(me,A) + rtt(me,B) (labelled "via this machine"), else UNMEASURED_RTT_MS. docs/PROTOCOL.md §3 "Split runs".
 import { gb } from "../protocol/machine-stats-format.ts";
-import { CPU_MEMORY, machineCapacity, type Backend, type MachineCapacity } from "./capacity.ts";
-import { CATALOG, type Catalog } from "./catalog.ts";
+import { CPU_MEMORY, machineCapacity, runtimeBackend, type Backend, type MachineCapacity } from "./capacity.ts";
+import { CATALOG, compareModels, type Catalog } from "./catalog.ts";
 import type { GroupInput } from "./group.ts";
 import {
-  candidates, ctxText, deviceSlot, EFFICIENCY, fastest, hopMs, place, quantText, roomiest, SPEED_RANK, speedClass,
+  candidates, ctxText, deviceSlot, EFFICIENCY, fastest, hopMs, place, placementOf, quantText, roomiest, SPEED_RANK, speedClass,
   type Candidate, type Part, type Pick, type SpeedClass,
 } from "./suggest.ts";
 
@@ -104,7 +104,7 @@ function build(c: Candidate, parts: Part[], inputs: ReadonlyMap<string, GroupInp
   const where = parts.map((p) => (p.s.b.memory === CPU_MEMORY ? `${p.s.m.hostname} (CPU)` : p.s.m.hostname)).join(", ");
   return {
     model: c.model, quant: c.quant, need, have, fits: true, pooled: parts.length > 1,
-    placement: parts.map((p) => ({ node_id: p.s.m.node_id, hostname: p.s.m.hostname, handle: p.s.m.handle, bytes: p.bytes, memory: p.s.b.memory })),
+    placement: parts.map((p) => placementOf(p.s, p.bytes)),
     tokensPerSec: tps, speed: speedClass(tps),
     why: `Needs ${gb(need)} GB (${quantText(c.quant)}, ${ctxText(context)}${runtimes}); ${gb(have)} GB free now across ${parts.length === 1 ? where : `${parts.length} machines: ${where}`}`,
     head: { node_id: best.h.node_id, hostname: best.h.hostname, self: best.h.self },
@@ -113,7 +113,6 @@ function build(c: Candidate, parts: Part[], inputs: ReadonlyMap<string, GroupInp
   };
 }
 
-/** The largest candidate `machines` hold together (8-bit before 4-bit, unless the 8-bit one is slow and 4-bit faster). */
 /** The whole model on one machine's fastest backend that holds it (POOL-REAL-1 "serve on the best machine"). */
 function onOne(c: Candidate, machines: readonly MachineCapacity[]): Part[] | null {
   const slots = machines.flatMap((m) => m.backends.map((b) => ({ m, b }))).filter((x) => x.b.usable >= c.need);
@@ -135,7 +134,7 @@ function largest(cands: readonly Candidate[], machines: readonly MachineCapacity
     if (whole && (!split || !split.pooled || whole.tokensPerSec >= split.tokensPerSec)) return whole;
     return split;
   };
-  // POOL-REAL-1: the largest candidate that isn't slow; only when every one that fits is slow, the largest of those.
+  // POOL-REAL-1: the best rated candidate that isn't slow; only when every one that fits is slow, the best of those.
   let slow: CombinedPick | null = null;
   for (const c of cands) {
     let p = pickFor(c);
@@ -204,12 +203,15 @@ export function suggestCombined(nodes: readonly GroupInput[], opts: { cat?: Cata
       .flatMap((n) => { const c = caps.find((m) => m.node_id === n.node_id); return c ? [capped(c, n.pool?.cap ?? null)] : []; });
     // This machine first (no hop for its part), then the helpers largest-first: what `walkie pool run` places.
     // A head without an accelerator holds no layers in a run (v1), so the estimate doesn't count it either.
-    const machines = headFirst([...(selfCap && selfCap.kind !== "cpu" ? [selfCap] : []), ...helpers], self.node_id);
+    const machines = headFirst([...(selfCap && runtimeBackend(selfCap).kind !== "cpu" ? [selfCap] : []), ...helpers], self.node_id);
     runnable = machines.length ? largest(cands, machines, inputs, () => [self], context, overhead, true, false, true) : null;
     if (!runnable) runnableNote = "Nothing in the catalog fits in the memory this machine and the sharing machines have free";
-    else if (pick && (runnable.model.params_b < pick.model.params_b) && notSharing.length) {
+    else if (pick && compareModels(runnable.model, pick.model) > 0 && notSharing.length) {
       runnableNote = `The bigger pick needs ${notSharing.join(", ")} to share (its owner runs: walkie pool share on)`;
     }
   }
+  const runtimeNotes = caps.filter((m) => m.runtimeNote && (m.node_id === self?.node_id || sharing.includes(m.hostname)))
+    .map((m) => `${m.hostname}: ${m.runtimeNote}`);
+  if (runtimeNotes.length) runnableNote = [runnableNote, ...runtimeNotes].filter(Boolean).join(" ");
   return { machines: caps, usable, pick, notSharing, sharing, runnable, runnableNote };
 }

@@ -40,7 +40,7 @@ export class Fixture implements ProcessProvider {
     return new Map(pids.map((p) => [p, Object.fromEntries(Object.entries(this.env.get(p) ?? {}).filter(([k]) => names.includes(k)))]));
   }
   async cwd(pid: number): Promise<string | undefined> { return this.cwds.get(pid); }
-  async openFiles(pid: number): Promise<string[]> { return this.files.get(pid) ?? []; }
+  async openFiles(pid: number): Promise<string[] | null> { return this.files.get(pid) ?? []; }
   async claudeSession(pid: number, dir?: string) { return this.sessions.get(`${dir}\n${pid}`); }
 }
 

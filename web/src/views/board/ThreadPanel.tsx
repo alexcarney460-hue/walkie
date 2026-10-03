@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ArrowLeft, X } from "lucide-react";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { ErrorState, SkeletonRows } from "../../components/primitives.tsx";
 import { Composer } from "./Composer.tsx";
 import { MessageItem } from "./MessageItem.tsx";
@@ -43,12 +44,12 @@ export function ThreadPanel({ id, channel, onClose }: { id: string; channel: str
           <SkeletonRows rows={3} avatar />
         ) : (
           <>
-            <MessageItem event={root} />
+            <ErrorBoundary scope="item" name={`message ${root.id}`} resetKeys={[root]}><MessageItem event={root} /></ErrorBoundary>
             <div className="thread-divider"><span>{count ? `${count} ${count === 1 ? "reply" : "replies"}` : "No replies yet"}</span></div>
             {replies.map((e, i) => {
               const prev = replies[i - 1];
               const compact = !!prev && prev.author.handle === e.author.handle && prev.author.agent === e.author.agent && e.ts - prev.ts < 5 * 60_000;
-              return <MessageItem key={e.id} event={e} compact={compact} />;
+              return <ErrorBoundary key={e.id} scope="item" name={`message ${e.id}`} resetKeys={[e, compact]}><MessageItem event={e} compact={compact} /></ErrorBoundary>;
             })}
             <div ref={endRef} />
           </>

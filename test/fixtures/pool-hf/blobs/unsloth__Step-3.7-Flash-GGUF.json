@@ -1,0 +1,188 @@
+{
+ "_id": "6a19843ef4090276d1c9589a",
+ "id": "unsloth/Step-3.7-Flash-GGUF",
+ "sha": "8dd62fe8a98f3c8994160d0c521542560b558f37",
+ "downloads": 242191,
+ "siblings": [
+  {
+   "rfilename": "BF16/Step-3.7-Flash-BF16-00001-of-00008.gguf",
+   "blobId": "e22f85b4649048749bc8aa970a76aa3526207abb",
+   "size": 47931746720,
+   "lfs": {
+    "sha256": "2f72716f155895e10308773c8ddfdab9776c815022a3679f8f4cc0d1c4ba3fd6",
+    "size": 47931746720,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Step-3.7-Flash-BF16-00002-of-00008.gguf",
+   "blobId": "b7e1d164092827461b219f6e0152db1717b0dc68",
+   "size": 49463869536,
+   "lfs": {
+    "sha256": "509123a964582d4d7d0a51d4eafaad77a2896ee6e531ff574e0d64a5f4383b99",
+    "size": 49463869536,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Step-3.7-Flash-BF16-00003-of-00008.gguf",
+   "blobId": "66a2dc2847fd1ed53db6550df5d55c9ebebbae5a",
+   "size": 49526523136,
+   "lfs": {
+    "sha256": "a44c65c87ce28070259b5598cf06faea62a0126d3e6a747cc38df1ec48e536b2",
+    "size": 49526523136,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/Step-3.7-Flash-BF16-00004-of-00008.gguf",
+   "blobId": "01eed4613172c287061ad8a158b5d6ea4367e649",
+   "size": 49776903968,
+   "lfs": {
+    "sha256": "38021ac3bde3d2781acd27287a1c3df161304e6252c3616b5a760ab77d385e21",
+    "size": 49776903968,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Step-3.7-Flash-MXFP4_MOE-00001-of-00004.gguf",
+   "blobId": "1b59b05696f84545510ae0289e96e10cc4190415",
+   "size": 5232064,
+   "lfs": {
+    "sha256": "4b1a68e6b0bfc64652375bc7fc531a69e21da23cdd7c43e53d35ca29c31b76f0",
+    "size": 5232064,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Step-3.7-Flash-MXFP4_MOE-00002-of-00004.gguf",
+   "blobId": "4831905479512411a7ce04240424b2eab95076cc",
+   "size": 49076410528,
+   "lfs": {
+    "sha256": "ffa294e762ecdc0a5bd211ccbf324a0d502b33005c5c32c6686e60edee5bef2e",
+    "size": 49076410528,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Step-3.7-Flash-MXFP4_MOE-00003-of-00004.gguf",
+   "blobId": "5f619c31b0019e3c78e2d886c6f75a7b8b57aa29",
+   "size": 49899775296,
+   "lfs": {
+    "sha256": "63aeefa32d91a0fea9f270b1461aab818452fdfc6653749cf6f9c32e51eab4de",
+    "size": 49899775296,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "MXFP4_MOE/Step-3.7-Flash-MXFP4_MOE-00004-of-00004.gguf",
+   "blobId": "7bf6aa09a7bf1c61314396f11e411d3ec3c82eed",
+   "size": 19273256672,
+   "lfs": {
+    "sha256": "111d3cfbee2202a20dc9a2529e207a7da37aea4304bcf06c6571fd8dd0e8b28c",
+    "size": 19273256672,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-Flash-Q8_0-00001-of-00006.gguf",
+   "blobId": "2989ade04574370b55711dc9071f872e1fd034e1",
+   "size": 5232064,
+   "lfs": {
+    "sha256": "66e8a389e5dd943108f40fafca8970fd7edb76a96609550252839d0a67db9eb6",
+    "size": 5232064,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-Flash-Q8_0-00002-of-00006.gguf",
+   "blobId": "aa9362016121e4ad315793a8d29fc0a213d89650",
+   "size": 49666176160,
+   "lfs": {
+    "sha256": "e273dd4e1485898ec30c9dfead623db323d18820fa61fe0483e0fa54191bf2e4",
+    "size": 49666176160,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-Flash-Q8_0-00003-of-00006.gguf",
+   "blobId": "39d81b8a91940e1c4745052bc7fd9dcfd2a5f9a8",
+   "size": 49435574144,
+   "lfs": {
+    "sha256": "d0b131501f4e5c1d8b24c0e88d4ec9b7f46e497ccdf9320625df7afc888b6ada",
+    "size": 49435574144,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-Flash-Q8_0-00004-of-00006.gguf",
+   "blobId": "7a895dbd331db166ae87dbb7ced07f45129abddd",
+   "size": 49399783296,
+   "lfs": {
+    "sha256": "e369492d48d4da4b1f132b26fb4db0b43e3a2e3a7f58f0d7990891fb99eed052",
+    "size": 49399783296,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-Flash-Q8_0-00005-of-00006.gguf",
+   "blobId": "c8263297c161f0469ef1039373d81c9a71475442",
+   "size": 49435574144,
+   "lfs": {
+    "sha256": "d74c1f9da8085204dc5f6899453d16777cc3ffe017565510316a8bf4f3a7a271",
+    "size": 49435574144,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/Step-3.7-Flash-Q8_0-00006-of-00006.gguf",
+   "blobId": "d8ef6bfce7a759ecdbf1e36ec7428a0f5a4c93b6",
+   "size": 11475532384,
+   "lfs": {
+    "sha256": "a65aea5c133cffce3afd9e76d41ab1de5c6862856aee566309f42a2d2134b7a9",
+    "size": 11475532384,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Step-3.7-Flash-UD-Q4_K_M-00001-of-00004.gguf",
+   "blobId": "8e311959b9296ebaa72f979a77c7bfb2466487a8",
+   "size": 5232064,
+   "lfs": {
+    "sha256": "3ace7518df03a818243c55076e8c5b422961aa3cefe4fa8f120d4456dd2edde7",
+    "size": 5232064,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Step-3.7-Flash-UD-Q4_K_M-00002-of-00004.gguf",
+   "blobId": "cd68d92bf75d6616fd393b71070aa7296a2359cd",
+   "size": 49617436032,
+   "lfs": {
+    "sha256": "1ff05ea5a4518c488548219ec944aadec6a1a075140a3f81ae258ec51b755a75",
+    "size": 49617436032,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Step-3.7-Flash-UD-Q4_K_M-00003-of-00004.gguf",
+   "blobId": "060ab941b3f1b504e69bf3010824bf67df0aedfa",
+   "size": 49659364256,
+   "lfs": {
+    "sha256": "47c1b36d9e6df9fcd6e05873bdaa101a54b85e56bcd775ce0a199453387c339d",
+    "size": 49659364256,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "UD-Q4_K_M/Step-3.7-Flash-UD-Q4_K_M-00004-of-00004.gguf",
+   "blobId": "febd408b745e9bbe18629a7fbef03b2e4bfd789a",
+   "size": 22808394624,
+   "lfs": {
+    "sha256": "1cc54c0a491b63b86ef0ddc631950c2b881ed701de9ffb1903338d3cbf088262",
+    "size": 22808394624,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

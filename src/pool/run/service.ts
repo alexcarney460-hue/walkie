@@ -20,7 +20,8 @@ import type { InstallView, PrepareView, ServeReq, ServeRes } from "../../protoco
 import { installRuntime, LLAMA_BUILD, targetFor, type RuntimeTarget } from "./runtime.ts";
 import { readAccel, readGpuNow } from "../../daemon/machine-stats/accel.ts";
 import { CATALOG, type Quant } from "../catalog.ts";
-import { machineCapacity } from "../capacity.ts";
+import { ModelSource } from "../hf/source.ts";
+import { machineCapacity, runtimeBackend } from "../capacity.ts";
 import { ensureFiles, filesFor, PINS } from "./gguf.ts";
 import { prepareWeights, preparedDir } from "./weights.ts";
 import type { End } from "./tunnel.ts";
@@ -44,6 +45,8 @@ export interface PoolOptions {
   /** Tests: served models' GPU budget (bytes) and idle timeout, instead of measured / 30 minutes. */
   serveBudget?: () => number | null;
   serveIdleMs?: number;
+  /** Tests: the fetch that reaches Hugging Face for the model list (default: the real one). */
+  hfFetch?: typeof fetch;
 }
 
 /** Machine stats this fresh are used as is; otherwise memory is read now. */
@@ -103,6 +106,8 @@ import type { PoolLocalView } from "../../protocol/pool.ts";
 
 export class PoolService {
   private shareCfg: ShareConfig;
+  /** The model list for the suggestions: read from Hugging Face when a person opens them (src/pool/hf/source.ts). */
+  readonly models: ModelSource;
   readonly stages: PoolStages;
   readonly runner: PoolRunner;
   readonly server: PoolServer;
@@ -114,6 +119,7 @@ export class PoolService {
   private inst: InstallView | null = null;
   private preparedMemo: string[] | null = null;
   constructor(private readonly d: PoolServiceDeps, private readonly opts: PoolOptions = {}) {
+    this.models = new ModelSource({ home: d.home, log: (event, fields) => d.log.info(event, fields), ...(opts.hfFetch ? { fetch: opts.hfFetch } : {}) });
     const max = d.config.pool_share_max_gb;
     this.shareCfg = { on: d.config.pool_share, maxBytes: typeof max === "number" ? Math.round(max * GiB) : null };
     this.children = new ChildRegistry(join(d.home, "pool", "children.json"));
@@ -130,9 +136,10 @@ export class PoolService {
       freeMemory: opts.freeMemory ?? (() => measureFreeMemory(d.stats)),
       gpuFree: async () => {
         const cap = machineCapacity({ node_id: "self", hostname: "self", handle: "self", stats: (await freshGpuStats(d.stats)) ?? undefined });
-        const gpu = cap?.backends.find((b) => b.kind === "nvidia" && b.measured);
-        // rpc-server holds the stage on the first GPU (POOL-REAL-1 p8-3): its budget is that GPU's.
-        return gpu ? gpu.device?.usable ?? gpu.usable : null;
+        const backend = cap ? runtimeBackend(cap) : null;
+        // Only the CUDA runtime uses NVIDIA memory; CPU targets fall back to freeMemory and its reserve/cap.
+        // rpc-server holds a CUDA stage on the first GPU (POOL-REAL-1 p8-3): its budget is that GPU's.
+        return backend?.kind === "nvidia" && backend.measured ? backend.device?.usable ?? backend.usable : null;
       },
       ...(opts.verifyRuntime ? { verifyRuntime: opts.verifyRuntime } : {}),
       ...(opts.rpcArgs ? { rpcArgs: opts.rpcArgs } : {}), ...(opts.leaseMs ? { leaseMs: opts.leaseMs } : {}),

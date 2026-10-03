@@ -2,9 +2,9 @@
 // dashboard session header like api/client.ts. Kept in its own file so the pool card owns its calls.
 import { sessionHeaders } from "../lib/session.ts";
 import { ApiError } from "./client.ts";
-import type { ConnectionView, PoolLocalView, RunView, ServeView } from "../../../src/protocol/pool.ts";
+import type { ConnectionView, PoolLocalView, PoolModelsView, RunView, ServeView } from "../../../src/protocol/pool.ts";
 
-export type { RunView, PoolLocalView, ServeView, ConnectionView };
+export type { RunView, PoolLocalView, PoolModelsView, ServeView, ConnectionView };
 
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
   let res: Response;
@@ -30,6 +30,9 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
 
 export const poolApi = {
   get: () => call<PoolLocalView>("GET", "/v1/pool"),
+  // LOCAL-MODELS-HF-1: the model list; opening the suggestions is what makes the daemon read Hugging Face when it is due.
+  models: (brief = false) => call<PoolModelsView>("GET", `/v1/pool/models${brief ? "?brief=1" : ""}`),
+  refreshModels: () => call<PoolModelsView>("POST", "/v1/pool/models/refresh", {}),
   share: (on: boolean, maxGb?: number | null) => call<PoolLocalView>("POST", "/v1/pool/share", { on, ...(maxGb !== undefined ? { max_gb: maxGb } : {}) }),
   run: (model: string, quant: "q4" | "q8") => call<{ run: RunView }>("POST", "/v1/pool/run", { model, quant }),
   stop: () => call<{ run: RunView | null }>("POST", "/v1/pool/stop", {}),

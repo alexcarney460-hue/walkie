@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import "../../src/daemon/orchestrator/schedule-routes.ts";
 import { dispatch, type RouteCtx } from "../../src/daemon/local-routes.ts";
 import { registerHost } from "../../src/daemon/orchestrator/host.ts";
 import { dashboardRoute } from "../../src/daemon/local-api.ts";
 import { SeatApi } from "../../src/daemon/seats/seat-api.ts";
+import { readAudit } from "../../src/daemon/admin/audit.ts";
 import { SCHEDULE_CHANNEL } from "../../src/protocol/talkie-schedule.ts";
 import { addMachineLink } from "../../src/protocol/add-machine.ts";
 import { randomBytes } from "node:crypto";
@@ -27,7 +28,7 @@ function harness() {
       posts.push({ ...body, ...opts }); return {};
     } } as unknown as Core;
   registerHost(core, { acceptsToken: () => true, schedules: {
-    list: () => [], unresolvedPage: (after?: string, limit?: number) => ({ total: 1,
+    list: () => [], acknowledgeLegacyOverflow: () => ({ cleared: 2 }), unresolvedPage: (after?: string, limit?: number) => ({ total: 1,
       entries: [{ id: "11111111-1111-4111-8111-111111111111", name: "Job", run: "22222222-2222-4222-8222-222222222222" }],
       next_cursor: after && limit ? after : null }), ensureChannel: async () => true,
     manage: (request: { op: string; id?: string; input?: unknown; handle: string }) => {
@@ -115,6 +116,38 @@ describe("schedule routes", () => {
       .rejects.toMatchObject({ status: 400 });
     await expect(h.request("GET", path, undefined, undefined, { via: "phone" }))
       .rejects.toMatchObject({ status: 403 });
+  });
+  test("acknowledging the legacy overflow is for a local owner, never a phone, the orchestrator, or a member", async () => {
+    const h = harness();
+    const path = "/v1/orchestrator/schedules/unresolved/ack-legacy";
+    const owner = await h.request("POST", path, {});
+    expect(owner.status).toBe(200);
+    expect(await owner.json()).toEqual({ cleared: 2 });
+    await expect(h.request("POST", path, {}, undefined, { via: "phone" })).rejects.toMatchObject({ status: 403 });
+    await expect(h.request("POST", path, {}, "orchestrator")).rejects.toMatchObject({ status: 403 });
+    (h.core as unknown as { me: () => unknown }).me = () => ({ handle: "alex", role: "member" });
+    await expect(h.request("POST", path, {})).rejects.toMatchObject({ status: 403 });
+    expect(dashboardRoute("POST", path)).toBe(false);
+  });
+  test("a local agent acknowledges the legacy overflow while agent admin is on (audited, no #general post) and is refused while it is off", async () => {
+    const h = harness();
+    const dir = mkdtempSync("/tmp/walkie-schedule-ack-agent-");
+    const config = join(dir, "config.json");
+    Object.assign(h.core, { hostname: "authority", paths: { home: dir, config },
+      roster: { channels: new Map([["general", {}]]) }, log: { info: () => {}, warn: () => {} } });
+    const path = "/v1/orchestrator/schedules/unresolved/ack-legacy";
+    try {
+      const allowed = await h.request("POST", path, {}, "helper");
+      expect(allowed.status).toBe(200);
+      expect(await allowed.json()).toEqual({ cleared: 2 });
+      expect(h.posts).toEqual([]); // #general exists, so a post would have been emitted had the route asked for one
+      expect(readAudit(dir)).toEqual([expect.objectContaining({ actor: "@alex/authority/helper", via: "local",
+        action: "acknowledged older WalkieTalkie schedule completion outcomes" })]);
+      writeFileSync(config, JSON.stringify({ agent_admin: false }));
+      await expect(h.request("POST", path, {}, "helper")).rejects.toMatchObject({ status: 403, code: "agent_admin_off" });
+      expect(readAudit(dir)[0]).toMatchObject({ refused: "agent_admin_off" }); // newest first
+      expect(h.posts).toEqual([]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test("ordinary posts refuse the private channel and both reserved prefixes for agents and phones", async () => {
     const h = harness();

@@ -1,0 +1,78 @@
+{
+ "_id": "69e0f0f03ee9bc5ee6957725",
+ "id": "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+ "sha": "5c2410d71524f4f72b023ce8daf7a80528226d5f",
+ "downloads": 190210,
+ "siblings": [
+  {
+   "rfilename": "Qwen_Qwen3.6-35B-A3B-IQ4_XS.gguf",
+   "blobId": "d9bd471618a7e5ab71afbb724ade44d3c13b5c10",
+   "size": 19699553920,
+   "lfs": {
+    "sha256": "afc7238af403ed454b7846454091b5e38b07575bdbb64c3e86777414dde4193c",
+    "size": 19699553920,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+   "blobId": "575cec93b791a88843798d81530b0de25857dc33",
+   "size": 22285080192,
+   "lfs": {
+    "sha256": "b46fedd33e0bfb0cae308aa3c158d0a4b2c4a1d2185a1ed6f093cdaf39064772",
+    "size": 22285080192,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3.6-35B-A3B-Q5_K_M.gguf",
+   "blobId": "42b5a8ef72dc5f03e4a42ca2f68ab9ebc4cdc808",
+   "size": 25913185920,
+   "lfs": {
+    "sha256": "ec438d1326eb11d8bb94785c54739cd4b60b01ae32bd8532e232a046b19d296d",
+    "size": 25913185920,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3.6-35B-A3B-Q6_K.gguf",
+   "blobId": "65220376fbd5f713df654917e416589472cbb019",
+   "size": 30947309184,
+   "lfs": {
+    "sha256": "a97ef79439194d8ec722bc0b6c316f0c41c0b477b35bbae8177c772ecbb0eb91",
+    "size": 30947309184,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3.6-35B-A3B-Q8_0.gguf",
+   "blobId": "41cd2dfe70d9a74414589772f859b74484258e19",
+   "size": 37812647552,
+   "lfs": {
+    "sha256": "bc57de096ec30e45773aa86103f35a8a32cea01f2193a53a3c636d618e4434e9",
+    "size": 37812647552,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen_Qwen3.6-35B-A3B-bf16/Qwen_Qwen3.6-35B-A3B-bf16-00001-of-00002.gguf",
+   "blobId": "404ec955102e16f240dbc43fab222e216e1da403",
+   "size": 39753375712,
+   "lfs": {
+    "sha256": "dbe8742f9ecf1624ac99577e174c7ae0642162232a47774c9d7fad45fbd0a75b",
+    "size": 39753375712,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "mtp-Qwen_Qwen3.6-35B-A3B-Q8_0.gguf",
+   "blobId": "099483ad8d95dd187dd8550448008c32d3b537e5",
+   "size": 1989597056,
+   "lfs": {
+    "sha256": "7f72d7cc4a9ff28cf0bd98a4e6e95e6869efa3b70c7244075376335f38109330",
+    "size": 1989597056,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

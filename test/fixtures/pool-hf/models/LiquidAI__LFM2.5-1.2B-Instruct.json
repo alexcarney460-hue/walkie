@@ -1,0 +1,93 @@
+{
+ "_id": "695c573eb0c977b76e1a059e",
+ "id": "LiquidAI/LFM2.5-1.2B-Instruct",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "695be6742651f86e501ba9d6",
+    "id": "LiquidAI/LFM2.5-1.2B-Base"
+   }
+  ]
+ },
+ "downloads": 114009,
+ "likes": 673,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "0f604ada3f766f9f257460c4c9f0b5d6f69d431b",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "lfm2",
+  "text-generation",
+  "liquid",
+  "lfm2.5",
+  "edge",
+  "conversational",
+  "en",
+  "ar",
+  "zh",
+  "fr",
+  "de",
+  "ja",
+  "ko",
+  "es",
+  "arxiv:2511.23404",
+  "base_model:LiquidAI/LFM2.5-1.2B-Base",
+  "base_model:finetune:LiquidAI/LFM2.5-1.2B-Base",
+  "license:other",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:azure",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/gpqa.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 38.89,
+    "date": "2026-01-27",
+    "source": {
+     "url": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct",
+     "name": "Model Card",
+     "user": "burtenshaw"
+    }
+   }
+  },
+  {
+   "filename": ".eval_results/ask-my-agent-bench-2.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "sapbot/ask-my-agent-bench-2",
+     "task_id": "fallback"
+    },
+    "value": 0.7,
+    "date": "2026-06-23T16:59:09.000Z"
+   },
+   "pullRequest": 17
+  },
+  {
+   "filename": ".eval_results/pixel-art-bench-detailed.yaml",
+   "error": "\u2716 Invalid input: expected array, received object",
+   "pullRequest": 15
+  },
+  {
+   "filename": ".eval_results/mmlu-pro.yaml",
+   "error": "\u2716 Invalid input: expected string, received undefined\n  \u2192 at [0].dataset.task_id",
+   "pullRequest": 4
+  }
+ ],
+ "createdAt": "2026-01-06T00:28:46.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 1170340608
+  },
+  "total": 1170340608
+ }
+}

@@ -1,0 +1,68 @@
+{
+ "_id": "6a8167f07e5b0adb68f9fcf0",
+ "id": "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+ "sha": "a855f377abf5cbda99a278414466743f427e97c8",
+ "downloads": 143711,
+ "siblings": [
+  {
+   "rfilename": "Qwen3.8-27B-Uncensored-F16-00001-of-00002.gguf",
+   "blobId": "1143e8eb72a927e67d42a0f23d51f3208e8ac010",
+   "size": 27908108288,
+   "lfs": {
+    "sha256": "578926d4e6d94281e95a48d8e154c4667061a669e9016f2aa2b15101ab4363dc",
+    "size": 27908108288,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Uncensored-F16-00002-of-00002.gguf",
+   "blobId": "76b6b290f915bd60c9c28972908b4ac905d4764c",
+   "size": 26749625920,
+   "lfs": {
+    "sha256": "c15e78454caec46b19dae22fa6915a9e77b917e7cceffdc64c265801f4eaa1f1",
+    "size": 26749625920,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Uncensored-IQ4_XS.gguf",
+   "blobId": "feff14d0fa92399a1682d3c6276cd8c5d9200154",
+   "size": 15309039200,
+   "lfs": {
+    "sha256": "c52df3e4289da6e24aa20665f2a88e9347aa1ce08f2bfe0a58cc9e578845e0af",
+    "size": 15309039200,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+   "blobId": "3b85a51c8d0ff71dc311fa622dff4af311d3b4b7",
+   "size": 16810714496,
+   "lfs": {
+    "sha256": "3445102e9cde5d562508642c100a2f5ac3368a5a3f748442811d7a95daee3bec",
+    "size": 16810714496,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Uncensored-Q5_K_M.gguf",
+   "blobId": "ca144a3047d15e0e294c6b21a9c9fce59a6605ff",
+   "size": 19535701376,
+   "lfs": {
+    "sha256": "0e42ef33bcf9974730119fa59ff6b065fdd52080a664728afa0902cb358a301b",
+    "size": 19535701376,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Qwen3.8-27B-Uncensored-Q8_0.gguf",
+   "blobId": "a7be4621d14f82bc472ba7ee7b97987dce3bf5d1",
+   "size": 29047084416,
+   "lfs": {
+    "sha256": "31756fca94beca71ea4b8706d6fdc896dab2a3c6376ab0c1863b98512a24f8d6",
+    "size": 29047084416,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

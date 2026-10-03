@@ -67,7 +67,7 @@ describe("the playbook", () => {
     expect(first).toMatch(/MISSION: onboard existing members' new machines through one link/);
     expect(first).toMatch(/keep every project current in Walkie as the source of truth/);
     expect(first).toMatch(/keep every machine at capacity within its caps/);
-    expect(first).toMatch(/Autonomously perform these duties on their schedules/);
+    expect(first).toMatch(/Carry out these duties on their schedules/);
   });
 
   test("proactive, and Walkie is the source of truth", () => {

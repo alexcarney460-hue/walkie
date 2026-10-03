@@ -10,6 +10,7 @@ import {
 } from "../../protocol/projects/fold.ts";
 import { type BoardDelta, type CardView, type ProjectView } from "../../protocol/projects/schema.ts";
 import { currentVersion, foldRoom, type RoomFileState } from "../../protocol/projects/room.ts";
+import { foldPage, type PageState } from "../../protocol/projects/page.ts";
 import type { Core } from "../core.ts";
 import { scrubPrivateKeys } from "../../protocol/projects/assoc.ts";
 import { cardRef } from "../../protocol/projects/short.ts";
@@ -20,7 +21,7 @@ import { ProjectsDb } from "./db.ts";
 import { trackOp } from "../watchdog.ts";
 
 /** Bumped when the fold's rules change: every project is re-folded once at startup. */
-export const FOLD_VERSION = "10"; // 10: the steward lease `steward_node` is a project setting (FO-6 r3); 9: the board steward may move a person's card (FO-6); 8: an agent's project and board roots count (AGENT-PROJECTS); 7: 8-hex short ids, oversize bodies aren't ops; 6: ranks from the parent chain only (board ops never evicted), card short ids
+export const FOLD_VERSION = "11"; // 11: `status_report` is a project setting (PROJECT-REPORTS-1); 10: the steward lease `steward_node` is a project setting (FO-6 r3); 9: the board steward may move a person's card (FO-6); 8: an agent's project and board roots count (AGENT-PROJECTS); 7: 8-hex short ids, oversize bodies aren't ops; 6: ranks from the parent chain only (board ops never evicted), card short ids
 const FOLD_META = "projects_fold";
 /**
  * Set while any re-fold work is queued, cleared when the queue drains (round-1 audit, Codex M8): a daemon stopped with
@@ -63,8 +64,12 @@ export class ProjectsIndex {
   private readonly roomDirty = new Set<string>();
   /** Each project's Data Room, folded from the log on first use and dropped when a room op arrives or is hidden. */
   private readonly rooms = new Map<string, RoomFileState[]>();
+  /** Project channels whose status page changed (PROJECT-PAGES-1): a page op arrived, or a report was posted. Nothing is re-folded for it. */
+  private readonly pageDirty = new Set<string>();
+  /** Each project's status page facts, folded from the log on first use and dropped when a page op arrives or is hidden, or the roster changes. */
+  private readonly pages = new Map<string, PageState>();
   /** Per channel, what this pass changed (for its delta). */
-  private readonly changed = new Map<string, { cards: Map<string, CardView>; removed: Set<string>; reset: boolean; room?: boolean }>();
+  private readonly changed = new Map<string, { cards: Map<string, CardView>; removed: Set<string>; reset: boolean; room?: boolean; page?: boolean }>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   /** Called with each project's delta once its dirty work is done (the SSE hub). */
@@ -149,7 +154,10 @@ export class ProjectsIndex {
     // A share in a project channel may be a room version's bytes: whether they can be served (`available`) changed, so
     // the room is resent even when its room op arrived first (round-2 audit LOW).
     if (ev.kind === "artifact.share") { this.markRoom(ch); return; }
-    const b = ev.body as { thread?: unknown; board?: { op?: unknown } };
+    const b = ev.body as { thread?: unknown; board?: { op?: unknown }; status_report?: unknown };
+    // PROJECT-PAGES-1: a status page op (a reply in the project's thread, which must not re-fold the project) or a report post
+    // (it carries the page's story): the page is read again; no card and no setting is re-folded.
+    if (b.board?.op === "page" || (b.board === undefined && b.status_report !== undefined)) { this.markPage(ch); return; }
     const thread = typeof b.thread === "string" ? b.thread : null;
     // A reply belongs to its root's entity; a root that was just hidden is still known as a card by its row.
     // Only a root of THIS channel counts (round-1 audit, Codex HIGH 1).
@@ -173,6 +181,7 @@ export class ProjectsIndex {
    */
   rosterChanged(): void {
     for (const name of this.core.roster.channels.keys()) if (this.core.isProjectChannel(name)) { this.notePending(); this.rosterDirty.add(name); }
+    this.pages.clear(); // who may set a fact is judged by the roster
     this.schedule();
   }
 
@@ -182,6 +191,26 @@ export class ProjectsIndex {
     this.rooms.delete(channel);
     this.roomDirty.add(channel);
     this.schedule();
+  }
+
+  /** A status page op arrived, was hidden or was written here, or a report was posted: the page is folded again on next use and its watchers told. */
+  markPage(channel: string): void {
+    this.pages.delete(channel);
+    this.pageDirty.add(channel);
+    this.schedule();
+  }
+
+  /** The facts of the project's status page, folded (cached until a page op marks it). Empty (and an empty head) for a channel with no project. */
+  page(channel: string): PageState {
+    const hit = this.pages.get(channel);
+    if (hit) return hit;
+    const project = this.settingsOf(channel).project;
+    const root = project ? this.db.opEvent(project.id, channel) : null;
+    const state: PageState = project && root
+      ? foldPage([root, ...this.db.pagePosts(channel, project.id)], root, this.env(channel))
+      : { facts: [], ignored: [], head: "", rev: 0 };
+    this.pages.set(channel, state);
+    return state;
   }
 
   /** The project's Data Room, folded (cached until a room op marks it). Every file, removed ones included. */
@@ -197,6 +226,7 @@ export class ProjectsIndex {
     this.notePending();
     this.dirtyFull.add(channel);
     this.settings.delete(channel);
+    this.pages.delete(channel); // the page's ops rank against the project root
   }
 
   private markCard(channel: string, id: string): void {
@@ -256,15 +286,18 @@ export class ProjectsIndex {
     return s;
   }
 
-  /** One card folded from the log right now, with its timeline (the card's detail view, the next op's rev). */
-  foldCardNow(channel: string, id: string): { state: CardState; settings: Settings } | null {
+  /**
+   * One card folded from the log right now, with its timeline (the card's detail view, the next op's rev). `without` names
+   * posts to leave out, to see the card as it stood before they arrived (null when its root is among them).
+   */
+  foldCardNow(channel: string, id: string, without?: ReadonlySet<string>): { state: CardState; settings: Settings } | null {
     const s = this.settingsOf(channel);
     if (!s.project) return null;
     const { root, thread } = this.db.threadPosts(id, channel);
-    if (!root) return null;
+    if (!root || without?.has(root.id)) return null;
     const env = this.env(channel);
     const creator = s.project.creator;
-    const state = foldCard(root, thread, {
+    const state = foldCard(root, without ? thread.filter((e) => !without.has(e.id)) : thread, {
       boards: new Map(s.boards.map((b) => [b.id, b])),
       steward: (ev) => { const role = env.roleOf(ev); return isStewardAuthor(ev.author, role === "removed" ? null : role, creator); },
     });
@@ -314,16 +347,22 @@ export class ProjectsIndex {
       this.delta(ch).room = true;
       this.finishChannel(ch, this.settingsOf(ch));
     }
+    for (const ch of [...this.pageDirty]) {
+      if (onlyChannel && ch !== onlyChannel) continue;
+      this.pageDirty.delete(ch);
+      this.delta(ch).page = true;
+      this.finishChannel(ch, this.settingsOf(ch));
+    }
     return onlyChannel ? this.dirtyFull.has(onlyChannel) || this.dirtyCards.has(onlyChannel) || this.rosterDirty.has(onlyChannel)
       : this.dirtyFull.size > 0 || this.dirtyCards.size > 0 || this.rosterDirty.size > 0;
   }
 
   private hasPending(): boolean {
     return this.dirtyFull.size > 0 || this.dirtyCards.size > 0 || this.rosterDirty.size > 0
-      || this.keysDirty.size > 0 || this.roomDirty.size > 0;
+      || this.keysDirty.size > 0 || this.roomDirty.size > 0 || this.pageDirty.size > 0;
   }
 
-  private delta(ch: string): { cards: Map<string, CardView>; removed: Set<string>; reset: boolean; room?: boolean } {
+  private delta(ch: string): { cards: Map<string, CardView>; removed: Set<string>; reset: boolean; room?: boolean; page?: boolean } {
     let d = this.changed.get(ch);
     if (!d) { d = { cards: new Map(), removed: new Set(), reset: false }; this.changed.set(ch, d); }
     return d;
@@ -371,6 +410,7 @@ export class ProjectsIndex {
       channel: ch, project: view,
       ...(reset ? { reset: true } : { ...(cards.length ? { cards } : {}), ...(d?.removed.size ? { removed: [...d.removed] } : {}) }),
       ...(d?.room ? { room: true } : {}),
+      ...(d?.page ? { page: true } : {}),
     });
   }
 

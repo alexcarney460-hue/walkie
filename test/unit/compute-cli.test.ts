@@ -1,12 +1,12 @@
 // RENT-2: `walkie compute …` (a fake daemon client), the machine-ask parser, the site client's strict contract and the
 // compute files. Prices only: no JSON the CLI prints carries a cost/margin/provider key or a cost number.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { compute, creditText, listText, quotesText } from "../../src/cli/commands/compute.ts";
 import type { Ctx } from "../../src/cli/context.ts";
 import { UsageError } from "../../src/cli/args.ts";
-import { loadAccount, loadRentals, newRecord, saveAccount, saveRentals, accountPath, rentalsPath } from "../../src/daemon/compute/files.ts";
+import { loadAccount, loadRentals, newRecord, RentalsFileError, saveAccount, saveRentals, accountPath, rentalsPath } from "../../src/daemon/compute/files.ts";
 import { ComputeSite, ComputeSiteError, computeBaseFromEnv } from "../../src/daemon/compute/site.ts";
 import { SITE_ORIGIN } from "../../src/license/site.ts";
 import { FORBIDDEN_CUSTOMER_KEYS, parseMachineAsks, usd } from "../../src/protocol/compute.ts";
@@ -122,6 +122,17 @@ describe("walkie compute (fake daemon)", () => {
     expect(creditText({ ...none, rentals: [] })).toContain("$0.00");
   });
 
+  test("list tells the owner when an ended rental's machine is still on the team (queued or refused revocation)", () => {
+    const ended = rental({ state: "ended", end_reason: "user", ended_at: 1 });
+    const text = listText(state([ended], { alerts: ["revocation_pending", "revocation_refused", "revocation_waiting_for_authority_sync", "compute_records_unreadable"] }));
+    expect(text).toContain("An ended rental can't be closed yet: this machine hasn't been able to sync with the team's roster authority");
+    expect(text).toContain("Walkie can't read its record of rented machines, so ended rentals aren't being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Walkie never overwrites it.");
+    expect(text).toContain("still on the team after its rental ended. Walkie removes it as soon as the team's roster authority is reachable.");
+    expect(text).toContain("couldn't be removed automatically. The reason is posted in #general.");
+    expect(listText(state([ended]))).not.toContain("still on the team");
+    noCost(text);
+  });
+
   test("list shows active rentals, counts ended ones; stop needs a rental id or all", async () => {
     const text = listText(state([rental(), rental({ id: "r_00000000000000a3", state: "ended", end_reason: "idle", ended_at: 1 })]));
     expect(text).toContain("rent-agent-7f3a");
@@ -177,7 +188,7 @@ describe("ComputeSite (strict contract)", () => {
 });
 
 describe("compute files", () => {
-  test("account and rentals: 0600, validated, junk reads as nothing", () => {
+  test("account and rentals: 0600, validated; a junk account reads as nothing, a junk rentals file is refused (never read as empty)", () => {
     const home = mkdtempSync("/tmp/walkie-compute-");
     dirs.push(home);
     expect(loadAccount(home)).toBeNull();
@@ -192,6 +203,13 @@ describe("compute files", () => {
     writeFileSync(accountPath(home), "{not json");
     writeFileSync(rentalsPath(home), JSON.stringify({ v: 1, rentals: { bad: {} } }));
     expect(loadAccount(home)).toBeNull();
-    expect(loadRentals(home)).toEqual({});
+    // The poller writes the records back after every round: reading a damaged (or newer) file as empty would wipe the
+    // links from active rentals to their machines, so it throws and leaves the file alone.
+    expect(() => loadRentals(home)).toThrow(RentalsFileError);
+    writeFileSync(rentalsPath(home), "{not json");
+    expect(() => loadRentals(home)).toThrow(RentalsFileError);
+    expect(readFileSync(rentalsPath(home), "utf8")).toBe("{not json");
+    rmSync(rentalsPath(home));
+    expect(loadRentals(home)).toEqual({}); // no file yet is simply none
   });
 });

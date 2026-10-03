@@ -1,4 +1,6 @@
 // Typed client for the local daemon API (unix socket). Used by the CLI, MCP server and hooks.
+import type { RecView } from "../daemon/orchestrator/recs.ts";
+import type { RecommendInputT } from "../daemon/orchestrator/rec-input.ts";
 import { REMOTE_AGENT, remoteRunToken } from "./remote-run.ts";
 import { readFileSync } from "node:fs";
 import type { BatchResult } from "../protocol/projects/batch.ts";
@@ -21,12 +23,14 @@ import { MAX_REMOTE_TIMEOUT_S, type RemoteRunRes } from "../protocol/admin.ts";
 import type { Grant } from "../daemon/provision/grant.ts";
 import type { ApplyResult, Journal } from "../daemon/provision/runner.ts";
 import type { ProfileId } from "../daemon/provision/profiles.ts";
-import type { ConnectionView, InstallView, PoolLocalView, PrepareView, RunView, ServeView } from "../protocol/pool.ts";
+import type { ConnectionView, InstallView, PoolLocalView, PoolModelsView, PrepareView, RunView, ServeView } from "../protocol/pool.ts";
 import type { MobileStatus, PairView } from "../daemon/mobile/manager.ts";
 import type { AddMachine } from "../protocol/add-machine.ts";
 import type { CreditBlock, LocalComputeState, LocalRentReq, Quotes, RentalView, RentResult } from "../protocol/compute.ts";
 import type { BoardView, CardDetail, CardView, ProjectsPayload, ProjectView, TimelineEntry } from "../protocol/projects/schema.ts";
 import type { RoomFileDetail, RoomFileView, TaskContext } from "../protocol/projects/room.ts";
+import type { StatusPagePayload } from "../protocol/projects/status-page.ts";
+import type { ScreenView, SetFactView } from "../protocol/projects/status-page.ts";
 import type { Schedule } from "../protocol/talkie-schedule.ts";
 
 /** GET /v1/tasks: cards across projects, newest change first, with the projects they belong to. */
@@ -291,6 +295,9 @@ export class WalkieClient {
   integrations() { return this.request<{ integrations: IntegrationView[] }>("GET", "/v1/integrations"); }
   /** WALKIE-POOL-2 split runs: this machine's sharing, runtime, run and stage. */
   pool() { return this.request<PoolLocalView>("GET", "/v1/pool"); }
+  /** LOCAL-MODELS-HF-1: the model list for the suggestions (opening them reads Hugging Face when it is due); brief leaves the catalog out. */
+  poolModels(o: { brief?: boolean } = {}) { return this.request<PoolModelsView>("GET", `/v1/pool/models${o.brief ? "?brief=1" : ""}`); }
+  poolModelsRefresh() { return this.request<PoolModelsView>("POST", "/v1/pool/models/refresh", {}); }
   poolShare(on: boolean, maxGb?: number | null) { return this.request<PoolLocalView>("POST", "/v1/pool/share", { on, ...(maxGb !== undefined ? { max_gb: maxGb } : {}) }); }
   poolRun(body: { model?: string; quant?: "q4" | "q8"; file?: string; machines?: string[] }) { return this.request<{ run: RunView }>("POST", "/v1/pool/run", body, 60_000); }
   poolStop() { return this.request<{ run: RunView | null }>("POST", "/v1/pool/stop", {}, 30_000); }
@@ -426,6 +433,32 @@ export class WalkieClient {
     }
     return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get("x-walkie-mime") ?? "application/octet-stream", version: Number(res.headers.get("x-walkie-version") ?? "0") };
   }
+  // ---- status page (PROJECT-PAGES-1) ----
+  statusPage(channel: string) { return this.request<StatusPagePayload>("GET", `/v1/projects/${encodeURIComponent(channel)}/page`); }
+  /** Sets (`value`) or removes (`remove: true`) one fact of a project's page; a member or their named agent. */
+  setFact(channel: string, body: { label: string; value?: string; remove?: true }) {
+    return this.request<{ facts: SetFactView[]; unchanged: boolean }>("POST", `/v1/projects/${encodeURIComponent(channel)}/page/facts`, body);
+  }
+  /** Adds a screen to a project's page (or replaces the one with this group and title): the image's bytes, and its details. */
+  async addScreen(channel: string, bytes: Uint8Array, meta: { title: string; group: string; status: string; about: string; route?: string; note?: string }) {
+    const h = this.headers({ "Content-Type": "application/octet-stream", "X-Walkie-Screen": encodeURIComponent(JSON.stringify(meta)) });
+    let res: Response;
+    try {
+      res = await fetch(`http://walkie/v1/projects/${encodeURIComponent(channel)}/page/screens`, { method: "POST", unix: this.socket, headers: h, body: bytes, signal: AbortSignal.timeout(Math.max(this.timeoutMs, 120_000)) } as RequestInit);
+    } catch {
+      throw new WalkieError("daemon_unreachable", `walkie daemon not reachable at ${this.socket} (run: walkie daemon start)`, 0);
+    }
+    const text = await res.text();
+    const data = (text ? JSON.parse(text) : {}) as { screen?: ScreenView; created?: boolean; version?: number; unchanged?: boolean; error?: Record<string, unknown> };
+    if (!res.ok || !data.screen) {
+      const { code, message, ...details } = (data.error ?? {}) as { code?: string; message?: string };
+      throw new WalkieError(code ?? `http_${res.status}`, message ?? "the upload failed", res.status, details as Partial<PlanLimitDetails>);
+    }
+    return data as { screen: ScreenView; created: boolean; version: number; unchanged: boolean };
+  }
+  removeScreen(channel: string, body: { group: string; title: string }) {
+    return this.request<{ removed: number }>("POST", `/v1/projects/${encodeURIComponent(channel)}/page/screens/remove`, body);
+  }
   createTask(body: Record<string, unknown>) { return this.request<{ task: CardView }>("POST", "/v1/tasks", body); }
   updateTask(ref: string, body: Record<string, unknown>) { return this.request<{ task: CardView }>("POST", `/v1/tasks/${encodeURIComponent(ref)}`, body); }
   taskAction(ref: string, action: "start" | "review" | "done" | "block" | "unblock", reason?: string) {
@@ -498,6 +531,23 @@ export class WalkieClient {
   /** "I'm done": paused seats continue, queued ones start. */
   seatsResume() { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/resume", {}); }
 
+  /** Recommendations visible to the caller; authorization stays with the daemon. */
+  talkieRecs(status: "open" | "all" = "open") {
+    return this.request<{ recs: RecView[]; now: number; more_open?: number }>("GET", `/v1/talkie/recs?status=${encodeURIComponent(status)}`);
+  }
+  /** `seen`: the `outgoing` text the person was shown and confirmed (the daemon refuses the approval if it changed since). */
+  talkieApprove(id: string, note?: string, seen?: string) {
+    return this.request<{ rec: RecView; result?: string }>("POST", `/v1/talkie/recs/${encodeURIComponent(id)}/approve`,
+      { ...(note === undefined ? {} : { note }), ...(seen === undefined ? {} : { seen }) });
+  }
+  talkieDismiss(id: string, note?: string) {
+    return this.request<{ rec: RecView }>("POST", `/v1/talkie/recs/${encodeURIComponent(id)}/dismiss`, note === undefined ? {} : { note });
+  }
+  /** Only authenticated WalkieTalkie duties may record; the daemon checks the existing child token. */
+  talkieRecommend(body: RecommendInputT) {
+    return this.request<{ id: string; short: string } | { duplicate: true; reason?: string } | { suppressed: true }>("POST", "/v1/talkie/recs", body);
+  }
+
   // ---- orchestrator (PROTOCOL §8) ----
   orchestrator() { return this.request<OrchestratorView>("GET", "/v1/orchestrator"); }
   schedules() { return this.request<{ schedules: Schedule[] }>("GET", "/v1/orchestrator/schedules"); }
@@ -505,9 +555,11 @@ export class WalkieClient {
     const query = new URLSearchParams({ limit: String(limit) });
     if (after !== undefined) query.set("after", after);
     return this.request<{ total: number; entries: Array<{ id: string; name: string; run: string;
-      local_id?: string; slot?: number | null; claim?: { term: number; seq: number; generation: number } }>;
+      local_id?: string; slot?: number | null; pause?: string; result?: string; claim?: { term: number; seq: number; generation: number } }>;
       next_cursor: string | null }>("GET", `/v1/orchestrator/schedules/unresolved?${query}`);
   }
+  /** Clears this machine's count of older unresolved outcomes (builds before the cursor list kept only a number). */
+  scheduleUnresolvedAckLegacy() { return this.request<{ cleared: number }>("POST", "/v1/orchestrator/schedules/unresolved/ack-legacy", {}); }
   scheduleNext(cron: string) { return this.request<{ times: number[] }>("GET", `/v1/orchestrator/schedules/next?cron=${encodeURIComponent(cron)}`); }
   scheduleAdd(body: Pick<Schedule, "name" | "cron" | "task">) { return this.request<{ schedule: Schedule }>("POST", "/v1/orchestrator/schedules", body); }
   scheduleEdit(id: string, body: Partial<Pick<Schedule, "name" | "cron" | "task" | "enabled">>) { return this.request<{ schedule: Schedule }>("PATCH", `/v1/orchestrator/schedules/${encodeURIComponent(id)}`, body); }
@@ -548,7 +600,7 @@ export class WalkieClient {
    * owner's machine checks its policy, the reply is sealed to a key this daemon made for this request).
    */
   /** A hand-out: Claude → `token` (a setup-token); Codex → `codex_auth` (an access-only auth.json, COMPANY POOL). */
-  vaultLease(body: { account: string; node: string; agent?: string; provider?: "claude" | "codex" }) {
+  vaultLease(body: { account: string; node: string; agent?: string; launcher?: string; provider?: "claude" | "codex" }) {
     return this.request<{ token?: string; codex_auth?: string; expires_at?: number | null; owner: string; grant: string; gen: string }>("POST", "/v1/vault/lease", body, 15_000);
   }
   vaultProbe(body: { account: string; node: string; provider: "claude" | "codex" }) {

@@ -1,0 +1,68 @@
+{
+ "_id": "6a8f8ec7f0e47dd74dee8695",
+ "id": "bartowski/orcarouter_Qwen3.8-27B-Uncensored-GGUF",
+ "sha": "87d37daf5e5eb72a926d8b413e08809a57f1a120",
+ "downloads": 147870,
+ "siblings": [
+  {
+   "rfilename": "mmproj-orcarouter_Qwen3.8-27B-Uncensored-bf16.gguf",
+   "blobId": "f7b356d3cfa1bf6aeefec0d87416490387467106",
+   "size": 931146528,
+   "lfs": {
+    "sha256": "9244bb2c3b80df4fb3e36b51fcc29f38d0b08b54329b6fd4c01022fd51bfee20",
+    "size": 931146528,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "mmproj-orcarouter_Qwen3.8-27B-Uncensored-f16.gguf",
+   "blobId": "2c2c129ba65cafea157f2d65550a65950611ef93",
+   "size": 927607584,
+   "lfs": {
+    "sha256": "bf709317815597d2ee48b8fb10796c9a22006da2f329d76e37761433a66fa697",
+    "size": 927607584,
+    "pointerSize": 134
+   }
+  },
+  {
+   "rfilename": "orcarouter_Qwen3.8-27B-Uncensored-IQ4_XS.gguf",
+   "blobId": "dbdc6b5d6aeeb4eda2d215db84e91fc6fe54d81b",
+   "size": 15567825152,
+   "lfs": {
+    "sha256": "af30200293d03899399c05f298fed8d10745b6b2e425f8e2927a29cd9f95bd87",
+    "size": 15567825152,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "orcarouter_Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+   "blobId": "031bd168776c1d4cf6979ae74d6c4c8d4185a75e",
+   "size": 17772538112,
+   "lfs": {
+    "sha256": "6c8c7658fe13eef22666aa89862f7fb70aa72109838cf19989e59b15875e5e08",
+    "size": 17772538112,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "orcarouter_Qwen3.8-27B-Uncensored-Q5_K_M.gguf",
+   "blobId": "189e044ab573357eea8a114dc31eddbb82c35ee1",
+   "size": 20752787712,
+   "lfs": {
+    "sha256": "4ad98832b3d376dd274df5bba59dd34834f0f401593e1463f38fd5fa219293b1",
+    "size": 20752787712,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "orcarouter_Qwen3.8-27B-Uncensored-Q8_0.gguf",
+   "blobId": "9b763e543ee53984ef25b6d7956f56306634f7f6",
+   "size": 29116389632,
+   "lfs": {
+    "sha256": "99bdffce202e32149f013e019db0d539ffbcae113d381d5cc55a143e91b5ddb7",
+    "size": 29116389632,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

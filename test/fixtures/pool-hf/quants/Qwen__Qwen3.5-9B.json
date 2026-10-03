@@ -1,0 +1,42 @@
+[
+ {
+  "_id": "69a2f5edef408247323ee7f4",
+  "id": "unsloth/Qwen3.5-9B-GGUF",
+  "downloads": 1311522
+ },
+ {
+  "_id": "69a77bbf40a682fb162ab03e",
+  "id": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
+  "downloads": 709727
+ },
+ {
+  "_id": "69a591f64814fea218e241cc",
+  "id": "lmstudio-community/Qwen3.5-9B-GGUF",
+  "downloads": 460644
+ },
+ {
+  "_id": "69a1bc2b43e9556fae48e36d",
+  "id": "bartowski/Qwen_Qwen3.5-9B-GGUF",
+  "downloads": 115696
+ },
+ {
+  "_id": "6a047df735125438ed2a1d14",
+  "id": "unsloth/Qwen3.5-9B-MTP-GGUF",
+  "downloads": 66413
+ },
+ {
+  "_id": "69a6a7c0ae4e7dd37aeedff2",
+  "id": "lukey03/Qwen3.5-9B-abliterated-GGUF",
+  "downloads": 30755
+ },
+ {
+  "_id": "6a3df1c9444639d844fc5228",
+  "id": "samuelchristlie/Ornith-1.0-9B-gguf",
+  "downloads": 17134
+ },
+ {
+  "_id": "69afd31197e57fcb354ccda2",
+  "id": "prithivMLmods/Gliese-Qwen3.5-9B-Abliterated-Caption",
+  "downloads": 13343
+ }
+]

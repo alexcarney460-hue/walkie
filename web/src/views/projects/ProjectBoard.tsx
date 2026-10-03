@@ -2,7 +2,7 @@
 // card drawer. Keyboard first: j/k h/l move, Enter opens, Space previews, c new card, m then 1–9 moves (the selection
 // with x, or the focused card), a assigns to me, e edits the title, Esc clears. Everything goes through the daemon.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Download, FolderOpen, Lock, Plus, Settings } from "lucide-react";
+import { ChevronLeft, Download, FileText, FolderOpen, Lock, Plus, Settings } from "lucide-react";
 import { api, friendlyError, planLimitOf } from "../../api/client.ts";
 import type { CardView, PlanLimitDetails, ProjectView, RoomFileView } from "../../api/types.ts";
 import { PlanLimitNotice } from "../../components/PlanLimitNotice.tsx";
@@ -11,6 +11,7 @@ import { tagHue } from "../../lib/format.ts";
 import { isTyping } from "../../lib/hotkeys.ts";
 import { columnsOf, dropTarget, isMe, moveFocus, NO_FILTERS, presence, type Filters, type Focus } from "../../lib/projects.ts";
 import { hrefFor, navigate } from "../../lib/route.ts";
+import { reportMode } from "../../lib/status-report.ts";
 import { projectsStore, useProjects } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
 import { CardDrawer } from "./CardDrawer.tsx";
@@ -20,8 +21,10 @@ import { Kanban, KanbanSkeleton } from "./Kanban.tsx";
 import { Meter } from "./Meter.tsx";
 import { AgentFaces } from "./ProjectList.tsx";
 import { ProjectSettings } from "./ProjectSettings.tsx";
+import { StatusPage } from "./StatusPage.tsx";
+import { StatusReportPanel } from "./StatusReportPanel.tsx";
 
-export function ProjectBoard({ channel, boardId, cardId, room }: { channel: string; boardId?: string; cardId?: string; room?: boolean }) {
+export function ProjectBoard({ channel, boardId, cardId, room, page, group }: { channel: string; boardId?: string; cardId?: string; room?: boolean; page?: boolean; group?: string }) {
   const s = useProjects();
   const { me, agents } = useStore();
   useEffect(() => {
@@ -41,11 +44,11 @@ export function ProjectBoard({ channel, boardId, cardId, room }: { channel: stri
       </div>
     );
   }
-  return <BoardBody project={project} cards={cards} boardId={boardId} cardId={cardId} room={room === true} me={me?.handle ?? null} agents={agents} allProjects={s.projects} files={s.rooms[channel]} />;
+  return <BoardBody project={project} cards={cards} boardId={boardId} cardId={cardId} room={room === true} page={page === true} group={group} me={me?.handle ?? null} agents={agents} allProjects={s.projects} files={s.rooms[channel]} />;
 }
 
-function BoardBody({ project, cards, boardId, cardId, room, me, agents, allProjects, files }: {
-  project: ProjectView; cards: CardView[]; boardId?: string; cardId?: string; room: boolean; me: string | null;
+function BoardBody({ project, cards, boardId, cardId, room, page, group, me, agents, allProjects, files }: {
+  project: ProjectView; cards: CardView[]; boardId?: string; cardId?: string; room: boolean; page: boolean; group: string | undefined; me: string | null;
   agents: ReturnType<typeof useStore>["agents"]; allProjects: ProjectView[]; files: RoomFileView[] | undefined;
 }) {
   const board = project.boards.find((b) => b.id === boardId) ?? project.boards.find((b) => b.state === "active") ?? project.boards[0];
@@ -61,6 +64,7 @@ function BoardBody({ project, cards, boardId, cardId, room, me, agents, allProje
   const [addingBoard, setAddingBoard] = useState(false);
   const [boardName, setBoardName] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const tabsRef = useRef<HTMLElement>(null);
   const cardUpload = useRoomUpload(project.channel);
   /** Live Data Room files attached to each card (the paperclip count on its tile). */
   const attached = useMemo(() => {
@@ -121,11 +125,16 @@ function BoardBody({ project, cards, boardId, cardId, room, me, agents, allProje
     }
   };
 
+  // On a phone the tabs scroll sideways: the one the address names (a board, the Data Room, the status page) is brought into view.
+  useEffect(() => {
+    tabsRef.current?.querySelector<HTMLElement>(".tab-link.is-on")?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+  }, [page, room, project.channel, board?.id]);
+
   // ---- keyboard -------------------------------------------------------------------------------------------------
   const keys = useRef({ gAt: 0, mAt: 0 });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || settings || room) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || settings || room || page) return;
       const k = e.key;
       const now = Date.now();
       if (k === "g") { keys.current.gAt = now; return; }
@@ -213,15 +222,20 @@ function BoardBody({ project, cards, boardId, cardId, room, me, agents, allProje
             <button type="button" className="btn btn-sm btn-icon" aria-label="Project settings" onClick={() => setSettings(true)}><Settings size={14} strokeWidth={1.75} /></button>
           </div>
         </div>
-        <nav className="tabs pboard-tabs" aria-label="Boards">
+        <nav ref={tabsRef} className="tabs pboard-tabs" aria-label="Boards">
           {project.boards.filter((b) => b.state === "active" || b.id === board.id).map((b) => (
-            <a key={b.id} className={b.id === board.id && !room ? "tab-link is-on" : "tab-link"} href={hrefFor({ view: "projects", channel: project.channel, board: b.id })} aria-current={b.id === board.id && !room ? "page" : undefined}>
+            <a key={b.id} className={b.id === board.id && !room && !page ? "tab-link is-on" : "tab-link"} href={hrefFor({ view: "projects", channel: project.channel, board: b.id })} aria-current={b.id === board.id && !room && !page ? "page" : undefined}>
               {b.name}<span className="muted tnum">{b.meter.done}/{b.meter.counted}</span>
             </a>
           ))}
           <a className={room ? "tab-link is-on pboard-room-tab" : "tab-link pboard-room-tab"} href={hrefFor({ view: "projects", channel: project.channel, room: true })} aria-current={room ? "page" : undefined}>
             <FolderOpen size={13} strokeWidth={2} aria-hidden="true" />Data Room<span className="muted tnum">{files ? files.filter((f) => f.state === "active").length : project.room?.files ?? 0}</span>
           </a>
+          {reportMode(project) === "hourly" && (
+            <a className={page ? "tab-link is-on pboard-page-tab" : "tab-link pboard-page-tab"} href={hrefFor({ view: "projects", channel: project.channel, page: true })} aria-current={page ? "page" : undefined}>
+              <FileText size={13} strokeWidth={2} aria-hidden="true" />Status page
+            </a>
+          )}
           {addingBoard ? (
             <form className="pboard-newboard" onSubmit={(e) => { e.preventDefault(); if (boardName.trim()) void addBoard(); }}>
               <input className="input" autoFocus value={boardName} maxLength={40} placeholder="Board name" aria-label="Board name" onChange={(e) => setBoardName(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setAddingBoard(false); }} />
@@ -234,7 +248,8 @@ function BoardBody({ project, cards, boardId, cardId, room, me, agents, allProje
         {limit && <PlanLimitNotice details={limit} />}
       </header>
 
-      {room ? <DataRoom project={project} cards={cards} /> : <>
+      {page ? <StatusPage project={project} group={group} /> : room ? <DataRoom project={project} cards={cards} /> : <>
+      <StatusReportPanel channel={project.channel} paused={project.state !== "active"} />
       <div className="pboard-filters" role="search">
         <input ref={searchRef} className="input" type="search" placeholder="Filter cards  /" aria-label="Filter cards" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} />
         <select className="select" aria-label="Assignee" value={filters.assignee} onChange={(e) => setFilters({ ...filters, assignee: e.target.value })}>

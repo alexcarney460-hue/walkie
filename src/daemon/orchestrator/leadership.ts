@@ -7,7 +7,7 @@ import { LEASE_RENEW_MS, LeaseAuthority, LeaseHolder, type LeadGrant } from "./l
 import { CLAIM_PREFIX, CLAIM_SKEW_MS, claimedSlotMark, claimRefusalFloor, compactClaims, loadScheduleClaims,
   saveScheduleClaims, signedClaimRecords, uncoveredAuthority, type ScheduleClaim, type ScheduleClaimResult } from "./schedule-claims.ts";
 import { eligibleCapacityTargets, latestCapacityChecks } from "./capacity-asks.ts";
-import { claimRetention, noteAuthorityCatchingUp, noteScheduleClockError, readSchedules, reconcileClaimedSlot, scheduleGeneration, seedScheduleIds, slotMarkTrip } from "./schedules.ts";
+import { claimRetention, noteAuthorityCatchingUp, noteScheduleClockError, readSchedules, reconcileClaimedSlot, repairStalledNextRun, scheduleGeneration, seedScheduleIds, slotMarkTrip } from "./schedules.ts";
 import { signSchedulePeer } from "./schedule-forward.ts";
 export { ScheduleClaim } from "./schedule-claims.ts";
 
@@ -94,6 +94,7 @@ export class Leadership {
         schedule.next_run !== null && entry.slot >= schedule.next_run &&
         (schedule.last_run === null || entry.slot > schedule.last_run));
       if (prior && now - prior.at >= CLAIM_SKEW_MS) reconcileClaimedSlot(core, schedule, prior, now);
+      else if (!prior) repairStalledNextRun(core, schedule, now);
       return { claimed: false, reason: "just_ran" };
     }
     const latest = loaded.find((entry) => !entry.reset && entry.schedule === claim.schedule);

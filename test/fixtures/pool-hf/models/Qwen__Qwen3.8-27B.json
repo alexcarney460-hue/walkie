@@ -1,0 +1,137 @@
+{
+ "_id": "6a72f2e302294c7d32dd278e",
+ "id": "Qwen/Qwen3.8-27B",
+ "downloads": 6950834,
+ "likes": 16723,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5",
+  "image-text-to-text",
+  "conversational",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "deploy:azure",
+  "deploy:sagemaker",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/Qwen3.8-27B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 61.7,
+    "date": "2026-08-14",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+     "name": "Qwen3.8-27B model card"
+    },
+    "notes": "Evaluated with the Claude Code harness, temp=1.0, top_p=0.95, 256K context; baseline models re-evaluated on the same refined task set."
+   },
+   "pullRequest": 22
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-27B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "datacurve/deep-swe",
+     "task_id": "deep_swe"
+    },
+    "value": 42.2,
+    "date": "2026-08-14",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+     "name": "Qwen3.8-27B model card"
+    }
+   },
+   "pullRequest": 22
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-27B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 89.2,
+    "date": "2026-08-14",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+     "name": "Qwen3.8-27B model card"
+    }
+   },
+   "pullRequest": 22
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-27B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 30.8,
+    "date": "2026-08-14",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+     "name": "Qwen3.8-27B model card"
+    },
+    "notes": "Judged by GPT-4o."
+   },
+   "pullRequest": 22
+  },
+  {
+   "filename": ".eval_results/Qwen3.8-27B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "claw-eval/Claw-Eval",
+     "task_id": "multimodal"
+    },
+    "value": 57.4,
+    "date": "2026-08-14",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+     "name": "Qwen3.8-27B model card"
+    },
+    "notes": "Reported as ClawEval-MM. Pass@3, the benchmark's own Pass\u00b3 methodology; card also reports a secondary 56.9 'Average' metric, not included here."
+   },
+   "pullRequest": 22
+  },
+  {
+   "filename": ".eval_results/terminal-bench-2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 73,
+    "date": "2026-08-14",
+    "source": {
+     "url": "https://huggingface.co/Qwen/Qwen3.8-27B",
+     "name": "Model Card"
+    },
+    "notes": "Row labeled \"(Terminus)\" as the harness; no further hyperparameter footnote given for this row."
+   },
+   "pullRequest": 158
+  }
+ ],
+ "createdAt": "2026-08-05T08:22:59.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 27781427952
+  },
+  "total": 27781427952
+ }
+}

@@ -4,7 +4,7 @@ import type { NodeView } from "../api/types.ts";
 import type { MachineStats } from "../../../src/protocol/machine-stats.ts";
 import { gb, memText, tempLevel, tempText } from "../../../src/protocol/machine-stats-format.ts";
 import { agoLong, useNow } from "../lib/time.ts";
-import { machineBusy } from "../../../src/protocol/machine-stats.ts";
+import { loadUnknown, machineBusy } from "../../../src/protocol/machine-stats.ts";
 
 type Level = "normal" | "warn" | "critical";
 export function ModelServerLoad({ stats }: { stats?: MachineStats }) {
@@ -34,10 +34,11 @@ export function statsTitle(hostname: string, stats: MachineStats | undefined, on
 }
 
 export function MachineLoad({ stats }: { stats?: MachineStats }) {
-  if (!stats?.sys && !stats?.agent_processes) return null;
+  if (!stats || (!stats.sys && !stats.agent_processes && !loadUnknown(stats))) return null;
   const sys = stats.sys;
   const count = stats.agent_processes?.reduce((n, a) => n + a.count, 0);
-  const known = count !== undefined || sys?.load1 != null || sys?.cpu_busy_pct != null;
+  // A stale, expired process census publishes no agent counts: low CPU then proves nothing, so it is never "Idle".
+  const known = (count !== undefined || sys?.load1 != null || sys?.cpu_busy_pct != null) && !loadUnknown(stats);
   return <span className="ms-load" data-testid="machine-load">
     {machineBusy(stats) ? "Busy" : known ? "Idle" : "Load unknown"}
     {count !== undefined ? ` · ${count} agents` : ""}

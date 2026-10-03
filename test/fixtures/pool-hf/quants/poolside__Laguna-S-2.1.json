@@ -1,0 +1,47 @@
+[
+ {
+  "_id": "6a54c30598352655b7526ae7",
+  "id": "poolside/Laguna-S-2.1-GGUF",
+  "downloads": 607089
+ },
+ {
+  "_id": "6a611068bb26432fa86525ee",
+  "id": "Myric/Laguna-S-2.1-APEX-GGUF",
+  "downloads": 156391
+ },
+ {
+  "_id": "6a60010d445a807efed16b43",
+  "id": "unsloth/Laguna-S-2.1-GGUF",
+  "downloads": 16253
+ },
+ {
+  "_id": "6a6261efe728d09bac27a635",
+  "id": "lmstudio-community/Laguna-S-2.1-GGUF",
+  "downloads": 14223
+ },
+ {
+  "_id": "6a60ee8f1a8a5f5eddaad88a",
+  "id": "bartowski/Laguna-S-2.1-GGUF",
+  "downloads": 2244
+ },
+ {
+  "_id": "6a6343603a60d63b3904cb51",
+  "id": "antirez/Laguna-S-2.1-GGUF",
+  "downloads": 1603
+ },
+ {
+  "_id": "6aa98520ceedd411a4d96001",
+  "id": "xautonomics/Laguna-S-2.1-UD-IQ4_NL.LAYR.GGUF",
+  "downloads": 1456
+ },
+ {
+  "_id": "6a60492da2d33479fb8f0ec8",
+  "id": "AtomicChat/Laguna-S-2.1-GGUF",
+  "downloads": 776
+ },
+ {
+  "_id": "6a709a653180058010ead72a",
+  "id": "ggml-org/Laguna-S-2.1-GGUF",
+  "downloads": 254
+ }
+]

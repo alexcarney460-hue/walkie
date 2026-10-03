@@ -226,14 +226,164 @@ export function runnerPathProblem(path: string, stat: (p: string) => Stats = lst
   return null;
 }
 
+// ---- the machine's sudo (WALK-93: Ubuntu 25.10 and later ship sudo-rs) ----------------------------------------------
+
+/** Which sudo runs the rules: the original, sudo-rs (a rewrite that knows fewer settings), or one we can't tell. */
+export type SudoFlavor = "classic" | "sudo-rs" | "unknown";
+export interface SudoInfo { flavor: SudoFlavor; /** The number it printed (`1.9.15p5`, `0.2.13`), when there was one. */ version: string | null }
+
+/** The first sudo-rs that reads a standalone `*` as the last word of a rule ("any further arguments"); before it a `*` is a plain character. */
+export const SUDO_RS_WILDCARD = "0.2.13";
+
+const firstLine = (text: string | null): string => (text ?? "").split("\n")[0]?.trim() ?? "";
+
+/**
+ * The sudo flavor from the first lines of `sudo --version` and `visudo --version`. As printed: the original says
+ * `Sudo version 1.9.15p5` and `visudo version 1.9.15p5`; sudo-rs says `sudo-rs 0.2.13`, and its visudo says
+ * `visudo-rs 0.2.13` (0.2.8: `visudo version 0.2.8`, the original has never had a 0.x). Either tool saying sudo-rs
+ * wins: the check that gates the install is visudo's.
+ */
+export function sudoInfoFrom(sudo: string | null, visudo: string | null): SudoInfo {
+  const s = firstLine(sudo);
+  const v = firstLine(visudo);
+  const rs = /^sudo-rs(?:\s+(\d+(?:\.\d+)*))?\b/i.exec(s) ?? /^visudo-rs\s+(\d+(?:\.\d+)*)/i.exec(v) ?? /^visudo version (0(?:\.\d+)+)/i.exec(v);
+  if (rs) return { flavor: "sudo-rs", version: rs[1] ?? null };
+  const classic = /^sudo version (\d[\w.]*)/i.exec(s) ?? /^visudo version ([1-9]\d*(?:\.\w+)*)/i.exec(v);
+  return classic ? { flavor: "classic", version: classic[1] ?? null } : { flavor: "unknown", version: null };
+}
+
+/** What a tool prints for `--version`, both streams (sudo-rs 0.2.8 prints its version on stderr), or null when it can't be run or fails. */
+export function toolOutput(argv: string[]): string | null {
+  try {
+    const r = Bun.spawnSync(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 5000, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
+    return r.exitCode === 0 ? `${r.stdout}${r.stderr}` : null;
+  } catch {
+    return null; // not installed here
+  }
+}
+
+/** This machine's sudo: `sudo --version` and `visudo --version` (`run` returns a tool's output, or null; tests pass fakes). */
+export function detectSudo(run: (argv: string[]) => string | null = toolOutput): SudoInfo {
+  const ask = (paths: string[]): string | null => {
+    for (const path of paths) {
+      try {
+        const out = run([path, "--version"]);
+        if (out) return out;
+      } catch { /* not here */ }
+    }
+    return null;
+  };
+  return sudoInfoFrom(ask(["/usr/bin/sudo"]), ask(["/usr/sbin/visudo", "/usr/bin/visudo", "/sbin/visudo"]));
+}
+
+function versionBefore(version: string, floor: string): boolean {
+  const a = version.split(".").map(Number);
+  const b = floor.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const [x, y] = [a[i] ?? 0, b[i] ?? 0];
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
+/**
+ * Why this sudo can't run the seat users' rules at all, or null. The helper's commands end in `*` (`seat-admin create
+ * *`: the id comes after), which a sudo-rs before 0.2.13 reads as a plain character: it parses the rules and then
+ * refuses every seat user, so setup stops before changing anything (test/sudo-rules-containers.sh shows it on 0.2.8).
+ */
+export function sudoProblem(sudo: SudoInfo): string | null {
+  if (sudo.flavor !== "sudo-rs" || sudo.version === null || !versionBefore(sudo.version, SUDO_RS_WILDCARD)) return null;
+  return `sudo-rs ${sudo.version} can't run seat users: the helper's sudo rules end in a * (the id), which sudo-rs reads as a plain character before ${SUDO_RS_WILDCARD}, so every seat user would be refused. Nothing was changed. Use sudo-rs ${SUDO_RS_WILDCARD} or later where available. On Ubuntu 25.10, switch to the original sudo: sudo apt install sudo && sudo update-alternatives --set sudo /usr/bin/sudo.ws. Then run walkie seats setup-user --apply again. Or run seats as your own user: walkie seats enable --same-user`;
+}
+
+function sudoNote(sudo: SudoInfo): string {
+  const v = sudo.version ? ` ${sudo.version}` : "";
+  if (sudo.flavor === "classic") return `sudo here is the original sudo${v}: the rules keep !requiretty (on some systems sudo wants a terminal, and seats have none)`;
+  if (sudo.flavor === "sudo-rs") return `sudo here is sudo-rs${v}: the rules leave out !requiretty, which sudo-rs doesn't know`;
+  return "sudo here isn't recognized: the rules keep !requiretty, and if sudo says it doesn't know that setting they are written again without it";
+}
+
+/**
+ * Whether `visudo -c` refused the rules only because its sudo (sudo-rs) doesn't know the `requiretty` setting: it
+ * printed at least one syntax error and every one is `unknown setting: 'requiretty'`. Any other error is a real
+ * problem with the rules and stays one.
+ */
+export function unknownRequiretty(output: string): boolean {
+  const errors = output.split("\n").filter((line) => /syntax error/i.test(line));
+  return errors.length > 0 && errors.every((line) => /syntax error: unknown setting: 'requiretty'\s*$/.test(line));
+}
+
+export interface RulesCheck { ok: boolean; output: string; /** The rules were written again without !requiretty. */ regenerated: boolean }
+
+/**
+ * The check of the sudo rules (`check` runs `visudo -c` on them, `rewrite` writes them again without the !requiretty
+ * lines; null when they have none). Only the one error of unknownRequiretty regenerates them, once, and the check
+ * runs again; anything else stays what it was.
+ */
+export function checkSudoRules(check: () => { ok: boolean; output: string }, rewrite: (() => void) | null): RulesCheck {
+  const first = check();
+  if (first.ok || rewrite === null || !unknownRequiretty(first.output)) return { ...first, regenerated: false };
+  rewrite();
+  return { ...check(), regenerated: true };
+}
+
 // ---- the setup plan ----------------------------------------------------------------------------------------------
 
 export const DEFAULT_ADMIN = `${RUNNER_DIR}/walkie-seat-admin`;
 
+/** Claude Code's own command for its standalone build (code.claude.com/docs/en/setup, "Native Install"). */
+const CLAUDE_STANDALONE_INSTALL = "curl -fsSL https://claude.ai/install.sh | bash";
+/** And for removing an npm install of it (the same page, "Uninstall Claude Code"). */
+const CLAUDE_NPM_UNINSTALL = "npm uninstall -g @anthropic-ai/claude-code";
+
+/**
+ * What to do about a runtime that isn't a single binary (a script launcher such as an npm install, or not installed). The
+ * command named is `seats setup-user --apply`, which works whether or not seat users exist: `seats enable --seat-users`
+ * skips the setup once they do (and they do as soon as the run that printed this has applied).
+ */
+const SETUP_USER = "walkie seats setup-user --apply";
+function runtimeWarning(name: string, codexReleaseTried: boolean): string {
+  if (name === "claude") {
+    return `claude isn't a single binary here (an npm script launcher, or not installed), so seat users can't run it: install Claude Code's standalone build (${CLAUDE_STANDALONE_INSTALL}), open a new terminal (an older npm claude that comes first on your PATH has to go: ${CLAUDE_NPM_UNINSTALL}), then run ${SETUP_USER} again`;
+  }
+  if (name === "codex") {
+    return codexReleaseTried
+      ? `codex isn't a single binary here and the official release could not be fetched (see above): check the network and run ${SETUP_USER} --codex-release again, or install a standalone codex yourself (https://github.com/openai/codex/releases) and run ${SETUP_USER} again`
+      : `codex isn't a single binary here (an npm script launcher, or not installed), so seat users can't run it: run ${SETUP_USER} --codex-release, which downloads OpenAI's standalone Codex and checks it, or install a standalone codex yourself and run ${SETUP_USER} again`;
+  }
+  return `${name} isn't a single binary here, so it isn't copied for the seat users: install it where they can run it`;
+}
+
+/** The sudoers file for `daemonUser`; `requiretty` false leaves out the two lines sudo-rs refuses. */
+function seatSudoers(daemonUser: string, requiretty: boolean): string {
+  return [
+    `# Walkie (walkie seats setup-user): ${daemonUser}'s daemon may make a fresh user for each seat, run the seat as it, and destroy it.`,
+    `Cmnd_Alias WALKIE_TALKIE_REPAIR = ${DEFAULT_ADMIN} seat-admin talkie-repair *`,
+    // The command-specific default discards a cached sudo timestamp even for a direct helper invocation.
+    "Defaults!WALKIE_TALKIE_REPAIR timestamp_timeout=0",
+    // Some systems' sudo wants a terminal and seats have none; sudo-rs has no such setting and refuses these lines.
+    ...(requiretty ? [`Defaults!${DEFAULT_RUNNER} !requiretty`, `Defaults!${DEFAULT_ADMIN} !requiretty`] : []),
+    `${daemonUser} ALL=(%${SEATS_GROUP}) NOPASSWD: ${DEFAULT_RUNNER} seat-runner, ${DEFAULT_RUNNER} talkie-runner`,
+    `${daemonUser} ALL=(root) NOPASSWD: ${DEFAULT_ADMIN} seat-admin create *, ${DEFAULT_ADMIN} seat-admin destroy *, ${DEFAULT_ADMIN} seat-admin pending, ${DEFAULT_ADMIN} seat-admin talkie-create *, ${DEFAULT_ADMIN} seat-admin talkie-reconcile *, ${DEFAULT_ADMIN} seat-admin talkie-destroy *, ${DEFAULT_ADMIN} seat-admin talkie-status, ${DEFAULT_ADMIN} seat-admin talkie-lock-init`,
+    `${daemonUser} ALL=(root) PASSWD: WALKIE_TALKIE_REPAIR`,
+    "",
+  ].join("\n");
+}
+
 export interface SeatUserPlan {
   /** Each step: what it does, and its argv (run with the person's sudo unless `sudo` is false). */
-  steps: Array<{ what: string; argv: string[]; sudo: boolean; /** Makes the seats' group (skipped when it exists). */ group?: true }>;
+  steps: Array<{
+    what: string; argv: string[]; sudo: boolean; /** Makes the seats' group (skipped when it exists). */ group?: true;
+    /** The check of the sudo rules (checkSudoRules: written again without !requiretty when its sudo doesn't know it). */ sudoersCheck?: true;
+  }>;
   sudoers: string;
+  /** `sudoers` without the two !requiretty lines (what is written again when sudo says it doesn't know them), or null when it has none. */
+  sudoersWithoutRequiretty: string | null;
+  /** The sudo found on this machine, and in plain words what that means for the rules. */
+  sudo: SudoInfo;
+  sudoNote: string;
+  /** Why this sudo can't run the rules at all (sudo-rs before 0.2.13): never applied, whatever else is accepted. */
+  sudoProblem: string | null;
   sudoersPath: string;
   runner: string;
   admin: string;
@@ -259,6 +409,17 @@ export function seatUserPlan(o: {
   extraRoots?: string[]; rootsTmp?: string;
   /** A file holding the daemon user's name: installed as SEAT_OWNER_FILE (one person per machine). */
   ownerTmp?: string;
+  /**
+   * WALK-103: a file holding the record of the Walkie these seat users are set up for (instance.ts
+   * seatRegistrationText), installed root-owned as SEAT_INSTANCE_FILE before the helper copy; `instanceHome` names
+   * that Walkie's home in the plan.
+   */
+  instanceTmp?: string;
+  instanceHome?: string;
+  /** The sudo on this machine (detectSudo); unknown when not given. */
+  sudo?: SudoInfo;
+  /** `--codex-release` was given: a codex that still can't be copied is not told to use it. */
+  codexReleaseTried?: boolean;
 }): SeatUserPlan {
   if (!/^[a-z_][a-z0-9._-]{0,31}$/.test(o.daemonUser)) throw new Error(`unexpected daemon user name: ${o.daemonUser}`);
   const mac = o.platform === "darwin";
@@ -276,6 +437,13 @@ export function seatUserPlan(o: {
     { what: "a root-owned directory for the runner and the user helper", argv: ["mkdir", "-p", RUNTIMES_DIR], sudo: true },
     { what: "owned by root", argv: ["chown", "-R", `root:${rootGroup}`, RUNNER_DIR], sudo: true },
     { what: "writable by root only", argv: ["chmod", "755", RUNNER_DIR, RUNTIMES_DIR], sudo: true },
+  );
+  // Before the helper copy: a helper of this version lists, makes and removes seat users only for the recorded Walkie.
+  if (o.instanceTmp) {
+    steps.push({ what: `which Walkie owns this machine's seat users (${o.instanceHome ?? "this one"}): the helper lists, makes and removes them for it only`,
+      argv: ["install", "-m", "0644", "-o", "root", "-g", rootGroup, o.instanceTmp, SEAT_INSTANCE_FILE], sudo: true });
+  }
+  steps.push(
     { what: "a root-owned copy of walkie as the runner", argv: ["install", "-m", "0755", "-o", "root", "-g", rootGroup, o.source, DEFAULT_RUNNER], sudo: true },
     { what: "a root-owned copy of walkie as the user helper (create/destroy a seat user)", argv: ["install", "-m", "0755", "-o", "root", "-g", rootGroup, o.source, DEFAULT_ADMIN], sudo: true },
   );
@@ -287,18 +455,9 @@ export function seatUserPlan(o: {
     steps.push({ what: `${name} for the seat users (root-owned copy)`, argv: ["install", "-m", "0755", "-o", "root", "-g", rootGroup, src, `${RUNTIMES_DIR}/${name}`], sudo: true });
   }
   const sudoersPath = "/etc/sudoers.d/walkie-seats";
-  const sudoers = [
-    `# Walkie (walkie seats setup-user): ${o.daemonUser}'s daemon may make a fresh user for each seat, run the seat as it, and destroy it.`,
-    `Cmnd_Alias WALKIE_TALKIE_REPAIR = ${DEFAULT_ADMIN} seat-admin talkie-repair *`,
-    // The command-specific default discards a cached sudo timestamp even for a direct helper invocation.
-    "Defaults!WALKIE_TALKIE_REPAIR timestamp_timeout=0",
-    `Defaults!${DEFAULT_RUNNER} !requiretty`,
-    `Defaults!${DEFAULT_ADMIN} !requiretty`,
-    `${o.daemonUser} ALL=(%${SEATS_GROUP}) NOPASSWD: ${DEFAULT_RUNNER} seat-runner, ${DEFAULT_RUNNER} talkie-runner`,
-    `${o.daemonUser} ALL=(root) NOPASSWD: ${DEFAULT_ADMIN} seat-admin create *, ${DEFAULT_ADMIN} seat-admin destroy *, ${DEFAULT_ADMIN} seat-admin pending, ${DEFAULT_ADMIN} seat-admin talkie-create *, ${DEFAULT_ADMIN} seat-admin talkie-reconcile *, ${DEFAULT_ADMIN} seat-admin talkie-destroy *, ${DEFAULT_ADMIN} seat-admin talkie-status, ${DEFAULT_ADMIN} seat-admin talkie-lock-init`,
-    `${o.daemonUser} ALL=(root) PASSWD: WALKIE_TALKIE_REPAIR`,
-    "",
-  ].join("\n");
+  const sudo: SudoInfo = o.sudo ?? { flavor: "unknown", version: null };
+  const requiretty = sudo.flavor !== "sudo-rs";
+  const sudoers = seatSudoers(o.daemonUser, requiretty);
   if (o.ownerTmp) {
     steps.push({ what: `whose seats this machine takes (one person per machine: ${o.daemonUser})`, argv: ["install", "-m", "0644", "-o", "root", "-g", rootGroup, o.ownerTmp, SEAT_OWNER_FILE], sudo: true });
   }
@@ -309,17 +468,18 @@ export function seatUserPlan(o: {
     });
   }
   steps.push(
-    { what: "check the sudo rules", argv: ["visudo", "-c", "-f", o.sudoersTmp], sudo: true },
+    { what: "check the sudo rules", argv: ["visudo", "-c", "-f", o.sudoersTmp], sudo: true, sudoersCheck: true },
     { what: "install the sudo rules", argv: ["install", "-m", "0440", "-o", "root", "-g", rootGroup, o.sudoersTmp, sudoersPath], sudo: true },
     { what: "check the installed sudo rules", argv: ["visudo", "-c", "-f", sudoersPath], sudo: true },
     { what: "create or verify the dedicated user lock", argv: [DEFAULT_ADMIN, "seat-admin", "talkie-lock-init"], sudo: true },
     { what: "keep the Walkie home private", argv: ["chmod", "700", o.walkieHome], sudo: false },
   );
   const warnings: string[] = [];
-  if (skippedRuntimes.length) warnings.push(`not a single binary, so not copied: ${skippedRuntimes.join(", ")}; install it where the seat users can run it`);
+  for (const name of skippedRuntimes) warnings.push(runtimeWarning(name, o.codexReleaseTried === true));
   if (o.homeProblem && o.acceptReadableHome) warnings.push(`${o.homeProblem} (accepted with --accept-readable-home: seat users can read what your home shows them)`);
   return {
-    steps, sudoers, sudoersPath, runner: DEFAULT_RUNNER, admin: DEFAULT_ADMIN, runtimesDir: RUNTIMES_DIR, runtimes, skippedRuntimes,
+    steps, sudoers, sudoersWithoutRequiretty: requiretty ? seatSudoers(o.daemonUser, false) : null, sudo, sudoNote: sudoNote(sudo),
+    sudoProblem: sudoProblem(sudo), sudoersPath, runner: DEFAULT_RUNNER, admin: DEFAULT_ADMIN, runtimesDir: RUNTIMES_DIR, runtimes, skippedRuntimes,
     blocked: o.homeProblem && !o.acceptReadableHome ? o.homeProblem : null, warnings,
   };
 }
@@ -332,11 +492,14 @@ export const SEAT_ROOTS_FILE = "seat-roots.json";
  */
 export const SEAT_OWNER_FILE = `${RUNNER_DIR}/seat-owner`;
 
+/** Which of that person's Walkies owns the seat users (WALK-103, instance.ts): its home and daemon socket. */
+export const SEAT_INSTANCE_FILE = `${RUNNER_DIR}/seat-instance`;
+
 /** Why `user` can't set up seat users here (another person's are), or null. */
 export function seatOwnerProblem(user: string, read: (p: string) => string | null): string | null {
   const owner = read(SEAT_OWNER_FILE)?.trim();
   if (!owner || owner === user) return null;
-  return `this machine's seat users are set up for ${owner}: one person per machine takes seats for now (the sudo rules name one daemon user); ${owner} can turn seats off (walkie seats deny) and an administrator can remove ${SEAT_OWNER_FILE} and /etc/sudoers.d/walkie-seats to hand it over`;
+  return `this machine's seat users are set up for ${owner}: one person per machine takes seats for now (the sudo rules name one daemon user); ${owner} can turn seats off (walkie seats deny) and an administrator can remove ${SEAT_OWNER_FILE}, ${SEAT_INSTANCE_FILE} and /etc/sudoers.d/walkie-seats to hand it over`;
 }
 
 /** Where every seat user's sweep goes anyway (runner-sweep.ts realRoots): found directories under these are covered. */

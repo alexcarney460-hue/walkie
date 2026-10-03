@@ -341,3 +341,13 @@ test("a launch that does not use the machine's login does not re-check it", asyn
   const users = statusRig({ ephemeral: true, inherit: true }); // seat users always get a projected token
   expect((await recheck(users.host, seat("claude"))).length).toBe(1);
 });
+
+// The launch path re-checks the machine login before bindAccount, while an account seat's creds are still empty.
+// That seat does not use this machine's login: the check must not read the Keychain or run `codex login status`.
+test("an account seat does not re-check this machine's login before its credentials are bound", async () => {
+  const r = statusRig();
+  const account = (runtime: string, id: string) => ({ run: { runtime }, v2: { run: { account: `bea:${id}` } } });
+  expect(await recheck(r.host, account("claude", "a".repeat(24)))).toEqual([]);
+  expect(await recheck(r.host, account("codex", "c".repeat(24)))).toEqual([]);
+  expect({ keychain: r.reads(), codex: r.codexRuns() }).toEqual({ keychain: 0, codex: 0 });
+});

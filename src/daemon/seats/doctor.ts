@@ -74,6 +74,18 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
   out.push(!codexBin ? { ok: "warn", what: "Codex isn't installed where seats can run it (only Claude seats)", fix: local.ephemeral ? "install codex, then walkie seats setup-user --apply" : "install codex" }
     : local.codex_login === "unavailable" ? { ok: false, what: `Codex seats: ${local.codex_login_reason ?? "not signed in where seat users can use it (no ~/.codex/auth.json)"}`, fix: local.codex_login_reason ? undefined : "codex login" }
     : { ok: true, what: "Codex seats: signed in (this machine's own sign-in)" });
+  // WALK-103: the root-owned record of which Walkie on this machine owns its seat users.
+  if (local.seat_scope?.state === "other") out.push({ ok: false, what: local.seat_scope.why, fix: "walkie seats setup-user --apply, run from this Walkie, moves this machine's seat users to it" });
+  if (local.seat_scope?.state === "legacy") out.push({ ok: "warn", what: local.seat_scope.why, fix: "walkie seats setup-user --apply" });
+  if (local.foreign_users?.length) {
+    const users = local.foreign_users;
+    out.push({ ok: "warn", what: `${users.length} seat user${users.length === 1 ? "" : "s"} here ${users.length === 1 ? "isn't" : "aren't"} this Walkie's to remove (${users.slice(0, 5).join(", ")}${users.length > 5 ? " …" : ""}): made before this update, or by another Walkie on this machine; Walkie leaves ${users.length === 1 ? "it" : "them"} and every process of ${users.length === 1 ? "it" : "them"} as they are`,
+      fix: local.seat_scope?.state === "other" ? "the Walkie that owns this machine's seat users removes them" : "walkie seats setup-user --apply, then restart the Walkie daemon: it removes them once nothing of them runs" });
+  }
+  for (const user of local.leftovers_running ?? []) {
+    out.push({ ok: "warn", what: `${user} is a leftover seat user that still runs processes no current seat of this Walkie started: it holds a seat slot until they end, then Walkie removes it`,
+      fix: `to end them now: sudo pkill -KILL -u ${user} (Walkie removes the user at its next retry)` });
+  }
   if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed" });
   if (local.cleanup_in_flight && Date.now() - local.cleanup_in_flight.since >= 60_000) {
     const h = local.cleanup_in_flight;
@@ -116,6 +128,20 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
   return out;
 }
 
+/**
+ * The helper's answer to the doctor's (or setup's) own `pending` probe: null when it answered and its id ledger reads,
+ * "no answer" when it didn't answer as the helper, else what's wrong. The probe isn't the registered daemon, so since
+ * WALK-103 the helper refuses to list for it, and says whether the ledger reads (`ledger`) without saying what it holds.
+ */
+export function pendingProbeProblem(out: string): string | null {
+  let r: { ok?: unknown; scope?: unknown; ledger?: unknown };
+  try { r = JSON.parse(out) as typeof r; } catch { return "no answer"; }
+  if (typeof r !== "object" || r === null) return "no answer";
+  if (r.ok === true) return null;
+  if (r.scope !== "other" && r.scope !== "unregistered" && r.scope !== "unchecked") return "no answer";
+  return r.ledger === undefined || r.ledger === "ok" ? null : String(r.ledger).slice(0, 300);
+}
+
 /** The facts the doctor needs, read from this machine (`versionDeps`: tests, a fake `version` run). */
 export function doctorFacts(local: SeatsLocalView, team: string | null, versionDeps?: HelperVersionDeps): DoctorFacts {
   // A source build runs its own runner and helper (never the installed ones): those aren't checked.
@@ -126,7 +152,12 @@ export function doctorFacts(local: SeatsLocalView, team: string | null, versionD
   if (installed) {
     const p = Bun.spawnSync(["sudo", "-n", DEFAULT_ADMIN, "seat-admin", "pending"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", cwd: "/", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
     const out = p.stdout.toString().trim();
-    helper = out.startsWith('{"ok":true') ? "ok" : `sudo -n ${DEFAULT_ADMIN} seat-admin pending didn't answer (${(out || p.stderr.toString().trim()).slice(0, 160)})`;
+    // This probe runs from the doctor, not from the registered daemon (WALK-103): the helper's refusal to list for it
+    // still shows sudo reaches the helper; whether this Walkie is the registered one is local.seat_scope's to say.
+    const problem = pendingProbeProblem(out);
+    helper = problem === null ? "ok" : problem === "no answer"
+      ? `sudo -n ${DEFAULT_ADMIN} seat-admin pending didn't answer (${(out || p.stderr.toString().trim()).slice(0, 160)})`
+      : `sudo -n ${DEFAULT_ADMIN} seat-admin pending answered, but ${problem}`;
   }
   let rootsFile = "ok";
   if (installed) {

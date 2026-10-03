@@ -20,7 +20,8 @@
 // and nobody pinned (create order, which the signer chooses); pinned files and files a person created always show.
 import type { Author } from "../schemas.ts";
 import { isPerson, order, refOf, type OpEvent } from "./fold.ts";
-import { FileOp, type FileOpT, type RoomFileView, type RoomVersion, type TimelineEntry } from "./schema.ts";
+import { shownScreen } from "./page-text.ts";
+import { FileOp, ScreenMeta, type FileOpT, type RoomFileView, type RoomVersion, type ScreenMetaT, type TimelineEntry } from "./schema.ts";
 
 // The views live in schema.ts (type-only: the dashboard imports them without the fold's dependencies).
 export type { ContextFile, RoomFileDetail, RoomFileView, RoomVersion, TaskContext } from "./schema.ts";
@@ -38,22 +39,43 @@ export interface RoomFileState {
   versions: RoomVersion[];
   /** Attached card ids (last attach last). */
   cards: string[];
+  /** PROJECT-PAGES-1: what the file is on the project's status page, or null when it is not a screen. */
+  screen: ScreenMetaT | null;
   created_at: number; created_by: Author; updated_at: number; updated_by: Author;
   rev: number; head: string;
   timeline: TimelineEntry[];
 }
 
-const FILE_FIELDS = ["name", "hash", "size", "mime", "share", "pin", "state", "attach", "detach"] as const;
+const FILE_FIELDS = ["name", "hash", "size", "mime", "share", "pin", "state", "attach", "detach", "screen"] as const;
 
 function fieldsOf(op: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const k of FILE_FIELDS) if (op[k] !== undefined) out[k] = op[k];
+  for (const k of FILE_FIELDS) {
+    if (op[k] === undefined) continue;
+    // `screen: null` is a value (off the page); `undefined` from screenOf, for a field the op carries, is one this build cannot read.
+    const screen = k === "screen" ? screenOf(op as FileOpT) : undefined;
+    out[k] = k === "screen" ? (screen === undefined ? UNREADABLE : screen) : op[k];
+  }
   return out;
 }
+
+/** What a file's history says of a `screen` value this build cannot read (the value itself is never copied: it may be anything, up to 16 KB). */
+const UNREADABLE = "(unreadable)";
 
 function parse(v: unknown): FileOpT | null {
   const r = FileOp.safeParse(v);
   return r.success ? r.data : null;
+}
+
+/**
+ * The screen register an op writes: `null` clears it, a valid ScreenMeta sets it, `undefined` is "this op does not touch it".
+ * A value that is not a ScreenMeta (written by a newer build) is "does not touch it": the rest of the op still applies.
+ */
+function screenOf(op: FileOpT): ScreenMetaT | null | undefined {
+  if (op.screen === undefined) return undefined;
+  if (op.screen === null) return null;
+  const r = ScreenMeta.safeParse(op.screen);
+  return r.success ? r.data : undefined;
 }
 
 /** 0: no content field; 1: all four; -1: some (a malformed version). */
@@ -108,6 +130,7 @@ function foldFile(root: Parsed, replies: readonly Parsed[]): RoomFileState {
   let s = {
     name: r.name as string, pinned: r.pin === true && isPerson(root.ev), state: "active" as RoomFileState["state"],
     updated_at: root.ev.ts, updated_by: root.ev.author, rev: 0, head: refOf(root.ev),
+    screen: screenOf(r) ?? null,
   };
   const versions: RoomVersion[] = [];
   const counts = { person: 0, agent: 0 };
@@ -133,17 +156,19 @@ function foldFile(root: Parsed, replies: readonly Parsed[]): RoomFileState {
     if (!o.root && op.pin === true) pins.push(o); // a pin reaching here is a person's (person_only above)
     for (const id of op.attach ?? []) { attached.delete(id); attached.set(id, true); }
     for (const id of op.detach ?? []) attached.delete(id);
+    const screen = o.root ? undefined : screenOf(op);
     s = {
       ...s, head: refOf(o.ev), rev: o.rank, name,
       ...(!o.root && op.pin !== undefined ? { pinned: op.pin } : {}),
       ...(!o.root && op.state !== undefined ? { state: op.state } : {}),
+      ...(screen !== undefined ? { screen } : {}),
       updated_at: Math.max(s.updated_at, o.ev.ts), updated_by: o.ev.ts >= s.updated_at ? o.ev.author : s.updated_by,
     };
   }
   return {
     id: root.ev.id, name: s.name, pinned: s.pinned, state: s.state,
     versions: s.pinned ? flagUnseen(versions, pins, root, replies) : versions,
-    cards: [...attached.keys()],
+    cards: [...attached.keys()], screen: s.screen,
     created_at: root.ev.ts, created_by: root.ev.author, updated_at: s.updated_at, updated_by: s.updated_by,
     rev: s.rev, head: s.head, timeline: timeline.sort(byTsEntry),
   };
@@ -184,14 +209,29 @@ export function currentVersion(f: Pick<RoomFileState, "versions" | "pinned">): R
   return f.versions[f.versions.length - 1] as RoomVersion;
 }
 
-/** A file as the API lists it. `cards` is narrowed to the project's cards by the caller; `available` too. */
+/**
+ * A file as the API lists it. `cards` is narrowed to the project's cards by the caller; `available` too. A screen's details are read
+ * through the status page's own cleaning (page-text.ts), so the Data Room never shows what the page would not; a screen whose title,
+ * group or sentence is a join code has no register here. (The signed events themselves, and an NDJSON export of them, are as signed.)
+ */
 export function roomFileView(f: RoomFileState, channel: string, opts: { cards: readonly string[]; available: boolean }): RoomFileView {
   const cur = currentVersion(f);
+  const screen = f.screen ? shownScreen(f.screen) : null;
   return {
     id: f.id, channel, name: f.name, pinned: f.pinned, state: f.state, hash: cur.hash, size: cur.size, mime: cur.mime,
     version: cur.v, versions: f.versions.length, updated_at: cur.ts, updated_by: cur.by, created_at: f.created_at, created_by: f.created_by,
     cards: [...opts.cards], available: opts.available, rev: f.rev,
+    ...(screen ? { screen } : {}),
   };
+}
+
+/** A file's history as the Data Room shows it: a screen register in it read through the same cleaning as the file's own. */
+export function shownTimeline(timeline: readonly TimelineEntry[]): TimelineEntry[] {
+  return timeline.map((entry) => {
+    const screen = entry.changes?.screen;
+    if (screen === undefined || screen === null || typeof screen === "string") return entry; // off the page, or one this build cannot read
+    return { ...entry, changes: { ...entry.changes, screen: shownScreen(screen as ScreenMetaT) ?? "(withheld)" } };
+  });
 }
 
 /** Room order: pinned first, then by name (case-insensitive), then create order. */
@@ -213,5 +253,7 @@ export function roomOpText(name: string, fields: Record<string, unknown>, versio
   if (fields.state === "active") parts.push("restored");
   if (Array.isArray(fields.attach)) parts.push(`attached to ${fields.attach.length} card${fields.attach.length === 1 ? "" : "s"}`);
   if (Array.isArray(fields.detach)) parts.push(`detached from ${fields.detach.length} card${fields.detach.length === 1 ? "" : "s"}`);
+  if (fields.screen === null) parts.push("taken off the status page");
+  else if (fields.screen !== undefined && fields.hash === undefined) parts.push("screen details changed");
   return `Data Room: ${clip(name, 160)} ${parts.join(", ") || "updated"}`;
 }

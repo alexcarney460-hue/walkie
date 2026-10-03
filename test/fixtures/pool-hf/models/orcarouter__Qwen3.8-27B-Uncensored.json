@@ -1,0 +1,54 @@
+{
+ "_id": "6a83bdd45235f3a3672c77d7",
+ "id": "orcarouter/Qwen3.8-27B-Uncensored",
+ "baseModels": {
+  "relation": "finetune",
+  "models": [
+   {
+    "_id": "6a72f2e302294c7d32dd278e",
+    "id": "Qwen/Qwen3.8-27B"
+   }
+  ]
+ },
+ "downloads": 21051,
+ "likes": 425,
+ "gated": "auto",
+ "pipeline_tag": "image-text-to-text",
+ "sha": "404ea47aaa5d8a8b00049c9e9750089aca011ab2",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5",
+  "image-text-to-text",
+  "abliterated",
+  "qwen",
+  "qwen3",
+  "qwen3.8",
+  "uncensored",
+  "ai-red-team",
+  "red-teaming",
+  "bf16",
+  "post-training",
+  "fine-tuning",
+  "vision-language",
+  "function-calling",
+  "reasoning",
+  "mtp",
+  "conversational",
+  "en",
+  "zh",
+  "base_model:Qwen/Qwen3.8-27B",
+  "base_model:finetune:Qwen/Qwen3.8-27B",
+  "license:apache-2.0",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "createdAt": "2026-08-18T02:05:08.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 27781427952
+  },
+  "total": 27781427952
+ },
+ "evalResults": []
+}

@@ -95,6 +95,34 @@ describe("Direct peer gate", () => {
     expect((await call(w.api, w.kira, "/peer/v1/vv", {}, w.team)).status).toBe(200);
   });
 
+  test("unadmitted Direct keys cannot evict an exhausted bucket on the main limiter", async () => {
+    const w = world();
+    const sentinel = "security:sentinel";
+    const spec = { capacity: 10, perSecond: 0 };
+    const clock = now();
+    for (let i = 0; i < 10; i++) expect(w.core.limiter.take(sentinel, spec, clock)).toBe(true);
+    expect(w.core.limiter.take(sentinel, spec, clock)).toBe(false);
+    // Fill the main limiter until the sentinel is its oldest key. One more main-limiter insert would drop it.
+    for (let i = 0; i < 511; i++) expect(w.core.limiter.take(`filler:${i}`, w.core.limits.peer, clock)).toBe(true);
+    for (let i = 0; i < 30; i++) await call(w.api, tnode(`stranger${i}`), "/peer/v1/vv", {}, w.team);
+    expect(w.core.limiter.take(sentinel, spec, clock)).toBe(false);
+  });
+
+  test("two PeerApi instances share the unadmitted bucket, and an admitted node still draws on the main limiter", async () => {
+    const w = world();
+    const other = new PeerApi(w.core);
+    let limited = 0;
+    for (let i = 0; i < 30; i++) {
+      const api = i % 2 === 0 ? w.api : other;
+      const res = await call(api, tnode(`share${i}`), "/peer/v1/vv", {}, w.team);
+      if (res.status === 429) limited++;
+    }
+    expect(limited).toBeGreaterThan(0);
+    const key = `peer:direct:${w.kira.keys.nodeId}`;
+    while (w.core.limiter.take(key, w.core.limits.peer)) { /* drain this node's own bucket */ }
+    expect((await call(w.api, w.kira, "/peer/v1/vv", {}, w.team)).status).toBe(429);
+  });
+
   test("the Tailscale path is unchanged: without a whois login, 403", async () => {
     const w = world();
     const res = await w.api.handle(new Request("http://127.0.0.1:7458/peer/v1/vv"), "127.0.0.1");

@@ -47,7 +47,7 @@ test("guest reads leave a dirty unrelated project's cards for background folding
   const folded: string[] = [];
   const idx = Object.assign(Object.create(ProjectsIndex.prototype), {
     dirtyFull: new Set<string>(), dirtyCards: pending, keysDirty: new Set<string>(),
-    rosterDirty: new Set<string>(), roomDirty: new Set<string>(),
+    rosterDirty: new Set<string>(), roomDirty: new Set<string>(), pageDirty: new Set<string>(),
     settingsOf: () => ({ project: null, boards: [] }),
     refoldCard: (ch: string) => { folded.push(ch); },
     finishChannel: () => undefined,

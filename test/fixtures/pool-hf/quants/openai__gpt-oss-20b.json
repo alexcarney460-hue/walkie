@@ -1,0 +1,47 @@
+[
+ {
+  "_id": "68923b71467354ab9147aa88",
+  "id": "unsloth/gpt-oss-20b-GGUF",
+  "downloads": 487590
+ },
+ {
+  "_id": "688dec3ebc727e7a313790d8",
+  "id": "ggml-org/gpt-oss-20b-GGUF",
+  "downloads": 126144
+ },
+ {
+  "_id": "68923e178f8b43b04da4d952",
+  "id": "lmstudio-community/gpt-oss-20b-GGUF",
+  "downloads": 102673
+ },
+ {
+  "_id": "689277cb60b4c9edeb2c2696",
+  "id": "bartowski/openai_gpt-oss-20b-GGUF",
+  "downloads": 16734
+ },
+ {
+  "_id": "699d6af53d2f48d63a21964e",
+  "id": "Mungert/DMind-3-GGUF",
+  "downloads": 3640
+ },
+ {
+  "_id": "69792966c96394253329d735",
+  "id": "squ11z1/gpt-oss-nano",
+  "downloads": 3121
+ },
+ {
+  "_id": "6892aa60c6023e07709d4139",
+  "id": "DavidAU/Openai_gpt-oss-20b-NEO-GGUF",
+  "downloads": 2603
+ },
+ {
+  "_id": "6895ebeb6cd5ef4106f49475",
+  "id": "mradermacher/gpt-oss-20b-i1-GGUF",
+  "downloads": 2085
+ },
+ {
+  "_id": "689242af5c53fd2630f9de2d",
+  "id": "bartowski/openai_gpt-oss-20b-GGUF-MXFP4-Experimental",
+  "downloads": 771
+ }
+]

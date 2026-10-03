@@ -9,7 +9,7 @@ import {
 import type { Core } from "../core.ts";
 import { seatsFor } from "./host.ts";
 import type { SyncManager } from "../sync.ts";
-import { agentsView } from "../views.ts";
+import { agentRowView } from "../agent-view-cache.ts";
 
 const PER_CHANNEL = 2_000;
 const MAX_SEATS = 100;
@@ -43,8 +43,12 @@ export function seatHosts(core: Core, sync: SyncManager): SeatHostView[] {
   const me = core.myHandle();
   const out = new Map<string, SeatHostView>();
   const now = Date.now();
-  for (const a of agentsView(core, sync)) {
-    if (a.agent !== SEATS_AGENT) continue;
+  // Only each machine's `seats` card matters here: the views of the thousands of other agents are not built (GET /v1/seats
+  // is polled every 2 s by the Seats view).
+  for (const row of core.store.agents()) {
+    if (row.agent !== SEATS_AGENT) continue;
+    const a = agentRowView(core, sync, row, now);
+    if (!a) continue;
     const ch = r.channels.get(seatsChannel(a.node));
     out.set(a.node, {
       node: a.node, hostname: a.hostname, handle: a.handle, self: a.node === core.nodeId,
@@ -114,6 +118,18 @@ export function seatsList(core: Core, only?: string): SeatView[] {
       if (s.file_error) seat.file_error = s.file_error;
       if (s.state === "running" && seat.started_at === undefined) seat.started_at = ev.ts;
       if (TERMINAL_STATES.has(s.state)) seat.ended_at = ev.ts;
+    }
+    // This machine's own seats: what it knows that the channel can't say yet (a resume held while the channel is
+    // narrowed, an end whose post was withheld), for its person (WALK-74).
+    const local = node === core.nodeId ? seatsFor(core) : undefined;
+    for (const seat of byId.values()) {
+      const note = local?.localState(seat.id);
+      if (!note || TERMINAL_STATES.has(seat.state)) continue;
+      seat.state = note.state;
+      seat.reason = note.reason;
+      delete seat.until;
+      if (note.dir) seat.dir = note.dir;
+      if (note.commits !== undefined) seat.commits = note.commits;
     }
     seats.push(...byId.values());
   }

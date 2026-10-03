@@ -123,14 +123,30 @@ export function detectIndent(text: string): string | number {
   return m[1].startsWith("\t") ? "\t" : m[1].length;
 }
 
-/** What the one write of the Claude settings file asks of the file system, injectable so a failure at each step can be tested. */
+/** What the one write of a settings or config file asks of the file system, injectable so a failure at each step can be tested. */
 export interface SettingsIo {
+  /** Creates `path`, which must not exist yet, private to its owner (0600), holding `body`: the staging file. Default: an exclusive create. */
+  write?(path: string, body: string): void;
   /** Replaces `to` with `from`, which sits in the same directory: atomic. */
   rename(from: string, to: string): void;
   /** Writes `body` into the existing file `path` itself, keeping its inode: only for a file that has other hard links. */
   writeInPlace(path: string, body: string): void;
 }
-const realSettingsIo: SettingsIo = { rename: renameSync, writeInPlace: (path, body) => writeFileSync(path, body) };
+const realSettingsIo: Required<SettingsIo> = {
+  write: (path, body) => writeFileSync(path, body, { mode: 0o600, flag: "wx" }),
+  rename: renameSync,
+  writeInPlace: (path, body) => writeFileSync(path, body),
+};
+
+/** How the replacement of a file words its errors: the Claude settings writer names the file and the cause, the Hermes one names neither. */
+export interface ErrorWords {
+  /** A read-only file, refused before anything is made. */
+  readonly notWritable: string;
+  /** What an error says of its cause ("" says nothing). */
+  cause(error: unknown): string;
+  /** The whole error text, from that cause and what became of the file. */
+  failed(cause: string, outcome: string): string;
+}
 
 /** Whether the file's content already is `settings`, as data (key order, indentation and a missing final newline do not count). */
 function holdsExactly(text: string, settings: Settings): boolean {
@@ -138,45 +154,60 @@ function holdsExactly(text: string, settings: Settings): boolean {
 }
 
 /**
- * The one write of the Claude settings file, used by `walkie hooks install claude|grok`. Atomic: the new content is written
- * beside the file under a staging name, with the file's own mode (0600 for a new one) and owner, and renamed over it in the same
- * directory, so a reader never sees half a file and a failure leaves the old one whole. A symlinked settings.json (dotfiles)
- * has its real file replaced and stays a link; a file with other hard links is written in place instead (a rename would cut
- * the others off). The file's indentation and final newline are kept. A file that already holds exactly these settings is not
- * written and not backed up; a read-only one is refused before anything is made; otherwise the old one is kept first as
- * `.bak-walkie-<ms>`, and that backup is removed again if the write then fails, so a failed install leaves nothing stray.
+ * The one way Walkie rewrites a person's settings or config file (`walkie hooks install|uninstall`): `produce` makes the new text from
+ * the file's current text (null when there is no file), or null for "nothing to change", which touches nothing. Atomic: the new text is
+ * written whole beside the file under a staging name, private (0600) while it is written, then given the file's own mode and its
+ * owner and group (where they differ from this process's: a group of the person's, or the owner when permitted), and renamed over it
+ * in the same directory, so a reader never sees half a file and a failure leaves the old one whole. A symlinked file (dotfiles) has its
+ * real file replaced and stays a link; a file with other hard links is written in place instead (a rename would cut the others off).
+ * A read-only file is refused before anything is made; otherwise the old one is kept first as `.bak-walkie-<ms>`, and that backup is
+ * removed again if the write then fails, so a failed install leaves nothing stray. `path` is the name the file is known by, the one the
+ * backup sits beside.
  */
-export function writeClaudeSettings(path: string, settings: Settings, io: SettingsIo = realSettingsIo): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+export function replaceFileText(path: string, produce: (current: string | null) => string | null, words: ErrorWords, io: SettingsIo = realSettingsIo): void {
+  const { write, rename, writeInPlace } = { ...realSettingsIo, ...io };
   const target = existsSync(path) ? realpathSync(path) : path;
   const old = existsSync(target) ? statSync(target) : null;
   const text = old ? readFileSync(target, "utf8") : null;
-  if (text !== null && holdsExactly(text, settings)) return;
+  const body = produce(text);
+  if (body === null) return;
   // A file its person made read-only stays as it is: a rename would replace it whatever its mode, so the check comes first, and
   // before any backup (the old writer made one per attempt and then failed with a bare EACCES).
-  if (old) { try { accessSync(target, constants.W_OK); } catch { throw new Error(`${path} is not writable; no changes made`); } }
-  const body = JSON.stringify(settings, null, text === null ? 2 : detectIndent(text)) + (text === null || text.endsWith("\n") ? "\n" : "");
+  if (old) { try { accessSync(target, constants.W_OK); } catch { throw new Error(words.notWritable); } }
   const mode = old ? old.mode & 0o7777 : 0o600;
   const staged = join(dirname(target), `.${basename(target)}.walkie-${process.pid}-${Date.now()}.tmp`);
   let backup: string | null = null;
   try {
     if (text !== null) backup = makeBackup(target, path);
-    if (old && old.nlink > 1) { io.writeInPlace(target, body); return; }
-    writeFileSync(staged, body, { mode, flag: "wx" });
-    chmodSync(staged, mode); // the umask narrowed the create mode: the file's own, exactly
+    if (old && old.nlink > 1) { writeInPlace(target, body); return; }
+    write(staged, body);
+    chmodSync(staged, mode); // created 0600: the file's own mode, exactly, before it takes the file's place
     if (old && (old.uid !== process.getuid?.() || old.gid !== process.getgid?.())) chownSync(staged, old.uid, old.gid);
-    io.rename(staged, target);
+    rename(staged, target);
   } catch (error) {
     rmSync(staged, { force: true });
-    const restored = old && old.nlink > 1 && text !== null ? restoreInPlace(target, text) : null;
+    const restored = old && old.nlink > 1 && text !== null ? restoreInPlace(target, text, words) : null;
     if (backup && restored === null) rmSync(backup, { force: true });
-    const why = (error as Error).message;
-    throw new Error(`could not write ${path}: ${why}; ${restored ?? (text === null ? "nothing was written" : "the file is as it was")}`);
+    throw new Error(words.failed(words.cause(error), restored ?? (text === null ? "nothing was written" : "the file is as it was")));
   }
 }
 
+/**
+ * The one write of the Claude settings file, used by `walkie hooks install claude|grok`: replaceFileText with the settings as JSON in
+ * the file's own indentation and final-newline style. A file that already holds exactly these settings is not written and not backed up.
+ */
+export function writeClaudeSettings(path: string, settings: Settings, io: SettingsIo = realSettingsIo): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  replaceFileText(path, (text) => text !== null && holdsExactly(text, settings) ? null
+    : JSON.stringify(settings, null, text === null ? 2 : detectIndent(text)) + (text === null || text.endsWith("\n") ? "\n" : ""), {
+    notWritable: `${path} is not writable; no changes made`,
+    cause: (error) => (error as Error).message,
+    failed: (cause, outcome) => `could not write ${path}: ${cause}; ${outcome}`,
+  }, io);
+}
+
 /** Copies `from` to a backup beside `path` that does not exist yet: `<path>.bak-walkie-<ms>`, with a counter when two land in one millisecond. Returns where. */
-function makeBackup(from: string, path: string): string {
+export function makeBackup(from: string, path: string): string {
   const stem = `${path}.bak-walkie-${Date.now()}`;
   for (let n = 0; ; n++) {
     const name = n === 0 ? stem : `${stem}-${n}`;
@@ -191,9 +222,12 @@ function makeBackup(from: string, path: string): string {
 }
 
 /** Puts a hard-linked file's old content back after a failed in-place write. Null: done. Otherwise what went wrong, and where the old content is. */
-function restoreInPlace(target: string, text: string): string | null {
+function restoreInPlace(target: string, text: string, words: ErrorWords): string | null {
   try { writeFileSync(target, text); return null; }
-  catch (error) { return `restoring it failed too (${(error as Error).message}); its old content is in the .bak-walkie copy beside it`; }
+  catch (error) {
+    const cause = words.cause(error);
+    return `restoring it failed too${cause ? ` (${cause})` : ""}; its old content is in the .bak-walkie copy beside it`;
+  }
 }
 
 async function run(argv: string[]): Promise<{ ok: boolean; out: string }> {

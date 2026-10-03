@@ -4,10 +4,15 @@
 // exits, so a lockfile left behind is never "stale": the file is not deleted on stop (deleting it would let a
 // waiting starter lock the old inode while a third locks a new one), and nothing ever needs to clean it up.
 import { dlopen, FFIType, toArrayBuffer } from "bun:ffi";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync } from "node:fs";
 
 const LOCK_EX = 2;
 const LOCK_NB = 4;
+/**
+ * O_CLOEXEC, which node:fs doesn't name (Linux x86_64/arm64, macOS): the lock's descriptor never reaches a process the
+ * daemon starts, so nothing it starts can pass for the daemon as the lock's holder (WALK-103 review).
+ */
+export const O_CLOEXEC = process.platform === "darwin" ? 0x1000000 : process.platform === "linux" ? 0o2000000 : 0;
 
 type Flock = (fd: number, op: number) => number;
 let flockFn: Flock | null = null;
@@ -28,10 +33,17 @@ function flock(): Flock {
 
 export interface InstanceLock { readonly path: string; release(): void }
 
-/** Read-only proof that the existing inode is locked. Uncertainty throws. */
-export function instanceLockHeld(path: string): boolean {
-  const fd = openSync(path, "r");
+/**
+ * Read-only proof that the existing inode is locked. Uncertainty throws. The root seat helper runs this on a path the
+ * daemon's user controls (WALK-103 review): it never follows a symlink at the path (ELOOP throws) and never waits on
+ * what was swapped in (O_NONBLOCK: a FIFO opens at once), and only a regular file counts, the very inode the caller
+ * found open in the daemon (`expect`) when it is given; anything else is "not held".
+ */
+export function instanceLockHeld(path: string, expect?: { dev: number; ino: number }): boolean {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | O_CLOEXEC);
   try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || (expect && (st.dev !== expect.dev || st.ino !== expect.ino))) return false;
     const result = flock()(fd, LOCK_EX | LOCK_NB);
     if (result === 0) return false;
     const code = errnoFn?.();
@@ -43,7 +55,7 @@ export function instanceLockHeld(path: string): boolean {
 /** Takes the lock without waiting, or throws "another walkie daemon is already running …". */
 export function acquireInstanceLock(socketPath: string): InstanceLock {
   const path = `${socketPath}.lock`;
-  const fd = openSync(path, "a", 0o600);
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | O_CLOEXEC, 0o600);
   if (flock()(fd, LOCK_EX | LOCK_NB) !== 0) {
     closeSync(fd);
     throw new Error(`another walkie daemon is already running for ${socketPath} (it holds ${path})`);

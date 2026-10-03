@@ -1,0 +1,47 @@
+[
+ {
+  "_id": "69e066230bd313faad5d76e7",
+  "id": "unsloth/Qwen3.6-35B-A3B-GGUF",
+  "downloads": 1308144
+ },
+ {
+  "_id": "6a01d228550577cadfac8843",
+  "id": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+  "downloads": 1102796
+ },
+ {
+  "_id": "69e17b9e48b1ac4c5ec71427",
+  "id": "HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive",
+  "downloads": 911715
+ },
+ {
+  "_id": "6a2b7d1187cdb824d82b4c21",
+  "id": "michaelw9999/Qwen3.6-35B-A3B-NVFP4-MTP-GGUF",
+  "downloads": 368571
+ },
+ {
+  "_id": "69e0f0f03ee9bc5ee6957725",
+  "id": "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+  "downloads": 190210
+ },
+ {
+  "_id": "69e179b69b590fa45bb35bd9",
+  "id": "mudler/Qwen3.6-35B-A3B-APEX-GGUF",
+  "downloads": 158405
+ },
+ {
+  "_id": "69e376b02ae0a29851d85511",
+  "id": "ggml-org/Qwen3.6-35B-A3B-GGUF",
+  "downloads": 154018
+ },
+ {
+  "_id": "69e0f1ddbf0a474aef336cec",
+  "id": "lmstudio-community/Qwen3.6-35B-A3B-GGUF",
+  "downloads": 121235
+ },
+ {
+  "_id": "6a0c4f4c7e02aab1c28f4821",
+  "id": "huihui-ai/Huihui-Qwen3.6-35B-A3B-abliterated-MTP-GGUF",
+  "downloads": 101982
+ }
+]

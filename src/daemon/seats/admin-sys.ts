@@ -3,7 +3,8 @@
 // Every inspection that can't tell throws (Codex r6 MEDIUM 6): "absent" is only ever a verified absence. Root never
 // deletes a file outside a seat's home by path: the seat user's own sweep does that (sweepAsUser). The one exception is
 // its crontab in the cron spool (a directory only root and cron itself write).
-import { accessSync, chmodSync, chownSync, closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, chownSync, closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import type { Stats } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { connect } from "node:net";
@@ -18,7 +19,8 @@ import { verifySeatHomeResidue } from "./admin-home-residue.ts";
 import { aclAllowsWrite, hasExtendedAcl, stripExtendedAcl } from "./admin-acl.ts";
 import { SCHEDULER_FILES, SEAT_ROOTS_FILE, listAcl } from "./seat-user.ts";
 import { sweep, type SweepResult } from "./sweep.ts";
-import { instanceLockHeld } from "../instance-lock.ts";
+import { O_CLOEXEC, instanceLockHeld } from "../instance-lock.ts";
+import { SEAT_INSTANCE_FILE, otherScopeWhy, readSeatRegistration, type SeatInstanceCheck } from "./instance.ts";
 
 const PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 let destroyDeadline = Infinity; // A root helper handles one command per process.
@@ -95,7 +97,7 @@ function isBoundDaemon(pid: number, owner: number, instance: string): boolean {
   if (!lock.isFile() || lock.isSymbolicLink() || lock.uid !== owner || (lock.mode & 0o077) !== 0) return false;
   const locks = files.filter((f) => /^\d/.test(f.fd) && f.type === "REG" && f.name.startsWith("/")
     && realpathSync(f.name) === realpathSync(lockPath) && f.inode === String(lock.ino));
-  if (locks.length !== 1 || !instanceLockHeld(lockPath)) return false;
+  if (locks.length !== 1 || !instanceLockHeld(lockPath, { dev: lock.dev, ino: lock.ino })) return false;
   if (otherLockHolder(owner, lockPath, pid)) throw new Error("the invoking daemon's instance lock has another live holder");
   const executable = files.find((f) => f.fd === "txt" && f.type === "REG" && f.name.startsWith("/"));
   if (!executable) throw new Error("the invoking daemon's executable could not be checked");
@@ -104,7 +106,7 @@ function isBoundDaemon(pid: number, owner: number, instance: string): boolean {
     throw new Error("the invoking daemon's executable changed during inspection");
   // setup-user copies the release binary to the root helper path, so compare bytes rather than path names.
   const expected = createHash("sha256").update(readFileSync(process.execPath)).digest("hex");
-  return createHash("sha256").update(readFileSync(executable.name)).digest("hex") === expected;
+  return createHash("sha256").update(readRegularNoFollow(executable.name, executableFile.dev, executableFile.ino)).digest("hex") === expected;
 }
 
 /** Root binds the sudo caller's ancestor to its listening socket, held lock, and installed executable. */
@@ -124,6 +126,126 @@ export function callingTalkieDaemon(owner: number, instance: string, parent = pr
     pid = Number(match[1]);
   }
   throw new Error("the invoking daemon could not be identified");
+}
+
+/**
+ * A file the daemon's user controls, read by root (WALK-103 review): never through a symlink, never waiting on a FIFO
+ * swapped in, and only the very inode checked before (`dev`, `ino`); anything else throws.
+ */
+export function readRegularNoFollow(path: string, dev: number, ino: number): Buffer {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | O_CLOEXEC);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.dev !== dev || st.ino !== ino) throw new Error(`${path} changed during inspection`);
+    return readFileSync(fd);
+  } finally { closeSync(fd); }
+}
+
+/** The asking daemon is definitely not the registered one (as opposed to: it couldn't be checked right now). */
+export class SeatCallerMismatch extends Error {}
+
+const GONE = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
+/** lstat that answers null for a path that isn't there (or is a link where a directory was); other errors throw. */
+function lstatIfThere(path: string): Stats | null {
+  try { return lstatSync(path); } catch (err) { if (GONE.has((err as NodeJS.ErrnoException).code ?? "")) return null; throw err; }
+}
+
+/**
+ * Whether the open file that `/proc/<pid>/fdinfo/<fd>` describes holds the exclusive flock, taken by `pid` (Linux 4.1+:
+ * the kernel lists there only the locks taken through that very open file, `lock:` lines). So a process that merely has
+ * the lock file open while another holds the lock doesn't count, and nothing has to be matched by inode or device: a
+ * global /proc/locks line can name the same inode on another device, and a device compare against stat's st_dev would
+ * fail where that isn't the superblock's (btrfs subvolumes, WALK-103 review). Waiters (`-> FLOCK`) are not holders.
+ */
+export function fdHoldsFlock(pid: number, fdinfo: string): boolean {
+  for (const line of fdinfo.split("\n")) {
+    const m = /^lock:\s+\d+:\s+FLOCK\s+ADVISORY\s+WRITE\s+(\d+)\s/.exec(line);
+    if (m && Number(m[1]) === pid) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether `pid` holds the instance lock of the daemon socket `socket` (instance-lock.ts: `<socket>.lock`, taken before
+ * the socket is bound and held until the daemon exits). False when it doesn't (or the socket or lock isn't there);
+ * throws only when that couldn't be checked right now. Linux: `pid` has that very inode open (`/proc/<pid>/fd`) and the
+ * kernel lists the flock, taken by `pid`, on that open file (`/proc/<pid>/fdinfo/<fd>`); root opens nothing of the
+ * daemon user's. macOS: lsof shows
+ * `pid` with the lock file open, and the lock is held (instanceLockHeld, opening only that same inode, without
+ * following links or waiting). macOS can't name a flock's holder, so there a process that only has the file open while
+ * another daemon of the same socket path holds the lock passes too (that one is the registered home's own daemon).
+ */
+export function holdsSeatInstanceLock(pid: number, owner: number, socket: string, platform: NodeJS.Platform = process.platform): boolean {
+  const sock = lstatIfThere(socket);
+  if (!sock || !sock.isSocket() || sock.uid !== owner) return false;
+  const lockPath = `${socket}.lock`;
+  const lock = lstatIfThere(lockPath);
+  if (!lock || !lock.isFile() || lock.isSymbolicLink() || lock.uid !== owner || (lock.mode & 0o077) !== 0) return false;
+  if (platform === "linux") {
+    for (const fd of readdirSync(`/proc/${pid}/fd`)) {
+      let st: ReturnType<typeof lstatSync>;
+      try { st = statSync(`/proc/${pid}/fd/${fd}`); } catch { continue; } // closed meanwhile
+      if (!st.isFile() || st.ino !== lock.ino || st.dev !== lock.dev) continue;
+      let info: string;
+      try { info = readFileSync(`/proc/${pid}/fdinfo/${fd}`, "utf8"); } catch { continue; } // closed meanwhile
+      if (fdHoldsFlock(pid, info)) return true;
+    }
+    return false;
+  }
+  const open = openFiles(pid).some((f) => /^\d/.test(f.fd) && f.type === "REG" && f.inode === String(lock.ino) && sameLockName(f.name, lockPath));
+  if (!open) return false;
+  try { return instanceLockHeld(lockPath, { dev: lock.dev, ino: lock.ino }); }
+  catch (err) { if (GONE.has((err as NodeJS.ErrnoException).code ?? "")) return false; throw err; }
+}
+
+/**
+ * WALK-103: the daemon that ran this helper through sudo, bound to the registered socket. The nearest ancestor running
+ * as the person is the process that ran sudo (sudo and its monitor run as root); it must itself hold the registered
+ * socket's instance lock. A daemon further up (one whose seat or shell started a second daemon) never stands in for it.
+ * SeatCallerMismatch: definitely not it; any other error: it couldn't be checked right now.
+ */
+export function callingSeatDaemon(owner: number, socket: string, parent = process.ppid,
+  holds: (pid: number) => boolean = (pid) => holdsSeatInstanceLock(pid, owner, socket)): OpId {
+  let pid = parent;
+  for (let depth = 0; depth < 8 && pid > 1; depth++) {
+    const r = run(["/bin/ps", "-ww", "-p", String(pid), "-o", "ppid=,uid=,lstart="], 5_000);
+    if (r.code !== 0) throw new Error("the invoking daemon's process chain could not be checked");
+    const match = /^\s*(\d+)\s+(\d+)\s+(.{24})\s*$/m.exec(r.out);
+    if (!match) throw new Error("the invoking daemon's process identity is ambiguous");
+    const uid = Number(match[2]);
+    if (uid === owner) {
+      if (!holds(pid)) throw new SeatCallerMismatch("the Walkie that asked doesn't hold the registered Walkie's socket");
+      const start = (match[3] as string).trim();
+      if (processStart(pid) !== start) throw new Error("the invoking daemon changed during inspection");
+      return { pid, start };
+    }
+    if (uid !== 0) throw new SeatCallerMismatch("the invoking daemon could not be identified (another user is between it and sudo)");
+    pid = Number(match[1]);
+  }
+  throw new SeatCallerMismatch("the invoking daemon could not be identified");
+}
+
+/**
+ * WALK-103: whether the daemon that ran this helper is the Walkie `walkie seats setup-user --apply` registered for this
+ * machine's seat users (SEAT_INSTANCE_FILE, root's). Nothing recorded: `unregistered` (a setup from before the record);
+ * a check that failed for a passing reason (ps or lsof timed out): `unchecked`, asked again later.
+ */
+export function checkSeatInstance(owner: number, path = SEAT_INSTANCE_FILE, bind: (owner: number, socket: string) => OpId = callingSeatDaemon,
+  root = true): SeatInstanceCheck {
+  const read = readSeatRegistration(path, root);
+  if (read.state === "absent") {
+    return { state: "unregistered", why: "this machine's seat users were set up by an earlier Walkie, which didn't record which Walkie on this machine owns them: the helper lists, makes and removes seat users again once walkie seats setup-user --apply records it" };
+  }
+  if (read.state === "invalid") return { state: "other", why: `${read.why}: run walkie seats setup-user --apply again` };
+  const r = read.registration;
+  if (r.uid !== owner) return { state: "other", why: otherScopeWhy(r) };
+  try {
+    bind(owner, r.socket);
+    return { state: "registered" };
+  } catch (err) {
+    if (err instanceof SeatCallerMismatch) return { state: "other", why: `${otherScopeWhy(r)} (${err.message})` };
+    return { state: "unchecked", why: `the helper couldn't check which Walkie asked right now (${(err as Error).message}): asked again later` };
+  }
 }
 
 /** The root-owned process identity survives unlinking daemon-owned lease and socket paths. */
@@ -510,6 +632,7 @@ export function realAdminSys(): AdminSys {
         { remove: false, canWrite: () => true, verifySkippedSubtrees: true });
       return emptyUidSweepVerification(result);
     },
+    seatInstance(owner) { return checkSeatInstance(owner); },
     talkieDaemonIdentity(owner, instance) { return callingTalkieDaemon(owner, instance); },
     talkieGenerationStopped(generation, owner, daemon) { return checkTalkieDaemonStopped("/tmp", owner, generation, daemon); },
     nameTaken(name) { return userExists(name) || groupExists(name, mac); },

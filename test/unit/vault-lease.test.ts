@@ -2,6 +2,8 @@
 // the owner's vault_sharing / local), replay and clock checks, the per-node rate limit, Codex never, and the reply
 // sealed so only the requesting daemon's ephemeral key opens it. Logs name the account and node, never the token.
 import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { z } from "zod";
 import type { Core } from "../../src/daemon/core.ts";
 import type { Logger } from "../../src/daemon/logger.ts";
 import type { MemberRec } from "../../src/daemon/roster.ts";
@@ -10,6 +12,8 @@ import { grantLease, NonceBook, probeLease, requestLease, type PeerLeaseReq } fr
 import type { VaultSource } from "../../src/accounts/service.ts";
 import type { VaultEntry } from "../../src/accounts/vault/vault.ts";
 import { ephemeralKey } from "../../src/accounts/vault/seal.ts";
+import { rememberPeerCapabilities } from "../../src/daemon/peer-capabilities.ts";
+import { PeerCallError } from "../../src/daemon/peer-client.ts";
 import { makeCore } from "../helpers/core.ts";
 import { createTeam, now, tnode } from "../helpers/events.ts";
 
@@ -42,6 +46,178 @@ function req(over: Partial<PeerLeaseReq> = {}): PeerLeaseReq & { key: ReturnType
 const body = (r: ReturnType<typeof req>) => { const { key: _k, ...b } = r; return b; };
 
 describe("grantLease (the owner's machine)", () => {
+  test("four own machines share one 256 hand-out ceiling at their vault holder", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 256 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 256; i++) await grantLease(core, d, `own-${i % 4}`, alex, body(req({ launcher: "alex", ts: clock })), clock);
+    await expect(grantLease(core, d, "own-0", alex, body(req({ launcher: "alex", ts: clock })), clock))
+      .rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("an owner-hosted teammate seat stays at ten on the same machine as the owner's raised seats", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 10; i++) await grantLease(core, d, "alex-host", alex, body(req({ launcher: "kira", ts: clock })), clock);
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ launcher: "kira", ts: clock })), clock))
+      .rejects.toMatchObject({ code: "rate_limited" });
+    for (let i = 0; i < 80; i++) await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock);
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock))
+      .rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("over an hour, the owner's busy fleet does not lift teammate-launched seats on the same machine above ten an hour", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 256 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const t0 = now();
+    let ownerOk = 0, mateOk = 0;
+    const ok = (p: Promise<unknown>) => p.then(() => true, () => false);
+    for (let s = 0; s < 3600; s += 15) {
+      const at = t0 + s * 1000;
+      if (s % 30 === 0) { if (await ok(grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: at })), at))) ownerOk++; }
+      else if (s % 60 === 15) { if (await ok(grantLease(core, d, "alex-host", alex, body(req({ launcher: "kira", ts: at })), at))) mateOk++; }
+    }
+    expect(ownerOk).toBe(120);
+    expect(mateOk).toBeLessThanOrEqual(20); // a burst of 10 plus 10 refilled in the hour
+  });
+
+  test("a launcher-less request from the same machine does not shrink the owner-launched burst", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 256 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    let granted = 0;
+    for (let i = 0; i < 5; i++) { await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock); granted++; }
+    await grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock); // e.g. `walkie accounts exec` or a pre.11 peer
+    for (let i = 0; i < 100; i++) { await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock); granted++; }
+    expect(granted).toBe(105);
+    for (let i = 0; i < 9; i++) await grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock);
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("at the default limit, owner-launched and other requests from one machine share the historical ten", async () => {
+    const { core, alex } = owner();
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 5; i++) await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock);
+    for (let i = 0; i < 5; i++) await grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock);
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("raising the owner limit from 10 counts owner-launched hand-outs already used this hour", async () => {
+    const { core, alex } = owner();
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 10; i++) expect((await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock)).owner).toBe("alex");
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    for (let i = 0; i < 70; i++) expect((await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock)).owner).toBe("alex");
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("readiness sees the owner-launched refill while the base has room", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    await expect(probeLease(core, d, "alex-host", alex, { account: A, provider: "claude" }, clock)).rejects.toMatchObject({ code: "unavailable" }); // warms the readiness cache
+    for (let i = 0; i < 80; i++) await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock);
+    await expect(probeLease(core, d, "alex-host", alex, { account: A, provider: "claude" }, clock)).rejects.toMatchObject({ code: "unavailable" });
+    // 45 s refills one hand-out at 80/hour (the base 10/hour would refill an eighth of one).
+    const later = clock + 45_001;
+    expect(await probeLease(core, d, "alex-host", alex, { account: A, provider: "claude" }, later)).toEqual({ ready: true });
+    expect((await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: later })), later)).owner).toBe("alex");
+  }, 10_000);
+
+  test("on the owner's own machine readiness needs room in both the base and the owner-launched bucket", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    await expect(probeLease(core, d, "alex-host", alex, { account: A, provider: "claude" }, clock)).rejects.toMatchObject({ code: "unavailable" }); // warms the readiness cache
+    for (let i = 0; i < 10; i++) await grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock); // spends the base ten
+    // A probe carries no launcher, and the next seat may be teammate-launched: that one would be refused.
+    await expect(probeLease(core, d, "alex-host", alex, { account: A, provider: "claude" }, clock)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(grantLease(core, d, "alex-host", alex, body(req({ launcher: "kira", ts: clock })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+    // Documented trade-off: an owner-launched seat still gets its hand-out.
+    expect((await grantLease(core, d, "alex-host", alex, body(req({ launcher: "alex", ts: clock })), clock)).owner).toBe("alex");
+  }, 10_000);
+
+  test("a refusal by the person's 256 ceiling spends no per-machine hand-out", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 256 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 256; i++) await grantLease(core, d, `own-${i % 4}`, alex, body(req({ launcher: "alex", ts: clock })), clock);
+    for (let i = 0; i < 20; i++) {
+      await expect(grantLease(core, d, "alex-host", alex, body(req({ ts: clock })), clock))
+        .rejects.toMatchObject({ code: "rate_limited", message: expect.stringContaining("this person's machines") });
+    }
+    // 141 s refill ten of the person's 256; the machine's base ten were never spent by the refused retries.
+    const later = clock + 141_000;
+    for (let i = 0; i < 10; i++) await grantLease(core, d, "alex-host", alex, body(req({ ts: later })), later);
+  });
+
+  test("a pre.11 owner node without launcher stays at ten", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 10; i++) await grantLease(core, d, "pre11-owner-node", alex, body(req({ ts: clock })), clock);
+    await expect(grantLease(core, d, "pre11-owner-node", alex, body(req({ ts: clock })), clock))
+      .rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("own-fleet hand-outs do not evict a teammate's current usage grant", async () => {
+    const { core, alex, kira } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 256 }));
+    const d = { vault: vault([{ policy: "shared", share_with: ["kira"] }]), sharing: true,
+      roomLeft: () => 90, nonces: new NonceBook(), grants: core.vaultGrants };
+    const clock = now();
+    const teammate = await grantLease(core, d, "kira-node", kira, body(req({ ts: clock })), clock);
+    for (let i = 1; i <= 1025; i++) {
+      const at = clock + i * 30_000;
+      await grantLease(core, d, `alex-node-${i % 11}`, alex, body(req({ ts: at })), at);
+    }
+    expect(core.vaultGrants.valid(teammate.grant, A, "kira-node", clock + 1025 * 30_000)).toBe(true);
+  });
+  test("an explicit own-fleet budget admits 80 distinct seats and still bounds the next hand-out", async () => {
+    const { core, alex } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 80; i++) await grantLease(core, d, "node-own-fleet", alex, body(req({ launcher: "alex" })), clock);
+    await expect(grantLease(core, d, "node-own-fleet", alex, body(req({ launcher: "alex" })), clock)).rejects.toMatchObject({ code: "rate_limited" });
+    await expect(probeLease(core, d, "node-own-fleet", alex, { account: A, provider: "claude" }, clock))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect((await grantLease(core, d, "node-own-fleet", alex, body(req({ launcher: "alex", ts: clock + 45_001 })), clock + 45_001)).owner).toBe("alex");
+  });
+
+  test("own-fleet configuration never increases a different person's hand-out budget", async () => {
+    const { core, kira } = owner();
+    writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 80 }));
+    const d = { vault: vault([{ policy: "shared", share_with: ["kira"] }]), sharing: true, roomLeft: () => 90, nonces: new NonceBook() };
+    const clock = now();
+    for (let i = 0; i < 10; i++) await grantLease(core, d, "node-other", kira, body(req()), clock);
+    await expect(grantLease(core, d, "node-other", kira, body(req()), clock)).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  test("invalid own-fleet configuration retains the default limit", async () => {
+    for (const value of [0, -1, 257, 10.5, "80", null]) {
+      const { core, alex } = owner();
+      writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: value }));
+      const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+      const clock = now();
+      for (let i = 0; i < 10; i++) await grantLease(core, d, "node-own-invalid", alex, body(req()), clock);
+      await expect(grantLease(core, d, "node-own-invalid", alex, body(req()), clock)).rejects.toMatchObject({ code: "rate_limited" });
+    }
+  });
+
   test("repeated readiness probes check policy and health without spending hand-outs", async () => {
     const { core, kira } = owner();
     const d = { vault: vault([{ policy: "shared", share_with: ["kira"] }]), sharing: true,
@@ -249,12 +425,81 @@ describe("requestLease (the machine that needs the token)", () => {
     const ownerNode = own.core.nodeId;
     expect(requester.roster.nodes.has(ownerNode)).toBe(true);
     const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
-    const call = async (_addr: { ip: string; port: number }, b: PeerLeaseReq) => grantLease(own.core, d, requester.nodeId, own.alex, b, now());
-    const got = await requestLease(requester, call, { account: A, node: ownerNode, agent: "cc-abc123" }, now());
+    rememberPeerCapabilities(requester.store, ownerNode, { version: "0.2.0-pre.12", caps: ["lease_launcher_v1"] });
+    let forwardedLauncher: string | undefined;
+    const call = async (_addr: { ip: string; port: number }, b: PeerLeaseReq) => {
+      forwardedLauncher = b.launcher;
+      return grantLease(own.core, d, requester.nodeId, own.alex, b, now());
+    };
+    const got = await requestLease(requester, call, { account: A, node: ownerNode, agent: "cc-abc123", launcher: "alex" }, now());
     expect(got).toMatchObject({ token: TOKEN, owner: "alex", grant: expect.stringMatching(/^[0-9a-f]{16}$/) });
+    expect(forwardedLauncher).toBe("alex");
     // A reply sealed for another requester node does not open here.
     const wrong = async (_a: { ip: string; port: number }, b: PeerLeaseReq) => grantLease(own.core, { ...d, nonces: new NonceBook() }, "someone-else", own.alex, b, now());
     await expect(requestLease(requester, wrong, { account: A, node: ownerNode }, now())).rejects.toMatchObject({ code: "bad_lease" });
     await expect(requestLease(requester, call, { account: A, node: requester.nodeId }, now())).rejects.toMatchObject({ code: "invalid" });
+  });
+  // The lease request schema of the released pre.10.1 and pre.11 vault holders: strict, without `launcher`; they parse
+  // it before spending a hand-out or the nonce, and refuse anything else with 400 invalid.
+  const OlderHolderLeaseReq = z.object({
+    account: z.string().regex(/^[0-9a-f]{24}$/), agent: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,47}$/).optional(),
+    epk: z.string().regex(/^[A-Za-z0-9_-]{43}$/), nonce: z.string().regex(/^[0-9a-f]{32}$/), ts: z.number().int().nonnegative(),
+  }).strict();
+  function holderPair() {
+    const own = owner();
+    const requester = makeCore(tnode("alex", "alex@example.com", "alex-mini"), own.core.teamId as string, cleanups);
+    requester.ingest(own.create, "remote");
+    const d = { vault: vault([{ policy: "own" }]), sharing: false, nonces: new NonceBook() };
+    const bodies: PeerLeaseReq[] = [];
+    const olderHolder = async (_addr: { ip: string; port: number }, b: PeerLeaseReq) => {
+      bodies.push(b);
+      if (!OlderHolderLeaseReq.safeParse(b).success) throw new PeerCallError(400, "invalid", "bad lease request");
+      return grantLease(own.core, d, requester.nodeId, own.alex, b, now());
+    };
+    return { own, requester, d, bodies, olderHolder };
+  }
+
+  test("a seat lease from an upgraded host works against a pre.11 or pre.10.1 holder (no launcher capability)", async () => {
+    const { own, requester, bodies, olderHolder } = holderPair();
+    const got = await requestLease(requester, olderHolder, { account: A, node: own.core.nodeId, agent: "seat-abc", launcher: "alex" }, now());
+    expect(got).toMatchObject({ token: TOKEN, owner: "alex" });
+    expect(bodies.length).toBe(1);
+    expect("launcher" in bodies[0]!).toBe(false);
+  });
+
+  test("a holder with stale capabilities that refuses the launcher is asked once more without it", async () => {
+    const { own, requester, bodies, olderHolder } = holderPair();
+    rememberPeerCapabilities(requester.store, own.core.nodeId, { version: "0.2.0-pre.12", caps: ["lease_launcher_v1"] });
+    const got = await requestLease(requester, olderHolder, { account: A, node: own.core.nodeId, agent: "seat-abc", launcher: "alex" }, now());
+    expect(got).toMatchObject({ token: TOKEN, owner: "alex" });
+    expect(bodies.map((b) => b.launcher)).toEqual(["alex", undefined]);
+    expect(bodies[0]!.nonce).not.toBe(bodies[1]!.nonce);
+    // Only a refusal of the request's shape is retried; a rate limit or policy refusal is final.
+    const limited = async (_addr: { ip: string; port: number }, b: PeerLeaseReq): Promise<never> => {
+      bodies.push(b); throw new PeerCallError(429, "rate_limited", "too many hand-outs from this machine; try later");
+    };
+    bodies.length = 0;
+    await expect(requestLease(requester, limited, { account: A, node: own.core.nodeId, launcher: "alex" }, now())).rejects.toMatchObject({ status: 429 });
+    expect(bodies.length).toBe(1);
+  });
+
+  test("an owner-launched lease to a holder without a verified launcher capability is logged once per holder", async () => {
+    const { own, requester, olderHolder } = holderPair();
+    const warnings: string[] = [];
+    (requester as unknown as { log: Logger }).log = { debug: () => undefined, info: () => undefined,
+      warn: (m, f) => warnings.push(JSON.stringify({ m, ...f })), error: () => undefined };
+    for (let i = 0; i < 3; i++) await requestLease(requester, olderHolder, { account: A, node: own.core.nodeId, launcher: "alex" }, now());
+    await requestLease(requester, olderHolder, { account: A, node: own.core.nodeId }, now());
+    const unverified = warnings.filter((w) => w.includes("vault_lease_launcher_unverified"));
+    expect(unverified.length).toBe(1);
+    expect(unverified[0]).toContain(own.core.nodeId);
+  });
+
+  test("a launcher is never retried or sent when the request had none", async () => {
+    const { own, requester, bodies, olderHolder } = holderPair();
+    rememberPeerCapabilities(requester.store, own.core.nodeId, { version: "0.2.0-pre.12", caps: ["lease_launcher_v1"] });
+    expect(await requestLease(requester, olderHolder, { account: A, node: own.core.nodeId }, now())).toMatchObject({ token: TOKEN });
+    expect(bodies.length).toBe(1);
+    expect("launcher" in bodies[0]!).toBe(false);
   });
 });

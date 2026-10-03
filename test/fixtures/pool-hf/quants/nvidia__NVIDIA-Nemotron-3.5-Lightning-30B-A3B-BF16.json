@@ -1,0 +1,37 @@
+[
+ {
+  "_id": "6a7b230505020600a120ac1a",
+  "id": "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "downloads": 236307
+ },
+ {
+  "_id": "6a7c745186129bfa0228892b",
+  "id": "unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "downloads": 67083
+ },
+ {
+  "_id": "6a7b3a3c03ad247dc1485d43",
+  "id": "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "downloads": 33230
+ },
+ {
+  "_id": "6a7b53df5dbdf67bb8fafddc",
+  "id": "vcruz305/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "downloads": 7368
+ },
+ {
+  "_id": "6a7b707ad09c96ab4a6f1ce3",
+  "id": "AtomicChat/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+  "downloads": 5976
+ },
+ {
+  "_id": "6a7d2e16ada481ff6f8118a2",
+  "id": "mradermacher/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16-i1-GGUF",
+  "downloads": 1927
+ },
+ {
+  "_id": "6a7bcdf986129bfa0219dab3",
+  "id": "gbuzhf/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MTP-GGUF",
+  "downloads": 1704
+ }
+]

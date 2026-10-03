@@ -22,6 +22,11 @@ test("an unresolved run is cleared once the authority starts a later run, with o
   w.at(first.next_run! + 2_000);
   await w.stepNode(mira);
   expect(w.view(alex, schedule.id).run_id).not.toBe(first.run_id);
+  // WALK-78: a completion is declared superseded only once this machine's copy holds the authority's messages without a gap,
+  // so the later run reaches mira's log (a sync) before its next tick can clear the entry.
+  expect(mira.s.status()).toContain("unresolved");
+  w.syncAll();
+  await w.stepNode(mira);
   expect(mira.s.status()).toBeNull();
   expect(mira.s.status()).toBeNull();
   const notes = mira.core.store.queryEvents({ channel: "general", kinds: ["msg.post"], limit: 100 })

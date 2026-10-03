@@ -9,12 +9,11 @@ import { parseGpuNow, parseNvidiaSmi, readAccel } from "../../src/daemon/machine
 import { ACCEL_RETRY_MS, MachineStatsSampler } from "../../src/daemon/machine-stats/sampler.ts";
 import { createLogger } from "../../src/daemon/logger.ts";
 import { CPU_MEMORY, GPU_RESERVE_BYTES, machineCapacity } from "../../src/pool/capacity.ts";
-import { suggestCombined } from "../../src/pool/combined.ts";
+import { suggestCombined, suggestTeam } from "../helpers/pool-legacy.ts";
 import { alternativeLabel } from "../../src/pool/format.ts";
 import { serveHosts } from "../../src/pool/run/plan.ts";
 import { ALLOWED, MAX_ACTIVE, MAX_BODY, ServeProxy } from "../../src/pool/run/serve-proxy.ts";
-import { suggestTeam } from "../../src/pool/suggest.ts";
-import type { MachineAccel, MachineStats } from "../../src/protocol/machine-stats.ts";
+import type { MachineAccel, MachineStats, MachineSys } from "../../src/protocol/machine-stats.ts";
 import type { PoolShare } from "../../src/protocol/pool.ts";
 import type { NodeView } from "../../src/protocol/schemas.ts";
 
@@ -25,11 +24,13 @@ const ATLAS_GPU = { name: "NVIDIA GeForce RTX 5070", vram: 12227 * MiB };
 const HESTIA_GPU = { name: "NVIDIA GeForce RTX 5070 Laptop GPU", vram: 8151 * MiB };
 const accelOf = (gpus: MachineAccel["gpus"], chip = "Intel(R) Core(TM) i7"): MachineAccel => ({ chip, unified: false, gpu_limit: null, gpus });
 
+/** What the machine's daemon reports as its platform: an Apple chip is a Mac (Metal build), anything else here is Linux on x64 (WSL, a CUDA box). */
+const platformOf = (s: Partial<MachineStats>): MachineSys => (s.accel?.chip?.startsWith("Apple") ? { os: "darwin", arch: "arm64", cpus: 12, load1: 0 } : { os: "linux", arch: "x64", cpus: 16, load1: 0 });
 function node(hostname: string, stats: Partial<MachineStats>, over: Partial<NodeView> = {}): NodeView {
   return {
     node_id: hostname.padEnd(16, "0").slice(0, 16), handle: "alex", hostname, ip: "100.64.0.1", online: true, last_seen: 1,
     rtt_ms: 3, self: false, sync: { behind: 0, last_sync: 1 },
-    stats: { at: 1, temp_c: 50, mem: { total: 16 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, ...stats },
+    stats: { at: 1, temp_c: 50, mem: { total: 16 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, sys: platformOf(stats), ...stats },
     ...over,
   } as NodeView;
 }

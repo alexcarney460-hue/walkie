@@ -16,6 +16,8 @@ import type { ProjectsIndex } from "./index.ts";
 import { BatchReq } from "../../protocol/projects/batch.ts";
 import { applyBatch, importBudgetKey } from "./batch.ts";
 import { cardFiles } from "./room.ts";
+import { reportMode, splitReport, type StatusReportPayload } from "../../protocol/projects/status-report-setting.ts";
+import { latestStatusReport } from "./status-report.ts";
 import { adminGate, agentCaller } from "../admin/gate.ts";
 import {
   automation, cardAction, comment, createBoard, createCard, createProject, findCard, findProject, requirePerson,
@@ -63,6 +65,7 @@ const UpdateProjectReq = z.object({
   prefix: Prefix.optional(), paths: z.array(PathRule).max(MAX_PATHS).optional(), meter: z.enum(["count", "points"]).optional(),
   automations: Automations.optional(), state: z.enum(["active", "archived", "deleted"]).optional(), private: z.boolean().optional(),
   steward: z.enum(["on", "off"]).optional(), steward_node: z.string().regex(/^(?:[0-9a-f]{16})?$/).optional(),
+  status_report: z.enum(["hourly", "off"]).optional(),
 }).strict();
 const BoardReq = z.object({ name: Line(40), columns: Columns.optional() }).strict();
 const UpdateBoardReq = z.object({ name: Line(40).optional(), columns: Columns.optional(), state: z.enum(["active", "archived"]).optional() }).strict();
@@ -124,12 +127,31 @@ route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, async (c, [channel]) => {
   const b = parseWith(UpdateProjectReq, await readJson(c.req, LOCAL_BODY_MAX));
   refuseAgentJoinContent(c, b);
   // FO-6 (pre.8 merge): the board steward's switch and lease stay a person's, even under agent admin (an agent may
-  // only dry-run the steward); other settings follow AGENT-ADMIN-1's audited gate.
+  // only dry-run the steward); other settings follow AGENT-ADMIN-1's audited gate. So does the status report's switch
+  // (PROJECT-REPORTS-1): a report goes to the project's members under WalkieTalkie's name, and a person decides that.
   if ((b.steward !== undefined || b.steward_node !== undefined) && agentCaller(c)) requirePerson(w(c), "the board steward's switch and lease");
+  if (b.status_report !== undefined && agentCaller(c)) requirePerson(w(c), "the project's status report switch");
   const ctx = adminW(c, `changed project ${channel}: ${Object.keys(b).join(", ") || "nothing"}`);
   limitWrite(c);
   c.noTimeout();
   return json({ project: await updateProject(ctx, channel as string, b) });
+});
+
+/**
+ * WalkieTalkie's latest status report for a project (PROJECT-REPORTS-1), for the dashboard: the newest report post an
+ * owner's WalkieTalkie wrote in its channel, split into its header line and the report, and whether the project has
+ * reports on. Visible exactly as the project is.
+ */
+route("GET", /^\/v1\/projects\/(p-[0-9a-f]{8})\/status-report$/, (c, [channel]) => {
+  const ctx = w(c);
+  const project = visibleProject(ctx, channel as string);
+  const got = latestStatusReport(ctx.core, ctx.idx, project.channel);
+  const split = got ? splitReport(got.text) : null;
+  const payload: StatusReportPayload = {
+    mode: reportMode(project),
+    report: got && split ? { markdown: split.body, header: split.header, as_of: got.as_of, at: got.at, by: got.by } : null,
+  };
+  return json(payload);
 });
 
 route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})\/boards$/, async (c, [channel]) => {

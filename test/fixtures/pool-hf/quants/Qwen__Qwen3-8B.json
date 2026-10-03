@@ -1,0 +1,52 @@
+[
+ {
+  "_id": "6815b8d70e2525074c399975",
+  "id": "Qwen/Qwen3-8B-GGUF",
+  "downloads": 509997
+ },
+ {
+  "_id": "680fefed611b27241b74cbb9",
+  "id": "MaziyarPanahi/Qwen3-8B-GGUF",
+  "downloads": 274411
+ },
+ {
+  "_id": "680f8fa2384885553e2167cf",
+  "id": "unsloth/Qwen3-8B-GGUF",
+  "downloads": 91842
+ },
+ {
+  "_id": "680f7b70e445a4be6af508b2",
+  "id": "bartowski/Qwen_Qwen3-8B-GGUF",
+  "downloads": 45917
+ },
+ {
+  "_id": "680f7b852deb57008c82f3cb",
+  "id": "lmstudio-community/Qwen3-8B-GGUF",
+  "downloads": 40070
+ },
+ {
+  "_id": "6a89ac91c5a6a814c235eee5",
+  "id": "luckypoolio/Qwen3-8B-Q8_0-full-v2.gguf",
+  "downloads": 11570
+ },
+ {
+  "_id": "68103170b924dd6c327968ae",
+  "id": "Aldaris/Qwen3-8B-Q4_K_M-GGUF",
+  "downloads": 8753
+ },
+ {
+  "_id": "68cfb0029e8b5ab827ee9605",
+  "id": "geoffmunn/Qwen3-8B-f16",
+  "downloads": 7043
+ },
+ {
+  "_id": "681003367f77878530e3248c",
+  "id": "unsloth/Qwen3-8B-128K-GGUF",
+  "downloads": 4294
+ },
+ {
+  "_id": "680ff09cddd067a5494bd312",
+  "id": "ggml-org/Qwen3-8B-GGUF",
+  "downloads": 2506
+ }
+]

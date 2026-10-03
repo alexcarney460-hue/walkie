@@ -1,5 +1,5 @@
 // Which machines hold how much of a split run (WALKIE-POOL-2), decided on the head from the team view. Pure.
-import { machineCapacity } from "../capacity.ts";
+import { machineCapacity, runtimeBackend, serveBudget } from "../capacity.ts";
 import { CATALOG, memoryNeeded, type CatalogModel, type Quant } from "../catalog.ts";
 import { canServe, capped, headFirst } from "../combined.ts";
 import type { GroupInput } from "../group.ts";
@@ -37,9 +37,10 @@ function resolve(nodes: readonly GroupInput[], name: string): GroupInput {
   return hit[0]!;
 }
 
-/** The head reported no GPU at all (CPU only): llama-server can't put layers on it in v1. */
+/** The pinned runtime has no usable local accelerator: the head holds no layers in v1. */
 export function cpuOnly(n: GroupInput): boolean {
-  return machineCapacity(n)?.kind === "cpu";
+  const c = machineCapacity(n);
+  return c ? runtimeBackend(c).kind === "cpu" : false;
 }
 
 function usableOf(n: GroupInput): number | null {
@@ -74,6 +75,7 @@ export function planRun(nodes: readonly GroupInput[], need: number, names?: read
     // adding the overhead on top pushed a capped Mac past its cap).
     const weights = free.map((f, i) => (i === 0 && cpuOnly(self) ? 0 : f === null ? 1 : Math.max(f - extra(i), 1)));
     const total = weights.reduce((s, w) => s + w, 0);
+    if (total === 0) throw new PlanError("no_memory", "the pinned runtime cannot place layers on this head; name a sharing worker");
     const stages = members.map((n, i) => {
       const share = Math.round((need * weights[i]!) / total);
       return { node_id: n.node_id, hostname: n.hostname, self: n.self, bytes: share + extra(i), model_bytes: share };
@@ -86,7 +88,10 @@ export function planRun(nodes: readonly GroupInput[], need: number, names?: read
   }
   const pool = [...(cpuOnly(self) ? [] : [self]), ...nodes.filter((n) => !n.self && n.online && canServe(n))];
   const caps = headFirst(pool.flatMap((n) => { const c = machineCapacity(n); return c ? [n.self ? c : capped(c, n.pool?.cap ?? null)] : []; }), self.node_id);
-  if (!caps.length) throw new PlanError("no_memory", "no machine here reported its memory (machine stats are off); name the machines with --machines");
+  if (!caps.length) {
+    if (cpuOnly(self)) throw new PlanError("no_memory", "the pinned runtime cannot place layers on this head; name a sharing worker");
+    throw new PlanError("no_memory", "no machine here reported its memory (machine stats are off); name the machines with --machines");
+  }
   const parts = place(need, caps, "usable", overhead, (m) => deviceSlot(m), true);
   if (!parts) {
     // What the stages could hold: each machine's device (GPU / unified memory), as placed above; not its CPU RAM.
@@ -119,8 +124,9 @@ export function serveHosts(nodes: readonly GroupInput[], need: number): ServeHos
     const c = machineCapacity(n);
     if (!c) continue;
     const m = n.self ? c : capped(c, n.pool?.cap ?? null);
-    const gpu = m.backends.find((b) => b.kind !== "cpu" && b.measured);
-    if (gpu && gpu.usable >= need) out.push({ node: n, usable: gpu.usable, bandwidth: gpu.bandwidth, memory: gpu.memory });
+    const gpu = runtimeBackend(m);
+    const budget = serveBudget(m);
+    if (budget !== null && budget >= need) out.push({ node: n, usable: gpu.usable, bandwidth: gpu.bandwidth, memory: gpu.memory });
   }
   return out.sort((a, b) => b.bandwidth - a.bandwidth || Number(b.node.self) - Number(a.node.self));
 }

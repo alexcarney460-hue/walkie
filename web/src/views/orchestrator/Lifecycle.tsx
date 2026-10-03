@@ -3,7 +3,7 @@
 // the phone app has no Orchestrator tab. Start sends only the access and model the person picks (ORCH-2: `platform`, the default,
 // always allows the Walkie tools and CLI; `full` allows every tool); the rest is the daemon's defaults (Claude from its
 // PATH or the usual install places, the home directory, default permissions). `walkie orchestrator start` sets them.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Play, Square } from "lucide-react";
 import { api } from "../../api/client.ts";
 import type { OrchestratorAccess } from "../../api/types.ts";
@@ -36,6 +36,7 @@ export function AccessChoice({ value, onChange, disabled, compact }: { value: Or
 
 /** Starts the orchestrator: "Starting…" until it answers (and until it shows as running here), the daemon's refusal inline. */
 export function StartOrchestrator({ size }: { size?: "sm" }) {
+  const pending = useRef(false);
   const [phase, setPhase] = useState<"idle" | "starting" | "started">("idle");
   const [error, setError] = useState<string | null>(null);
   const [access, setAccess] = useState<OrchestratorAccess>("platform");
@@ -44,23 +45,27 @@ export function StartOrchestrator({ size }: { size?: "sm" }) {
   // button is back after a while rather than stuck on "Starting…".
   useEffect(() => {
     if (phase !== "started") return;
-    const t = setTimeout(() => setPhase("idle"), STARTED_WAIT_MS);
+    const t = setTimeout(() => { pending.current = false; setPhase("idle"); }, STARTED_WAIT_MS);
     return () => clearTimeout(t);
   }, [phase]);
   const start = async () => {
-    setError(null);
-    // ORCH-2: another machine leads the team's WalkieTalkie; starting here too means two running.
-    const lead = await api.orchestrator().then((v) => (v.local.running ? undefined : v.local.lead), () => undefined);
-    if (lead && !window.confirm(`WalkieTalkie is already running on ${lead}; start here anyway?`)) return;
+    // Claim the whole attempt before status lookup yields or React commits disabled.
+    if (pending.current) return;
+    pending.current = true;
     setPhase("starting");
+    setError(null);
+    let started = false;
     try {
+      // ORCH-2: another machine leads the team's WalkieTalkie; starting here too means two running.
+      const lead = await api.orchestrator().then((v) => (v.local.running ? undefined : v.local.lead), () => undefined);
+      if (lead && !window.confirm(`WalkieTalkie is already running on ${lead}; start here anyway?`)) return;
       const { local } = await api.orchestratorStart(access, model);
-      if (local.running) { setPhase("started"); return; }
+      if (local.running) { started = true; setPhase("started"); return; }
       setError(local.last_error ? `It didn't start: ${local.last_error}` : "It didn't start. Try walkie talkie start in a terminal to see why.");
-      setPhase("idle");
     } catch (err) {
       setError(lifecycleError(err));
-      setPhase("idle");
+    } finally {
+      if (!started) { pending.current = false; setPhase("idle"); }
     }
   };
   return (

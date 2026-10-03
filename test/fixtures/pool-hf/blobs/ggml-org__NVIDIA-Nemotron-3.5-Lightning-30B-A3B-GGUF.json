@@ -1,0 +1,58 @@
+{
+ "_id": "6a7b230505020600a120ac1a",
+ "id": "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+ "sha": "8a08a1c81dadcc75d35dbb96016cfd344b632e67",
+ "downloads": 236307,
+ "siblings": [
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16.gguf",
+   "blobId": "9c32ecbe598c40da4d19dc9060db7cf2331c9c54",
+   "size": 63181504576,
+   "lfs": {
+    "sha256": "fd513c912c63dc5ca29ab6932107f8354d53ea13be88b3c5072bd4022814acc7",
+    "size": 63181504576,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+   "blobId": "f7adb788b643b8b4fd1450b4835561dcffae0a0f",
+   "size": 33585495616,
+   "lfs": {
+    "sha256": "d4cc4c9fffaa356db8b49cfaba9233609cfb29b4dd89d827665210dc1cc8dbbb",
+    "size": 33585495616,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16.gguf",
+   "blobId": "977f8981f7563997b9ff4ec61c01a18b98923e1d",
+   "size": 4087848896,
+   "lfs": {
+    "sha256": "caca666aa88c8ae8f78982e9ce1c97cffd4d95aaf85f94570843f6710d1868fa",
+    "size": 4087848896,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf",
+   "blobId": "57785349030bf8e991019ba417ab80029b595163",
+   "size": 1155907520,
+   "lfs": {
+    "sha256": "19f964207d5236dc88662686f00604a5494974c23fb04dd16a5ad7b2eebbd5b4",
+    "size": 1155907520,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+   "blobId": "c7751811ea346e4fce84fb09abe468a85c078376",
+   "size": 2175713216,
+   "lfs": {
+    "sha256": "3c97aa5d1188384d81af610a5152c98d88d7669bdfa1f9814d18b452db4f170d",
+    "size": 2175713216,
+    "pointerSize": 135
+   }
+  }
+ ]
+}

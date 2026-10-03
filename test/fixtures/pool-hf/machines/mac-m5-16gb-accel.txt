@@ -1,0 +1,3 @@
+machdep.cpu.brand_string: Apple M5
+hw.optional.arm64: 1
+iogpu.wired_limit_mb: 0

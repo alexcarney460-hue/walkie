@@ -312,9 +312,20 @@ row that becomes valid in re-validation is likewise kept in full.
   first, then the least recently tried, up to 10 pages. Unfillable stubs can't starve the rest.
 - **Removal reaches the removed:** a `team.member role=removed` / `team.node revoked` event is also pushed to the nodes
   it cuts off, so they learn about it even though they can no longer call the peer API.
-- **Liveness:** a peer is `online` if its last successful sync or push is under 45 s old. `rtt_ms` is measured on `vv`,
+- **Liveness:** a peer is `online` if its last contact is under 45 s of healthy time old. Contact is a successful sync
+  or push of ours, or a request of the peer's own that passed the peer gate (an admitted machine of a current member,
+  its signature checked where it carries one: `/hello` is not contact) from a machine this node can reach itself. A
+  request of the peer's own is presence only: pushes (below), the `online` list this node serves in `vv` and `peer_rtt`
+  follow this node's own calls, so a peer that reaches us but that we cannot reach is shown online and gets no pushes.
+  Healthy time is the time since the contact less what this daemon spent stalled meanwhile (its event-loop watchdog),
+  or asleep (the wall clock gaining on the monotonic clock, which does not run while a laptop sleeps; a wall clock set
+  back and forward again is not a sleep; logged `sleep_resume`, never shown as a lagging daemon); a call that failed
+  or timed out across such a stall says nothing about the peer. So a stall of the local daemon never turns a machine
+  offline, and a peer that stalled shows online again at its first request. Its agents follow their machine; a working
+  or waiting status nobody refreshed for 30 minutes still reads offline, as it always did, so after a stall or sleep
+  longer than that it does until the agent's next status. `rtt_ms` is measured on `vv`,
   and so is clock skew (`NodeView.sync.skew_ms`, peer clock minus ours; `walkie doctor` warns above 5 s). Pushes to a
-  peer whose last contact failed at the transport level are skipped until anti-entropy reaches it again.
+  peer whose last contact failed at the transport level are skipped until a call of ours reaches it again (anti-entropy; its own requests do not lift the skip).
 - **Machine stats.** Each daemon samples its machine every 30 s (`machine_stats_interval_s`; `"machine_stats": false`
   in config.json turns it off): memory total/used, swap used and a pressure level (`normal`/`warn`/`critical`; macOS
   `kern.memorystatus_vm_pressure_level`, Linux PSI `/proc/pressure/memory`, else derived from the share in use), and
@@ -377,12 +388,17 @@ row that becomes valid in re-validation is likewise kept in full.
   and a malformed `version` (semver with optional pre-release and `+build` metadata) drops only the version. A load
   move of at least max(0.5, 25 %) publishes on the next sample, like the memory and temperature steps.
   Optional **`accel`** (read once at daemon start; `MachineAccel`): `{ chip: string | null, unified: boolean,
-  gpu_limit: bytes | null, gpus: [{ name, vram: bytes }] }`. `chip` is macOS `machdep.cpu.brand_string` or Linux
+  gpu_limit: bytes | null, gpus: [{ name, vram: bytes, unified?: true }] }`. `chip` is macOS `machdep.cpu.brand_string` or Linux
   `/proc/cpuinfo` "model name"; `unified` is macOS `hw.optional.arm64` = 1 (Apple Silicon: the GPU uses system RAM);
   `gpu_limit` is `iogpu.wired_limit_mb` when the user set it (0 = OS default → null); `gpus` come from one
   `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits` call (5 s timeout) when it is installed at
   a standard path. Names are printable ASCII ≤ 64 chars, ≤ 8 GPUs; a malformed `accel` is dropped without dropping
-  the snapshot. Daemons before local-model suggestions don't send it.
+  the snapshot. Daemons before local-model suggestions don't send it. **`gpus[].unified`** (LOCAL-MODELS-HF-1,
+  WALK-81): an NVIDIA integrated GPU that shares the machine's memory (a DGX Spark's GB10; Jetson: [UNCLEAR], not
+  observed) answers `[N/A]` to nvidia-smi's `memory.total`: it is kept as `{ name, vram: 0, unified: true }` and the
+  viewer sizes it from the machine's memory (below). Only those names count: a discrete card whose memory could not be
+  read is still dropped. An older daemon's schema drops the flag and reads a GPU with no VRAM (the old answer: its
+  CPU).
   Optional **`gpu_free`** (sampled with memory on a machine with an NVIDIA GPU): free bytes per GPU in `accel.gpus`
   order, from `nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits`; absent when not measured. A change
   of ≥ 1 GiB (summed) publishes. Malformed (not bytes, > 8 entries): dropped, the rest kept.
@@ -394,7 +410,9 @@ row that becomes valid in re-validation is likewise kept in full.
     memory is its own group (Walkie measures latency only from this machine). Offline machines and machines without
     `stats.mem` are listed as not counted.
   - *Usable memory per machine* ("free now"), leaving memory already in use alone, whatever uses it (Walkie doesn't
-    attribute memory to agents): Apple Silicon `min(gpu_share, total − used − 1 GiB)` with `gpu_share` =
+    attribute memory to agents): NVIDIA with unified memory (GB10) `total − used − 1 GiB` with no share limit, the CPU
+    a second backend, 273 GB/s (LPDDR5X 8533 MT/s × 256 bit; "if idle" `total − 4 GiB`); Apple Silicon
+    `min(gpu_share, total − used − 1 GiB)` with `gpu_share` =
     `gpu_limit`, else 2/3 of unified memory up to 32 GiB and 3/4 above (Metal's recommendedMaxWorkingSetSize as
     measured by the llama.cpp community, e.g. ggml-org/llama.cpp discussion #2182; Apple does not document it:
     [UNCLEAR]); NVIDIA Σ (min(`gpu_free`, VRAM) − 0.5 GiB) per GPU (POOL-REAL-1: measured, the catalog figure's 1 GiB overhead already covers the rest), or 0 when `gpu_free` wasn't measured (the GPU then
@@ -407,25 +425,67 @@ row that becomes valid in re-validation is likewise kept in full.
     backend per machine, so no memory is counted twice: each machine's fastest backend when that holds the model,
     else each machine's roomiest; every machine after the first holds another runtime (+1 GiB overhead); when an
     8-bit split would be slow and the 4-bit split of the same model is faster, the 4-bit one is suggested.
-  - *Memory a model needs* (`src/pool/models.json`, versioned, each entry with its model-card URL):
+  - *Memory a model needs* (a list of models, see "Where the models come from"; each entry with its model-card URL):
     `weights + kv + overhead`, with `weights = params × bits_per_weight / 8` (Q4_K_M 4.8944, Q8_0 8.5008 bits per
-    weight, from llama.cpp `tools/quantize/README.md`) or the published checkpoint size for natively 4-bit releases
-    (gpt-oss), `kv = 2 × layers × kv_heads × head_dim × context × 2 bytes` (multi-head latent attention:
-    `layers × (kv_lora_rank + rope_dim) × context × 2`), context 8192 tokens, overhead 1 GiB. Example: Llama 3.3 70B at
-    4-bit = 40.2 GiB weights + 2.5 GiB KV + 1 GiB = 43.7 GiB.
-  - *Picks.* The largest model (8-bit before 4-bit) that fits one machine backend's usable memory and is NOT slow
-    (POOL-REAL-1; only when every model that fits is slow, the largest of those; the faster backend on a tie), with,
-    when that pick runs on a CPU, the largest model a GPU runs at a usable speed ("On the GPU": what `walkie pool
-    serve` runs), and a bigger model that fits only slowly or only on a CPU ("Bigger, slow" / "Bigger, on CPU"); then
-    the largest the group
-    holds split across machines (filled largest-first, pipeline-parallel as with exo or llama.cpp RPC; a slow split
-    is not offered over a one-machine pick that isn't slow), a faster
-    smaller model when the pick isn't fast, the next size up that doesn't fit, and what otherwise idle machines
-    could run.
+    weight, from llama.cpp `tools/quantize/README.md`) or, for a model read from Hugging Face and for natively 4-bit
+    releases (gpt-oss), the real size of its GGUF files (`weights_gib`),
+    `kv = 2 × layers × kv_heads × head_dim × context × 2 bytes` (multi-head latent attention:
+    `layers × (kv_lora_rank + rope_dim) × context × 2`), context 8192 tokens, overhead 1 GiB. A hybrid model's layers
+    follow its config (`arch.hybrid`, from `layer_types` / `layers_block_type`): only the layers that cache the whole
+    context count (full attention, with the global layers' own KV heads and head size where the config gives them),
+    sliding-window layers hold at most their window (`2 × layers × kv_heads × head_dim × min(window, context)`), linear
+    attention, convolution, state-space and expert layers cache nothing. Example: Llama 3.3 70B at 4-bit = 40.2 GiB
+    weights + 2.5 GiB KV + 1 GiB = 43.7 GiB; Qwen3.8-27B (16 of 64 layers cache) at its 16.5 GB `UD-Q4_K_M` file =
+    15.3 GiB + 0.5 GiB KV + 1 GiB = 16.8 GiB.
+  - *Picks* (LOCAL-MODELS-HF-1: the BEST model, not the largest). Models are ordered by `compareModels`: rated models by
+    their score, then every unrated model, newest month first, then effective size (`√(total × active)` for a Mixture
+    of Experts), then 30-day downloads. The best model (8-bit before 4-bit) that fits one machine backend's usable
+    memory and is NOT slow (POOL-REAL-1; only when every model that fits is slow, the best of those; the faster backend
+    on a tie), with, when that pick runs on a CPU, the best model a GPU runs at a usable speed ("On the GPU": what
+    `walkie pool serve` runs), and a better rated model that fits only slowly or only on a CPU ("Better, slow" /
+    "Better, on CPU"); then the best the group holds split across machines (filled largest-first, pipeline-parallel as
+    with exo or llama.cpp RPC; only when it is rated above the one-machine pick, and a slow split is not offered over a
+    one-machine pick that isn't slow), a faster smaller alternative (another model that needs less memory and reaches
+    a faster speed class, else one at least 1.5× as fast), the next one up that doesn't fit, and what otherwise idle
+    machines could run. Every counted machine gets its own best pick and faster alternative (`TeamSuggestion.machines`),
+    and `bestOverall` names the best rated model across machines alone, each group's split and all machines
+    together (the same model: the faster run, then the simpler way).
   - *For a model* (`walkie pool --for-agent`, or an agent runtime in the environment): host, chip and GPU names are
     self-reported by peers, so each group's text is wrapped with the §6 wrapper (`trust="team-member"`, an
     information-not-instructions note, `from` = the machine for a one-machine group, else `@walkie`) and `--json`
     carries `trust`, `note` and per machine `reported_by`, with every name defanged and capped (host 63, text 300).
+  - *Where the models come from* (LOCAL-MODELS-HF-1, `src/pool/hf/`). The list is read from the public Hugging Face Hub
+    API when a person asks (`walkie pool`, or a dashboard page that shows the suggestions (Mission Control, the Team page's Models tab, a machine page) through `GET /v1/pool/models`), by the machine that asks,
+    kept in `<home>/pool/hf-catalog.json` (0600, atomic) for 24 hours; never on a timer. Plain unauthenticated GETs to
+    `https://huggingface.co` only (same-origin redirects are followed by hand, up to three hops; another origin is refused), with no token, cookies or anything about the
+    team or its machines; at most 450 requests (406 measured, about 7 s), 6 at once, 15 s each, 120 s in all, byte caps
+    (4 MiB lists, 2 MiB file listings, 1 MiB records, 64 KiB organisation overviews, 256 KiB configs and cards),
+    every JSON response validated with zod (a config or a card is read by hand within fixed bounds), a stop before the anonymous windows (500 `api` and 3000 `resolvers` requests per
+    300 s, from the `ratelimit` header) run out. Offline, rate limited or malformed: the previous list if under 30 days old,
+    else the list built into Walkie (`models.json`, refreshed by `scripts/refresh-pool-catalog.ts`; `--ratings-only` re-rates its models under the
+    current rules and moves no pin, and every stored rating carries the rules it was made under, `quality.rules`, which a test checks), and the output says
+    which and why; a failure is remembered for 15 minutes and a manual refresh waits a minute after the previous read ENDED; one process reads at
+    a time (`<home>/pool/hf-refresh.lock`, shared by the daemon and `walkie pool`, made whole and linked into place, taken over from a dead or stale owner by one process only and removed only by its owner; a second reader shows the list there is and says so; a folder or link at that path is reported and the read goes ahead without a lock); when the request budget
+    runs short part-way the models not yet read (the ones fewest people run) are left out and counted, and the list is
+    built from the rest. A candidate is: a base
+    model behind a GGUF repository found by 30-day downloads or trending (a quantization repository collapses to its
+    `base_model`; a maker's own `<name>-GGUF` without the tag to `<name>`); from an organisation with at least 1,000
+    followers; original (no `base_model` of another author, and a name that does not continue another maker's model
+    name); chat-capable (`text-generation`, `image-text-to-text` or `any-to-any`, not a `-Base` / `-pt` checkpoint, a
+    quantised copy, a speculative-decoding drafter or a text-diffusion model); created within 16 months (a base whose earliest GGUF repository in the lists is older is dropped
+    without a request); with a `Q4_K_M` (or Unsloth `UD-Q4_K_M`, or native `MXFP4`) GGUF, and
+    optionally `Q8_0`, in the maker's repository or one of unsloth, bartowski, lmstudio-community, ggml-org (complete
+    shards, side files such as mmproj and MTP drafts ignored, the 4-bit file within 0.5–1.4 × `params × 4.89 / 8`);
+    readable numbers: `config.json` (layers, KV heads, head size, layout) and, for a Mixture of Experts, the active
+    parameters from the name token (`A3B`, `E4B`) or a model-card sentence whose total agrees with the checkpoint
+    (40–115 %), never computed from the config. Quality is the one-factor fit of the self-reported benchmark results
+    (`expand[]=evalResults`; nine benchmarks, none `verified`): per benchmark a line `score = c + s × ability`, per model
+    one ability, fitted by alternating least squares over the rated models (a model needs three or more admitted results: a value in (1, 100], the lowest of any duplicates, none attached to a Hub pull
+    request; a benchmark needs six reporters whose values differ; a table with no spread, or a score outside ±20, rates nobody), ridge toward 0, noise floor 0.45, score = ability − 0.5 standard errors.
+    When no model of the list is rated (the built-in list under these rules: 0 of 58, regenerated 2026-10-02), every view says so, labels the picks
+    "Newest" instead of "Best" (a pick nobody rated is only the newest that fits), and `walkie pool --json` carries `catalog.rated_models`,
+    `catalog.ranking` (`quality` or `newest-that-fits`), `catalog.ranking_note` and `ranked_by` on each pick. `walkie pool run|serve|prepare`
+    still take only the pinned list (`gguf.json`); any other pick is a suggestion (download its GGUF and use `--file`).
   - *Speed* (labelled estimate): generation reads the active weights once per token, so tokens/s ≈ 0.6 × bandwidth /
     bytes per token (0.6 sits inside the 0.45–0.84 llama.cpp measured on Apple Silicon, discussion #4167); a split
     adds the stages' times plus (1.3 round trips + 2 ms) per hop (1.3: measured, POOL-REAL-1, llama.cpp RPC makes
@@ -681,11 +741,11 @@ row that becomes valid in re-validation is likewise kept in full.
   - Coverage: Codex app / IDE sessions (`codex app-server`) are not discovered; they report at turn end (notify hook)
     and through `walkie_set_status`.
   - `idle`: running, none of the above, for two scans in a row and 90 s since the last activity (hysteresis).
-    `offline`: its process is gone (posted at once, activity "Process exited"). A failed or empty `ps` changes nothing.
+    `offline`: its process is gone (posted at once, activity "Process exited"). A failed or empty `ps` changes no card; the machine's published process counts are held, flagged `discovery.stale`, for 5 minutes and then published as unknown (`agent_processes` absent) until a scan succeeds; a daemon whose `ps` fails from its first scan has nothing to hold and is flagged `discovery.stale` at once. A machine with `discovery.stale` and no `agent_processes` has unknown load, not zero agents: the dashboard shows it as "Load unknown" (unless its CPU alone already says busy) and the pool does not offer its capacity as idle.
   - Naming: the session id comes from Claude's `sessions/<pid>.json` in the session's own `CLAUDE_CONFIG_DIR` (else a
     child's `CLAUDE_CODE_SESSION_ID`) and must be a plain id. A session with no id (`claude-pid<N>`) takes over a hook
     / MCP card of this node with the same runtime and directory (the same, or one inside the other) that no running
-    session claims, instead of posting a second card. Sessions under claude-mem's worker or in `~/.claude-mem/` are not
+    session claims, instead of posting a second card. A `claude-pid<N>` card whose process a later scan reports under its own name is a duplicate of the named card: it is posted offline with `observed_at` already past the offline grace, so it is archived at once instead of sitting beside the named card for 10 min. Sessions under claude-mem's worker or in `~/.claude-mem/` are not
     agents. Set `WALKIE_AGENT=<name>` on a worker's own process to show it under that name after enrichment; the
     first process-table pass never waits for environment reads. At most 100 sessions per runtime are reported; each
     selected live process appears as working with "Working (details pending)" before the budgeted environment,
@@ -715,6 +775,12 @@ row that becomes valid in re-validation is likewise kept in full.
   reports. Each daemon keeps at most 200 archived agents per machine and none whose last status is older than 7 days:
   every minute the rest are deleted from its `agents_latest` table (the signed status events stay in the log; a new
   status re-creates the row), and dashboards are re-sent the roster when time moved an agent between the tiers.
+  Retention judges a record by its own last status only: a machine that merely looks offline (a stalled local daemon,
+  a peer restarting) never gets its agents dropped, they are judged as if it were online, and a live agent (a session
+  with a working sub-agent included) is never dropped. A record nothing shows any more (its machine revoked or unknown, its person removed) is dropped once its last
+  status is older than 7 days. The daemon keeps the table in memory (it is the store's alone to write) and builds the
+  roster's views incrementally, so a roster read, a stream flush or the upkeep costs work for the agents that changed,
+  not for every record; stream flushes also back off (up to 2 s) while they are slow.
   `GET /v1/agents?scope=archive|all` filters by `node` (id or hostname), `q` (search) and `states` (comma list)
   BEFORE it cuts the page (`limit` ≤ 1000, `offset`), and answers `total`, `offset` and `truncated`. Every agents
   payload carries `archive_rev`, bumped whenever the archive's contents change (not only its counts), so a loaded
@@ -923,7 +989,7 @@ first verified proof or signed admission, and team-wide once strict mode engages
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | GET | `/peer/v1/hello` | – (no team header needed; caller's login must be a member, node need not be admitted) | `{ team, name, node_id, hostname, authority: {node_id, hostname, ip, port} \| null }` |
-| GET | `/peer/v1/vv` | Optional `X-Walkie-Vv-Challenge` (32 lowercase hex bytes) | `{ node, vv: {origin: seq}, ts, capabilities?, proof?, stats?, accounts?, online?, pool? }` (`capabilities`: `{ version, caps: string[] }`, the optional features this daemon serves: `seats_v2`, §11; `ssh_revocation_v1`, §4 "Owner SSH revocation receipts"; `proof`: node-key signature over a digest of the response body plus requester, target, timestamp, and challenge; `stats`: this machine's published `MachineStats`, with `peer_rtt` since POOL-2; `accounts`: its `AccountsSnapshot`, §3; `online`, v0.2 additive: node ids the server reached itself within its liveness window, ≤1024; §4 "Mixed teams"; `pool`: its `PoolShare`, §3 "Split runs") |
+| GET | `/peer/v1/vv` | Optional `X-Walkie-Vv-Challenge` (32 lowercase hex bytes) | `{ node, vv: {origin: seq}, ts, capabilities?, proof?, stats?, accounts?, online?, pool? }` (`capabilities`: `{ version, caps: string[] }`, the optional features this daemon serves: `seats_v2`, §11; `ssh_revocation_v1`, §4 "Owner SSH revocation receipts"; `lease_launcher_v1`, `launcher` accepted in `/peer/v1/vault/lease`; `proof`: node-key signature over a digest of the response body plus requester, target, timestamp, and challenge; `stats`: this machine's published `MachineStats`, with `peer_rtt` since POOL-2; `accounts`: its `AccountsSnapshot`, §3; `online`, v0.2 additive: node ids the server reached itself within its liveness window, ≤1024; §4 "Mixed teams"; `pool`: its `PoolShare`, §3 "Split runs") |
 | GET | `/peer/v1/events` | `origin, after, limit≤500`, or `ids=a,b,…` (≤100, stub fill) | `{ events: (Event \| Stub)[] }` ascending seq, stopped before 768 KiB serialized (≥1 event); unknown ids are omitted |
 | POST | `/peer/v1/events` | `{ events: (Event \| Stub)[] }` (≤100) | `{ accepted, pending, rejected: [{id, reason}] }` (duplicates count as accepted) |
 | POST | `/peer/v1/join` | `{ pubkey, hostname, ip, port?, invite? }` (`PeerJoinReq`; `port` = joiner's peer port, default 7458; `invite` = owner-issued add-machine credential) | Served by the **roster authority**: if the whois login is a member, emits `team.node` pinning the **observed source IP** (not the claimed `ip`) and returns `{ admitted: true, team, node_id }`. Any other node returns `{ admitted: false, reason: "not_authority", authority }` and the joiner retries there; `pending_approval` when auto-admit is off or that login has ever had a machine and no valid add-machine credential. Idempotent for an already-admitted pubkey (any node answers); a revoked node gets 403; `409 node_limit` past the node limits (§2), before anything is queued. |
@@ -935,7 +1001,7 @@ first verified proof or signed admission, and team-wide once strict mode engages
 | GET (WebSocket) | `/peer/v1/pool/tunnel/:run` | Tailscale: an `Upgrade: websocket` request with the usual identity headers; Walkie Direct: a `CONNECT` stream (below) | Raw bytes to the stage's rpc-server (§3 "Split runs"). Refused before any byte: the peer gate (403), not an upgrade (426), not the run's head (403 forbidden), no such stage (404 no_run), sharing off or the head no longer allowed (403), 4 open or reserved or 20 new in a minute (429). Closed later by the credit window or the RPC guard (§3 "Split runs"). |
 | POST | `/peer/v1/pool/serve` | `{ action: "start", model, quant }` \| `{ action: "connect", id? }` \| `{ action: "renew" \| "disconnect" \| "stop", id }` (POOL-REAL-1) | `{ ok, id?, state?, model?, key?, lease_ms? }`. `start`: `403 not_sharing`, `403 forbidden` (observer, or may not use it), `409 seats_pool_conflict`, `409 busy` (a stage runs), `409 serve_active` (another model; the same model answers its current state), `409 no_runtime`, `409 no_gpu`, `507 insufficient_memory`, `400 unknown_model`/`no_such_format`. `connect`: `404 not_serving`, `403 not_sharing`, `429 too_many_clients` (16); idempotent per machine (same key). `renew`/`disconnect`: the connected machine; `stop`: only the machine that started it (`403`). 30 per peer, then 1/s. Older daemons: 404. |
 | CONNECT / GET (WebSocket) | `/peer/v1/pool/serve-tunnel/:id` | as `/peer/v1/pool/tunnel/:run` | raw bytes into the serving machine's allow-list proxy, only for a connected machine while it serves (`503 not_ready` while loading), ≤ 8 at once and 60 new a minute per machine. |
-| POST | `/peer/v1/vault/lease` | `{ account, agent?, epk, nonce, ts }` (ACCOUNTS-2 phase 3; `epk` = the requester's ephemeral X25519 public key, raw base64url; `nonce` 16 bytes hex; `ts` ms) | `{ epk, box, owner, grant, gen }` (`grant`: a new hand-out id the borrower's lease names; `gen`: the credential generation): a Claude setup-token from THIS machine's vault, sealed to `epk` (X25519 ECDH with the owner's own ephemeral key → HKDF-SHA256, salt = nonce, info = `walkie-vault-lease\|<account>\|<requester node>\|<owner node>` → AES-256-GCM with that context as AAD). Refused unless: `ts` within 60 s, the nonce unseen, the account in this vault, and its policy allows the caller — `own`: the caller's login is this machine's owner; `shared`: also a handle in `share_with`, and only while this owner's config has `"vault_sharing": true`; `local`: nobody. COMPANY POOL: while this machine knows the team's pool is on, a login not marked personal is also lent to any owner or member (never an observer); to another person only while this machine's own reading under an hour old shows more than 10 % left (else 409 `reserved`). At most 10 per calling node per hour (429). A Codex login is LEASED, never copied: the box holds an access-token copy (`refresh_token: ""`, an `id_token` with only the plan and account id, `last_refresh` = now, no API key), the reply adds `provider: "codex"` and `expires_at` (its access token's JWT exp); refused (503) when that expiry cannot be read or is under 30 minutes away (this machine then renews the login through its own Codex CLI); the requester (`POST /v1/vault/lease {…, provider: "codex"}`) refuses a reply of the other kind or one carrying a refresh token or API key. `Cache-Control: no-store`; granted and refused hand-outs are logged by account, node and handle, never the token. |
+| POST | `/peer/v1/vault/lease` | `{ account, agent?, launcher?, epk, nonce, ts }` (ACCOUNTS-2 phase 3; `epk` = the requester's ephemeral X25519 public key, raw base64url; `nonce` 16 bytes hex; `ts` ms; `launcher` = the seat event's launcher handle, sent only to a holder that lists `lease_launcher_v1` in its verified `/peer/v1/vv` capabilities; pre.10.1 and pre.11 holders refuse any unknown field with `400 invalid`, so a requester that gets that answer to a request with `launcher` asks once more without it) | `{ epk, box, owner, grant, gen }` (`grant`: a new hand-out id the borrower's lease names; `gen`: the credential generation): a Claude setup-token from THIS machine's vault, sealed to `epk` (X25519 ECDH with the owner's own ephemeral key → HKDF-SHA256, salt = nonce, info = `walkie-vault-lease\|<account>\|<requester node>\|<owner node>` → AES-256-GCM with that context as AAD). Refused unless: `ts` within 60 s, the nonce unseen, the account in this vault, and its policy allows the caller — `own`: the caller's login is this machine's owner; `shared`: also a handle in `share_with`, and only while this owner's config has `"vault_sharing": true`; `local`: nobody. COMPANY POOL: while this machine knows the team's pool is on, a login not marked personal is also lent to any owner or member (never an observer); to another person only while this machine's own reading under an hour old shows more than 10 % left (else 409 `reserved`). The base is 10 hand-outs per calling node per hour (429), including absent `launcher`, direct local-socket requests and teammate-launched seats on an owner's host. An owner-launched seat from that owner's authenticated machine uses its vault holder's `vault_own_lease_limit` (10–256) per node, in a bucket of its own once above 10 (the base requests from that node can neither spend nor shrink it; at 10 both share the base); all of that person's borrower nodes together have a 256/hour ceiling at that vault holder, which every hand-out to them counts toward, base requests included; a request refused by that ceiling spends no per-node hand-out. The local socket refuses a caller-supplied `launcher`; SeatsHost relays the signed seat event's launcher directly. Hand-out, probe and usage-refresh budgets live in a roster-bounded store on the vault holder (one record per node id, at most 1024; a new id past that is refused rather than evicting another), not in the shared 512-key rate limiter, so other keys cannot evict them. A roster node that is not an admitted member cannot draw; the next time it is admitted it starts a fresh allowance. A bucket that has refilled is kept, so raising the owner-launched limit does not jump an exhausted bucket up to the new capacity. The first time the separate owner-launched bucket is created (the configured limit moves above 10), it starts at that new limit minus the owner-launched hand-outs already charged to the shared base bucket this hour, so the raise does not grant a fresh full bucket on top of those. Hand-outs that were not owner-launched do not seed it, and a bucket that already exists is not seeded again. A machine taken off the team while its hand-out is being sealed (the vault read is still in flight) is refused with the same 429 as a machine already off the team and does not receive the login; that hand-out is spent. They still refill continuously and reset if the vault-holder daemon restarts; separate holders do not share a counter. A Codex login is LEASED, never copied: the box holds an access-token copy (`refresh_token: ""`, an `id_token` with only the plan and account id, `last_refresh` = now, no API key), the reply adds `provider: "codex"` and `expires_at` (its access token's JWT exp); refused (503) when that expiry cannot be read or is under 30 minutes away (this machine then renews the login through its own Codex CLI); the requester (`POST /v1/vault/lease {…, provider: "codex"}`) refuses a reply of the other kind or one carrying a refresh token or API key. `Cache-Control: no-store`; granted and refused hand-outs are logged by account, node and handle, never the token. |
 | POST | `/peer/v1/admin/run` | `{ argv: string[], agent?, timeout_s? }` (AGENT-ADMIN-1; `agent` = the caller's agent label, absent for a person) | `{ machine, exit, stdout, stderr, truncated, timed_out }`: runs `walkie <argv>` as this machine's OS user (no shell, stdin closed, `timeout_s` default 300 max 1800, 64 KB per stream) with `WALKIE_AGENT=remote-admin` and a per-run token its gates accept as the remote actor. Refused: `403 not_your_machine` unless the caller's member is an owner or this machine's person, `403 remote_admin_off` / `403 agent_admin_off` (this machine's switches), `400 not_allowed_remotely` (src/protocol/admin.ts allow-list). One `#general` post by `walkie-admin` per command, mentioning this machine's person. Older daemons: 404. |
 | GET | `/peer/v1/blobs/:hash?channel=X` | – | the bytes, only if this node holds **provenance** for `(X, hash)` (it uploaded them with a share in X, or fetched them for an accepted share in X from a peer with provenance), an accepted `artifact.share` of the hash in X exists, and the caller can see X. A share announcement alone never creates provenance; a hash named in `msg.post`/`ask`/`answer` `artifacts` authorizes nothing. |
 
@@ -1087,6 +1153,19 @@ with an invite code), and **dual** machines that serve both.
   receive their events by pulling from a dual machine). There is no way to turn a Direct-only machine into a
   Tailscale one in v0.2, nor to turn Direct off on a dual machine (its record keeps serving Direct, and startup
   follows the record).
+- **Seeing the gap.** A machine that shares no transport with part of the team shows those machines, and their
+  agents, online only on the word of a machine that reaches them (the liveness rule above); when none is in sync with
+  it they show offline and their agents are hidden there. Its local API says so, additively and with no peer
+  protocol change: each such peer's `NodeView` carries `unreached: { vouched }` (`vouched` false = hidden), except
+  an observer's machine (an observer publishes no agent status, so nothing of theirs is hidden) and except while this
+  machine's own Direct endpoint is not up but should be (starting, or failing to bind: it then reaches no machine
+  over Direct, which says nothing about the team; `walkie doctor`'s "walkie direct" check names it).
+  `walkie doctor` warns, naming the machines and the fix (`walkie direct enable` on a Tailscale-only machine; on a
+  Direct-only one, that Tailscale is optional and the other machines run it), and says whether their agents are shown
+  through another machine or hidden (hidden can also mean those machines are off, and the wording says so). It never
+  fails: it reports other machines' reachability, not this machine's health, and the macOS company-machine join (a
+  Direct-only machine) treats a failing doctor as a failed join. Mission Control shows a dismissible banner. Nothing
+  enables a transport on its own: a person runs it.
 
 ## 5. Local API
 
@@ -1233,15 +1312,17 @@ it, `202 { queued: true, request_id }` while it is unreachable.
 | GET | `/v1/events` | `EventsQuery` → `{ events: Event[] }`, newest first |
 | GET | `/v1/events/:id` | `{ event, replies: Event[] }` |
 | POST | `/v1/post` | `PostReq` → `{ event, redactions: string[] }` (redacts secrets unless `raw`; an unknown channel is first created as a public channel through the authority, `409 channel_pending` while it is unreachable; `@mentions` in the text fill `body.mentions`) |
-| POST | `/v1/ask` | `AskReq` → `{ event, redactions }`; 404 if the target handle isn't a member; 400 if `channel` is restricted and the target can't see it |
+| POST | `/v1/ask` | `AskReq` → `{ event, redactions }`; 404 if the target handle isn't a member; 403 if `to` is `@handle/machine/agent` and that machine's card under that agent name is a Hermes session's (`runtime: other`, `runtime_name: hermes`): Hermes is view only and has no inbox, so it cannot answer; asks to a person or a machine are unaffected; 400 if `channel` is restricted and the target can't see it |
 | GET | `/v1/asks/:id` | `AskView` (`expires_at` = when the ask expires on this node: the body's, but never later than its own timeout, capped at a day, from receipt). `?wait=<s>` long-polls until answered or declined (max 120 s per call) |
 | GET | `/v1/asks` | `?state=open&to=me` → `{ asks: AskView[] }`; `to=me` = addressed to this handle, machine or agent. Optional bounds for small clients (the phone link sets both): `text_max=N` cuts ask and answer texts to N characters (the body says `truncated: true`), `max_bytes=N` stops the list (newest first) before it passes N encoded bytes and adds `truncated: true` |
 | POST | `/v1/answer` | `AnswerReq` → `{ event }`; only the addressed handle may answer (403), not after expiry (409); the answer inherits the ask's channel |
 | POST | `/v1/status` | `StatusReq` → `{ event }`; `agent` must match `X-Walkie-Agent` if that's present. Dedupe: identical to the latest status within 2 s → no new event. A hook may also say which event a report is, in an unsigned `delivery` object (`{session, event, at, call?, turn?, kind?}`, `kind` being a notification's type; never signed or replicated); the daemon remembers the last 4096 for 60 s and drops a repeat for the same agent: `200 { event: null, duplicate: true }`. Over the 2/s limit it is **coalesced, not rejected**: `202 { event: null, coalesced: true }`, and the newest held status is emitted when the bucket refills. |
-| POST | `/v1/hermes/status` | A Hermes hook's observation `{profile, session, at, sequence, pid?, state, fallback, activity?, source?}` (`profile` a name Walkie carries, `session` the sha-256 hex of Hermes' session id, `at` within two hours of now) → `{ event }`, or `202 { event: null, coalesced: true }`. `X-Walkie-Agent` must be `hermes-<profile>` (403); the daemon keeps one row per session (local, never replicated), at most 32 per profile and 512 in all, and signs one `agent.status` per profile from them. A session it does not know yet takes a token of the profile's admission bucket (429 when spent). A join credential in `activity` is refused as on `/v1/status`. **Privacy:** a profile shows its state only: `activity` and `source` are dropped, before the row is stored and again where the card is posted, unless `config.json` lists the profile in `hermes_activity_profiles` (re-read when it changes; missing or invalid = none). |
+| POST | `/v1/hermes/status` | A Hermes hook's observation `{profile, session, at, sequence, pid?, state, fallback, activity?, source?}` (`profile` a name Walkie carries, `session` the sha-256 hex of Hermes' session id, `at` within two hours of now) → `{ event }`, or `202 { event: null, coalesced: true }`. `X-Walkie-Agent` must be `hermes-<profile>` (403); the daemon keeps one row per session (local, never replicated), at most 32 per profile and 512 in all, and signs one `agent.status` per profile from them. A session it does not know yet takes a token of the profile's admission bucket (429 when spent). A join credential in `activity` is refused as on `/v1/status`. **Privacy:** a profile shows its state only: `activity` and `source` are dropped, before the row is stored and again where the card is posted, unless `config.json` lists the profile in `hermes_activity_profiles` (re-read when it changes; missing or invalid = none). A card of this node that still shows a line for an unlisted profile is posted again with its state only (carrying `observed_at` of the card it replaces), at daemon start and every 15 s (and on every discovery scan), whether or not discovery runs. |
 | GET | `/v1/agents` | `{ agents: AgentView[], archive: {node, idle, offline}[] }`. Default `scope=live`: the live roster (§3 "Agent archive"), with the archive only as counts per machine. `?scope=archive` lists archived agents, `?scope=all` both, newest first, filtered by `node` (node id or hostname) and `q` (name, machine, title, task, repo, branch or activity), at most `limit` (≤ 1000). Every `AgentView` carries `archived`. |
 | GET | `/v1/accounts` | `{ accounts: AccountView[] }`: every machine's accounts (this node's own, peers' from `vv`), one entry per (owner, account id) — `key` (`<handle>:<id>`), `owners` (the one member), `claimed_by` (other members reporting the same id: unverified claims, each its own entry, never allowed to overwrite the owner's reading), `machines` (`{node_id, hostname, handle, online, self, agents, usage}`: each machine's OWN reading, which an agent's chip uses; an offline machine's agents are not counted), `usage` = the freshest reading of the owner's machines, `usage_host`. Times are moved onto this node's clock; a reading dated beyond the allowed clock skew (5 min) is rejected, not clamped, and reset / `until` times are capped at the reading + 8 days. ACCOUNTS-2: `vault` and `leases` (§3 "Accounts: switching"). Never a token. |
 | GET | `/v1/pool` | WALKIE-POOL-2: `{ share: {on, max_bytes}, runtime: {installed, dir, build}, run: RunView \| null, stage: StageView \| null }` (§3 "Split runs"): this machine's sharing, llama.cpp runtime, the run it heads (state `downloading` → `starting` → `loading` → `serving`, or `stopping` / `stopped` / `failed` with `error` naming the machine; `stages`, `download`, `endpoint` + `api_key_file` + a sample `example` once serving, measured `tokens_per_s`, `server_pid`) and the stage it serves for someone else's run. Open to agents (read only). |
+| GET | `/v1/pool/models` | LOCAL-MODELS-HF-1: `{ source: "huggingface"\|"built-in", state: "fresh"\|"stale"\|"built-in", checked_at: ms\|null, note, refreshing, catalog? }` (§3 "Where the models come from"): the model list the suggestions rank from. Open to every local caller like `GET /v1/pool`. It starts the read of Hugging Face (in the background of the request) when the list is missing or over a day old and no failure is remembered, so the answer is what there is now with `refreshing: true`; `?brief=1` leaves out `catalog` (the dashboard polls with it). Only the daemon reaches Hugging Face. |
+| POST | `/v1/pool/models/refresh` | `{}` → `202` the same view: ask Hugging Face again, not within a minute of the last attempt. Rate limited like other local writes. |
 | POST | `/v1/pool/share` | `{ on: boolean, max_gb?: number \| null }`: turn sharing this machine for split runs on or off (persisted in `config.json`); off stops a running stage at once. `409 seats_pool_conflict` while remote seats are allowed here (§11 "Seats and split runs"). People only (403 with `X-Walkie-Agent`). → the `/v1/pool` view |
 | POST | `/v1/pool/run` | `{ model, quant?: "q4"\|"q8" }` (a catalog id) or `{ file: "/abs/path.gguf" }`, optional `machines: [hostname \| node id \| handle/hostname]`: start a split run headed by this machine (validated and planned before answering: `409 seats_pool_conflict` while remote seats are allowed here (§11), `409 run_active`, `409 no_runtime`, `409 not_sharing` / `offline` / `busy` / `does_not_fit` / `unknown_machine`, `400 unknown_model`), then it proceeds in the background. People only. → `202 { run }` |
 | POST | `/v1/pool/stop` | stop this machine's run (llama-server killed by its PID, tunnels closed, every stage told to stop). People only. → `{ run }` |
@@ -1258,7 +1339,7 @@ it, `202 { queued: true, request_id }` while it is unreachable.
 | POST | `/v1/artifacts` | raw body; headers `X-Walkie-Name`, `X-Walkie-Mime`, optional `X-Walkie-Note`, `X-Walkie-Channel`, `X-Walkie-Thread` → `{ event }` |
 | GET | `/v1/artifacts/:hash` | bytes, for a visible accepted share: served from the local store if this node has provenance for that share's channel, else fetched from a peer with `?channel=` (which grants provenance) |
 | GET | `/v1/stream` | SSE. `?channels=a,b` filters `event` messages. Sends `hello` first, then `event` / `agents` (`{agents, archive}`, the live roster as `GET /v1/agents` gives it) / `nodes` / `accounts` (`{accounts: AccountView[]}`) as they change, and `hidden` (`{ids}`) when a roster change invalidates delivered events. Heartbeat comment every 15 s. A client with more than 1 MB unread is sent a final comment and dropped. |
-| GET | `/v1/peers` | `{ nodes: NodeView[] }` (`stats`: the machine's memory and temperature, §3 "Machine stats"; absent when it never reported. v0.2: `transports`, and `via`: `"tailscale"`, `"direct"`, or `"relay"` for a peer this machine shares no transport with) |
+| GET | `/v1/peers` | `{ nodes: NodeView[] }` (`stats`: the machine's memory and temperature, §3 "Machine stats"; absent when it never reported. v0.2: `transports`, and `via`: `"tailscale"`, `"direct"`, or `"relay"` for a peer this machine shares no transport with, which also carries `unreached: {vouched}`: whether a machine that reaches it vouches for it now, §4 "Mixed teams") |
 | GET | `/v1/integrations` | `{ integrations: IntegrationView[] }` (`src/integrations/views.ts`): per connector `enabled`, `configured`, `key_source` (`secret` \| `key_path` \| null), `key_path`, `channel`, non-secret `settings`, `last_run`, `last_ok`, `last_error`, `items_posted`, `next_run`, `running`. Never a key. |
 | POST | `/v1/integrations/:id` | `id` ∈ `fireflies`, `wispr`, `linear`. Body: `{ enabled?, key? \| key_path?, channel?, interval_s?, backfill_hours?, … }` (Wispr: `dir`, `summarize: "off"\|"claude"`, `unfurl`, `settle_minutes`; Linear: `activity`, `teams`, `default_team`); unknown fields are 400. `key` is stored in `~/.walkie/secrets/<id>`; `key_path` is validated (a regular file owned by the user, mode `& 077 == 0`, no ACL granting others access; else 400 with the `chmod 600` / `chmod -N` fix) and read on each run. Enabling requires the target channel to exist: 409 `unknown_channel` with `{ channel, hint: "walkie channel create <name>" }` otherwise (connectors never create channels). Turning a connector on takes its slot at the roster authority first (§2 "Integration slots"): `402 plan_limit` past the plan, nothing configured; `202 { queued, request_id, integration }` while the authority is offline (the connector is stored `pending_enable`, not enabled, and turns on when the authority accepts). Turning it off releases the slot. People only: 403 with `X-Walkie-Agent`. → `{ integration }` |
 | DELETE | `/v1/integrations/:id` | disables and forgets settings, the stored key, the cursor and dedup marks (people only); releases the slot → `{ integration }` |
@@ -1446,7 +1527,14 @@ even if process inspection fails. The daemon
 renews the file every 250 ms only while its lease is valid. The Claude run receives a run-local `PreToolUse`
 hook through `--settings`; the hook denies tools when the lease file's wall deadline or run epoch is stale.
 Claude runs from `~/.walkie/talkie` with user, project and local setting sources excluded, so settings in the
-person's working directory cannot add shell permissions. Only Walkie's `--allowedTools` grants platform tools.
+person's working directory cannot add shell permissions. Only Walkie's `--allowedTools` grants platform tools, except
+that a turn whose duty needs none (the status reports turn) is launched with no tools at all. A Claude that rejects
+`--tools` or `--strict-mcp-config` at that launch ("unknown option": too old) fails only that turn, with the reason "this
+Claude is too old for tool-less report turns; update Claude" (the duty's run records it as a failure; the conversation
+gets the same line), and does not count towards the host's give-up: WalkieTalkie stays up and the next message gets a
+Claude launched with the usual flags. The host remembers the rejection for the binary it launched, so later tool-less
+turns fail at once without a launch, until that `claude` is replaced or WalkieTalkie is started again. A tool-less turn is
+never run in a Claude that has the tools.
 WalkieTalkie starts Claude only; Codex seats are a separate runtime and do not hold this leadership lease.
 The local wall clock must advance across sleep for the hook to fence a resumed process before replacement acts.
 macOS may hide another process's environment from `ps -E`; the supervisor also checks its recorded descendant
@@ -1460,8 +1548,11 @@ queued work, spawns and writes under `orchestrator` are fenced. If the authority
 finish their lease and then nobody leads until it returns. This requires upgraded daemons; older releases cannot
 be retroactively made lease-aware. Conversations remain local; this peer endpoint grants leadership only.
 
-**Schedules.** The authority creates three enabled defaults on the lead's first schedule check: `board-refresh` (`0 * * * *`),
-`capacity-check` (`*/15 * * * *`), and `data-room-refresh` (`0 9 * * *`). An owner may manage at most 20 schedules.
+**Schedules.** The authority creates six enabled defaults on the lead's first schedule check: `board-refresh` (`0 * * * *`),
+`machine-onboarding` (`*/15 * * * *`), `project-sync` (`0 * * * *`), `capacity-check` (`*/15 * * * *`), `data-room-refresh`
+(`0 9 * * *`) and `project-reports` (`7 * * * *`: off the hour, so its turn does not queue behind the duties due at minute 0). A team whose schedule channel already exists and still has a built-in
+duty gets `project-reports` once, from the authority (never again after its owners created or removed one). An owner may
+manage at most 20 schedules.
 Each record carries `id`, `name`, a validated five-field cron in the lead machine's local time zone, a built-in
 template or free-form prompt, `enabled`, `created_by`, `last_run`, `next_run`, `last_result`, consecutive failures,
 `run_id`, optional last accepted progress time, and optional per-orchestrator capacity check times. Changes are signed `msg.post` records in the owner-only `talkie-schedules` channel. Older peers accept
@@ -1510,19 +1601,44 @@ The local unresolved list retains every run identity; owner status shows the fir
 `walkie talkie schedule unresolved [--limit N] [--after cursor]` expose pages of up to 100 identities in stable
 identity order. A page returns `next_cursor` when more entries remain; a cleared earlier entry does not shift later pages.
 An entry clears after its matching completion appears, the authority moves to a later run, or its schedule is removed,
-with one durable `#general` note for superseded entries. A count-only overflow written by an older version remains visible for manual review because
-those dropped identities cannot be reconstructed.
+with one durable `#general` note for superseded entries; a note that is waiting for `#general` or for its hour is posted by the
+scheduler's next 15-second tick, whether or not anyone reads the schedules and whether or not this machine holds the lease.
+A count-only overflow written by an older version remains visible for manual review because those dropped identities cannot be
+reconstructed, until an owner clears the count on that machine with `walkie talkie schedule unresolved --ack-legacy`
+(`POST /v1/orchestrator/schedules/unresolved/ack-legacy`, owner only, never from a phone, answer `{cleared}`; retained entries are untouched).
+A local agent of the owner can call it while agent admin is on (the call goes to the admin audit log and posts nothing to `#general`);
+with agent admin off it is refused and audited, and WalkieTalkie's own orchestrator is always refused.
 Each hard-failure append reconciles old entries and collapses repeated failures of the same run and claim identity,
 so the durable list does not depend on a status read to shrink.
-A captured completion stays in memory across lease loss and is retried if that machine reacquires the lease before a
-newer run supersedes it; a run without a captured result is abandoned.
+A completion's request carries the lead's copy of the schedule from when its run ended, and every retry sends that same
+copy, so a lost acknowledgement is recognized. The authority builds the recorded row from its own current schedule and
+refuses a completion only for a bad lease, claim, run or revision: an owner edit made since (a rename, a new task, a pause)
+neither blocks it nor travels with it, and a pause the owner made stays. Other progress puts may still not differ from the
+authority's management fields. A captured completion stays in memory across lease loss and is retried if that machine
+reacquires the lease; a run without a captured result is abandoned. On every tick, led or not, the lead checks its own
+copy of the log. A completion the authority recorded is finished (a lost acknowledgement stops the retries, and a pause is
+still announced once). A completion a newer run or a reset superseded becomes an unresolved run that the supersession note
+then reports, but only once the copy holds the authority's messages without a gap through the schedule's newest change:
+messages are stored out of order per sender, so a completion that is missing from the copy may be recorded in one that has
+not arrived, and until the copy is complete it stays held (on a machine that does not lead) or listed (an unresolved entry).
+A machine that leads, or becomes the lead, with a gap in its copy turns the held completion into an unresolved entry at once,
+so the schedule keeps running; reconciliation keeps the entry listed until the copy is complete. The `#general` note names
+the newest ten superseded runs by run id and counts the rest, and never carries a result, because every member reads
+`#general` and only owners may read schedule results. The results (a short excerpt per run) are posted once to the
+owner-only schedule channel next to that note, and the unresolved list shows the same excerpt. The superseded runs waiting
+for their note are stored under their own key, so an older build still reads the notes. While a completion is held, the
+owner's status says so; a completion held for an hour without the lead becomes an unresolved run (durable and listed). A schedule an owner removed drops its held
+completion without a note. An unresolved entry for a completion that paused the schedule carries the pause text, so the
+`#general` post goes out when its completion turns up recorded; a pause found recorded while `#general` is missing waits
+the same way as an unresolved entry, and the lead's tick posts it when the channel is back. Every tick also posts notes that
+waited for `#general` or for the authority's messages.
+An owner edit computes `next_run` after the slot that last started, and a refused claim repairs a `next_run` at or before
+that slot, so a lead whose clock was ahead cannot leave a schedule on a slot that already ran. Like the retry fix, both
+changes are made by the roster authority, so a team gets them once the authority runs this version.
 
-Current limits: a captured completion keeps its original management fields, so an owner edit before its first commit
-can make later attempts receive `forbidden`. A completion held on a machine that does not regain the lead may remain
-uncommitted, and a newer run can supersede it before it is committed. An owner edit made while a lead's clock is ahead
-can leave `next_run` on an already claimed slot until a later repair. A pause notification to `#general` is only sent
-after the lead observes a successful completion acknowledgement, so lost acknowledgements can leave a committed pause
-without that notification.
+Current limits: a held completion lives in memory for up to an hour, so a daemon restart in that time loses it, and one
+held that long no longer retries if its machine leads again. A pause made by a run that failed to start is written once,
+with no retry.
 
 A new authority refuses claims, defaults, reset, progress and management writes until its local store covers the previous authority's own origin stream
 through that origin's sequence in the signed transfer watermark (`wm`) and has filled readable schedule stubs from authority origins within their signed term windows.
@@ -1623,9 +1739,71 @@ times), `POST /v1/orchestrator/schedules`, `PATCH` and `DELETE /v1/orchestrator/
 `POST /v1/orchestrator/schedules/:id/reset`. Owners and their own agents pass the existing audited agent-admin
 gate for management. WalkieTalkie's reserved agent cannot change schedules, but its lease-fenced child can run one.
 The CLI exposes `walkie talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset`; the dashboard has matching
-list, add, pause/resume, and run controls. A board refresh first calls the existing steward for each active project
-with a lease check before its writes, then gives WalkieTalkie the results to summarize. The other built-in prompts
-use the Data Room, machine stats, seats, accounts, and `walkie ask` tools. Free-form prompts use its normal access.
+list, add, pause/resume, and run controls. `src/daemon/orchestrator/host.ts:prepareFor` maps Board refresh to
+card curation and Capacity check to the orchestration poll. Curation gathers steward evidence, calls the pure `planSteward`, reconciles recommendations,
+and returns a skip/result line without a model turn (`src/daemon/orchestrator/curation.ts:prepareCardCuration`). These
+preparations do not execute the suggested actions. Other built-in and free-form scheduled model turns use the
+scoped child guard in `src/daemon/local-routes.ts:refuseScheduledWrite`: reads, posts in an existing channel and
+recommendation creation remain allowed subject to route permissions; other local API writes are refused, during the
+turn and afterwards until that Claude child is replaced (the next message always gets a new child). Manually invoked
+steward operations and ordinary conversations retain their own permissions outside this scheduled-child guard.
+
+**Project status reports (PROJECT-REPORTS-1).** The `project-reports` duty writes a plain-English status report for the
+projects that have `status_report: hourly` (§10). Its prepare step runs on the lead's daemon: for each active project it
+can see with the switch on, it asks whether anything changed since that project's last report. Changed means this daemon
+RECEIVED, at or after the report's `as_of` on its own clock, a card op that changes a value a report would say (a move,
+a new title, body, labels, estimate, due date, assignee or reviewer, a block or unblock; not a reorder, an archive, or an
+edit that sets what the card already had) or a comment by a person or another agent (not WalkieTalkie's own), or an agent
+on the project by the Mission Control mapping whose state or activity line began after it; an origin's `ts` is not
+consulted (a machine with a wrong clock does not count twice, an offline machine's late work counts), except that events
+written more than 30 days before the report are history. Each candidate card is folded as it stands and as it stood without
+the events received since, and a changed value is news (so a repeated edit, a revert and a block-and-unblock are not). A
+recorded report time more than a minute later than the reading clock (or than its marker's arrival) is a wrong clock's and
+is ignored; with more than 40 candidate cards or 500 events the duty reports rather than skip. Cards labelled `confidential`, and their comments, are left out of every
+count, list and test. When nothing changed the run completes at once with `last_result` "No changes since the last
+report…" and no model turn. Otherwise at most 10 projects of one privacy class (owners-only projects and the team's never
+share a turn; never-attempted first, then the oldest successful or failed attempt) go into one turn as capped, redacted, defanged fact sheets
+fenced as untrusted text, with links, join codes and secrets removed. Each string is judged twice, as it is shown
+(compatibility forms such as fullwidth letters read as what they spell, a letter and its accent composed into one letter,
+controls and stray marks dropped) and by its bare letters (decomposed, then every accent and combining mark, control,
+format character and blank-looking character taken out: the Hangul fillers and any other default-ignorable character,
+the braille blank, the object replacement mark, private-use, unassigned and lone-surrogate code points), so an accent that
+composes with a letter of a code, a link or a key, or a filler between its characters, cannot keep it out of the checks
+while a model reads straight through it. What is said keeps its accents (`Café résumé` stays as written); only when a
+disguise is found in a string, or a find only one view meets in full, is that string said in its bare letters with the
+find taken out. The rest of the projects wait for the next hour and `last_result` says so.
+The turn asks for one `<status-report project="p-…">` block per project and is launched with no tools at all (its prepare
+step returns `tools: "none"`: the child gets `--tools=` and `--strict-mcp-config`, no `--mcp-config` or `--allowedTools`,
+and the `default` permission mode, and is not shared with a turn that has tools); the daemon does every write. It cleans each report (secrets redacted, card keys of the team's projects, links and join
+codes removed, each judged as written and by its bare letters, at most 4 000 characters; a week written "wk1" is respelled
+"wk-1" where the daemon's own join-code check would trip on it, and a code-like run after a `wk1`, however it is spaced
+or accented, voids the project's report) and delivers it: a `msg.post` in the project's channel as `orchestrator`
+carrying `status_report: {v: 1, as_of}` (the time its facts were gathered), the Data Room document `Status report` (a
+new version each time; `Status report (2)`, … once a file holds 90 of WalkieTalkie's versions or is pinned by a person),
+and the report time. Report times are a signed `walkie-talkie-project-reports:v1:{"reported":{"p-…": ms}}` marker in
+`talkie-schedules` (person-signed only), cached in the daemon's meta table. A project whose report could not be used three
+times in a row (no usable block, or its post refused) is paused on this daemon until it changes again (`last_result` says
+how many are paused, and how many this run paused), and projects rotate by their last attempt, including failed attempts, so a failure neither monopolizes nor loses retry turns
+when more are due than a turn takes. A run that delivers nothing it was asked for counts as a failure of the duty (three in
+a row pause it), except that a run that delivered at least one report, or whose only failures are tries that paused their
+project (the third in a row, or a woken project failing again), does not: those are the projects' own pauses. `GET
+/v1/projects/:channel/status-report` returns the setting and the newest report post written
+by an owner's WalkieTalkie (a post by any other author is not a report), split into its header line and the report.
+Older peers show the posts as ordinary messages and ignore the marker field.
+
+**The page block (PROJECT-PAGES-1).** A project's block may also hold one `<page>` with `<headline>` (at most 100
+characters), `<lede>` (420), `<live-now>` (up to 8 hyphen bullets of at most 180) and `<landing-next>` (up to 6), and,
+only when the fact sheet says the project's status page screens are out of date (none, or the newest older than 7 days),
+`<screens>` (140: one sentence that begins "Screens are out of date"). The fact sheet gains what was finished in the last
+14 days, the top of the to-do columns and `Status page screens: none yet | N, the newest added <time> [(out of date)]`
+(a card labelled `confidential` is in none of it). The daemon cuts the page out of the block (a page that never closes is
+dropped with everything after it), reads it in one bounded pass, cleans every string with the report's own rules and
+more (no link in any spelling, no markup, no join code: the string is dropped; a week written `wk1` respelled), and posts
+it beside the report as `status_page: {v: 1, headline, lede, live_now[], landing_next[], screens_note?}` in the same
+`msg.post`. A reply with no usable page posts the report exactly as before; a good page with no usable report text makes
+the report; `last_result` says how many pages could not be used. Fact and screen changes are not news, so they start no
+turn. A reader (the page route) cleans the story again whoever signed it and shows the newest usable one of the last five
+reports. Older peers ignore the field.
 
 Any authorized explicit stop (`POST /v1/orchestrator/stop`), including a non-TTY person or an owner's agent through admin, is sticky. Upgrade clears legacy stop flags unless they carry
 the pre.8 explicit-stop marker. A manual start still requires the exclusive lease;
@@ -1670,7 +1848,10 @@ reply in progress in that conversation and drops its queued messages; a daemon r
 state is kept in the history. Only messages go to the orchestrator: no files, asks or answers.
 
 **Messages.** A conversation is a thread: its id is the person's first message's id. The host keeps one Claude session
-per conversation (`--session-id` for a new one, `--resume` after that); a conversation whose session can't be resumed
+per conversation (`--session-id` for a new one, `--resume` after that). In full access a change of conversation is a restart
+of Claude (its login and shell user are prepared again first), and the Claude that restart launches is the one the message
+at the head of the queue needs: that conversation's own session resumed, or a fresh session when the message starts a
+conversation (a person's, or a scheduled run's), never the session that was running. A conversation whose session can't be resumed
 continues in a fresh session that is first given the earlier turns as context: only the person's messages that were
 `sent` and the orchestrator's replies, as a JSON array of `{role, text}` between markers carrying a random boundary, so
 no text in a reply can start a turn of its own. A reply lists the tools it used (at most 12, then `+N more`), is redacted like
@@ -1706,6 +1887,75 @@ lines (redacted) go out for the first 12 tools only, and a reply keeps 12 tool l
 reconnects reloads what was stored meanwhile (`since`: from the older of its newest message and its oldest queued
 one).
 
+### Talkie recommendations (TALKIE-OPS-1)
+
+The daemon records recommendations and serves the routes below. The CLI (`walkie talkie recs|approve|dismiss|recommend`:
+`src/cli/commands/talkie-recs.ts`, `src/client/index.ts`) and the dashboard panel (`web/src/api/client.ts`,
+`web/src/api/types.ts`, `web/src/views/orchestrator/Recommendations.tsx`) are their clients. The dashboard lists
+`status=all` and posts `{}` to encoded-ID approve/dismiss routes; its panel appears on the WalkieTalkie tab when no
+conversation is open (`web/src/views/orchestrator/Orchestrator.tsx`). The CLI list returns `{ recs }` in JSON, while
+the API below also returns `now`. See [the specification](plans/TALKIE-OPS-1.md) for how the duties plan.
+
+Records are signed `msg.post` events carrying strict version-1 `talkie_rec` create/resolve data
+(`src/protocol/talkie-recs.ts`). Actions are move-card, start-seat, ask-orchestrator, onboarding-step or create-card.
+An ask carries only `to`, `topic` and an optional `card` (or, for topic `setup`, a `machine` and a `step`: `seats_enable`,
+`seat_helper`, `runtime_login` or `update`), never text: the message an approval sends in the approver's name is
+`askMessage`'s fixed sentence for the topic (a setup step's own fixed sentence and the machine's name), the card's
+reference, the card's title as data on a line of its own (`Card REF: title`, with quote marks, Markdown and `@`
+neutralised, at most 80 characters; a confidential card's title is never repeated) and, for what the daemon
+recommended, its reason. An ask about a card is sent in the card's own channel, so only those who can see the card read
+it. A model-recorded recommendation's own words (its reason, note and evidence) are the create's optional
+`context` (at most 600 characters): shown quoted, never sent, posted or commented. A create whose ask has a `text`
+field is not a recommendation. A resolve carries its recommendation's `key`.
+Only an owner's `orchestrator` create counts; a person may resolve approved/dismissed and an owner's WalkieTalkie
+may supersede. The fold uses the earliest resolution by time then ID. Pending records expire at read time.
+Team records use the project channel; private-project, confidential-card and machine records use owners-only
+`talkie-schedules`. Older peers may display the ordinary post text. Historical posts are not retracted by later
+label changes.
+
+`orchestrator/rec-routes.ts` exposes these local routes (all refuse paired phones; a dashboard session reaches the list
+and the two answer routes, never the create):
+
+| Method/path | Request and response |
+|---|---|
+| `GET /v1/talkie/recs?status=open` | `open` is default: every open record, newest first, up to 200, and `more_open` counts the rest. `all` adds the answered and expired after them, newest first, up to 100, so history never pushes an open one out. `{ recs, now, more_open }`; each view includes `short`, `project_name`, `can_approve`, `can_dismiss`, optional `why_not`, `context`, and, for a pending one, `outgoing`: word for word what approving does in this machine's person's name (an ask's message, a new card's title, a setup step's command and machine, a seat's role, runtime, machine (its person, name and node id: names are not unique) and card with its title, chosen now), `null` when the card it is about is gone. A dashboard session sees a setup step with `can_approve: false`. |
+| `POST /v1/talkie/recs/:id/approve` | Person-only; strict `{ note?: string, seen?: string }` (note at most 200 characters). When the recommendation has an `outgoing`, `seen` must be exactly the text the person was shown: the daemon computes it again and answers 409 `rec_changed` if it differs (a card renamed, another machine chosen) or is missing. A setup step is refused to a dashboard session (403: it is approved at a terminal). Returns `{ rec, result }` after performing the action and recording approval. |
+| `POST /v1/talkie/recs/:id/dismiss` | Same person/body gates. Returns `{ rec }`; records dismissal. |
+| `POST /v1/talkie/recs` | WalkieTalkie identity only. Strict `RecommendInput` from `orchestrator/rec-input.ts`; create-card, ask (`to`, `topic`, `card?`, `note?`: no `text`) and onboarding only. The daemon writes the summary and a fixed reason; the model's `reason`, `note` and `evidence` become `context`. A new record returns 201 `{ id, short }`; repeats/suppression return 200, caps refuse. |
+
+`:id` accepts an eight-hex short ID or full event ID. An ambiguous short ID is 409; nonpending or expired records
+are 409 `rec_not_pending`. Observers cannot answer; owners-only records and setup require an owner. Permission
+flags reflect these coarse gates, while action routes independently check permissions under the approver's context.
+The scheduled-child guard allows reads, posts in an existing channel and recommendation creation; other local API
+writes (a new channel included, and `/v1/auth/logout` and `/v1/auth/rotate`, which are answered before routing) are
+403 `scheduled_turn_cannot_act` while that child's scheduled turn runs and afterwards until a new child replaces it:
+a child that answered a scheduled turn is never reused, so the next message gets a new child and token. It is not a
+guard on every actor.
+
+Approvals serialize per recommendation on one daemon, not across daemons, and while one runs no poll or curation run
+on that daemon retires, replaces or remakes a recommendation with its key. A seat's approval re-checks the card by the
+poll's rules (not blocked, confidential, assigned, labelled `decision-needed` or `waiting-on`, without a reviewer for
+a review, no agent working on it) and chooses the machine again from the fleet as it is then, among machines whose person can see the card's channel
+(a restricted project's card never reaches another person's machine): the recommended machine while it has a free seat
+and that runtime, else the roomiest that can take it, else 409 `no_free_seat`. The poll applies the same viewer rule. A seat
+recommendation is the same one whatever machine a later poll would pick. Action, evidence comment and signed
+resolve are separate writes. Retry checks use current target column, a visible nonterminal seat marker, a
+same-approver ask marker within a bounded 24-hour read, or an open normalized-title card. Setup has no such repeat
+check. Concurrent machines or retries after partial success can duplicate effects: there is no exactly-once
+execution guarantee. A deterministic folded resolution does not undo duplicate actions.
+
+Defaults: 24-hour expiry (72 for setup), 24-hour dismissal suppression, six-hour approval suppression;
+20 open per project/scope, 150 total, 25 new per reconcile run, 10 new per model turn. These checks use the local
+view. Reads cover seven days and at most 2,000 events per channel, cache for two seconds per core (local writes
+invalidate); the cooldowns are also read from the last day's person answers (each carries its key, which must be the key of the
+recommendation it answers, an owner's WalkieTalkie's create in the same channel), so they hold however many other records
+a channel sees and an answer cannot hold back another recommendation. `status=all` is bounded, not a complete audit export.
+
+The new poll default is `*/5 * * * *`; curation is `3,10,17,24,31,38,45,52 * * * *` (seven-minute steps,
+eleven minutes across the hour boundary). Both prepare in the daemon without model turns or executing their
+suggested actions. Capacity check and Board refresh use these same preparations at their own cadence.
+Schedule availability can delay execution. See the specification for seeding and curation budget limits.
+
 ## 10. Projects (WALKIE-PROJECTS-1, additive)
 
 Projects with native kanban boards. **No new event kind** (a daemon that doesn't know a kind would stall its
@@ -1721,7 +1971,7 @@ messages; this version folds them into boards. Schemas: `src/protocol/projects/s
   without it) + a root post
   `{board: {v: 1, op: "project", rev: 0, name ≤ 60, prefix [A-Z][A-Z0-9]{1,9}, folder? ≤ 40, description? ≤ 2000,
   paths? ≤ 20 [{path} | {repo}], meter? count|points, automations? {pr_opened, pr_merged, agents_can_close},
-  steward? on|off, steward_node? <node id or "">}}`. The
+  steward? on|off, steward_node? <node id or "">, status_report? hourly|off}}`. The
   prefix `p-` is reserved: a post never auto-creates such a channel (`409 unknown_channel`) and `POST /v1/channels`
   refuses it (`409`). Settings changes reply in the root's thread with `op: "project"` and the fields changed
   (`state` active|archived|deleted too).
@@ -1797,7 +2047,10 @@ messages; this version folds them into boards. Schemas: `src/protocol/projects/s
     board; a machine offline for longer doesn't hold moves back (until it upgrades it may show such a card unmoved).
     Other moves fold identically everywhere.
   - **Settings.** `steward: on|off` and `steward_node` are project settings fields (admins, people); a pre.6 schema
-    drops them and keeps the op's other fields.
+    drops them and keeps the op's other fields. So does `status_report: hourly|off` (PROJECT-REPORTS-1; default off; the
+    project's creator while a member and the team's owners, people only: an agent, an observer and another member are
+    refused with a reason, and a project root signed by an agent never carries it; fold 11 re-folds every project once at
+    startup).
   - **Git.** Read-only, fixed argv, full ref names only (a name starting with "-" is skipped), revisions after
     `--end-of-options`, no system/global config and the program-running settings off, one deadline per run, output and
     ref budgets; a scan that fails or is cut short (a failed reflog read included) leaves coverage unknown (no stale or
@@ -1912,7 +2165,9 @@ startup. Validity is unchanged (board ops are judged as posts; the person / agen
 | GET | `/v1/projects` | `{projects: ProjectView[], stubs: ProjectStub[]}` (`?all=1` adds deleted projects) |
 | POST | `/v1/projects` | a person or a named agent: `{name, prefix?, folder?, description?, private?, paths?, columns?, meter?, automations? (people only), board?}` → `{project}`; the channel is created through the authority (`409 channel_pending` while it is offline), `402` on Free past 1 project, `403` private by a non-owner |
 | GET | `/v1/projects/:channel` | `{project, cards, timeline}` (`?board=`, `?deleted=1`); `404` for a project this member can't see |
-| POST | `/v1/projects/:channel` | settings / `state` / `private` (admins, people only) → `{project}` |
+| POST | `/v1/projects/:channel` | settings / `state` / `private` / `status_report` (admins, people only) → `{project}` |
+| GET | `/v1/projects/:channel/status-report` | `{mode: hourly|off, report: {markdown, header, as_of, at, by} | null}`: the latest report WalkieTalkie posted in the channel |
+| GET | `/v1/projects/:channel/page` | the project's status page (PROJECT-PAGES-1; below, "Status page"); its facts and screens are written by `…/page/facts`, `…/page/screens` and `…/page/screens/remove` |
 | POST | `/v1/projects/:channel/boards` | a person or a named agent `{name, columns?}` → `{board}`; `402` past the included boards |
 | POST | `/v1/projects/:channel/boards/:board` | people only `{name?, columns?, state?}` → `{board}` (`:board` may be percent-encoded) |
 | GET | `/v1/projects/:channel/export` | people only, `?format=csv|json|ndjson` (NDJSON = every signed post as signed; CSV cells never start a formula) |
@@ -2011,6 +2266,51 @@ fetch them) and the card's attached files. They reach the model wrapped with the
 
 `GET /v1/tasks/:ref` adds `files` (the card's attached room files). `ProjectView.room` = `{files, pinned, bytes}` of the
 live files. SSE `board` deltas carry `room: true` when the room changed (refetch it).
+
+### Status page (PROJECT-PAGES-1, additive)
+
+A project whose hourly status report is on has a status page: a plain-English view for teammates who do not use the
+terminal. **No new event kind.** It is made of three things, all in the project's channel:
+
+1. **The story**: the `status_page` WalkieTalkie's report post carries (§9 "Project status reports"): headline, lede, what
+   is live, what lands next.
+2. **Facts**: signed **page ops**, board ops `{board: {v: 1, op: "page", rev, after?, fact?: {label, value | null}}}` in the
+   thread of the project root (`thread` = the root's id), with readable text (`Status page: "Live build" set to "ddee2f0bca"`).
+   `label` 1 to 24 and `value` 1 to 60 characters of plain text on one line (no control, format, direction-changing or
+   line-separating character); `value: null` removes the label. Schema `PageOp`, fold `foldPage` (`src/protocol/projects/
+   page.ts`, pure): the ops are ranked and applied exactly as the project's settings ops are (§10 "Convergence": ranks from
+   the parent chain, then origin and seq; `after` names the newest accepted page op, the project root when there is none,
+   never a settings op), one register per label compared ignoring case, spacing and compatibility forms, last writer wins,
+   and the newest spelling shows. An op by a member or owner counts, a person's or their agent's (`not_member` otherwise:
+   an observer, a removed member, a stranger); a label not there yet needs one of six places (`fact_limit`). A label keeps its
+   place when set again and goes last when removed and set again. It is a board op (`isBoardOp`), so its hidden rows are
+   bounded like every other board op; it never touches the project's settings or a card, and the index does not re-fold
+   either for it. `BOARD_OPS_CLASS` is 3 (every stored `p-` post is classified once more at the first start); VALIDITY and
+   FOLD versions are unchanged. An older daemon shows the op's text as a channel message and folds nothing.
+3. **Screens**: Data Room files (above) whose root or a later room op carries `screen: {title 1 to 60, group 1 to 40,
+   status works | partial | empty | not-built, about 1 to 300, route? 1 to 120 (starts with `/` or `#/`, printable ASCII,
+   no spaces), note? 1 to 200, w?, h?}` or `screen: null` (off the page; the file stays in the room). The register is
+   last-writer-wins in fold order like the file's other fields, written by anyone who can post (a person or their named
+   agent: it changes what the page shows, never the file); a value this build cannot read leaves the register as it was and
+   costs the op nothing else. A screen's identity is its group and title compared as labels are; the file shown for one is the
+   newest by the current version's time, and a screen added again is a new version of that file. The page lists active
+   screen files whose current version is `image/png`, `image/jpeg` or `image/webp` of 1 byte to 8 MB, grouped in the order
+   each group's first screen was added and listed in the order added (event ids compare by origin, then sequence as a
+   number), at most 120 screens in 12 groups, the earliest first. An older daemon drops the field and shows an ordinary
+   image file.
+
+Local API (dashboard sessions reach the read only; a write by an agent must name it, `403 agent_unnamed`):
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/projects/:channel/page` | `{mode, state, generated_at, updated_at, reports_since, story, facts: {computed, set[]}, screens: {total, newest_at, groups[{id, name, screens[]}]}}`; `reports_since` = when the hourly report was switched on (null when off); `story` carries `counts` `{blocked, in_progress, in_review}` (what the summary was written against; absent from an older post) and its `at` is the earlier of the lead's stamp and this daemon's receipt; no time is later than `generated_at`; every fact and screen text is read through the write-time checks again (a screen's route shows its path alone); visible exactly as the project is (`404` for one this member can't see). With the report off: the setting, the facts and the screens (an agent can prepare them) and no story and no counts. `computed` = `{done_day, done_week, in_progress, in_review, blocked, agents_working, agent_machines, last_change}` from the project's cards that are not labelled `confidential` and from the Mission Control mapping of its agents |
+| POST | `/v1/projects/:channel/page/facts` | `{label, value}` or `{label, remove: true}` → `{facts, unchanged}`; a member or their named agent, an observer is `403`; setting what is there signs nothing; the seventh label `409 fact_limit`; a link, a join code (`400`) or a secret (`409 secret_detected`) in a label or value is refused |
+| POST | `/v1/projects/:channel/page/screens` | the image's bytes (at most 8 MB, `413`) with its details in `X-Walkie-Screen` (URI-encoded JSON `{title, group, status, about, route?, note?}`) → `{screen, created, version, unchanged}`; the type and size are read from the bytes (PNG, JPEG, WebP; at most 12 000 pixels a side and 25 million pixels; SVG and anything else `400`); stored through the Data Room (its limits apply; the file is named for its group and title); `409 screen_limit` / `group_limit` |
+| POST | `/v1/projects/:channel/page/screens/remove` | `{group, title}` → `{removed}` (files taken off the page; they stay in the room) |
+
+SSE `board` deltas carry `page: true` when a fact changed or a report was posted (a screen sends `room: true`): an open page
+looks again. The CLI is `walkie projects fact <project> [<label> <value…> | <label> --remove]` and `walkie projects screen
+<project> [<image> --title --group --status --about [--route] [--note] | --remove --group --title]`.
 
 Every text field (titles, descriptions, labels, comments, block reasons, project names, Data Room file names) is redacted with the post
 redactor before it is signed (config `redact`). Card text reaching a model (MCP `walkie_tasks` / `walkie_task`, the CLI
@@ -2126,7 +2426,7 @@ never put on argv or through a shell, and nothing in it is interpreted by Walkie
 `seats-<this node>`; the channel is fit; seats are allowed here; the author is an allowed launcher **right now**
 (above), signed by an admitted, non-observer machine of the author's own login (`author.node == origin`); **the host
 itself** is an admitted, non-observer member right now (a demoted host judges nothing and answers nothing, and checks
-again just before it spawns a seat); it is at
+again just before it spawns a seat, and before a borrowed account's login is requested); it is at
 most 10 minutes old when it arrives and dated at most **2 minutes ahead** of the host's clock (`future`); the runtime
 is allowed here. Then the **caps**: fewer than the host's `max` seats run on this machine (whoever launched them),
 the launcher already runs fewer than its `max_concurrent` here (so at most `min(max_concurrent, max)`), and at most
@@ -2302,13 +2602,19 @@ permission.
 `walkie seats setup-user [--apply] [--accept-readable-home]` (the person, with their own sudo) makes the seats' group
 `walkie-seats` (macOS: a free gid 590000–599999; Linux `groupadd --system`), a root-owned `/usr/local/libexec/walkie`
 with root-owned copies of walkie as `walkie-seat-runner` and `walkie-seat-admin` and of the person's native runtime
-binaries in `runtimes/` (a script, like an npm `codex`, is listed for manual install), and one sudoers file, checked
-with `visudo -c` before and after it is installed:
+binaries in `runtimes/` (a script, like an npm install, can't be copied: the output says to install Claude Code's
+standalone build, or to use `--codex-release` for Codex, and to run `seats setup-user --apply` again), and one sudoers
+file, checked with `visudo -c` before and after it is installed:
 
     <daemon user> ALL=(%walkie-seats) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-runner seat-runner
     <daemon user> ALL=(root) NOPASSWD: /usr/local/libexec/walkie/walkie-seat-admin seat-admin create *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin destroy *, /usr/local/libexec/walkie/walkie-seat-admin seat-admin pending
 
-(the helper refuses every argument but one integer, and `pending` alone). It also writes `seat-roots.json` (root's,
+(the helper refuses every argument but one integer, and `pending` alone). The file also has two `Defaults!<runner or
+helper> !requiretty` lines for the original sudo; sudo-rs has no `requiretty` setting and refuses them, so for a
+machine whose `sudo --version` says sudo-rs they are left out (an unrecognized sudo gets them, and only the error
+`unknown setting: 'requiretty'` writes the rules again without them). A sudo-rs before 0.2.13 reads the `*` that ends
+a helper rule as a plain character and is refused at setup; after the rules are installed `sudo -k -n <helper>
+seat-admin create 0` must answer (the helper refuses 0 as an id and makes nothing). It also writes `seat-roots.json` (root's,
 `0644`) next to the helper: the world-writable directories it found at most two levels below the system's usual
 parents (e.g. `/private/var/db/DiagnosticsReporter`), outside what every sweep covers; re-running `--apply` refreshes
 it. It keeps `~/.walkie` `0700`, checks the runner's and helper's
@@ -2324,12 +2630,22 @@ a `bunfig.toml`, `.env`, `tsconfig.json` or `package.json`: Opus r6 LOW 3) and s
 
 - stdin: one JSON line (at most 1 MiB; a longer line is refused before it is read) `{ rv: 6, dir_name, bin, args
   ("{cwd}" = the working directory), env, token, socket, bundle_len, prompt_len, probe_permission_prompts?,
-  claude_credentials? }`, then the bundle's bytes, then the prompt's, then control lines (at most 64 bytes) `term`,
-  `kill`, `abort`. stdin's end, or a line over its limit, makes the runner SIGKILL the runtime's group;
+  claude_credentials?, codex_auth?, gate? }`, then the bundle's bytes, then the prompt's, then control lines (at most
+  64 bytes; 192 KiB for a gated run) `term`, `kill`, `abort`, `go <login JSON>`. stdin's end, or a line over its limit,
+  makes the runner SIGKILL the runtime's group;
+- **gated** (`gate: true`, which this daemon always sends; Codex pre.12 audit MUST 1): the spec carries no login (no
+  `claude_credentials`, `codex_auth` or `CLAUDE_CODE_OAUTH_TOKEN`; a gated spec with one is refused). Once the run is
+  prepared (directory, clone, branch, brief, the `--help` probe) the runner answers `r {"prepared": true}` and waits.
+  The daemon judges the launcher and the account once more and, with nothing awaited, sends `go {env?:
+  {CLAUDE_CODE_OAUTH_TOKEN}, claude_credentials?, codex_auth?}` (no other key or variable; each part at most 64 KiB),
+  or `abort`. Only then does the runner write the login (0600, in the run's fresh roots) and start the runtime. A
+  malformed `go`, an `abort` or stdin's end while it waits ends the run with `stopped`, nothing started. A runner that
+  answers `ready` without `prepared` to a gated spec (an older installed copy: it got no login) is killed;
 - the runner makes `~/walkie-seats/<dir_name>` (0700), writes the token file, a fresh `CLAUDE_CONFIG_DIR` (with
-  Walkie's `settings.json`, `{"disableAllHooks": true}`, and the machine's Claude login when it is handed over) and
-  `CODEX_HOME`, clones the bundle, asks the runtime `--help` (as this user) whether it knows `--permission-prompts`,
-  runs the runtime in its own group, and answers `o <runtime stdout line>` or `r {ready | exit | outcome | error}`.
+  Walkie's `settings.json`, `{"disableAllHooks": true}`) and `CODEX_HOME`, clones the bundle, asks the runtime `--help`
+  (as this user) whether it knows `--permission-prompts`, puts the login in place (an ungated spec's at the start; a
+  gated run's only when `go` arrives, after the clone and the probe), runs the runtime in its own group, and answers
+  `o <runtime stdout line>` or `r {prepared | ready | exit | outcome | error}`.
   When the runtime exits its group is reaped at once while its output drains for at most 2 s. The post-run git runs
   in the runner, as the seat user, its scratch inside the run's own directory. The runner makes itself non-dumpable
   on Linux (`PR_SET_DUMPABLE 0`, best effort).
@@ -2553,14 +2869,25 @@ across peers and daemon restarts.
   AND with the seat's launcher (or launched by its owner), or (COMPANY POOL, pre.8) while the team's pool is on, a
   login its holder pooled (not personal) when this machine's person and the launcher are each an owner or member;
   per one online holder that allows both and is the one leased from. The owner's machine checks again,
-  `vault_sharing`, the pool and its 10 % reserve included, before it hands out the login (§ACCOUNTS-2). A Codex login
+  `vault_sharing`, the pool and its 10 % reserve included, before it hands out the login (§ACCOUNTS-2). The seat host
+  checks that the launcher may still start the seat, and that this machine may still use the account, before it asks.
+  It keeps the reply in memory and checks both again before it writes a lease home or builds the seat's environment.
+  If that standing is lost, or the account is no longer one this machine may use, the seat is refused: a hand-out that
+  already came back is spent, nothing is written, and no process is given the login (the runtime's help probe included;
+  that probe runs with the host environment and no borrowed credential). If the only problem is the seats channel being
+  narrowed, or a launcher entry that matches two machines, the login is dropped (a lease home already written is
+  deleted) and the seat waits; when that clears it asks for a new hand-out, and the earlier one is spent. The same two
+  checks run once more immediately before the process starts. A Codex login
   from another machine is leased as an access-only copy (`/peer/v1/vault/lease`): a seat user's runner gets it as its
   auth.json, a same-user seat a leased `CODEX_HOME` of its own, deleted when the seat ends. Kimi logins aren't vault
   accounts. Otherwise `refused` with reason `account_not_usable: …`, before anything runs. The token lives in that
   run's environment only; a router lease (`agent: seat-<id>`) counts while it runs. Borrowing requires a reserve
   reading at most one hour old. During a run, stale or unknown usage triggers a lender refresh through
   `POST /peer/v1/vault/usage` (bound to that borrower's current account grant, rate-limited, and subject to the
-  provider poller's throttle/backoff). Only a fresh reading at or below 10% stops the seat; refresh failure does not.
+  provider poller's throttle/backoff). A fresh reading at or below 10% stops the seat at once; three checks in a row
+  that cannot establish the reserve (no current grant, a failed refresh, a reading still stale) stop it too. A
+  throttled refresh (429) is asked again at the next check; after ten throttled checks since the last fresh reading
+  each further one counts as a failed check, so at most 13 checks pass without a fresh reading.
   Authorized own/shared Codex demand renews even when the pool is off or the login is personal; scheduled pool
   renewal still requires the pool on and a non-personal login. Both share serialization, expiry and retry guards.
 - **Result file.** A relative path; after the run (done, failed, timeout, stopped by its launcher or by this

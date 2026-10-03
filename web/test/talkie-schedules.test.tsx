@@ -24,7 +24,7 @@ describe("WalkieTalkie schedule list", () => {
       .toContain("schedule authority unreachable");
   });
   test("shows every default by plain name and offers its template", () => {
-    const names = ["Board refresh", "Machine onboarding", "Project sync", "Capacity check", "Data room refresh"];
+    const names = ["Board refresh", "Machine onboarding", "Project sync", "Capacity check", "Data room refresh", "Project status reports", "Orchestration poll", "Card curation"];
     const html = renderToStaticMarkup(<ScheduleItems schedules={names.map((name, i) => ({ ...schedule, id: String(i), name }))}
       onToggle={() => {}} onRun={() => {}} />);
     const panel = renderToStaticMarkup(<SchedulesPanel />);

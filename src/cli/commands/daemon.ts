@@ -45,19 +45,83 @@ async function start(ctx: Ctx): Promise<number> {
   return EXIT.error;
 }
 
-async function stop(ctx: Ctx): Promise<number> {
+/**
+ * How long `walkie daemon stop` waits for the daemon to exit after SIGTERM. The daemon shuts down in bounded steps (stop() in
+ * src/daemon/main.ts): the orchestrator's halt comes first (up to 2 s), then running seats get up to 14 s
+ * (src/daemon/seats/host.ts close()), then the rest of the teardown. It keeps answering on its socket until its listeners close,
+ * which is after the seats, so a shorter wait gave up on a shutdown that was still going, and an immediate `walkie daemon start`
+ * then found that dying daemon "already running".
+ */
+export const STOP_WAIT_MS = 30_000;
+
+/** How far into the wait `walkie daemon stop` says what it is waiting for (running seats), if it is still waiting. */
+export const STOP_NOTICE_AFTER_MS = 3_000;
+
+/** The clock and the process calls `stop` makes; tests substitute a clock of their own and a daemon that leaves when they say. */
+export interface StopSys {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  alive(pid: number): boolean;
+  /** Asks the daemon to shut down (SIGTERM). */
+  terminate(pid: number): void;
+}
+
+const realSys: StopSys = {
+  now: () => Date.now(),
+  sleep: (ms) => Bun.sleep(ms),
+  alive,
+  terminate(pid) { process.kill(pid, "SIGTERM"); },
+};
+
+/** What `stop` reads from outside itself; tests substitute each. */
+export interface StopDeps {
+  /** How long to wait for the daemon to exit after SIGTERM (default STOP_WAIT_MS). */
+  waitMs?: number;
+  /** How far into the wait to say what it is waiting for, when that is running seats (default STOP_NOTICE_AFTER_MS). */
+  noticeAfterMs?: number;
+  /** How many seats run here now, or null when the daemon can't say (default: asks the daemon). */
+  runningSeats?: () => Promise<number | null>;
+  /** The clock and process calls (default: the real ones). */
+  sys?: Partial<StopSys>;
+}
+
+/** Seats running on this machine, or null when the daemon can't say (not answering, an older one): a hint for the person, never a condition. */
+async function runningSeats(): Promise<number | null> {
+  try {
+    const running = (await new WalkieClient({ timeoutMs: 1_000 }).seats()).local.running;
+    return typeof running === "number" ? running : null;
+  } catch {
+    return null; // optional information: a daemon that is already closing its socket, or an older one, just doesn't give it
+  }
+}
+
+/** SIGTERM once (never again: a second one would cut the daemon's own shutdown short), then wait for the pid to go. */
+export async function stop(ctx: Ctx, deps: StopDeps = {}): Promise<number> {
+  const sys: StopSys = { ...realSys, ...deps.sys };
+  const waitMs = deps.waitMs ?? STOP_WAIT_MS;
+  const noticeAfterMs = deps.noticeAfterMs ?? STOP_NOTICE_AFTER_MS;
+  const seatCount = deps.runningSeats ?? runningSeats;
   const paths = pathsFor(defaultHome());
   const pid = readPid(paths.pid);
-  if (!pid || !alive(pid)) {
+  if (!pid || !sys.alive(pid)) {
     ctx.out((await up()).ok ? c.yellow("daemon is running but has no pid file (managed by launchd/systemd?)") : "daemon not running");
     return EXIT.ok;
   }
-  process.kill(pid, "SIGTERM");
-  for (let i = 0; i < 100; i++) {
-    await Bun.sleep(100);
-    if (!alive(pid)) { ctx.out(c.green("daemon stopped")); return EXIT.ok; }
+  sys.terminate(pid);
+  const started = sys.now();
+  let asked = false;
+  for (;;) {
+    await sys.sleep(100);
+    if (!sys.alive(pid)) { ctx.out(c.green("daemon stopped")); return EXIT.ok; }
+    const waited = sys.now() - started;
+    if (waited >= waitMs) break;
+    if (!asked && waited >= noticeAfterMs) {
+      asked = true; // once: a slow shutdown is told what it waits for, a quick one never asks
+      const seats = await seatCount();
+      if (seats !== null && seats > 0) ctx.out(`waiting for ${seats} running seat${seats === 1 ? "" : "s"} to finish before the daemon exits (up to ${waitMs / 1000} s)…`);
+    }
   }
-  ctx.err(c.red(`daemon (pid ${pid}) did not exit within 10s`));
+  ctx.err(c.red(`daemon (pid ${pid}) did not exit within ${waitMs / 1000}s`));
   return EXIT.error;
 }
 

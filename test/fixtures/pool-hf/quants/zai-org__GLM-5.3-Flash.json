@@ -1,0 +1,27 @@
+[
+ {
+  "_id": "6a8ef65b58482bb8b9d2a681",
+  "id": "unsloth/GLM-5.3-Flash-GGUF",
+  "downloads": 988928
+ },
+ {
+  "_id": "6a954c3292de0e20d7c5bc1c",
+  "id": "orcarouter/GLM-5.3-Flash-Uncensored-GGUF",
+  "downloads": 29031
+ },
+ {
+  "_id": "6aa684a93eaa602a16ca209d",
+  "id": "pfeifferj/GLM-5.3-Flash-GSQ-RCO-GGUF",
+  "downloads": 24744
+ },
+ {
+  "_id": "6a8efb53225d22c0ee118201",
+  "id": "aj9o9/GLM-5.3-Flash-GGUF",
+  "downloads": 19982
+ },
+ {
+  "_id": "6a93c95a9035091511e779db",
+  "id": "patrickbdevaney/GLM-5.3-Flash-REAP50-GGUF",
+  "downloads": 8517
+ }
+]

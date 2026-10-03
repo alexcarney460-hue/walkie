@@ -1,0 +1,87 @@
+{
+ "_id": "6a110d5abf07261a989071d8",
+ "id": "stepfun-ai/Step-3.7-Flash",
+ "downloads": 24523,
+ "likes": 459,
+ "gated": false,
+ "pipeline_tag": "image-text-to-text",
+ "sha": "5f6244077ac62e04eec3f320501ff8c2b293373a",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "step3p7",
+  "image-text-to-text",
+  "vision-language",
+  "multimodal",
+  "moe",
+  "conversational",
+  "custom_code",
+  "en",
+  "license:apache-2.0",
+  "eval-results",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/terminal-bench-2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 59.5,
+    "date": "2026-06-03",
+    "source": {
+     "url": "https://huggingface.co/stepfun-ai/Step-3.7-Flash",
+     "name": "Model Card"
+    }
+   },
+   "pullRequest": 16
+  },
+  {
+   "filename": ".eval_results/swe_bench_pro.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 56.3,
+    "date": "2026-05-23",
+    "source": {
+     "url": "https://huggingface.co/stepfun-ai/Step-3.7-Flash",
+     "name": "Model Card"
+    }
+   },
+   "pullRequest": 4
+  },
+  {
+   "filename": ".eval_results/hle_with_tools.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 48.1,
+    "date": "2026-05-23",
+    "source": {
+     "url": "https://huggingface.co/stepfun-ai/Step-3.7-Flash",
+     "name": "Model Card"
+    },
+    "notes": "With tools"
+   },
+   "pullRequest": 3
+  }
+ ],
+ "createdAt": "2026-05-23T02:13:46.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 201365304064,
+   "F32": 12096
+  },
+  "total": 201365316160
+ }
+}

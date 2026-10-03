@@ -1,0 +1,128 @@
+{
+ "_id": "6a8ef65b58482bb8b9d2a681",
+ "id": "unsloth/GLM-5.3-Flash-GGUF",
+ "sha": "621d456e93e926e4b52f85cff5f634358c1828f9",
+ "downloads": 988928,
+ "siblings": [
+  {
+   "rfilename": "BF16/GLM-5.3-Flash-BF16-00001-of-00014.gguf",
+   "blobId": "115fe5ae99b348591d8b4deb2865a825134c598a",
+   "size": 9429632,
+   "lfs": {
+    "sha256": "a5cd1a7a1f4d2997403578df1700519b5b0c490a78bb7cc4f2579311bfe9c731",
+    "size": 9429632,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "BF16/GLM-5.3-Flash-BF16-00002-of-00014.gguf",
+   "blobId": "9abffc6d87034790783db2a2099be70ba570a6e9",
+   "size": 48155668736,
+   "lfs": {
+    "sha256": "9cc585be519911723528aee146812057663d062eac6d7bae6e06cdaec6e989aa",
+    "size": 48155668736,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/GLM-5.3-Flash-BF16-00003-of-00014.gguf",
+   "blobId": "e2afaf9393d8e157b8b8218bb595188144bbaae5",
+   "size": 49289812544,
+   "lfs": {
+    "sha256": "2e2042b9ced18a23ea1debba8d77a16f654459260aa979911750e5ac069cf002",
+    "size": 49289812544,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "BF16/GLM-5.3-Flash-BF16-00004-of-00014.gguf",
+   "blobId": "b5133f96861cc50e4e053c8f645e1e27db4e146e",
+   "size": 49315393792,
+   "lfs": {
+    "sha256": "9ee483074b94e2a2a36205f01bb681a0537c7a44baf52e6fba32ec82e3fe1ac8",
+    "size": 49315393792,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00001-of-00008.gguf",
+   "blobId": "9ffa23adba4e255d6d4dfe6d7ef9cba77582f6b3",
+   "size": 9429888,
+   "lfs": {
+    "sha256": "0b21d951c7d14562c479c6a7342c71166d222b21ac2e9c1e32b529a9e017a2df",
+    "size": 9429888,
+    "pointerSize": 132
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00002-of-00008.gguf",
+   "blobId": "1c61a017268434428ea73294a4942f11cd0f593e",
+   "size": 49665857344,
+   "lfs": {
+    "sha256": "8aabbbc0a92c551894f62a0737b433c9fad60a94baaa61e669f96329bb1d88a6",
+    "size": 49665857344,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00003-of-00008.gguf",
+   "blobId": "e731af9037c122e122530888da23d03cfc0defea",
+   "size": 49822821280,
+   "lfs": {
+    "sha256": "7b50941b404fed3413be4e0ca52af43e79113e4b3e2c940d1f4cdf74e95ebb39",
+    "size": 49822821280,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00004-of-00008.gguf",
+   "blobId": "96ae91e6a38b31b83e99d33042f85fbb8ecce22c",
+   "size": 49849652064,
+   "lfs": {
+    "sha256": "ff27fb4536d524cae687c4fb88dfa1b43a8ee0b4256e55304f95dc1aa38e8b81",
+    "size": 49849652064,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00005-of-00008.gguf",
+   "blobId": "04490d128948837f3e44d2d5444bfd844f71ee97",
+   "size": 49974608352,
+   "lfs": {
+    "sha256": "c088636854c5da312e44a7be4195cd765dd9eb6339d7b014d1da4192851a9b5b",
+    "size": 49974608352,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00006-of-00008.gguf",
+   "blobId": "71e30498e2b93bf274f569def491ed33e118662c",
+   "size": 49840638624,
+   "lfs": {
+    "sha256": "4bece55cb9e98720f3ef2e1e9683983aeced77434dbcd54584c0b7c80a2e95cb",
+    "size": 49840638624,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00007-of-00008.gguf",
+   "blobId": "973cef8211f66c21567b5ee4bf9d52264cfae937",
+   "size": 49831834720,
+   "lfs": {
+    "sha256": "a9f792204b0b58155e6092f9a4160a0659fcdc98a1c126e563ecc3cd02ad68ad",
+    "size": 49831834720,
+    "pointerSize": 136
+   }
+  },
+  {
+   "rfilename": "Q8_0/GLM-5.3-Flash-Q8_0-00008-of-00008.gguf",
+   "blobId": "c1cf618d9832bc06a0e76e47af94743b74d33309",
+   "size": 41987123840,
+   "lfs": {
+    "sha256": "a6cb6887c0047653f08c0ab6e564972451d9511322202970f7052e36052aefd6",
+    "size": 41987123840,
+    "pointerSize": 136
+   }
+  }
+ ]
+}

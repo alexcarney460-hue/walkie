@@ -4,6 +4,7 @@ import { DEFAULT_COLUMNS, type BoardView, type CardView, type Meter, type Projec
 import { keyBetween } from "../../src/protocol/projects/position.ts";
 import { cardRef, shortId } from "../../src/protocol/projects/short.ts";
 import { MockRoom } from "./room.ts";
+import type { StatusReportMode, StatusReportPayload } from "../../src/protocol/projects/status-report-setting.ts";
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -24,6 +25,8 @@ export class MockProjects {
   private readonly cards: CardView[] = [];
   private readonly comments = new Map<string, TimelineEntry[]>();
   private readonly room: MockRoom;
+  /** The project's hourly status report setting (PROJECT-REPORTS-1), switched by POST /v1/projects/:channel. */
+  private report: StatusReportMode = "off";
 
   constructor() {
     const seed: Array<[string, string, string | null, string[]]> = [
@@ -49,7 +52,7 @@ export class MockProjects {
     return {
       channel: CH, id: "a1b2c3d4e5f60718:901", name: "Website relaunch", folder: "Harbor", description: "New marketing site", prefix: "WEB",
       paths: [{ path: "~/work/site" }], meter_mode: "count", automations: { pr_opened: true, pr_merged: false, agents_can_close: true },
-      state: "active", private: false, admins: ["maren"], creator: "maren", steward: "on", steward_node: "a1b2c3d4e5f60718", created_at: NOW - 3_600_000, boards: [board], meter: board.meter,
+      state: "active", private: false, admins: ["maren"], creator: "maren", steward: "on", steward_node: "a1b2c3d4e5f60718", status_report: this.report, created_at: NOW - 3_600_000, boards: [board], meter: board.meter,
       cards: this.cards.filter((c) => c.state !== "deleted").length, last_activity: Math.max(...this.cards.map((c) => c.updated_at)),
       room: this.room.summary(),
     };
@@ -64,6 +67,24 @@ export class MockProjects {
     if (path === "/v1/projects" && m === "GET") return json({ projects: [this.project()], stubs: [] });
     if (path === "/v1/projects" && m === "POST") return fail(402, "plan_limit", "the mock has one project");
     if (path === `/v1/projects/${CH}` && m === "GET") return json({ project: this.project(), cards: this.cards.filter((c) => c.state !== "deleted"), timeline: [] });
+    if (path === `/v1/projects/${CH}` && m === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { status_report?: StatusReportMode };
+      if (b.status_report === "hourly" || b.status_report === "off") this.report = b.status_report;
+      return json({ project: this.project() });
+    }
+    if (path === `/v1/projects/${CH}/status-report` && m === "GET") {
+      const at = NOW - 20 * MIN;
+      const payload: StatusReportPayload = {
+        mode: this.report,
+        report: { header: "**Status report · Website relaunch · as of now**", as_of: at, at: at + MIN, by: { handle: "maren", agent: "orchestrator" }, markdown: [
+          "**On track:** the pricing page copy is in review and the hero video is half done.", "",
+          "## Done since the last report", "- Cookie banner is live.", "",
+          "## In progress (and who is on it)", "- Hero section with the product video (an agent for Maren).", "- Signup email verification.", "",
+          "## Blocked or waiting on a decision", "- Signup email verification waits on the mail vendor.", "",
+          "## Next", "- Publish the pricing page once the copy review ends."].join("\n") },
+      };
+      return json(payload);
+    }
     const room = await this.room.handle(req, path, (ref) => this.find(ref)?.id ?? null, json, fail);
     if (room) return room;
     if (path === "/v1/tasks" && m === "POST") {

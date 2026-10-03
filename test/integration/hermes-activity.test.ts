@@ -1,6 +1,7 @@
 // Hermes privacy by default over real daemons: a hook's status reaches a teammate with its state only, unless the machine's config.json
 // lists the profile in `hermes_activity_profiles`. The daemon's discovery, wired the way main.ts wires it, follows the same list, and a
-// change of the file applies without a restart.
+// change of the file applies without a restart. A machine with agent discovery off (a Windows daemon, or "discover_agents": false) follows the
+// same list through the daemon's own scrub timer, which runs at start and every pass whether or not discovery does.
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -78,4 +79,45 @@ test("a listed profile shows its activity to a teammate and no other does; disco
   await hook("research", "r2");
   await Bun.sleep(150);
   expect((await seen("hermes-research"))?.status).not.toHaveProperty("activity");
+}, 60_000);
+
+/** alex runs no discovery (the cluster builds none, and his config says "discover_agents": false) and a scrub timer set to `scrubMs`; kira is a teammate. */
+async function teamWithoutDiscovery(name: string, scrubMs: number) {
+  const alex = await c.add({ name: `${name}-alex`, login: `${name}-alex@example.com`, hermesScrub: { intervalMs: scrubMs } });
+  const kira = await c.add({ name: `${name}-kira`, login: `${name}-kira@example.com` });
+  setConfig(alex, { discover_agents: false, share_activity: true, hermes_activity_profiles: ["research"] });
+  await alex.client().init("acme", "alex");
+  await alex.client().invite(`${name}-kira@example.com`, "kira", "member");
+  expect((await kira.client().join(alex.peerAddr)).admitted).toBe(true);
+  const seen = async (agent: string) => (await kira.client().agents()).agents.find((a) => a.agent === agent);
+  let sequence = 0;
+  // a session at its prompt: it ended its turn, and hooks no more
+  const hook = (profile: string, session: string) => alex.client(`hermes-${profile}`).hermesStatus({ profile, session: hex(session), at: Date.now(), sequence: ++sequence,
+    state: "idle", fallback: "idle", activity: "Finished turn", source: "phrase" });
+  return { alex, kira, seen, hook };
+}
+
+test("with agent discovery off, a profile taken off the list loses its line within a scrub pass: nothing else would ever take it off", async () => {
+  const { alex, seen, hook } = await teamWithoutDiscovery("scrub-timer", 50);
+  await hook("research", "r");
+  const shown = await waitFor(async () => { const a = await seen("hermes-research"); return a?.status.activity ? a : undefined; }, { what: "the listed profile's line on kira" });
+  expect(shown.status).toMatchObject({ state: "idle", runtime_name: "hermes", activity: "Finished turn" });
+  await Bun.sleep(150); // passes while it is listed leave it alone
+  expect((await seen("hermes-research"))?.status.activity).toBe("Finished turn");
+
+  setConfig(alex, { hermes_activity_profiles: [] }); // the person takes it off the list; no hook follows, as the session sits at its prompt
+  await waitFor(async () => { const a = await seen("hermes-research"); return a && a.status.activity === undefined ? a : undefined; }, { what: "the line gone on kira" });
+  expect((await seen("hermes-research"))?.status).toMatchObject({ state: "idle", runtime: "other", runtime_name: "hermes" });
+  expect(JSON.parse(alex.d.core.store.agent(alex.d.nodeId, "hermes-research")!.body)).not.toHaveProperty("activity");
+}, 60_000);
+
+test("with agent discovery off, a restart scrubs what changed while the daemon was down, before any interval has passed", async () => {
+  const { alex, seen, hook } = await teamWithoutDiscovery("scrub-start", 3_600_000); // the timer never fires in this test: only the run at start can scrub
+  await hook("research", "r");
+  await waitFor(async () => (await seen("hermes-research"))?.status.activity, { what: "the line on kira" });
+  await alex.stop();
+  setConfig(alex, { hermes_activity_profiles: [] }); // edited while no daemon ran
+  await alex.start();
+  expect(JSON.parse(alex.d.core.store.agent(alex.d.nodeId, "hermes-research")!.body)).not.toHaveProperty("activity"); // already: the daemon's first act on its own cards
+  await waitFor(async () => { const a = await seen("hermes-research"); return a && a.status.activity === undefined ? a : undefined; }, { what: "the line gone on kira" });
 }, 60_000);

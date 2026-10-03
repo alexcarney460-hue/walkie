@@ -1,0 +1,187 @@
+{
+ "_id": "6a83f99c91917d42401beac3",
+ "id": "ornith-ai/Ornith-1.5-9B",
+ "downloads": 461716,
+ "likes": 346,
+ "gated": false,
+ "pipeline_tag": "text-generation",
+ "sha": "489cb97981b8654bcfcf30ce1f94ed1b62e07b53",
+ "tags": [
+  "transformers",
+  "safetensors",
+  "qwen3_5",
+  "image-text-to-text",
+  "text-generation",
+  "conversational",
+  "license:mit",
+  "eval-results",
+  "endpoints_compatible",
+  "region:us"
+ ],
+ "evalResults": [
+  {
+   "filename": ".eval_results/ornith-ai__Ornith-1.5-9B.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "hkust-nlp/Toolathlon",
+     "task_id": "toolathlon_verified"
+    },
+    "value": 41.2,
+    "date": "2026-08-23",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "ornith-ai/Ornith-1.5-9B model card"
+    }
+   },
+   "pullRequest": 13
+  },
+  {
+   "filename": ".eval_results/terminal-bench-2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 46.2,
+    "date": "2026-08-20",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Model Card"
+    },
+    "notes": "Terminus-2 harness (Harbor framework), parser=json, temperature=1.0, top_p=1.0, 128K context, 4h timeout, avg of 5 runs."
+   },
+   "pullRequest": 11
+  },
+  {
+   "filename": ".eval_results/terminal-bench-2.1.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "harborframework/terminal-bench-2.1",
+     "task_id": "terminalbench_2_1"
+    },
+    "value": 47,
+    "date": "2026-08-20",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Model Card"
+    },
+    "notes": "Claude Code 2.1.126 harness, parser=json, temperature=1.0, top_p=1.0, max_new_tokens=131072, avg of 5 runs."
+   },
+   "pullRequest": 11
+  },
+  {
+   "filename": ".eval_results/ornith-1.5-9b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Verified",
+     "task_id": "swe_bench_%_resolved"
+    },
+    "value": 70.6,
+    "date": "2026-08-18",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Ornith-1.5-9B model card"
+    }
+   },
+   "pullRequest": 1
+  },
+  {
+   "filename": ".eval_results/ornith-1.5-9b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "ScaleAI/SWE-bench_Pro",
+     "task_id": "SWE_Bench_Pro"
+    },
+    "value": 47.5,
+    "date": "2026-08-18",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Ornith-1.5-9B model card"
+    }
+   },
+   "pullRequest": 1
+  },
+  {
+   "filename": ".eval_results/ornith-1.5-9b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "SWE-bench/SWE-bench_Multilingual",
+     "task_id": "swe_bench_multilingual_%_resolved"
+    },
+    "value": 54.4,
+    "date": "2026-08-18",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Ornith-1.5-9B model card"
+    }
+   },
+   "pullRequest": 1
+  },
+  {
+   "filename": ".eval_results/ornith-1.5-9b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 20.2,
+    "date": "2026-08-18",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Ornith-1.5-9B model card"
+    },
+    "notes": "No tools."
+   },
+   "pullRequest": 1
+  },
+  {
+   "filename": ".eval_results/ornith-1.5-9b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "cais/hle",
+     "task_id": "hle"
+    },
+    "value": 30.5,
+    "date": "2026-08-18",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Ornith-1.5-9B model card"
+    },
+    "notes": "With tools."
+   },
+   "pullRequest": 1
+  },
+  {
+   "filename": ".eval_results/ornith-1.5-9b.yaml",
+   "verified": false,
+   "data": {
+    "dataset": {
+     "id": "Idavidrein/gpqa",
+     "task_id": "diamond"
+    },
+    "value": 86.4,
+    "date": "2026-08-18",
+    "source": {
+     "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B",
+     "name": "Ornith-1.5-9B model card"
+    }
+   },
+   "pullRequest": 1
+  }
+ ],
+ "createdAt": "2026-08-18T06:20:12.000Z",
+ "safetensors": {
+  "parameters": {
+   "BF16": 9653104368
+  },
+  "total": 9653104368
+ }
+}

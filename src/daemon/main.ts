@@ -34,6 +34,7 @@ import { accountsView, agentsPayload, agentsView, nodesView } from "./views.ts";
 import { TeamPoolState } from "./team-pool.ts";
 import { AgentArchive } from "./agent-archive.ts";
 import { AgentDiscovery, UNNAMED_MIN_AGE_MS, type DiscoveryOptions } from "./discovery.ts";
+import { startHermesActivityScrub } from "./hermes-scrub.ts";
 import { MachineStatsSampler, type SamplerOptions } from "./machine-stats/sampler.ts";
 import { readAccel } from "./machine-stats/accel.ts";
 import { locateRuntime, metalBudget } from "../pool/run/runtime.ts";
@@ -65,6 +66,7 @@ import "./orchestrator/routes.ts"; // registers /v1/orchestrator
 import "./orchestrator/schedule-routes.ts";
 import "./projects/routes.ts"; // registers /v1/projects, /v1/tasks (WALKIE-PROJECTS-1)
 import "./projects/room-routes.ts"; // registers /v1/projects/:ch/room, /v1/tasks/:ref/context (DATA-ROOM-1)
+import "./projects/page-routes.ts"; // registers /v1/projects/:ch/page (PROJECT-PAGES-1)
 import "./admin/routes.ts"; // registers /v1/admin (AGENT-ADMIN-1: switches, audit, remote admin)
 import "./provision/routes.ts"; // local enrollment grant and bounded profile status/apply
 import { backfillEnrollment } from "./provision/grant.ts";
@@ -72,8 +74,11 @@ import "./ssh/routes.ts"; // owner SSH status and local revoke
 import { postUpgradeNotice } from "./admin/audit.ts";
 import { JoinStatusReporter } from "./join-status.ts";
 import "./projects/steward-routes.ts"; // registers /v1/steward (FO-6 board steward)
-import { StewardLoop, runSteward } from "./projects/steward-run.ts";
-import { visibleProjects } from "./projects/service.ts";
+import "./orchestrator/rec-routes.ts"; // registers /v1/talkie/recs (TALKIE-OPS-1: recommendations and one-tap approval)
+import { StewardLoop } from "./projects/steward-run.ts";
+import { prepareProjectReports } from "./projects/status-report.ts";
+import { prepareOrchestrationPoll } from "./orchestrator/poll.ts";
+import { prepareCardCuration } from "./orchestrator/curation.ts";
 import { ProjectsIndex } from "./projects/index.ts";
 import { RestrictedMembership } from "./projects/members.ts";
 import { authorityProjectQuota } from "./projects/service.ts";
@@ -85,6 +90,7 @@ import { startWatchdog, stopWatchdog, trackOp, type LoopWatchdog } from "./watch
 import "./compute/routes.ts"; // registers /v1/compute (RENT-2 rental compute)
 import { registerCompute } from "./compute/routes.ts";
 import { ComputeService, type ComputeOptions } from "./compute/service.ts";
+import { authorityLevelAt } from "./compute/authority-sync.ts";
 import { ComputeSite, computeBaseFromEnv } from "./compute/site.ts";
 import { RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION } from "../protocol/compute-release.ts";
 import { GuestRegistry } from "../mcp/guest-registry.ts";
@@ -140,6 +146,8 @@ export interface DaemonOptions {
   peerLink?: PeerLinkOptions;
   /** Agent auto-discovery (config `discover_agents`, default on); false disables it, tests inject the process list. */
   discovery?: DiscoveryOptions | false;
+  /** Tests only: how often the Hermes activity scrub runs (default 15 s). It runs with or without discovery (hermes-scrub.ts). */
+  hermesScrub?: { intervalMs?: number };
   /** Orchestrator supervisor timings and the child's environment (tests). */
   orchestrator?: OrchestratorOptions;
   /** Remote seats: timings and the seats' environment (tests). */
@@ -302,8 +310,11 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
 
   const client = new PeerClient({ team: () => core.teamId, nodeId: keys.nodeId, keys, self: () => core.roster.nodes.get(keys.nodeId) });
   let watchdog: LoopWatchdog | null = null;
+  // Set below, once the Direct link exists: this node should run Walkie Direct but its endpoint is not up.
+  let directPending = (): boolean => false;
   const sync = new SyncManager(core, client, { ...opts.sync,
     stallTotal: opts.sync?.stallTotal ?? (() => watchdog?.stallTotalMs() ?? 0),
+    directPending: () => directPending(),
   });
   const linkIdentity: Identity = { kind: identity.kind, whois: (ip, h) => identity.whois(ip, h), self: () => selfWithin(identity, IDENTITY_HANG_MS) };
   // Set below: a dual node keeps syncing over Walkie Direct while its tailnet listener is down.
@@ -318,6 +329,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     options: { ...(config.relays ? { relays: config.relays } : {}), ...opts.direct },
   }, config);
   directUp = () => direct.direct() !== null;
+  directPending = () => direct.pending();
   // Projects (WALKIE-PROJECTS-1): boards folded from project channels' posts; restricted members follow the roster.
   const projects = new ProjectsIndex(core, log);
   const guestRegistry = new GuestRegistry(store);
@@ -335,32 +347,15 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   // FO-6: the board steward; runs only when this machine's person turned `steward.auto` on (steward-run.ts).
   const steward = new StewardLoop({ core, idx: projects, sync, client, catchUp: sync.requestCatchUp, linear: integrations.linear, log });
   const orchestrator = new OrchestratorHost({ core, log, client, catchUp: sync.requestCatchUp, nodes: () => nodesView(core, sync),
-    capacitySnapshot: () => {
-      const active = seatsList(core).filter((s) => ["running", "paused", "queued"].includes(s.state));
-      return {
-        machines: nodesView(core, sync).map((n) => ({ node: n.node_id, online: n.online })),
-        seats: seatHosts(core, sync).map((h) => ({ node: h.node, free: !h.online || !h.allows ? 0
-          : h.availability?.max === undefined ? null : Math.max(0, h.availability.max - active.filter((s) => s.host.node === h.node).length) })),
-        accounts: accountsView(core, sync).map((a) => ({ key: a.key, state: a.usage?.state ?? "unknown",
-          windows: (a.usage?.windows ?? []).map((w) => ({ kind: w.kind, scope: w.scope, used_pct: w.used_pct })) })),
-      };
-    },
-    capacityTargets: () => agentsView(core, sync).filter((a) => a.machine_online && !a.archived &&
-      a.effective_state !== "offline" && /orchestrator/i.test(`${a.agent} ${a.status.title ?? ""}`) &&
-      !(a.node === core.nodeId && a.agent === "orchestrator"))
-      .map((a) => `@${a.handle}/${a.hostname}/${a.agent}`),
-    boardRefresh: async (canAct) => {
-      const results: string[] = [];
-      for (const p of visibleProjects({ core, idx: projects }).filter((p) => p.state === "active")) {
-        if (!canAct()) throw new Error("WalkieTalkie lease expired");
-        try {
-          const r = await runSteward({ core, idx: projects, sync, client, catchUp: sync.requestCatchUp, linear: integrations.linear, log }, p.channel,
-            { dryRun: false, caller: "loop", canAct });
-          results.push(`${p.prefix}: ${r.applied.length} moves, ${r.plan.held.length} held, ${r.failed.length} failed`);
-        } catch (err) { results.push(`${p.prefix}: ${String(err).slice(0, 200)}`); }
-      }
-      return results.join("\n").slice(0, 8_000);
-    },
+    // TALKIE-OPS-1: the poll and the curation are daemon work that only records recommendations; nothing scheduled runs the steward with writes.
+    // Capacity check runs the poll too, so the old model turn's capacity asks and #general summary (capacityTargets, capacitySnapshot)
+    // are not wired: they would only mark other orchestrators as asked, with a schedule write each run, though nothing asks them.
+    orchestrationPoll: (canAct, signal) => prepareOrchestrationPoll({
+      core, idx: projects, log, nodes: () => nodesView(core, sync), seatHosts: () => seatHosts(core, sync), seats: () => seatsList(core),
+      accounts: () => accountsView(core, sync), agents: () => agentsView(core, sync),
+    }, canAct, signal),
+    cardCuration: (canAct, signal) => prepareCardCuration({ core, idx: projects, log, agents: () => agentsView(core, sync) }, canAct, signal),
+    projectReports: (canAct, signal) => prepareProjectReports({ core, idx: projects, client, catchUp: sync.requestCatchUp, agents: () => agentsView(core, sync), log }, canAct, signal),
   }, opts.orchestrator);
   registerHost(core, orchestrator);
   // Set once the accounts service starts (below); the reset routes answer 404 until then.
@@ -372,7 +367,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   const joinStatus = new JoinStatusReporter(core, log);
   // Tests inject a local site; the shipped daemon never starts a rental poller in this version.
   const compute = RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION || opts.compute?.site
-    ? new ComputeService({ core, client, catchUp: sync.requestCatchUp, log, transport: () => direct }, {
+    ? new ComputeService({ core, client, catchUp: sync.requestCatchUp, log, transport: () => direct, authoritySyncedAt: () => authorityLevelAt(core, (id) => sync.peerState(id)) }, {
       ...opts.compute, site: opts.compute?.site ?? new ComputeSite({ base: opts.env !== false ? computeBaseFromEnv() : undefined }),
     }) : null;
   if (compute) registerCompute(core, compute);
@@ -403,6 +398,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     // Mixed teams: an event its origin pushed here goes on to the peers that origin can't reach (sync.ts relay).
     core.onPeerEvent = (ev, from) => sync.relay(ev, from);
     core.reachedPeers = () => sync.reachedPeers();
+    core.onPeerContact = (nodeId) => sync.heard(nodeId);
     core.sshTeamConfirmed = () => sync.sshTeamConfirmed();
     core.peerRtts = () => sync.peerRtts();
     const addrOrThrow = (nodeId: string) => {
@@ -554,6 +550,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   if (accounts && discovery) discovery.onScan = (found) => accounts.observe(found);
   accounts?.start();
   discovery?.start();
+  // A Hermes card that shows a line for a profile off the activity allow list loses it, whether or not discovery runs (hermes-scrub.ts).
+  const stopHermesScrub = startHermesActivityScrub(core, log, opts.hermesScrub);
   // Idle and ended agents leave the live roster for the Agent archive, which stays bounded (agent-archive.ts).
   const archive = new AgentArchive(core, sync, log);
   archive.start();
@@ -623,6 +621,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       renewer?.stop();
       compute?.stopPoller();
       discovery?.stop();
+      stopHermesScrub();
       archive.stop();
       stopHookPrune();
       sampler?.stop();

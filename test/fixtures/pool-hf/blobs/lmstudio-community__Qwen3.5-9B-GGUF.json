@@ -1,0 +1,48 @@
+{
+ "_id": "69a591f64814fea218e241cc",
+ "id": "lmstudio-community/Qwen3.5-9B-GGUF",
+ "sha": "1379f25c6b505a3fc737bd7818cb09389cf807c1",
+ "downloads": 460644,
+ "siblings": [
+  {
+   "rfilename": "Qwen3.5-9B-Q4_K_M.gguf",
+   "blobId": "3c3f26952f689d24abbd950098c99a02781f14da",
+   "size": 5627044256,
+   "lfs": {
+    "sha256": "cd76ec205963b3b33350093e6904d9de16c4e666fd104e1f632d25c7f15f2a13",
+    "size": 5627044256,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen3.5-9B-Q6_K.gguf",
+   "blobId": "87422b3270e39704866775bd4c486dc250a406ea",
+   "size": 7359259040,
+   "lfs": {
+    "sha256": "b2ccc477f0a2449de299bef560b63e498cae94a2f3a3bae13df01168d77773e6",
+    "size": 7359259040,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "Qwen3.5-9B-Q8_0.gguf",
+   "blobId": "4c6bfe6e3eb3ee0298ece949b3d4659897123406",
+   "size": 9527501216,
+   "lfs": {
+    "sha256": "096a84703a334662086e4b46b6a4dd896bad10a46f67cd84a53cfe1420b24717",
+    "size": 9527501216,
+    "pointerSize": 135
+   }
+  },
+  {
+   "rfilename": "mmproj-Qwen3.5-9B-BF16.gguf",
+   "blobId": "c0639d4f5c8a00e6ebe1c8c092027edad22213ae",
+   "size": 921704480,
+   "lfs": {
+    "sha256": "330d17547bfdbcd0e7a0cb3f4b06b4ceeac0aaa1e449122d9d66ef957aeb74b3",
+    "size": 921704480,
+    "pointerSize": 134
+   }
+  }
+ ]
+}
