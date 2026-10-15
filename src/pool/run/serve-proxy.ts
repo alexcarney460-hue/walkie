@@ -1,6 +1,6 @@
 // The allow-list proxy in front of a served model's llama-server (POOL-REAL-1). llama-server listens on 127.0.0.1
 // with its own API key that never leaves this daemon; this proxy (also 127.0.0.1 only) is what the machine's person
-// and every connected member reach (members through their Walkie tunnel). It lets through only the OpenAI-compatible
+// and every connected member reach (members through their Sqwakie tunnel). It lets through only the OpenAI-compatible
 // calls a client needs, each with a per-client bearer key the serving daemon minted:
 //   GET /health, GET /v1/models, POST /v1/chat/completions, POST /v1/completions
 // Everything else of llama-server (/slots with other clients' prompts, /props, /metrics, LoRA, tokenizer, infill,
@@ -81,10 +81,10 @@ export class ServeProxy {
 
   async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    if (!ALLOWED.some(([m, p]) => m === req.method && p === url.pathname)) return err(404, "not_found", "not available through Walkie");
+    if (!ALLOWED.some(([m, p]) => m === req.method && p === url.pathname)) return err(404, "not_found", "not available through Sqwakie");
     const m = /^Bearer ([0-9a-f]{48})$/.exec(req.headers.get("authorization") ?? "");
     const label = m ? this.d.authorize(m[1]!) : null;
-    if (!m || !label) return err(401, "unauthorized", "a Walkie connection key is required (the key file walkie pool status names)");
+    if (!m || !label) return err(401, "unauthorized", "a Sqwakie connection key is required (the key file walkie pool status names)");
     const key = m[1]!;
     const up = this.d.upstream();
     if (!up) return err(503, "not_ready", "the model is not serving yet");

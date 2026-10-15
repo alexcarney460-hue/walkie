@@ -3,16 +3,21 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { defaultHandlerDeps, type HandlerDeps } from '../_lib/compute/handler.js';
 import { fail, json } from '../_lib/http.js';
 import { sendAlert } from '../_lib/compute/alerts.js';
-import { bill, reconcileDeletion } from '../_lib/compute/billing.js';
+import { bill, capLapsedLease, noteOperatorFunded, reconcileDeletion } from '../_lib/compute/billing.js';
 import { optionalEnv } from '../_lib/env.js';
 
-/** Signed, small heartbeat from the independent host watchdog. */
+/**
+ * Signed, small heartbeat from the independent host watchdog (scripts/compute-watchdog.ts, every five minutes from
+ * scripts/launchd/dev.walkie.compute-watchdog.plist, hourly backstop .github/workflows/compute-watchdog.yml). It needs
+ * COMPUTE_WATCHDOG_HMAC_SECRET here and the same value on the watchdog host (with COMPUTE_WATCHDOG_TOKEN_FILE and
+ * COMPUTE_SITE_ORIGIN) and in the GitHub secrets COMPUTE_WATCHDOG_HMAC_SECRET and COMPUTE_WATCHDOG_TOKEN (variable
+ * COMPUTE_SITE_ORIGIN). It keeps working while compute drains (COMPUTE_ENABLED unset, store and config present).
+ */
 export function makeWatchdogHeartbeat(deps: HandlerDeps): (req: Request) => Promise<Response> {
   return async req => {
-    if (optionalEnv(deps.env, 'COMPUTE_ENABLED') !== '1') return fail(503, 'compute_not_configured');
     const secret = deps.env.COMPUTE_WATCHDOG_HMAC_SECRET;
     const compute = await deps.compute();
-    const store = compute?.store ?? await deps.alertStore?.();
+    const store = compute?.store ?? (optionalEnv(deps.env, 'COMPUTE_ENABLED') === '1' ? await deps.alertStore?.() : null);
     if (!secret || !store) return fail(503, 'compute_not_configured');
     if (Number(req.headers.get('content-length') ?? 0) > 4096) return fail(400, 'invalid_heartbeat');
     const reader = req.body?.getReader();
@@ -116,9 +121,10 @@ export function makeWatchdogHeartbeat(deps: HandlerDeps): (req: Request) => Prom
           const current = await t.rental(rental.id);
           if (!current || current.instance_id !== rental.instance_id || !['starting', 'running', 'stopping'].includes(current.state)) return;
           const endedAt = Math.min(now, at);
-          const billed = await bill(t, current, endedAt);
-          await reconcileDeletion(t, billed, endedAt);
+          const billed = await bill(t, capLapsedLease(current, endedAt), endedAt);
+          const settled = await reconcileDeletion(t, billed, endedAt, now);
           await t.updateRental(current.id, { state: 'ended', ended_at: endedAt, end_reason: 'watchdog_expired', heartbeat_hash: null });
+          if (compute) noteOperatorFunded(compute.log, settled, compute.config.tiers[settled.tier]?.cost_per_hour_micros);
         });
       }
     }

@@ -476,7 +476,7 @@ ul.mdr-list ul.mdr-list { list-style: circle; }
   .orch-head-stop { width: 30px; padding: 0; justify-content: center; }
 }
 
-/* ---- Mission Control's WalkieTalkie card (ORCH-STATUS-1): this host's real state, at a glance ---- */
+/* ---- Mission Control's Talkie card (ORCH-STATUS-1): this host's real state, at a glance ---- */
 .wt-card {
   display: grid;
   gap: 8px;

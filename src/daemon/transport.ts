@@ -1,7 +1,7 @@
 // How a daemon reaches a peer's API (PROTOCOL §4). The peer API is HTTP either way; only the connection under
 // it changes:
 //   tailscale  HTTP over the tailnet IP (the caller is identified by `tailscale whois`).
-//   direct     Walkie Direct: one iroh QUIC bi-stream per request (ALPN walkie/1), dialed by the peer's node
+//   direct     Sqwakie Direct: one iroh QUIC bi-stream per request (ALPN walkie/1), dialed by the peer's node
 //              key; the caller is identified by the key QUIC/TLS authenticated (src/daemon/direct/net.ts).
 import type { TransportKind } from "../protocol/schemas.ts";
 import { nodeIdFromPubkey } from "../protocol/ids.ts";
@@ -11,9 +11,9 @@ export interface PeerAddr {
   readonly ip: string; readonly port: number;
   /** Known roster node id, used to bind Tailscale request signatures to their receiver. */
   readonly nodeId?: string;
-  /** Walkie Direct: dial this node key (base64) over iroh instead of ip:port. */
+  /** Sqwakie Direct: dial this node key (base64) over iroh instead of ip:port. */
   readonly pubkey?: string;
-  /** Walkie Direct: a relay URL hint (an invite's); discovery finds the node without it. */
+  /** Sqwakie Direct: a relay URL hint (an invite's); discovery finds the node without it. */
   readonly relay?: string;
 }
 
@@ -26,7 +26,7 @@ export interface PeerRequest {
 export interface Transport {
   readonly kind: TransportKind;
   request(addr: PeerAddr, req: PeerRequest): Promise<Response>;
-  /** WALKIE-POOL-2: a raw byte tunnel (Walkie Direct: a CONNECT stream). Tailscale tunnels use a WebSocket instead. */
+  /** WALKIE-POOL-2: a raw byte tunnel (Sqwakie Direct: a CONNECT stream). Tailscale tunnels use a WebSocket instead. */
   openTunnel?(addr: PeerAddr, path: string, headers: Record<string, string>, signal: AbortSignal): Promise<End>;
 }
 

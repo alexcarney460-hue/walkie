@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 const MARK = "# walkie-managed";
 /**
- * The Claude Code events Walkie's hook handles. PreToolUse only for Agent / Task (a sub-agent's description at its
+ * The Claude Code events Sqwakie's hook handles. PreToolUse only for Agent / Task (a sub-agent's description at its
  * launch) and SubagentStart / SubagentStop (WALKIE-MISSION-SUB-1): each sub-agent is a row of its own. A matcher made
  * only of [A-Za-z0-9_|, -] is an exact list of tool names in Claude Code 2.1.283 (not a regex), so "Agent|Task" is
  * already anchored; "^(Agent|Task)$" would take the regex path instead and lose its tool-alias expansion.
@@ -37,12 +37,12 @@ export function walkieCommand(): string {
 export type HookEntry = { matcher?: string; hooks: { type: string; command: string; timeout?: number }[] };
 export type Settings = { hooks?: Record<string, HookEntry[]> } & Record<string, unknown>;
 
-/** A hook command Walkie installed. */
+/** A hook command Sqwakie installed. */
 export function isOurHook(h: { command?: unknown }): boolean {
   return typeof h.command === "string" && h.command.includes(MARK);
 }
 
-/** The entry Walkie installs for one event. */
+/** The entry Sqwakie installs for one event. */
 export function ourEntry(cmd: string, matcher: string | undefined): HookEntry {
   return { ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: `${cmd} hook claude ${MARK}`, timeout: 5 }] };
 }
@@ -154,7 +154,7 @@ function holdsExactly(text: string, settings: Settings): boolean {
 }
 
 /**
- * The one way Walkie rewrites a person's settings or config file (`walkie hooks install|uninstall`): `produce` makes the new text from
+ * The one way Sqwakie rewrites a person's settings or config file (`walkie hooks install|uninstall`): `produce` makes the new text from
  * the file's current text (null when there is no file), or null for "nothing to change", which touches nothing. Atomic: the new text is
  * written whole beside the file under a staging name, private (0600) while it is written, then given the file's own mode and its
  * owner and group (where they differ from this process's: a group of the person's, or the owner when permitted), and renamed over it
@@ -266,7 +266,7 @@ export async function installClaude(opts: { dryRun: boolean; uninstall: boolean;
 
 function mcpSkippedNote(uninstall: boolean, mcp: string): string {
   return uninstall
-    ? `claude is not on PATH, so the MCP step is skipped. If Claude Code lists Walkie as an MCP server, remove it with: ${mcp}`
+    ? `claude is not on PATH, so the MCP step is skipped. If Claude Code lists the walkie MCP server (which belongs to Sqwakie), remove it with: ${mcp}`
     : `claude is not on PATH, so the MCP step is skipped. Once Claude Code is installed, run: ${mcp}`;
 }
 

@@ -34,10 +34,10 @@ test("recommendation requests use the route contract and encode full ids", async
 
 test("daemon refusals propagate without retries or identity changes", async () => {
   class RefusedClient extends RecordingClient {
-    override async request<T>(): Promise<T> { throw new WalkieError("forbidden", "only WalkieTalkie records recommendations", 403); }
+    override async request<T>(): Promise<T> { throw new WalkieError("forbidden", "only Talkie records recommendations", 403); }
   }
   const client = new RefusedClient();
-  await expect(client.talkieRecommend({ kind: "create_card", project: "WEB", title: "A", reason: "r" })).rejects.toThrow("only WalkieTalkie");
+  await expect(client.talkieRecommend({ kind: "create_card", project: "WEB", title: "A", reason: "r" })).rejects.toThrow("only Talkie");
   expect(client.agent).toBe("fixture");
 });
 

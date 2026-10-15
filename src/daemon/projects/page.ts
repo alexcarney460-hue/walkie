@@ -1,8 +1,8 @@
 // PROJECT-PAGES-1 in the daemon: a project's status page. Reads (the route's answer: the plain-English story the report turn
-// posted, the counts Walkie makes itself, the facts people and agents set, the screens) and writes (a fact, a screen added or
+// posted, the counts Sqwakie makes itself, the facts people and agents set, the screens) and writes (a fact, a screen added or
 // taken off), each checked at the boundary. The facts are signed `page` ops in the project root's thread (folded by
 // protocol/projects/page.ts and cached by the index), the screens are Data Room files carrying a screen register, the story
-// is the `status_page` that WalkieTalkie's report post carries. docs/plans/PROJECT-PAGES-1.md has the design.
+// is the `status_page` that Talkie's report post carries. docs/plans/PROJECT-PAGES-1.md has the design.
 import type { AgentView } from "../../protocol/schemas.ts";
 import { currentVersion, type RoomFileState } from "../../protocol/projects/room.ts";
 import { cleanFactText, compareScreens, composeScreens, factKey, pageOpText, sameScreen, screenKey, screensWanted } from "../../protocol/projects/page.ts";
@@ -36,7 +36,7 @@ const whoOf = (a: { handle: string; agent?: string | undefined }) => ({ handle: 
 
 // ---- the read model -----------------------------------------------------------------------------------------------------
 
-/** What Walkie counts itself: the card counts (page-counts.ts) and the agents working on the project now. */
+/** What Sqwakie counts itself: the card counts (page-counts.ts) and the agents working on the project now. */
 function computeFacts(d: PageDeps, p: ProjectView, visible: readonly ProjectView[], now: number): ComputedFacts {
   const counts = cardCounts(d.idx, p, now);
   const working = (agentsByProject({ core: d.core, idx: d.idx, agents: d.agents }, visible).get(p.channel) ?? [])
@@ -44,7 +44,7 @@ function computeFacts(d: PageDeps, p: ProjectView, visible: readonly ProjectView
   return { ...counts, agents_working: working.length, agent_machines: new Set(working.map((a) => a.agent.node)).size };
 }
 
-/** The newest usable story among the project's latest report posts (an owner's WalkieTalkie wrote it; read through the cleaning again). */
+/** The newest usable story among the project's latest report posts (an owner's Talkie wrote it; read through the cleaning again). */
 function latestStory(d: PageDeps, p: ProjectView, keys: readonly string[]): StoryView | null {
   const owners = [...d.core.roster.members.values()].filter((m) => m.role === "owner").map((m) => m.handle);
   for (const ev of d.idx.db.statusReportPosts(p.channel, owners, 5)) {
@@ -84,7 +84,7 @@ function reportingSince(idx: ProjectsIndex, channel: string): number | null {
 
 /**
  * The status page of a project this member can see. The facts people and agents set and the screens are always answered
- * (an agent can prepare them with the report off); the story and Walkie's own counts only while the report is on, which is
+ * (an agent can prepare them with the report off); the story and Sqwakie's own counts only while the report is on, which is
  * also the only time the dashboard shows the page. A screens sentence the report turn wrote is dropped once it is no longer true.
  */
 export function buildPage(d: PageDeps, p: ProjectView): StatusPagePayload {

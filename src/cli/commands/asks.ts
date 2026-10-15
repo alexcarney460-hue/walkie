@@ -4,10 +4,11 @@ import { askViewJson, eventForModel } from "../agent-output.ts";
 import { bool, channelArg, int, need, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, type Ctx } from "../context.ts";
 import { ago, c, hostMap, safeTerm, who, type HostMap } from "../format.ts";
+import { displayStoredText } from "../../protocol/display-text.ts";
 
 /** An answer's text as this reader should see it (FINAL Codex 5). */
 function answerText(ctx: Ctx, a: Event, hosts: HostMap): string {
-  return ctx.forAgent ? eventForModel(a, hosts) : safeTerm(String((a.body as { text?: string }).text ?? ""));
+  return ctx.forAgent ? eventForModel(a, hosts) : safeTerm(displayStoredText(String((a.body as { text?: string }).text ?? "")));
 }
 
 export async function ask(ctx: Ctx): Promise<number> {
@@ -44,7 +45,7 @@ function askLine(v: AskView, hosts: Map<string, string>, forAgent: boolean): str
   const expires = v.expires_at ?? b.expires_at;
   const head = `${c.dim(v.ask.id)}  ${state}  ${c.bold(who(v.ask, hosts))} → ${b.to}`;
   if (forAgent) return `${head}  ${c.dim(`expires in ${ago(Date.now() - (expires - Date.now()))}`)}\n${eventForModel(v.ask, hosts)}`;
-  return `${head}  ${safeTerm(b.text)}  ${c.dim(`expires in ${ago(Date.now() - (expires - Date.now()))}`)}`;
+  return `${head}  ${safeTerm(displayStoredText(b.text))}  ${c.dim(`expires in ${ago(Date.now() - (expires - Date.now()))}`)}`;
 }
 
 export async function inbox(ctx: Ctx): Promise<number> {

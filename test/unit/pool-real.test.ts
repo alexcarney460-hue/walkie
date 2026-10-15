@@ -487,9 +487,8 @@ describe("a machine joins a split only when it helps (atlas-wsl + hestia-wsl + a
   const mac = node("alexs-macbook-air", { mem: { total: 16 * GiB, used: 6 * GiB, swap_used: 0, pressure: "normal" }, accel: { chip: "Apple M5", unified: true, gpu_limit: null, gpus: [], metal_budget: 12124 * MiB } }, { pool: share({ cap: 3 * GiB }), rtt_ms: 12 });
   const need = catalogNeed(CAT.models.find((m) => m.id === "gpt-oss-20b")!, "q4");
 
-  test("gpt-oss-20b from atlas-wsl: atlas + hestia hold it, so the Mac (slower link, 3 GB cap) is not added", () => {
-    const plan = planRun([atlas({ self: true, rtt_ms: null }), hestia({ pool: share(), rtt_ms: 7 }), mac], need);
-    expect(plan.stages.map((s) => s.hostname)).toEqual(["atlas-wsl", "hestia-wsl"]);
+  test("gpt-oss-20b from atlas-wsl: unnamed run does not use the farther WSL or Mac", () => {
+    expect(() => planRun([atlas({ self: true, rtt_ms: null }), hestia({ pool: share(), rtt_ms: 7 }), mac], need)).toThrow(/GPU memory/);
   });
 
   test("named, the Mac joins with a share within its cap", () => {

@@ -25,6 +25,7 @@ import type { Config } from "./config.ts";
 import { HttpError } from "./http.ts";
 import type { Identity } from "./identity.ts";
 import { signEvent, verifyEvent, verifyHeader, type NodeKeys } from "./keys.ts";
+import { catalogPost } from "./skills/catalog.ts";
 import { engagePeerSigStrict } from "./peer-capabilities.ts";
 import type { Logger } from "./logger.ts";
 import type { Paths } from "./paths.ts";
@@ -133,6 +134,8 @@ export interface EmitOptions {
   readonly provenance?: StatusProvenance;
   /** agent.status re-signed later (reprojectOwnStatuses): when it was really observed; views use it for freshness. */
   readonly observedAt?: number;
+  /** team.node admitted by a fleet link (FLEET-LINK-1): the per-member node limit it counts against. */
+  readonly nodeLimit?: number;
 }
 
 /** A status with no free text: no title, task or cwd, and a fixed activity phrase (or none). */
@@ -193,7 +196,9 @@ export class Core {
    * is a repeat of one hook event and is dropped. Kept here, never signed; bounded in size and in age.
    */
   readonly hookDeliveries = new RecentDeliveries();
-  readonly hostname: string;
+  hostname: string;
+  /** Sqwakie Direct relay hint for fleet links. */
+  relayHint: ((ms: number) => Promise<string | null>) | null = null;
   /** Where the peer API listens ("" while it is down) and the Tailscale login; both follow Tailscale (peer-link.ts). */
   ip: string; login: string | null;
   /** Actual bound peer port (set once the peer listener is up). */
@@ -229,6 +234,10 @@ export class Core {
   private closed = false;
   /** Called for every accepted event originated by this node (sync push). */
   onLocalEvent: ((ev: Event) => void) | null = null;
+  /** Accepted replicated catalog event: install or deactivate from the signed projection. */
+  onCatalogChange: (() => void) | null = null;
+  /** Most recent local catalog activation or deactivation reasons, shown by the local API. */
+  catalogFailures: string[] = [];
   /** Called after the roster changes (sync connects to new peers, fills newly visible stubs). */
   onRosterChange: (() => void) | null = null;
   /** This machine's published memory/temperature (machine-stats/sampler.ts): served on `vv`, shown on NodeView. */
@@ -326,6 +335,9 @@ export class Core {
         // The invites overlay was built from the roster this rollback just undid.
         this.rosterView = null;
         this.retiredInvites = null;
+        // So was the transfer count: an event id is made from (origin, seq), and the seq a rollback frees is reused, so the
+        // next entry can have the same length and id as the one the count was cached for.
+        this.termCache = null;
       },
     });
     // Board-op rows not examined yet (stored before the columns existed, or by an older build after a rollback: its
@@ -346,6 +358,8 @@ export class Core {
     // A restart may have lost the ready set: every held dependency is re-checked once.
     for (const dep of this.store.pendingDeps(PENDING_CAP)) this.ready.add(dep);
     this.scheduleDrain();
+    // A Sqwakie Direct machine goes by its roster name (a fleet link's authority may have de-duplicated it).
+    if (this.teamId && this.adoptRosterHostname()) this.log.info("hostname_from_roster", { hostname: this.hostname });
   }
 
   get nodeId(): string { return this.keys.nodeId; }
@@ -997,6 +1011,7 @@ export class Core {
     this.store.afterCommit(() => {
       this.hub.publishEvent(ev);
       if (ev.origin === this.nodeId) this.onLocalEvent?.(ev);
+      if (catalogPost(ev)) this.onCatalogChange?.();
       if (ev.kind === "msg.post" || ev.kind === "artifact.share") this.onPostChange?.(ev, "accepted");
     });
   }
@@ -1017,6 +1032,7 @@ export class Core {
       this.hub.agentsChanged();
     }
     this.hub.publishHidden([ev.id]);
+    if (catalogPost(ev)) this.store.afterCommit(() => this.onCatalogChange?.());
     if (ev.kind === "msg.post" || ev.kind === "artifact.share") this.store.afterCommit(() => this.onPostChange?.(ev, "hidden"));
   }
 
@@ -1191,7 +1207,7 @@ export class Core {
       ? { ...this.projectOwnStatus(body as BodyOf<"agent.status">, opts.provenance), ...(opts.observedAt !== undefined ? { observed_at: Math.max(0, Math.round(opts.observedAt)) } : {}) } as BodyOf<K>
       : body;
     const clean = stripUndefined(projected) as Record<string, unknown>;
-    const signedBody = roster ? this.chainBody(kind, clean, opts.requestId) : clean;
+    const signedBody = roster ? this.chainBody(kind, clean, opts.requestId, opts.nodeLimit) : clean;
     const ev = signEvent(this.keys, {
       v: PROTOCOL_VERSION, team, id: eventId(this.nodeId, seq), origin: this.nodeId, seq, ts,
       author: { handle: me.handle, node: this.nodeId, ...(opts.agent ? { agent: opts.agent } : {}) },
@@ -1325,7 +1341,7 @@ export class Core {
    * the link to the transfer (if due), the request id (C5) and the watermark `wm` (this node's
    * version vector now, PROTOCOL §2 "Anchoring"); a channel.upsert states its members/archived (F4).
    */
-  private chainBody(kind: Kind, body: Record<string, unknown>, requestId: string | undefined): Record<string, unknown> {
+  private chainBody(kind: Kind, body: Record<string, unknown>, requestId: string | undefined, nodeLimit?: number): Record<string, unknown> {
     // invite_code proves who minted an id. It stays on the request and never on the chain.
     const { wm: _wm, after: _after, request_id: _rid, invite_code: _inviteCode, ...rest } = body;
     this.checkPlan(kind, rest);
@@ -1344,7 +1360,7 @@ export class Core {
     }
     if (kind === "team.node") {
       const n = rest as BodyOf<"team.node">;
-      this.checkNodeCapacity(n.node_id, n.login, n.revoked === true);
+      this.checkNodeCapacity(n.node_id, n.login, n.revoked === true, nodeLimit);
     }
     const link = this.chain.pendingLink;
     // A license or integration entry carries no watermark: it never anchors anything (PROTOCOL §2 "Licenses").
@@ -1378,17 +1394,28 @@ export class Core {
   }
 
   /** Throws `409 node_limit` if admitting (nodeId, login) would exceed the node limits (H1/F5). */
-  checkNodeCapacity(nodeId: string, login: string, revoked = false): void {
-    if (nodeCapacity(this.roster, nodeId, login, revoked).status === "ok") return;
+  checkNodeCapacity(nodeId: string, login: string, revoked = false, perLogin = MAX_NODES_PER_LOGIN): void {
+    if (nodeCapacity(this.roster, nodeId, login, revoked, perLogin).status === "ok") return;
     throw new HttpError(409, "node_limit",
-      `node limit reached: at most ${MAX_NODES_PER_LOGIN} active machines per member and ${MAX_NODES_PER_TEAM} machines ever admitted per team; an owner can revoke unused machines`);
+      `node limit reached: at most ${perLogin} active machines per member and ${MAX_NODES_PER_TEAM} machines ever admitted per team; an owner can revoke unused machines`);
+  }
+
+  /**
+   * FLEET-LINK-1: a Sqwakie Direct machine takes the name the roster gives it (the authority de-duplicates a fleet
+   * link's hostnames). Returns the name when it changed. Tailscale machines keep their tailnet name.
+   */
+  adoptRosterHostname(): string | null {
+    const self = this.roster.nodes.get(this.nodeId);
+    if (!self || self.revoked || self.ip !== "" || self.hostname === this.hostname) return null;
+    this.hostname = self.hostname;
+    return self.hostname;
   }
 
   /** `walkie init`: mints the team id and emits team.create (seq 1) signed by this node. */
   createTeam(name: string, handle: string, direct?: { login: string }): Event {
     if (this.teamId) throw new HttpError(409, "team_exists", "this node already belongs to a team");
     if (this.store.countEvents() > 0) throw new HttpError(409, "team_exists", "this node has history from another team; use a fresh WALKIE_HOME");
-    // A Walkie Direct team has no Tailscale login: the founder's login is its Direct login (direct:<handle>).
+    // A Sqwakie Direct team has no Tailscale login: the founder's login is its Direct login (direct:<handle>).
     const login = direct?.login ?? this.login;
     if (!login) throw new HttpError(409, "tailscale_unavailable", "Tailscale identity unavailable; run walkie doctor");
     const ts = this.clock();

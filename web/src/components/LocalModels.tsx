@@ -103,7 +103,7 @@ function shownPicks(t: TeamSuggestion, o: Overall | null): Pick[] {
   ].filter((p): p is Pick => !!p);
 }
 
-export const PINNED_UI = "Walkie starts only the models in its pinned list (each checked against a sha256); for any other pick, download its GGUF file from Hugging Face and start it with `walkie pool run --file`.";
+export const PINNED_UI = "Sqwakie starts only the models in its pinned list (each checked against a sha256); for any other pick, download its GGUF file from Hugging Face and start it with `walkie pool run --file`.";
 
 /** Mission Control card: the best overall, the group that could run the best model, its picks, a link to the details. */
 export function LocalModelsCard({ nodes, models }: { nodes: readonly NodeView[]; models?: ModelsInput }) {
@@ -125,7 +125,7 @@ export function LocalModelsCard({ nodes, models }: { nodes: readonly NodeView[];
         <a className="lm-more" href={hrefFor({ view: "team", tab: "models" })}>Details <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" /></a>
       </header>
       {!s ? (
-        <p className="lm-empty">No machine has reported its memory yet. Machines share it once they run a Walkie newer than v0.1.3.</p>
+        <p className="lm-empty">No machine has reported its memory yet. Machines share it once they run a Sqwakie newer than v0.1.3.</p>
       ) : (
         <>
           <SourceLine m={m} />
@@ -226,12 +226,12 @@ export function LocalModelsSection({ nodes, models }: { nodes: readonly NodeView
         Spark or another machine whose GPU shares the machine's memory, that memory). "Best" follows each model's
         self-reported benchmark results on Hugging Face within the current list, not its size. "If idle" means {IDLE_HINT}. A machine
         with a GPU is also considered running on its CPU from system memory (slower, but it may fit a bigger model). All the
-        team's machines together can run a bigger model split across them (llama.cpp RPC through Walkie's encrypted
+        team's machines together can run a bigger model split across them (llama.cpp RPC through Sqwakie's encrypted
         connections): each machine joins only when its owner turns sharing on, and a person starts the run. Across sites
         every token waits for a round trip to each machine, so it is slower than one machine. Suggestions are estimates:
         nothing is downloaded or run until a person starts a split run.
       </p>
-      {t.suggestions.length === 0 && <p className="lm-empty">No machine has reported its memory yet. Machines share it once they run a Walkie newer than v0.1.3.</p>}
+      {t.suggestions.length === 0 && <p className="lm-empty">No machine has reported its memory yet. Machines share it once they run a Sqwakie newer than v0.1.3.</p>}
       {t.suggestions.map((s, i) => <GroupCard key={s.group.machines.map((mc) => mc.node_id).join(",")} s={s} machines={t.machines.filter((x) => x.group === i)} cat={cat} />)}
       {t.excluded.length > 0 && (
         <p className="lm-foot">Not counted: {t.excluded.map((e) => `${e.hostname} (${e.reason})`).join(", ")}.</p>

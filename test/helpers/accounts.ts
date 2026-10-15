@@ -46,7 +46,7 @@ export function makeFakeHome(home: string, o: FakeHomeOptions = {}): string {
   mkdirSync(join(home, ".kimi-code", "credentials"), { recursive: true });
   writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), JSON.stringify({
     access_token: TOKENS.kimi, refresh_token: "FAKEKIMIREFRESHNEVERSENT", expires_at: o.kimiExpiresAt ?? now + 10 * 60_000, scope: "kimi-code", token_type: "Bearer", expires_in: 900,
-  }));
+  }), { mode: 0o600 });
   mkdirSync(join(home, ".grok", "logs"), { recursive: true });
   writeFileSync(join(home, ".grok", "auth.json"), fixtureText("grok-auth.json"));
   writeFileSync(join(home, ".grok", "logs", "unified.jsonl"), o.grokLog ?? fixtureText("grok-unified.jsonl"));

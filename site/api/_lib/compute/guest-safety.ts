@@ -58,7 +58,7 @@ ${LEASE_SCRIPT}LEASE
 chmod 0700 /usr/local/lib/walkie-rental/lease.sh
 cat > /etc/systemd/system/walkie-rental-lease.service <<'UNIT'
 [Unit]
-Description=Walkie paid lease watchdog
+Description=Sqwakie paid lease watchdog
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/walkie-rental/lease.sh
@@ -66,7 +66,7 @@ TimeoutStartSec=20
 UNIT
 cat > /etc/systemd/system/walkie-rental-lease.timer <<'UNIT'
 [Unit]
-Description=Walkie paid lease expiry
+Description=Sqwakie paid lease expiry
 [Timer]
 OnBootSec=5
 OnUnitActiveSec=15

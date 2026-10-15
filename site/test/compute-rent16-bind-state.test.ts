@@ -51,7 +51,7 @@ function fixture(options: { enabled?: boolean; enabledValue?: string; store?: Co
 }
 
 test('pre.9 request keeps pre-RENT first and repeated bind semantics without compute state', async () => {
-  for (const options of [{ privateConfig: true }, { store: C.world().store }]) {
+  for (const options of [{ privateConfig: true, store: C.world().store }, { store: C.world().store }]) {
     const f = fixture(options);
     f.stripe.subs.set(f.lic, C.LH.subscription({ id: f.lic }));
     const first = await f.submitLegacy();
@@ -83,19 +83,25 @@ test('proof-less rebind preserves authority and rejects existing compute state',
 });
 
 test('live compute requires a working store before license authority changes', async () => {
-  for (const options of [{ enabled: true }, { enabled: true, missingTables: true }]) {
+  for (const [options, error] of [[{ enabled: true }, 'licence_store_required'],
+    [{ enabled: true, missingTables: true }, 'compute_state_unavailable']] as const) {
     const f = fixture(options);
-    expect(await f.submit()).toEqual({ status: 503, body: { error: 'compute_state_unavailable' } });
+    expect(await f.submit()).toEqual({ status: 503, body: { error } });
     expect(f.authority()).toBe(f.team.f.pubkey);
   }
 });
 
-test('disabled compute with no store or a working empty store retains legacy bind behavior', async () => {
-  for (const options of [{ store: C.world().store }, { privateConfig: true },
-    { enabledValue: '0' }, { enabledValue: '' }]) {
-    const f = fixture(options);
+test('disabled compute retains legacy bind behavior on a working empty store and refuses without one', async () => {
+  for (const env of [{}, { privateConfig: true }, { enabledValue: '0' }, { enabledValue: '' }]) {
+    const f = fixture({ ...env, store: C.world().store });
     expect((await f.submit()).status).toBe(200);
     expect(f.authority()).toBe(f.next.pubkey);
+    // Lane C round 11: the compute-capable site records every binding, so with no store it binds nothing.
+    const g = fixture(env), writes = g.stripe.calls.metadata.length;
+    expect(await g.submit()).toEqual({ status: 503, body: { error: 'licence_store_required' } });
+    expect(await g.submitLegacy()).toEqual({ status: 503, body: { error: 'licence_store_required' } });
+    expect(g.authority()).toBe(g.team.f.pubkey);
+    expect(g.stripe.calls.metadata).toHaveLength(writes);
   }
 });
 

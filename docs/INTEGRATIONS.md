@@ -1,6 +1,6 @@
 # Integrations: Fireflies, Wispr Flow, Linear
 
-Integrations bring meeting and issue context into Walkie so your teammates and their agents see it
+Integrations bring meeting and issue context into Sqwakie so your teammates and their agents see it
 without anyone copy-pasting. Each one runs inside the daemon of the machine where you turn it on and
 posts into a team channel **as you**, marked with a source badge (Fireflies, Wispr Flow, Linear) and a
 link back to the source. Teammates don't need to set anything up: the posts replicate like any other.
@@ -99,8 +99,8 @@ Personal API key from Linear, Settings, Security & access. Three things happen:
   and remembers the page it reached. An issue's whole recent history is read (several pages when it
   changed a lot), so a burst of changes between two polls is reported completely and in order. The first
   time an issue is seen only its state is recorded; changes after that are posted.
-- **Create from Walkie.** `walkie linear create "Refund rounding drift" --from <event-id> [--team ENG]`
-  files an issue whose description holds that message's thread and a Walkie backlink, then posts the
+- **Create from Sqwakie.** `walkie linear create "Refund rounding drift" --from <event-id> [--team ENG]`
+  files an issue whose description holds that message's thread and a Sqwakie backlink, then posts the
   issue link into the thread. Agents use the `walkie_linear_create` MCP tool. `--dry-run` shows the
   mutation without sending it. Only a thread you can fully see is exported: its first message and every
   reply must be visible to you now and in the same channel as the linked message. Otherwise the create is
@@ -115,7 +115,7 @@ walkie import linear --sync [--two-way]        # while switching: update the imp
 walkie import linear --schedule 10m [--two-way]  # …or every 10 minutes (needs this integration, or --key-file)
 ```
 
-Or from the dashboard: Projects → Import from Linear. Each Linear project becomes a Walkie project (folders from
+Or from the dashboard: Projects → Import from Linear. Each Linear project becomes a Sqwakie project (folders from
 initiatives or teams) with its issues as cards: column by state, labels, assignee (matched to members by email, name
 or `--map-users @kira=Kira Rowe`), estimate, due date, parent, a link back, and one comment with the issue's history
 and comments. The import writes in signed batches (hundreds of cards a second, not one a second), is safe to re-run
@@ -146,7 +146,7 @@ is cancelled and nothing it had started is posted or saved afterwards. `remove` 
 link retries.
 
 Settings live in `~/.walkie/integrations.json` (0600, no secrets). A pasted key is stored in
-`~/.walkie/secrets/<name>` (0600, directory 0700); with `--key-path` Walkie reads your file each run and
+`~/.walkie/secrets/<name>` (0600, directory 0700); with `--key-path` Sqwakie reads your file each run and
 never copies it. The key file must be yours and private: a file that other users can read or write (any
 group/other permission bit) is refused with the fix, `chmod 600 <path>`, and so is a file whose ACL grants
 anyone else access (macOS: `chmod -N <path>` removes it; Linux: `setfacl -b <path>`). Keys never appear in

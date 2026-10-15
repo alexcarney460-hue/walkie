@@ -75,22 +75,50 @@ export class DigitalOceanDriver implements CloudDriver {
   private fail(status: number, json: Record<string, unknown>): never {
     const id = typeof json.id === "string" ? json.id : "error";
     const message = typeof json.message === "string" ? json.message.slice(0, 200) : "";
-    // Droplet/GPU limits and sold-out sizes or regions: queue and retry, never fail the rental.
-    if (status === 422 && /limit|not available|unavailable|capacity|insufficient/i.test(message)) throw new CapacityError(`DigitalOcean: ${message}`);
+    // Droplet/GPU limits and capacity: retried with backoff (launch.ts). A size, region or image "not available" is a
+    // misconfiguration, not capacity: it fails fast like any other error.
+    if (status === 422 && /limit|capacity|insufficient/i.test(message)) throw new CapacityError(`DigitalOcean: ${message}`);
     throw new DriverError(`DigitalOcean ${status} ${id}`, status === 429 || status >= 500);
   }
 
+  /**
+   * Every droplet with the tag, or a retryable DriverError: never a partial list, because reconcile reads a recorded
+   * instance missing from the listing as possibly vanished. Every page must carry its completion metadata (a `links`
+   * object and an integer `meta.total`, unchanged across pages) and droplets with unique positive integer ids. Pages
+   * are followed until DigitalOcean reports no next page, and the ids collected must number exactly `meta.total`. A
+   * page bound reached with a next page still offered, an empty page that offers a next page, a repeated droplet or
+   * any malformed field rejects the whole listing.
+   */
   private async byTag(tag: string, signal?: AbortSignal): Promise<DoDroplet[]> {
     const out: DoDroplet[] = [];
+    const seen = new Set<number>();
+    const incomplete = (why: string): never => { throw new DriverError(`DigitalOcean listing incomplete (${why})`, true); };
+    let total: number | null = null;
     for (let page = 1; page <= MAX_PAGES; page++) {
       const r = await this.call("GET", `/droplets?tag_name=${encodeURIComponent(tag)}&per_page=200&page=${page}`, undefined, signal);
       if (r.status !== 200) this.fail(r.status, r.json);
-      const droplets = Array.isArray(r.json.droplets) ? (r.json.droplets as DoDroplet[]) : [];
-      out.push(...droplets);
-      const next = (r.json.links as { pages?: { next?: unknown } } | undefined)?.pages?.next;
-      if (!next || droplets.length === 0) return out;
+      if (!Array.isArray(r.json.droplets)) incomplete('malformed page');
+      const links = r.json.links;
+      if (!links || typeof links !== 'object' || Array.isArray(links)) incomplete('no pagination links');
+      const reported = (r.json.meta as { total?: unknown } | undefined)?.total;
+      if (typeof reported !== 'number' || !Number.isSafeInteger(reported) || reported < 0) incomplete('no total');
+      if (total !== null && reported !== total) incomplete('total changed');
+      total = reported as number;
+      for (const droplet of r.json.droplets as DoDroplet[]) {
+        if (!droplet || typeof droplet !== 'object' || !Number.isSafeInteger(droplet.id) || droplet.id <= 0) incomplete('malformed droplet');
+        if (seen.has(droplet.id)) incomplete('repeated droplet');
+        seen.add(droplet.id);
+        out.push(droplet);
+      }
+      const next = (links as { pages?: { next?: unknown } }).pages?.next;
+      if (next !== undefined && next !== null && typeof next !== 'string') incomplete('malformed next link');
+      if (!next) {
+        if (out.length !== total) incomplete('count differs from total');
+        return out;
+      }
+      if ((r.json.droplets as unknown[]).length === 0) incomplete('empty page before the last');
     }
-    return out;
+    return incomplete('page bound reached');
   }
 
   async provision(req: ProvisionReq, signal?: AbortSignal): Promise<{ instance_id: string }> {
@@ -113,12 +141,22 @@ export class DigitalOceanDriver implements CloudDriver {
   async terminate(instanceId: string, signal?: AbortSignal): Promise<void> {
     if (!/^[0-9]{1,20}$/.test(instanceId)) throw new DriverError("bad droplet id", false);
     const r = await this.call("DELETE", `/droplets/${instanceId}`, undefined, signal);
-    if (r.status === 404) return;
-    if (r.status === 204) {
+    // Only a GET answering 404 confirms a deletion (billing stops on it). A DELETE's 204 and any 4xx (a repeat DELETE of a
+    // droplet being destroyed can answer 404 or 422) are checked with that GET; otherwise today's retry: a 204 or 404
+    // that the GET does not confirm, or the DELETE's own error (a 5xx gets no GET).
+    if (r.status === 204 || (r.status >= 400 && r.status < 500)) {
       const confirmed = await this.call('GET', `/droplets/${instanceId}`, undefined, signal);
       if (confirmed.status === 404) return;
-      throw new DriverError('DigitalOcean deletion not confirmed', true);
+      if (r.status === 204 || r.status === 404) throw new DriverError('DigitalOcean deletion not confirmed', true);
     }
+    this.fail(r.status, r.json);
+  }
+
+  async instanceGone(instanceId: string, signal?: AbortSignal): Promise<boolean> {
+    if (!/^[0-9]{1,20}$/.test(instanceId)) throw new DriverError("bad droplet id", false);
+    const r = await this.call("GET", `/droplets/${instanceId}`, undefined, signal);
+    if (r.status === 404) return true;
+    if (r.status === 200) return false;
     this.fail(r.status, r.json);
   }
 

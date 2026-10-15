@@ -61,6 +61,17 @@ test("dead parent with an uncertain ps result retries its cleanup owner", async 
   const daemonPid = 999_999_999;
   const owner = { pid: daemonPid, start: "unknown-start" };
   const obligation = new CleanupObligation(cleanup);
+  const original = Bun.spawnSync;
+  let uncertainProbes = 0;
+  // A large absent PID is a known-dead result on Linux, not an uncertain ps failure.
+  Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+    const argv = args[0];
+    if (Array.isArray(argv) && argv[0] === "/bin/ps" && argv.at(-1) === String(daemonPid)) {
+      uncertainProbes++;
+      throw new Error("fixture: ps could not inspect the cleanup owner");
+    }
+    return original(...args);
+  }) as typeof Bun.spawnSync;
   try {
     expect(obligation.record("dead-parent", owner, 3_000)).toBe(true);
     let waits = 0, destroys = 0;
@@ -71,8 +82,9 @@ test("dead parent with an uncertain ps result retries its cleanup owner", async 
     });
     expect(code).toBe(0);
     expect(waits).toBeGreaterThan(0);
+    expect(uncertainProbes).toBeGreaterThan(0);
     expect(destroys).toBe(1);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { Bun.spawnSync = original; rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("a three second renewal delay does not destroy the uid before authority expiry", async () => {

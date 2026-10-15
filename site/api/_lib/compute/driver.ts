@@ -39,6 +39,11 @@ export interface CloudDriver {
   setPaidUntil(instanceId: string, until: number, signal?: AbortSignal): Promise<void>;
   /** Every instance this driver made that still exists (tagged walkie:managed), any state but terminated. */
   list(signal?: AbortSignal): Promise<Instance[]>;
+  /**
+   * True only when the provider definitely no longer has the instance (a 404 for it); false while it still returns it.
+   * Throws on any other answer. Reconcile asks this before ending a rental whose instance a listing omitted.
+   */
+  instanceGone(instanceId: string, signal?: AbortSignal): Promise<boolean>;
 }
 
 /** The provider is out of capacity or our account quota: queue and retry later, don't fail the rental. */

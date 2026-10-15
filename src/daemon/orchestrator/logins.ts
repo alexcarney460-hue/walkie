@@ -1,4 +1,4 @@
-// ORCH-2: which model logins this machine has, for WalkieTalkie's auto-start. Only presence is checked: no token is
+// ORCH-2: which model logins this machine has, for Talkie's auto-start. Only presence is checked: no token is
 // read, printed or copied here (the Keychain item is looked up without -w, so `security` prints its attributes only,
 // which are discarded). Uses the accounts adapters' own locations (src/accounts/adapters).
 import { existsSync } from "node:fs";
@@ -10,7 +10,7 @@ import { kimiCredentialsPath } from "../../accounts/adapters/kimi.ts";
 import type { Login } from "../../accounts/types.ts";
 
 export type LoginProvider = "claude" | "codex" | "kimi";
-/** Where the Claude login comes from: the CLI's own sign-in, CLAUDE_CODE_OAUTH_TOKEN, or the Walkie accounts vault. */
+/** Where the Claude login comes from: the CLI's own sign-in, CLAUDE_CODE_OAUTH_TOKEN, or the Sqwakie accounts vault. */
 export type ClaudeSource = "cli" | "env" | "vault";
 
 export interface Logins {
@@ -69,7 +69,7 @@ export async function detectLogins(d: LoginDeps = {}): Promise<Logins> {
     : vault.length ? "vault" : null;
   const codexHome = env.CODEX_HOME || join(home, ".codex");
   const codex = existsSync(join(codexHome, "auth.json")) || !!identifyCodex(login("codex", codexHome));
-  const kimi = existsSync(kimiCredentialsPath(login("kimi", join(home, ".kimi-code"))));
+  const kimi = kimiCredentialsPath(login("kimi", join(home, ".kimi-code"))) !== null;
   const found: LoginProvider[] = [...(claude ? ["claude" as const] : []), ...(codex ? ["codex" as const] : []), ...(kimi ? ["kimi" as const] : [])];
   return { found, claude, ...(claude === "vault" && vault[0] ? { vaultAccount: vault[0] } : {}) };
 }

@@ -20,6 +20,7 @@ export function CreateProject({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState<PlanLimitDetails | null>(null);
+  const [createdChannel, setCreatedChannel] = useState<string | null>(null);
   const first = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -30,8 +31,26 @@ export function CreateProject({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   const prefixOk = !prefix || /^[A-Z][A-Z0-9]{1,9}$/.test(prefix);
+  const admit = async (channel: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await projectsStore.refresh(); // the authoritative list admits newly created channels
+      if (!projectsStore.isVisible(channel)) {
+        setError(projectsStore.get().error ?? "Project is not visible yet. Retry the refresh.");
+        return;
+      }
+      navigate({ view: "projects", channel });
+      onClose();
+    } catch (err) {
+      setError(friendlyError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (createdChannel) { await admit(createdChannel); return; }
     if (!name.trim() || !prefixOk) return;
     setBusy(true);
     setError(null);
@@ -41,9 +60,8 @@ export function CreateProject({ onClose }: { onClose: () => void }) {
         name: name.trim(), ...(folder.trim() ? { folder: folder.trim() } : {}), ...(prefix ? { prefix } : {}),
         ...(priv ? { private: true } : {}), ...(path.trim() ? { paths: [{ path: path.trim() }] } : {}),
       });
-      projectsStore.project(project);
-      onClose();
-      navigate({ view: "projects", channel: project.channel });
+      setCreatedChannel(project.channel);
+      await admit(project.channel);
     } catch (err) {
       const l = planLimitOf(err);
       if (l) setLimit(l); else setError(friendlyError(err));
@@ -84,13 +102,15 @@ export function CreateProject({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={priv} disabled={!owner || !restricted} onChange={(e) => setPriv(e.target.checked)} />
             <span>Private: only the team's owners see it{!owner ? " (owners only)" : !restricted ? " (Team plan)" : ""}</span>
           </label>
-          {priv && <p className="field-hint">{prefix ? "A readable prefix can reveal the project where Walkie can't mask its keys (commit messages, file names); leave it empty for an opaque one." : "Its cards get an opaque key prefix (like PX7Q), so a key that escapes reveals nothing."}</p>}
+          {priv && <p className="field-hint">{prefix ? "A readable prefix can reveal the project where Sqwakie can't mask its keys (commit messages, file names); leave it empty for an opaque one." : "Its cards get an opaque key prefix (like PX7Q), so a key that escapes reveals nothing."}</p>}
           {limit && <PlanLimitNotice details={limit} />}
           {error && <p className="field-error" role="alert">{error}</p>}
         </div>
         <footer className="dialog-foot">
           <button type="button" className="btn btn-sm" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary btn-sm" disabled={busy || !name.trim() || !prefixOk}>{busy ? "Creating…" : "Create project"}</button>
+          <button type="submit" className="btn btn-primary btn-sm" disabled={busy || (!createdChannel && (!name.trim() || !prefixOk))}>
+            {busy ? "Creating…" : createdChannel ? "Retry" : "Create project"}
+          </button>
         </footer>
       </form>
     </div>

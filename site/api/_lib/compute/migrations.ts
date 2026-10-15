@@ -1,6 +1,6 @@
 // Neon Postgres schema for rental compute, applied in order by `migrate()` (pg-store.ts) under an advisory lock and
 // recorded in compute_migrations. Amounts are integer micro-dollars (bigint); times are unix ms (bigint). The ledger
-// is append-only: balance = sum(amount_micros). Retention: ledger 7 years (tax); rentals/rent requests 1 year.
+// is append-only: balance = sum(amount_micros); credit lots and their expiry are in lots.ts. Retention: ledger 7 years (tax); rentals/rent requests 1 year.
 export const MIGRATIONS: readonly { readonly id: number; readonly sql: string }[] = [
   {
     id: 1,
@@ -109,6 +109,18 @@ UPDATE compute_accounts AS a SET first_funded_at = LEAST(
 FROM (SELECT account_id, MIN(created_at) AS first_funded_at FROM compute_ledger
       WHERE kind IN ('purchase', 'adjustment') AND amount_micros > 0 GROUP BY account_id) AS p
 WHERE a.id = p.account_id;
+` },
+  // Credit expiry (lots.ts; Alex 2026-10-09): every purchase or positive adjustment is a lot that expires 60 days after
+  // it was credited. Burn, refund and expire rows name the lot they draw on or return to (`lot` = the lot row's
+  // idem_key); `expire` rows write a lot's unspent remainder off. No backfill: production has no compute rows yet.
+  { id: 7, sql: `
+ALTER TABLE compute_ledger ADD COLUMN IF NOT EXISTS lot text;
+ALTER TABLE compute_ledger DROP CONSTRAINT compute_ledger_kind_check;
+ALTER TABLE compute_ledger ADD CONSTRAINT compute_ledger_kind_check
+  CHECK (kind IN ('purchase', 'burn', 'refund', 'adjustment', 'expire'));
+CREATE INDEX IF NOT EXISTS compute_ledger_lots ON compute_ledger (created_at)
+  WHERE kind IN ('purchase', 'adjustment') AND amount_micros > 0;
+CREATE INDEX IF NOT EXISTS compute_ledger_lot_expiries ON compute_ledger (lot) WHERE kind = 'expire';
 ` },
 ];
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.id;

@@ -35,7 +35,7 @@ test("a second daemon cannot reconcile or create over another daemon's uid", asy
   const create = await createTalkieUser(world.sys, second, daemonB);
   expect(reconcile.ok).toBe(false);
   expect(create.ok).toBe(false);
-  expect(create.why).toContain("another Walkie daemon");
+  expect(create.why).toContain("another Sqwakie daemon");
   expect(world.users.get("walkie-talkie")?.uid).toBe(TALKIE_UID);
   expect(world.sys.ledger().talkieOwner(TALKIE_UID)?.instance).toBe(daemonA);
   expect((await reconcileTalkieUser(world.sys, first, daemonA)).ok).toBe(true);
@@ -62,7 +62,7 @@ test("a different socket's daemon refuses shell access while the first owns the 
   const other = new TalkieOsUser(join(root, "other.sock"), () => false, deps);
   try {
     await primary.prepare();
-    await expect(other.prepare()).rejects.toThrow("Another Walkie daemon owns shell access");
+    await expect(other.prepare()).rejects.toThrow("Another Sqwakie daemon owns shell access");
     expect(primary.active).toBe(true);
     expect(world.users.get("walkie-talkie")?.uid).toBe(TALKIE_UID);
   } finally { await primary.destroy(); }

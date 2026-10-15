@@ -22,11 +22,11 @@
 // an environment with no HOME, resolves the real home if it asks. A test that starts one names a HOME of its own.
 import { mock } from "bun:test";
 import * as osModule from "node:os";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 const STATE = Symbol.for("walkie.test.home");
-export interface TestHome { readonly home: string; readonly realHome: string }
+export interface TestHome { readonly home: string; readonly realHome: string; readonly freshDefaultPaths: boolean }
 const holder = globalThis as typeof globalThis & { [STATE]?: TestHome };
 
 /** The throwaway home of this test run, and the home it stands in for. */
@@ -88,6 +88,7 @@ function install(): TestHome {
   const realUserInfo = osModule.userInfo as unknown as (options?: unknown) => object;
   const realHome = real.homedir();
   const home = mkdtempSync("/tmp/walkie-th-"); // short: a unix socket path under it must stay under 104 bytes
+  const freshDefaultPaths = [".walkie", ".claude", ".codex", ".grok", ".hermes", ".ssh"].every((dir) => !existsSync(join(home, dir)));
   const gitConfig = join(home, ".gitconfig");
   writeFileSync(gitConfig, "[user]\n\tname = Walkie Test\n\temail = test@example.com\n"); // the lowest-precedence default: a test's own -c or repo config still wins
 
@@ -114,7 +115,7 @@ function install(): TestHome {
   const watcher = spawn(["/bin/sh", "-c", 'while kill -0 "$1" 2>/dev/null; do sleep 2; done; rm -rf "$2"', "sh", String(process.pid), home],
     { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, env: { PATH: "/usr/bin:/bin" } }) as { unref(): void };
   watcher.unref();
-  return { home, realHome };
+  return { home, realHome, freshDefaultPaths };
 }
 
 holder[STATE] ??= install();

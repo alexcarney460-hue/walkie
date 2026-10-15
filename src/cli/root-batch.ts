@@ -1,7 +1,7 @@
 // The enrollment's ONE root batch on a Linux or macOS terminal: a single `sudo` of this walkie running
 // `provision root-marker install <home> [ssh-linux|ssh-macos]`. The person has already typed the one consent; this is
 // the only place the enrollment asks for the machine's password. The root-owned marker comes first (the daemon records
-// no grant without it); when the link carries owner SSH and Walkie's SSH service does not answer yet, the same sudo
+// no grant without it); when the link carries owner SSH and Sqwakie's SSH service does not answer yet, the same sudo
 // then installs it (Linux and WSL: src/daemon/ssh/enroll-linux.ts, a loopback-only sshd on 22; macOS:
 // src/daemon/ssh/macos-service.ts, a launchd daemon on 22022), so there is no second prompt. macOS never asks for Remote
 // Login. A machine that needs neither runs no sudo at all. (The Windows bootstrap's WSL root commands call the same helper.)
@@ -35,8 +35,8 @@ export function planRootBatch(o: { markerPresent: boolean; carriesSsh: boolean; 
 /** What the person is told before the sudo prompt. */
 export function describeRootBatch(need: RootBatchNeed): string {
   const service = need.sshMacos
-    ? "Walkie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)"
-    : need.sshLinux ? "Walkie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)" : "";
+    ? "Sqwakie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)"
+    : need.sshLinux ? "Sqwakie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)" : "";
   return [need.marker ? "the root-owned company-machine marker" : "", service].filter(Boolean).join(", then ");
 }
 
@@ -71,7 +71,7 @@ export function realRootBatch(home: string, spawn: Spawn = Bun.spawnSync, argv: 
 
 /**
  * The company flows' administrator step, run after the person's typed yes and BEFORE the consent is recorded: the root
- * marker the daemon requires before it records any grant and, when owner SSH is carried and Walkie's SSH service does
+ * marker the daemon requires before it records any grant and, when owner SSH is carried and Sqwakie's SSH service does
  * not answer yet, that service, all from one sudo. A machine that needs neither runs nothing. A step that did not finish
  * returns the plain sentence to show; one whose SSH half failed names what repeats just that step, and nothing has
  * been recorded, so the same link still works.

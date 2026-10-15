@@ -3,10 +3,10 @@
 // switcher — no new habit. Each shim:
 //   · runs the REAL CLI unchanged when WALKIE_NO_SWITCH=1, when there is no vault yet, or when it is already inside a
 //     shim (WALKIE_SHIM_ACTIVE: never a loop), finding it on PATH while skipping its own directory and any file
-//     that is itself a Walkie shim;
+//     that is itself a Sqwakie shim;
 //   · otherwise execs `walkie claude|codex "$@"` (which also passes straight through when the vault has no account
 //     for that provider).
-// The Walkie side resolves the real CLI the same way (realCli below) and never execs a shim.
+// The Sqwakie side resolves the real CLI the same way (realCli below) and never execs a shim.
 import { RELEASE_BUILD } from "../license/service.ts";
 import { accessSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -132,7 +132,7 @@ export function installShims(walkieHome: string, opts: { profile?: string | null
   const written: string[] = [];
   for (const name of SHIM_NAMES) {
     const path = join(dir, name);
-    if (existsSync(path) && !isShim(path)) throw new Error(`${path} exists and is not a Walkie shim; move it away first`);
+    if (existsSync(path) && !isShim(path)) throw new Error(`${path} exists and is not a Sqwakie shim; move it away first`);
     writeFileSync(path, shimScript(name, walkieHome, opts.walkie), { mode: 0o755 });
     chmodSync(path, 0o755);
     written.push(path);

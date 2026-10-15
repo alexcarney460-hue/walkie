@@ -1,4 +1,4 @@
-// The CLI binaries Walkie hands credentials to (round 1 Codex 1; rounds 2-3). `walkie accounts shims install` (or
+// The CLI binaries Sqwakie hands credentials to (round 1 Codex 1; rounds 2-3). `walkie accounts shims install` (or
 // `walkie accounts trust-cli`) records, per CLI, the path found on PATH and the object it resolves to, after checking:
 //   · it is a NATIVE executable (Mach-O / ELF): a script launcher, a shebang file, anything an interpreter runs is
 //     refused (round 3: an interpreter, its startup files and the scripts it dispatches to cannot all be pinned) — with
@@ -13,7 +13,7 @@
 // At EVERY credential-bearing launch the wrapper resolves the CLI on PATH again, re-runs all checks and compares the
 // validated object's dev / inode / size / mtime right before it spawns it; it runs the validated real file, never the
 // PATH name. An update that replaced the binary in the same trusted place is accepted (re-validated) and the record
-// refreshed. Anything else runs without Walkie credentials, with one line saying why. ~/.walkie/trusted-cli.json (0600).
+// refreshed. Anything else runs without Sqwakie credentials, with one line saying why. ~/.walkie/trusted-cli.json (0600).
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -47,7 +47,7 @@ export interface TrustOptions {
   brewPrefixes?: readonly string[];
   /** Tests: ACL entries of a path (`ls -le` entry lines) or null when unreadable; macOS `ls -led` in use. */
   acl?: (path: string) => string[] | null;
-  /** Walkie's shim directory (unused by the checks; accepted for callers). */
+  /** Sqwakie's shim directory (unused by the checks; accepted for callers). */
   shimDir?: string;
 }
 

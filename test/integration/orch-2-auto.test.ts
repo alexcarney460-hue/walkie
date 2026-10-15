@@ -105,9 +105,9 @@ describe("one machine: auto-start, first run, crash, sticky stop, rename", () =>
     const st = await cli(solo, ["talkie", "status", "--json"]);
     expect(st.code).toBe(0);
     expect((JSON.parse(st.out) as OrchestratorView).local).toMatchObject({ running: true, logins: ["claude"] });
-    expect((await cli(solo, ["talkie", "status"])).out).toMatch(/^WalkieTalkie: running on this machine/);
-    expect((await cli(solo, ["orchestrator", "status"])).out).toMatch(/^WalkieTalkie: running on this machine/);
-    expect((await cli(solo, ["who", "--all"])).out).toMatch(/WalkieTalkie\s+(idle|working)/);
+    expect((await cli(solo, ["talkie", "status"])).out).toMatch(/^Talkie: running on this machine/);
+    expect((await cli(solo, ["orchestrator", "status"])).out).toMatch(/^Talkie: running on this machine/);
+    expect((await cli(solo, ["who", "--all"])).out).toMatch(/(?:^|\n)\s*Talkie\s+(idle|working)/);
     expect((await cli(solo, ["help"])).out).toContain("talkie status [--json]");
   }, 60_000);
 
@@ -247,11 +247,11 @@ describe("one lead per team: the authority leads, an owner machine stands by, ta
     await waitFor(async () => (await view(kira)).lead === "alex-mbp", { what: "kira knows the lead" });
     const asked = await cli(kira, ["talkie", "start"]);
     expect(asked.code).not.toBe(0);
-    expect(asked.err).toContain("WalkieTalkie is already running on alex-mbp; start here anyway?");
+    expect(asked.err).toContain("Talkie is already running on alex-mbp; start here anyway?");
     const agentHere = await cli(kira, ["talkie", "start", "--here"]);
     expect(agentHere.err).toContain("exclusive lease");
     const agentBinary = await cli(kira, ["talkie", "start", "--here", "--claude", "/bin/sh"]);
-    expect(agentBinary.err).toContain("only a person can choose WalkieTalkie");
+    expect(agentBinary.err).toContain("only a person can choose Talkie");
     const here = await cli(kira, ["talkie", "start", "--here", "--cwd", c.root], true);
     expect(here.code).not.toBe(0);
     expect(here.err + here.out).toContain("exclusive lease");
@@ -286,7 +286,7 @@ describe("its walkie CLI mints an add-machine link under agent admin (Walkie Dir
     expect(res.handle).toBe("alex");
     expect(res.delivered).toBe(true);
     expect(JSON.stringify(res)).not.toContain("wk1");
-    expect((await alex.client("").orchestratorMessages({ limit: 500 })).messages.some((m) => m.text.includes("Link: https://getwalkie.vercel.app/join#wk1"))).toBe(true);
+    expect((await alex.client("").orchestratorMessages({ limit: 500 })).messages.some((m) => m.text.includes("Link: https://sqwakie.si/join#wk1"))).toBe(true);
     expect(res.expires_at).toBeGreaterThan(Date.now());
     expect(readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8")).toMatch(/orchestrator[^\n]*minted an add-machine link for @alex/);
   }, 60_000);

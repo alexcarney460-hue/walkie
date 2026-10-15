@@ -1,6 +1,6 @@
 // `walkie hooks install grok` writes two files, so a machine with only Grok gets the whole lifecycle:
 //  - ~/.grok/hooks/walkie.json: the events the Claude-compatible path does not deliver (grok-events.ts).
-//  - ~/.claude/settings.json: Walkie's shared Claude-compatible hooks, which Grok scans by default (compat.claude.hooks)
+//  - ~/.claude/settings.json: Sqwakie's shared Claude-compatible hooks, which Grok scans by default (compat.claude.hooks)
 //    and which deliver the rest. They are written with the pure hooks writer only (install.ts): never `claude mcp add`
 //    or `remove`, so no claude CLI is needed. The file is created when absent; an old one is kept as .bak-walkie-<ms>.
 // Both files are read and checked before either is written, and the Claude settings go first, so a failure in between
@@ -47,7 +47,7 @@ export function withGrokHooks(settings: Settings, command: string, install: bool
   return Object.keys(hooks).length ? { ...rest, hooks } : rest;
 }
 
-/** Where Grok reads Walkie's own hook file. */
+/** Where Grok reads Sqwakie's own hook file. */
 export function grokHooksPath(): string {
   return join(homedir(), ".grok", "hooks", "walkie.json");
 }
@@ -80,7 +80,7 @@ export async function installGrok(opts: { dryRun: boolean; uninstall: boolean; p
   return { changed: [named(path), ...(shared ? [named(shared.path)] : [])], commands: [] };
 }
 
-/** The Claude settings with Walkie's hooks in them, and whether that differs from what the file holds now. */
+/** The Claude settings with Sqwakie's hooks in them, and whether that differs from what the file holds now. */
 function sharedClaudeHooks(path: string): { path: string; next: Settings; changed: boolean } {
   const current = readClaudeSettings(path);
   const next = withClaudeHooks(current, walkieCommand(), true);

@@ -107,14 +107,14 @@ test("probe3", async () => {
   await alex.client("").seatsConfig({ allow: true, same_user: true, launchers: ["@alex/alex-mbp/orchestrator"] });
   const seat = await T("POST", "/v1/seats/run", { machine: "alex-mbp", runtime: "claude", prompt: "test seat" });
   expect(seat.status).toBe(409);
-  expect(seat.text).toContain("switch WalkieTalkie back to Walkie platform access to use same-user machines");
+  expect(seat.text).toContain("switch Talkie back to Sqwakie platform access to use same-user machines");
   const shellRun: SeatRun = {
     op: "run", v: 1, runtime: "claude", prompt: "must not run as alex", timeout_s: 600, max_concurrent: 1, shell_user: true,
   };
   const forged = alex.d.core.emit("msg.post", { text: runText(shellRun, "alex-mbp"), seat: shellRun } as any,
     { channel: `seats-${alex.d.nodeId}`, agent: "orchestrator" });
   await waitFor(async () => (await alex.client("").seats(forged.id)).seats[0]?.state === "refused", { what: "execution host refuses shell seat" });
-  expect((await alex.client("").seats(forged.id)).seats[0]?.reason).toContain("switch WalkieTalkie back to Walkie platform access");
+  expect((await alex.client("").seats(forged.id)).seats[0]?.reason).toContain("switch Talkie back to Sqwakie platform access");
   // 9. Orchestrator conversation routes (allowlisted) and agent-only reads.
   await T("POST", "/v1/orchestrator/say", { text: "hi" });
   await T("GET", "/v1/orchestrator/messages");

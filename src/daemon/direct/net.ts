@@ -1,4 +1,4 @@
-// Walkie Direct (PROTOCOL §4): the peer API over iroh. The endpoint runs on the node's own ed25519 key, so its
+// Sqwakie Direct (PROTOCOL §4): the peer API over iroh. The endpoint runs on the node's own ed25519 key, so its
 // endpoint id IS the node key in `team.node`, and every connection's remote key is authenticated by QUIC/TLS
 // before a byte of HTTP is read. iroh hole-punches a direct UDP path and falls back to an encrypted relay (n0's
 // public relays by default, `relays` in config.json otherwise); relays forward ciphertext only.
@@ -331,7 +331,7 @@ export class DirectNet implements Transport {
   }
 
   async request(addr: PeerAddr, r: PeerRequest): Promise<Response> {
-    if (this.stopped) throw new Error("Walkie Direct is stopped");
+    if (this.stopped) throw new Error("Sqwakie Direct is stopped");
     if (!addr.pubkey) throw new Error("no node key to dial");
     const bi = await this.openStream({ ...addr, pubkey: addr.pubkey }, r.signal);
     const { send, recv } = bi;
@@ -369,7 +369,7 @@ export class DirectNet implements Transport {
    * stream is not finished). A refusal rejects with the status and the server's JSON error.
    */
   async openTunnel(addr: PeerAddr, path: string, headers: Record<string, string>, signal: AbortSignal): Promise<End> {
-    if (this.stopped) throw new Error("Walkie Direct is stopped");
+    if (this.stopped) throw new Error("Sqwakie Direct is stopped");
     if (!addr.pubkey) throw new Error("no node key to dial");
     const { send, recv } = await this.openStream({ ...addr, pubkey: addr.pubkey }, signal);
     const reset = (): void => { void send.reset(0n).catch(() => undefined); void recv.stop(0n).catch(() => undefined); };

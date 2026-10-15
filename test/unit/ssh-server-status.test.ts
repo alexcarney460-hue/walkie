@@ -1,6 +1,6 @@
-// WALK-67 lane 8, round 2: what GET /v1/ssh/status calls the SSH server. On macOS that is Walkie's own service
+// WALK-67 lane 8, round 2: what GET /v1/ssh/status calls the SSH server. On macOS that is Sqwakie's own service
 // (dev.walkie.sshd, 127.0.0.1:22022, src/daemon/ssh/macos-service.ts): an SSH banner on that port, and nothing else.
-// Remote Login (port 22, `systemsetup`) is never consulted or opened: Walkie does not need it. On Linux and WSL the
+// Remote Login (port 22, `systemsetup`) is never consulted or opened: Sqwakie does not need it. On Linux and WSL the
 // server is the machine's own on 127.0.0.1:22, as before. Stubbed probes, plus real loopback sockets for the banner.
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -18,7 +18,7 @@ function probe(over: { platform?: NodeJS.Platform; answer?: Answer } = {}) {
 }
 
 describe("which port is the SSH server on", () => {
-  test("Walkie's own service on macOS (22022, never Remote Login's 22); the machine's own SSH server everywhere else", () => {
+  test("Sqwakie's own service on macOS (22022, never Remote Login's 22); the machine's own SSH server everywhere else", () => {
     expect(MACOS_SSH_PORT).toBe(22022);
     expect(sshServicePort("darwin")).toBe(22022);
     expect(sshServicePort("linux")).toBe(22);
@@ -47,7 +47,7 @@ describe("macOS: an SSH banner on 127.0.0.1:22022", () => {
     ] as Answer[]) {
       const r = await sshServerStatus(undefined, probe({ answer }).deps);
       expect([answer.state, answer.banner, r.enabled]).toEqual([answer.state, answer.banner, false]);
-      expect(r.detail).toContain("Walkie's SSH service");
+      expect(r.detail).toContain("Sqwakie's SSH service");
       expect(r.detail).not.toContain("Remote Login");
     }
   });

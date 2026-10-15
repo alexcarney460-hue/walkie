@@ -2,7 +2,7 @@
 // fields; the daemon checks every one against the board and the roster, decides the audience and the group itself, and writes the
 // sentence people read from a template: nothing the model wrote is ever the action, the summary, the reason or the place, and an
 // ask carries no text at all (askMessage writes it from the topic and the card). What the model wrote itself (its reason, its note,
-// its evidence) is kept as the record's `context`: shown quoted as WalkieTalkie's to the person who answers, never sent or posted
+// its evidence) is kept as the record's `context`: shown quoted as Talkie's to the person who answers, never sent or posted
 // in anyone's name. Only three kinds come this way (a card to create, an orchestrator to ask, a setup step); moves and seats are
 // the daemon's own duties' alone.
 import { z } from "zod";
@@ -28,7 +28,7 @@ export const RecommendInput = z.discriminatedUnion("kind", [
     kind: z.literal("ask_orchestrator"), to: Address, topic: z.enum(ASK_TOPICS), card: z.string().min(1).max(64).optional(),
     /** topic "setup" (machine onboarding): the machine, and the one step its person is asked to take (a fixed sentence each). */
     machine: z.string().min(1).max(64).optional(), step: z.enum(ASK_SETUP_STEPS).optional(),
-    /** For the person who approves: shown to them quoted as WalkieTalkie's, never sent (the ask's message is a template). */
+    /** For the person who approves: shown to them quoted as Talkie's, never sent (the ask's message is a template). */
     note: z.string().trim().min(1).max(400).optional(), reason: Reason, evidence: Evidence,
   }).strict(),
   z.object({ kind: z.literal("onboarding_step"), machine: z.string().min(1).max(64), step: z.enum(ONBOARDING_STEPS), reason: Reason, evidence: Evidence }).strict(),
@@ -47,7 +47,7 @@ function labelOf(core: Core, address: string): string {
 }
 
 /** The reason every model-recorded recommendation shows: the model's own reason is in the quoted context under it. */
-export const TURN_REASON = "WalkieTalkie suggested this in a scheduled run; what it wrote is quoted below.";
+export const TURN_REASON = "Talkie suggested this in a scheduled run; what it wrote is quoted below.";
 
 interface PhraseBundle { phrases: string[]; prefixes: string[] }
 
@@ -106,10 +106,16 @@ function contextOf(d: RecDeps, input: RecommendInputT, extra: readonly string[] 
   // phrases, would miss what is left of it. Each line is scrubbed, made safe to read with no cut (making it readable can
   // itself form a title out of look-alike characters) and scrubbed again; the joined lines are scrubbed (a title split
   // across two fields). Check the final display text too: shortening can change a token boundary, so the uncut
-  // text passing the whole-phrase policy is not enough (Codex pre.13 audit rounds 1-4).
+  // text passing the whole-phrase policy is not enough (Codex pre.13 audit rounds 1-4). The scrub trims its result, so
+  // the cut text is trimmed before that comparison (a cut just after a space or a newline is not a change by the scrub);
+  // the scrub collapses nothing else in text it has already scrubbed, so any other difference is a phrase it removed.
   const scrub = (line: string) => (phrases.length ? withoutPrivatePhrases(line, phrases, known.prefixes) : line);
   const uncut = (line: string) => safeText(line, 1_000_000);
-  const text = scrub(lines.map((line) => scrub(uncut(scrub(line.replace(/\s+/g, " "))))).filter(Boolean).join("\n")).slice(0, MAX_CONTEXT);
+  const joined = scrub(lines.map((line) => scrub(uncut(scrub(line.replace(/\s+/g, " "))))).filter(Boolean).join("\n"));
+  // Removing one phrase can expose another, including across fields. Refuse unstable full text before a cut can
+  // turn that new private phrase into a partial title the whole-phrase matcher would no longer recognize.
+  if (scrub(joined) !== joined) return "(no words)";
+  const text = joined.slice(0, MAX_CONTEXT).trim();
   if (scrub(text) !== text || !text || !/[\p{L}\p{N}]/u.test(text)) return "(no words)";
   return text;
 }
@@ -118,7 +124,7 @@ function sealSecret(home: string): Uint8Array {
   try { return loadOrCreateRecSeal(home); }
   catch (err) {
     const message = err instanceof Error && /rec-seal\.key/.test(err.message) ? err.message
-      : "rec-seal.key is missing or unreadable. Walkie will not write a new one.";
+      : "rec-seal.key is missing or unreadable. Sqwakie will not write a new one.";
     throw new HttpError(409, "rec_seal", message);
   }
 }

@@ -1,11 +1,12 @@
 // Limit resets (WALKIE-ACCOUNTS-RESET-1). Only Codex offers an official way for a client to use one: the Codex CLI's
 // own app-server protocol (JSON-RPC over stdio, the protocol its IDE extension speaks), methods
 // `account/rateLimits/read` (the resets the account holds) and `account/rateLimitResetCredit/consume` (use one, with
-// an idempotency key: "reuse the same value when retrying that attempt"). Walkie runs the user's own `codex
+// an idempotency key: "reuse the same value when retrying that attempt"). Sqwakie runs the user's own `codex
 // app-server` against the login's CODEX_HOME and never reads, holds or sends a token for it: the CLI authenticates
 // itself. Claude resets are used on claude.ai (Settings > Usage > "Reset for free", per Anthropic's help centre) and
-// Kimi has none, so for those Walkie only links to the provider's page.
+// Kimi has none, so for those Sqwakie only links to the provider's page.
 import { spawn, type ChildProcess } from "node:child_process";
+import { noteChildProcess } from "../daemon/adopted-zombies.ts";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -61,6 +62,7 @@ export const launchCodexAppServer: AppServerLauncher = async (login) => {
   } catch {
     throw new RpcError("spawn_failed");
   }
+  noteChildProcess(child);
   return stdioSession(child);
 };
 
@@ -194,7 +196,7 @@ export async function redeemCodexReset(launch: AppServerLauncher, login: Login, 
   try {
     try {
       await session.request("initialize", {
-        clientInfo: { name: "walkie", title: "Walkie", version: VERSION },
+        clientInfo: { name: "walkie", title: "Sqwakie", version: VERSION },
         capabilities: { experimentalApi: false, requestAttestation: false },
       }, INIT_TIMEOUT_MS);
       session.notify("initialized");
@@ -242,8 +244,8 @@ export async function redeemCodexReset(launch: AppServerLauncher, login: Login, 
 
 /**
  * COMPANY POOL: lets the Codex CLI renew a vault login's tokens itself — the home machine is the login's one refresher.
- * Walkie starts the user's own `codex app-server` on that CODEX_HOME and asks it to read the account's limits; the CLI
- * authenticates on its own and refreshes a stale login as it does for any use. Walkie never reads, holds or sends a
+ * Sqwakie starts the user's own `codex app-server` on that CODEX_HOME and asks it to read the account's limits; the CLI
+ * authenticates on its own and refreshes a stale login as it does for any use. Sqwakie never reads, holds or sends a
  * token here. Returns whether the app-server answered. Never throws.
  */
 export async function renewCodexLogin(launch: AppServerLauncher, login: Login): Promise<boolean> {
@@ -251,7 +253,7 @@ export async function renewCodexLogin(launch: AppServerLauncher, login: Login): 
   try { session = await launch(login); } catch { return false; }
   try {
     await session.request("initialize", {
-      clientInfo: { name: "walkie", title: "Walkie", version: VERSION },
+      clientInfo: { name: "walkie", title: "Sqwakie", version: VERSION },
       capabilities: { experimentalApi: false, requestAttestation: false },
     }, INIT_TIMEOUT_MS);
     session.notify("initialized");

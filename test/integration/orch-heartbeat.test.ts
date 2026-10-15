@@ -34,7 +34,10 @@ describe("WalkieTalkie status heartbeat", () => {
     await waitFor(async () => (await solo.client("").orchestrator()).local.running === true, { what: "running" });
     await waitFor(async () => (await card())?.status.state === "idle", { what: "idle card" });
     const first = (await card())!.updated_at;
-    await waitFor(async () => ((await card())?.updated_at ?? 0) > first, { what: "heartbeat re-announce", timeoutMs: 5_000 });
-    expect((await card())!.effective_state).toBe("idle");
+    const refreshed = await waitFor(async () => {
+      const current = await card();
+      return current && current.updated_at > first && current.status.state === "idle" && current.effective_state === "idle" ? current : null;
+    }, { what: "idle heartbeat re-announce", timeoutMs: 5_000 });
+    expect(refreshed.effective_state).toBe("idle");
   }, 30_000);
 });

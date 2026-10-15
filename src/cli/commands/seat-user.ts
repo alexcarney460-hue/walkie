@@ -31,7 +31,7 @@ function freeMacGroupId(): number {
 }
 
 /**
- * A runtime on the person's PATH as a single native binary (copyable), or null (missing, or a script). Walkie's own
+ * A runtime on the person's PATH as a single native binary (copyable), or null (missing, or a script). Sqwakie's own
  * account shims (`walkie accounts shims install`: a script carrying SHIM_MARK, in ~/.walkie/bin) are passed over and
  * the search goes on down PATH to the native binary they start (PRE4 RC, Codex 4).
  */
@@ -119,7 +119,7 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
       }
     }
     const extraRoots = worldWritableDirs(); // swept too (Opus r7 6)
-    // WALK-103: the Walkie these seat users are for (this daemon: the socket this command talks to), recorded root-owned
+    // WALK-103: the Sqwakie these seat users are for (this daemon: the socket this command talks to), recorded root-owned
     // so the helper serves only it and no second daemon of this person's (a test, another WALKIE_HOME) can remove them.
     const uid = rootOwner ? lookupOsUser(me.username)?.uid : process.getuid?.();
     if (uid === undefined || !Number.isSafeInteger(uid) || uid < 0) {
@@ -142,7 +142,7 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
     writeFileSync(join(tmp, "seat-instance"), seatRegistrationText(registration), { mode: 0o644 });
     const before = readSeatRegistration();
     if (before.state === "present" && before.registration.socket !== registration.socket) {
-      ctx.out(c.yellow(`note: this machine's seat users belong to the Walkie at ${before.registration.home} now; applying moves them to this one (${registration.home}), and that Walkie stops listing, making or removing them`));
+      ctx.out(c.yellow(`note: this machine's seat users belong to the Sqwakie at ${before.registration.home} now; applying moves them to this one (${registration.home}), and that Sqwakie stops listing, making or removing them`));
     }
     writeFileSync(join(tmp, "walkie-seats"), plan.sudoers, { mode: 0o644 });
     writeFileSync(join(tmp, SEAT_ROOTS_FILE), `${JSON.stringify(extraRoots)}\n`, { mode: 0o644 });
@@ -150,7 +150,7 @@ export async function seatUserSetup(ctx: Ctx, o: { apply: boolean; accept: boole
     if (o.plan) {
       if (ctx.json && !apply) { ctx.out(JSON.stringify({ ...plan, steps })); return { ok: true, applied: false }; }
       ctx.out(c.bold("Every seat as a fresh OS user of its own, made for it and destroyed after it (never reused)"));
-      ctx.out(c.dim("A seat then can't reach your Walkie (its socket and token stay in your 0700 ~/.walkie), your home (closed to other"));
+      ctx.out(c.dim("A seat then can't reach your Sqwakie (its socket and token stay in your 0700 ~/.walkie), your home (closed to other"));
       ctx.out(c.dim("users), another seat, or a later one: its user, with every process, schedule, service and file of it, is removed."));
       for (const s of steps) ctx.out(`  ${s.sudo ? "sudo " : ""}${shell(s.argv)}  ${c.dim(`# ${s.what}`)}`);
       ctx.out(c.dim(`  ${plan.sudoNote}`));

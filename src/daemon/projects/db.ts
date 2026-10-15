@@ -16,7 +16,7 @@ const STORED = "+kind = 'msg.post' AND redacted = 0 AND status IN ('ok', 'reject
 
 /**
  * The events of a project channel that are news about a card (cardEventsReceivedSince): bound as (channel, ts >=, received_at >=).
- * A card op carrying a field beyond the bookkeeping ones, or a thread reply that is not a board op and not WalkieTalkie's own.
+ * A card op carrying a field beyond the bookkeeping ones, or a thread reply that is not a board op and not Talkie's own.
  */
 const CARD_NEWS = `channel = ? AND ts >= ? AND received_at >= ? AND ${VISIBLE} AND (
   (json_extract(body, '$.board.op') = 'card'
@@ -183,7 +183,7 @@ export class ProjectsDb {
    * What this daemon RECEIVED in the channel at or after `since` (its own clock: an origin's clock may be wrong, and an
    * event can arrive long after it was written) that touches a card (PROJECT-REPORTS-1: what is news since a report):
    * card ops that change something a report would say, so not a reorder or an archive alone, and comments, but not
-   * WalkieTalkie's own (its duties comment on cards every hour). Events written before `writtenAfter` are history, not
+   * Talkie's own (its duties comment on cards every hour). Events written before `writtenAfter` are history, not
    * news (a machine that just synced its first copy of a channel). Newest receipt first, one row per event.
    */
   cardEventsReceivedSince(channel: string, since: number, writtenAfter: number, limit: number): Array<{ id: string; card: string }> {
@@ -248,8 +248,10 @@ export class ProjectsDb {
    * views depend on), was stored after event row `rowid` (restart recovery; round-3 audit, Codex M2).
    */
   projectPostsAfter(rowid: number): boolean {
+    // A short suffix is cheaper by rowid; a long status-only suffix is cheaper through the kind index.
+    const source = this.maxRowid() - rowid > 20_000 ? "events" : "events NOT INDEXED";
     return !!this.db.query(
-      `SELECT 1 FROM events WHERE rowid > ? AND ((kind = 'msg.post' AND channel LIKE 'p-%')
+      `SELECT 1 FROM ${source} WHERE rowid > ? AND ((kind = 'msg.post' AND channel LIKE 'p-%')
        OR kind IN ('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')) LIMIT 1`).get(rowid);
   }
   maxRowid(): number {
@@ -262,9 +264,11 @@ export class ProjectsDb {
    * ignored by the fold, so only the importing person's own roots are trusted).
    */
   extRoots(src: string, handle: string): Array<{ id: string; channel: string; op: string; ext_id: string; ts: number }> {
+    const source = this.projectRootsSource();
     return this.db.query<{ id: string; channel: string; op: string; ext_id: string; ts: number }, [string, string]>(
       `SELECT id, channel, json_extract(body, '$.board.op') AS op, json_extract(body, '$.board.ext.id') AS ext_id, ts
-       FROM events WHERE channel >= 'p-' AND channel < 'p.' AND channel LIKE 'p-%' AND ${VISIBLE} AND +thread IS NULL AND author_handle = ? AND +author_agent IS NULL
+       FROM ${source} WHERE channel >= 'p-' AND channel < 'p.' AND channel LIKE 'p-%' AND ${VISIBLE}
+       AND kind = 'msg.post' AND +thread IS NULL AND thread IS NULL AND author_handle = ? AND +author_agent IS NULL
        AND json_extract(body, '$.board.op') IN ('card', 'project') AND json_extract(body, '$.board.ext.src') = ?
        AND typeof(json_extract(body, '$.board.ext.id')) = 'text' ORDER BY ts, id`).all(handle, src);
   }
@@ -279,9 +283,16 @@ export class ProjectsDb {
 
   /** Channels that have at least one project post (startup: rebuild what was folded under another fold version). */
   projectChannels(): string[] {
+    const source = this.projectRootsSource();
     return this.db.query<{ channel: string }, []>(
-      `SELECT DISTINCT channel FROM events WHERE channel >= 'p-' AND channel < 'p.' AND channel LIKE 'p-%' AND ${VISIBLE} AND +thread IS NULL
+      `SELECT DISTINCT channel FROM ${source} WHERE channel >= 'p-' AND channel < 'p.' AND channel LIKE 'p-%' AND ${VISIBLE}
+       AND kind = 'msg.post' AND +thread IS NULL AND thread IS NULL
        AND json_extract(body, '$.board.op') = 'project'`).all().map((r) => r.channel);
+  }
+
+  private projectRootsSource(): string {
+    const ready = this.db.query("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'events_project_roots'").get();
+    return ready ? "events INDEXED BY events_project_roots" : "events";
   }
 
   // ---- folded projects --------------------------------------------------------------------------------------------

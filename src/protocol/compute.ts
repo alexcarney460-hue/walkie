@@ -1,5 +1,5 @@
 // Rental compute (RENT-1/RENT-2, docs/plans/RENT-1.md): the contract between the daemon (CLI, dashboard,
-// WalkieTalkie) and the site's control plane (site/api/compute/*). The site keeps its own copy of these shapes
+// Talkie) and the site's control plane (site/api/compute/*). The site keeps its own copy of these shapes
 // (site/api/_lib/compute/types.ts) because Vercel deploys site/ on its own.
 //
 // CUSTOMERS NEVER SEE OUR COST (Alex, binding): nothing here carries a cost, a margin, a markup, a provider or an
@@ -29,6 +29,16 @@ export const IDLE_MINUTES_MIN = 10;
 export const IDLE_MINUTES_MAX = 1440;
 
 export const MICROS_PER_USD = 1_000_000;
+
+/**
+ * Prepaid credit is non-refundable and expires this many days after purchase (Alex 2026-10-09; the site's lots.ts
+ * CREDIT_LIFETIME_MS). Each purchase is a lot; the soonest-expiring credit is spent first.
+ */
+export const CREDIT_LIFETIME_DAYS = 60;
+/** The credit terms as owners read them (CLI, dashboard). */
+export const CREDIT_TERMS = `Credit is non-refundable and expires ${CREDIT_LIFETIME_DAYS} days after purchase; the credit that expires soonest is used first.`;
+/** Most credit lots a state lists (the site's views.ts MAX_CREDIT_LOTS_SHOWN). */
+export const MAX_CREDIT_LOTS = 100;
 
 /** Keys that must never appear in a customer-facing compute payload (checked by tests, recursively). */
 export const FORBIDDEN_CUSTOMER_KEYS = /cost|margin|markup|wholesale|instance_?type|provider/i;
@@ -91,11 +101,22 @@ export const RentalView = z.object({
   started_at: z.number().int().nullable(),
   ended_at: z.number().int().nullable(),
   end_reason: StopReason.nullable(),
-  /** The Walkie node id once the machine has joined and reported it (heartbeat). */
+  /** The Sqwakie node id once the machine has joined and reported it (heartbeat). */
   node_id: z.string().regex(/^[0-9a-f]{16}$/).nullable(),
   idle_minutes: z.number().int(),
 }).strict();
 export type RentalView = z.infer<typeof RentalView>;
+
+/** One unexpired credit lot with credit left: bought at `purchased_at`, usable until `expires_at`. */
+export const CreditLot = z.object({
+  purchased_micros: Micros,
+  remaining_micros: Micros,
+  purchased_at: z.number().int(),
+  expires_at: z.number().int(),
+  /** It expires within 7 days (the site's clock). */
+  expiring_soon: z.boolean(),
+}).strict();
+export type CreditLot = z.infer<typeof CreditLot>;
 
 export const ComputeState = z.object({
   handover_notice: z.string().max(4096).optional(),
@@ -108,11 +129,15 @@ export const ComputeState = z.object({
   balance_micros: Micros,
   /** Sum of the hourly prices of every machine that is burning now (starting or running). */
   burn_per_hour_micros: Micros,
-  /** Hours of credit left at the current burn; null when nothing burns. */
+  /** Hours of credit left at the current burn, counting what expires unspent; null when nothing burns. */
   hours_left: z.number().nullable(),
+  /** The unexpired lots with credit left, soonest expiry first (balance_micros is their sum). Absent from an older site. */
+  credit_lots: z.array(CreditLot).max(MAX_CREDIT_LOTS).optional(),
+  next_expiry_at: z.number().int().nullable().optional(),
   rentals: z.array(RentalView).max(1000),
   accounts: z.array(z.object({ account_id: z.string().regex(/^ca_[0-9a-f]{16}$/), status: z.enum(['active', 'frozen']),
-    balance_micros: Micros, burn_per_hour_micros: Micros, hours_left: z.number().nullable() }).strict()).optional(),
+    balance_micros: Micros, burn_per_hour_micros: Micros, hours_left: z.number().nullable(),
+    credit_lots: z.array(CreditLot).max(MAX_CREDIT_LOTS).optional(), next_expiry_at: z.number().int().nullable().optional() }).strict()).optional(),
 }).strict();
 export type ComputeState = z.infer<typeof ComputeState>;
 
@@ -120,19 +145,22 @@ export type ComputeState = z.infer<typeof ComputeState>;
 export const COMPUTE_ALERT_TEXT: Readonly<Record<NonNullable<ComputeState["alerts"]>[number], string>> = {
   tick_stale: "Compute monitoring is delayed. New rentals are paused.",
   termination_delayed: "Shutdown is delayed. Billing continues until deletion is confirmed.",
-  revocation_pending: "A rented machine is still on the team after its rental ended. Walkie removes it as soon as the team's roster authority is reachable.",
+  revocation_pending: "A rented machine is still on the team after its rental ended. Sqwakie removes it as soon as the team's roster authority is reachable.",
   revocation_refused: "A rented machine is still on the team after its rental ended and couldn't be removed automatically. The reason is posted in #general.",
   revocation_waiting_for_authority_sync: "An ended rental can't be closed yet: this machine hasn't been able to sync with the team's roster authority since it ended, so a machine that joined late could still be on the team. Check that the authority machine is online and reachable (walkie doctor).",
-  compute_records_unreadable: "Walkie can't read its record of rented machines, so ended rentals aren't being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Walkie never overwrites it.",
+  compute_records_unreadable: "Sqwakie can't read its record of rented machines, so ended rentals aren't being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Sqwakie never overwrites it.",
 };
 
 /**
  * GET /v1/compute/state (the daemon) before this machine has a compute account (nothing rented or bought here yet):
- * the ComputeState fields with account_id null and status "none". The account is created on the first rent or buy.
+ * the ComputeState fields with account_id null and status "none". The account is created on the first rent or buy,
+ * and only on the team's roster authority: `authority_required` says this machine isn't it, so renting (and seeing
+ * the team's rentals) happens there.
  */
 export interface NoComputeAccount {
   account_id: null; team_id: string; status: "none"; balance_micros: 0; burn_per_hour_micros: 0; hours_left: null; rentals: [];
   handover_pending_until?: number;
+  authority_required?: true;
 }
 export type LocalComputeState = ComputeState | NoComputeAccount;
 
@@ -183,6 +211,17 @@ export const LocalRentReq = z.object({
 }).strict();
 export type LocalRentReq = z.infer<typeof LocalRentReq>;
 
+/** "2026-12-07 14:03 UTC": a lot's expiry to the minute, in one zone for everyone. */
+export function expiryText(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/** "in 3 days", "in 1 day", "in less than a day": how soon an expiry is (whole days, rounded down). */
+export function expiresInText(expiresAt: number, now: number): string {
+  const days = Math.floor((expiresAt - now) / 86_400_000);
+  return days < 1 ? "in less than a day" : `in ${days} day${days === 1 ? "" : "s"}`;
+}
+
 /** "$0.84" (cents; whole micros below a cent round up so a price never reads as less than it is). */
 export function usd(micros: number): string {
   const neg = micros < 0;
@@ -200,7 +239,7 @@ export function parseMachineAsks(tokens: readonly string[]): MachineAsk[] {
   for (const t of tokens) {
     const m = /^([a-z0-9-]+)(?:=(\d{1,3}))?$/.exec(t);
     const tier = TierId.safeParse(m?.[1]);
-    if (!m || !tier.success) throw new Error(`unknown tier "${t}" (one of: ${TIER_IDS.join(", ")}; add =N for a count)`);
+    if (!m || !tier.success) throw new Error(`unknown tier "${t}" (the tiers on sale: walkie compute quotes; add =N for a count)`);
     const n = m[2] === undefined ? 1 : Number(m[2]);
     if (n < 1) throw new Error(`count must be at least 1 in "${t}"`);
     counts.set(tier.data, (counts.get(tier.data) ?? 0) + n);

@@ -1,5 +1,5 @@
 // Is a discovered session working right now? (WALKIE-MISSION-1.) Headless seats (`claude -p`, `codex exec`) run
-// without Walkie hooks, so discovery judges them from two cheap, local signals:
+// without Sqwakie hooks, so discovery judges them from two cheap, local signals:
 //   1. its session file: Claude's transcript (<config dir>/projects/<cwd slug>/<session>.jsonl, and its subagents'
 //      files), Codex's open rollout file, Kimi's open .jsonl. A write in the last minute, or a turn still in progress
 //      (the last record is a prompt, a tool call or a tool result), means working. Only the last TAIL_BYTES are read,

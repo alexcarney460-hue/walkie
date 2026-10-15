@@ -15,7 +15,7 @@ const TEMPLATES = [
 
 export function ScheduleItems({ schedules, onToggle, onRun }: { schedules: Schedule[]; onToggle: (s: Schedule) => void; onRun: (s: Schedule) => void }) {
   if (!schedules.length) return <p className="panel-empty">No schedules yet.</p>;
-  return <ul aria-label="WalkieTalkie schedules">{schedules.map((s) => <li key={s.id} className="orch-card">
+  return <ul aria-label="Talkie schedules">{schedules.map((s) => <li key={s.id} className="orch-card">
     <strong>{s.name}</strong> · <code>{s.cron}</code> · {s.enabled ? "Enabled" : "Paused"}
     <div>Next: {s.next_run ? new Date(s.next_run).toLocaleString() : "—"}</div>
     <div>Last: {s.last_run ? new Date(s.last_run).toLocaleString() : "Never"}</div>

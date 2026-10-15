@@ -13,6 +13,7 @@ import { EmptyState, ErrorState, RuntimeBadge, SkeletonRows, StatePill } from ".
 import { getRoute, hrefFor, navigate } from "../../lib/route.ts";
 import { agoLong, useNow } from "../../lib/time.ts";
 import { useActions, useStore } from "../../state/store.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { archiveCountText, countByNode, isArchived, matchesSearch, shownByDefault } from "../../../../src/protocol/agent-roster.ts";
 
 type StateFilter = "all" | "idle" | "offline";
@@ -189,7 +190,7 @@ export function ArchiveView({ machine }: { machine?: string }) {
                         <StatePill state={a.effective_state} />
                         <span className="archive-agent mono truncate">{a.agent}</span>
                         <RuntimeBadge runtime={a.status.runtime} runtime_name={a.status.runtime_name} launch={a.status.launch} />
-                        <span className="archive-title truncate">{a.status.title ?? <span className="muted">No status title</span>}</span>
+                        <span className="archive-title truncate">{a.status.title ? displayStoredText(a.status.title) : <span className="muted">No status title</span>}</span>
                         <span className="archive-repo mono truncate">
                           {a.status.repo && <><GitBranch size={11} strokeWidth={1.75} aria-hidden="true" />{a.status.repo}{a.status.branch ? `@${a.status.branch}` : ""}</>}
                         </span>

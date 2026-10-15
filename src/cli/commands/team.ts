@@ -1,23 +1,37 @@
 // init / invite / join / channel create / status / who
 import { adminCtx, requireAdmin } from "../admin-gate.ts";
 import { subagentLabel, subagentsText } from "../../protocol/subagents.ts";
+import { displayStoredText } from "../../protocol/display-text.ts";
 import { labelWorthShowing, runtimeLabel } from "../../protocol/runtime-label.ts";
 import type { MemPressure } from "../../protocol/machine-stats.ts";
 import { gb, memText, tempLevel, tempText } from "../../protocol/machine-stats-format.ts";
 import { archiveCountText, hiddenByNode, needsPerson, shownByDefault, type ArchiveCount } from "../../protocol/agent-roster.ts";
 import type { AgentView, MeView, NodeView, TeamView } from "../../protocol/schemas.ts";
+import { Event, NodeId, RosterRequest } from "../../protocol/schemas.ts";
 import { agentDisplayName, ORCHESTRATOR_AGENT } from "../../protocol/orchestrator.ts";
 import { agentViewJson, teamViewJson, WHO_NOTE } from "../agent-output.ts";
 import { bool, channelArg, need, str, UsageError } from "../args.ts";
-import { agentFrom, EXIT, requirePerson, type Ctx } from "../context.ts";
+import { agentFrom, EXIT, readStdin, requirePerson, type Ctx } from "../context.ts";
 import { OFFBOARD_APPLY_TIMEOUT_MS } from "../../daemon/peer-timeouts.ts";
 import { ago, c, pad, safeTerm } from "../format.ts";
 import { planLine } from "./license.ts";
 import { isInviteCode, INVITE_MAX_CHARS } from "../../daemon/invite.ts";
 import { isolationLines, loginLines } from "./seats.ts";
 import { allowTeamAgents, enableSeats } from "./seats-enable.ts";
+import { teamLink } from "./team-link.ts";
+import { linkTokenFrom } from "../../daemon/fleet-link.ts";
+import { WalkieError } from "../../client/index.ts";
 
-/** --direct / --tailscale, or neither (the daemon decides: Tailscale when signed in, else Walkie Direct). */
+async function beforeDeadline<T>(request: Promise<T>, remainingMs: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([request, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), remainingMs); })]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** --direct / --tailscale, or neither (the daemon decides: Tailscale when signed in, else Sqwakie Direct). */
 export function transportFlag(ctx: Ctx): "direct" | "tailscale" | undefined {
   const direct = bool(ctx.args, "direct");
   const tailscale = bool(ctx.args, "tailscale");
@@ -37,7 +51,7 @@ export async function init(ctx: Ctx): Promise<number> {
   const handle = str(ctx.args, "handle");
   if (!handle) throw new UsageError("--handle is required (your short name, e.g. --handle alex)");
   const me = await ctx.client().init(name, handle, transportFlag(ctx));
-  const via = me.transport?.mode === "direct" ? " · Walkie Direct" : "";
+  const via = me.transport?.mode === "direct" ? " · Sqwakie Direct" : "";
   ctx.out(ctx.json ? JSON.stringify(me) : `${c.green("created team")} ${me.team?.name} (${me.team?.id}) — you are @${me.handle} (owner) on ${me.node.hostname}${via}
 ${inviteHint(me)}`);
   return EXIT.ok;
@@ -49,7 +63,7 @@ function roleArg(ctx: Ctx): string {
   return role;
 }
 
-/** `walkie invite --handle kira`: a Walkie Direct invite code (single use, 7 days). */
+/** `walkie invite --handle kira`: a Sqwakie Direct invite code (single use, 7 days). */
 async function inviteCode(ctx: Ctx, handle: string): Promise<number> {
   const client = await requireAdmin(ctx, `mint an invite code for @${handle}`, handle);
   const res = await client.inviteCode(handle, roleArg(ctx));
@@ -95,27 +109,55 @@ export async function inviteFromStdin(stream: ReadableStream<Uint8Array>): Promi
     }
   } finally { reader.releaseLock(); }
   const peer = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)).trim();
-  if (peer.length > INVITE_MAX_CHARS || !isInviteCode(peer)) throw new UsageError("stdin did not contain one Walkie invite code");
+  if (peer.length > INVITE_MAX_CHARS || !isInviteCode(peer)) throw new UsageError("stdin did not contain one Sqwakie invite code");
   return peer;
 }
 
 export async function join(ctx: Ctx): Promise<number> {
-  const fromStdin = bool(ctx.args, "invite-stdin");
-  if (fromStdin && ctx.args.pos.length) throw new UsageError("--invite-stdin cannot be combined with a command-line invite");
-  const peer = fromStdin ? await inviteFromStdin(Bun.stdin.stream()) : need(ctx.args, 0, "invite code, or a teammate's Tailscale host / 100.x IP");
-  // --allow-team-agents (alias --allow-seats) is the one-step opt-in (walkie seats enable): the person's, or an agent of
-  // theirs applying the flag it was given (AGENT-ADMIN-1: refused while agent admin is off, audited while it is on).
+  const inviteStdin = bool(ctx.args, "invite-stdin");
+  const linkStdin = bool(ctx.args, "link-stdin");
+  if (inviteStdin && linkStdin) throw new UsageError("choose --invite-stdin or --link-stdin");
+  if ((inviteStdin || linkStdin) && ctx.args.pos.length) throw new UsageError("stdin invite/link cannot be combined with a command-line credential");
+  const peer = inviteStdin ? await inviteFromStdin(Bun.stdin.stream()) : linkStdin ? await readStdin() : need(ctx.args, 0, "invite code or fleet link, or a teammate's Tailscale host / 100.x IP");
+  const link = linkTokenFrom(peer);
+  if (linkStdin && !link) throw new UsageError("no fleet link on stdin (the token starts with wl1)");
   const allowSeatsToo = allowTeamAgents(ctx);
   const seatUsers = bool(ctx.args, "seat-users");
   if (seatUsers && !allowSeatsToo) throw new UsageError("--seat-users requires --allow-team-agents (or --allow-seats)");
   if (seatUsers && bool(ctx.args, "same-user")) throw new UsageError("choose --same-user or --seat-users");
   if (allowSeatsToo && ctx.agentMarker()) ctx = adminCtx(ctx, "let the team start agents on this machine");
-  const res = await ctx.client().join(peer);
+  let res = link ? await ctx.client().joinLink(link) : await ctx.client().join(peer);
+  const wait = bool(ctx.args, "wait");
+  if (wait && !res.admitted && res.reason === "pending_approval") {
+    const env = Number(process.env.WALKIE_LINK_WAIT_S);
+    const waitMs = process.env.WALKIE_LINK_WAIT_S !== "" && Number.isFinite(env) && env >= 0 ? Math.min(env * 1000, 120_000) : 120_000;
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      await Bun.sleep(Math.min(2_000, deadline - Date.now()));
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        if (link) {
+          const me = await beforeDeadline(ctx.client().me(remaining), remaining);
+          if (!me || Date.now() >= deadline) break;
+          if (me.team) { res = { ...me, admitted: true }; break; }
+        } else {
+          const next = await beforeDeadline(ctx.client().join(peer, remaining), remaining);
+          if (!next || Date.now() >= deadline) break;
+          res = next;
+          if (res.admitted || res.reason !== "pending_approval") break;
+        }
+      } catch (error) {
+        if (error instanceof WalkieError && error.code === "timeout") break;
+        throw error;
+      }
+    }
+  }
   if (res.admitted && !ctx.json) ctx.out(`${c.green("joined")} ${res.team?.name} as @${res.handle} (${res.role}) on ${res.node.hostname}`);
   const seatsView = res.admitted && allowSeatsToo
     ? await enableSeats(ctx, { sameUser: bool(ctx.args, "same-user"), seatUsers, acceptReadableHome: bool(ctx.args, "accept-readable-home") })
     : null;
-  if (ctx.json) { ctx.out(JSON.stringify(seatsView ? { ...res, seats: seatsView } : res)); return res.admitted && (!allowSeatsToo || seatsView) ? EXIT.ok : EXIT.error; }
+  if (ctx.json) { ctx.out(JSON.stringify(seatsView ? { ...res, seats: seatsView } : res)); return res.admitted && (!allowSeatsToo || seatsView) ? EXIT.ok : wait && res.reason === "pending_approval" ? EXIT.timeout : EXIT.error; }
   if (res.admitted) {
     if (seatsView) {
       for (const line of isolationLines(seatsView)) ctx.out(line);
@@ -139,12 +181,36 @@ export async function join(ctx: Ctx): Promise<number> {
     invite_issuer_not_owner: "the machine that made that invite no longer belongs to an owner — ask an owner for a new one",
     invite_predates_removal: "that invite was made before you were removed from the team — ask an owner for a new one",
   };
-  ctx.err(c.red(`not admitted: ${why[res.reason ?? ""] ?? res.reason ?? "unknown reason"}`));
-  return EXIT.error;
+  if (link && res.reason === "pending_approval") {
+    ctx.out(c.yellow("waiting for an owner to approve this machine (dashboard: Team → Waiting to join). It joins by itself once approved; check with: walkie who"));
+    return wait ? EXIT.timeout : EXIT.ok;
+  }
+  ctx.err(c.red(`not admitted: ${why[res.reason ?? ""] ?? LINK_REFUSALS[res.reason ?? ""] ?? res.reason ?? "unknown reason"}`));
+  return wait && res.reason === "pending_approval" ? EXIT.timeout : EXIT.error;
 }
 
+/** What a refused fleet link means, for the person at the new machine (FLEET-LINK-1). */
+export const LINK_REFUSALS: Record<string, string> = {
+  link_pending_elsewhere: "this machine already awaits approval through another invitation — ask an owner to decide it first",
+  link_used_up: "this fleet link has admitted all the machines it was made for — ask an owner for a new one (walkie team link)",
+  link_expired: "this fleet link expired — ask an owner for a new one (walkie team link)",
+  link_revoked: "this fleet link was revoked — ask an owner for a new one",
+  link_unknown: "the team's roster authority doesn't know this fleet link (it may have moved to another machine since) — ask an owner for a new one",
+  link_authority_changed: "the roster authority moved since this fleet link was made — ask an owner for a new one",
+  link_predates_removal: "this fleet link was made before this machine's member was removed — ask an owner for a new invitation",
+  link_member_removed: "the member this link adds machines for is no longer on the team — ask an owner for a new link",
+  link_role_changed: "the member this link adds machines for changed role since it was made — ask an owner for a new link",
+  link_issuer_not_owner: "whoever made this link is no longer an owner — ask an owner for a new one",
+  link_declined: "an owner declined this machine",
+  link_malformed: "that fleet link is damaged — copy the whole link or command again",
+  link_wrong_team: "that fleet link is for another team",
+  link_bad_signature: "that fleet link doesn't verify — copy the whole link or command again",
+  rate_limited: "too many attempts from this machine — wait a minute and run it again",
+  join_limit: "too many machines are already waiting for approval — an owner must approve or deny them first",
+};
+
 /**
- * `walkie direct enable` (mixed teams): this Tailscale machine also serves Walkie Direct, so teammates who joined
+ * `walkie direct enable` (mixed teams): this Tailscale machine also serves Sqwakie Direct, so teammates who joined
  * with an invite code can reach it. Run it on the roster authority before minting invite codes on a Tailscale team.
  */
 export async function directCmd(ctx: Ctx): Promise<number> {
@@ -161,7 +227,8 @@ export async function directCmd(ctx: Ctx): Promise<number> {
 }
 
 export async function channel(ctx: Ctx): Promise<number> {
-  const sub = need(ctx.args, 0, "subcommand (create)");
+  const sub = need(ctx.args, 0, "subcommand (create | archive)");
+  if (sub === "archive") return archiveChannel(ctx);
   if (sub !== "create") throw new UsageError(`unknown channel subcommand: ${sub}`);
   const name = channelArg(need(ctx.args, 1, "channel name"));
   const membersRaw = str(ctx.args, "members");
@@ -171,6 +238,46 @@ export async function channel(ctx: Ctx): Promise<number> {
   // Omitted fields keep their values (PROTOCOL §2): only --public makes a restricted channel team-wide.
   const res = await ctx.client().channel({ name, topic: str(ctx.args, "topic"), members, ...(isPublic ? { public: true } : {}) });
   ctx.out(ctx.json ? JSON.stringify(res) : `${c.green("channel")} #${name}${members ? ` (restricted to ${members.map((m) => "@" + m).join(", ")})` : isPublic ? " (public)" : ""}`);
+  return EXIT.ok;
+}
+
+function archiveOutcome(value: unknown, name: string): "applied" | "queued" | "unconfirmed" {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "unconfirmed";
+  const keys = Object.keys(value);
+  if ("queued" in value) {
+    return keys.length === 2 && value.queued === true && "request_id" in value
+      && RosterRequest.shape.id.safeParse(value.request_id).success ? "queued" : "unconfirmed";
+  }
+  const event = Event.safeParse("event" in value ? value.event : undefined);
+  return keys.length === 1 && event.success && event.data.kind === "channel.upsert"
+    && event.data.body.name === name && event.data.body.archived === true ? "applied" : "unconfirmed";
+}
+
+async function archiveChannel(ctx: Ctx): Promise<number> {
+  const name = channelArg(need(ctx.args, 1, "channel name"));
+  if (ctx.args.pos.length !== 2) throw new UsageError("channel archive takes one channel name");
+  for (const flag of ctx.args.flags.keys()) {
+    if (!["json", "for-agent", "agent"].includes(flag)) {
+      throw new UsageError(`channel archive does not accept --${safeTerm(flag).slice(0, 40)}`);
+    }
+  }
+  const client = ctx.client();
+  // The API is an upsert: do not create an archived placeholder for a misspelled or unavailable channel.
+  if (!(await client.team()).channels.some((channel) => channel.name === name)) {
+    throw new UsageError(`channel #${safeTerm(name)} is not available on this machine`);
+  }
+  const res = await client.channel({ name, archived: true });
+  const outcome = archiveOutcome(res, name);
+  if (ctx.json) ctx.out(JSON.stringify(res));
+  else if (outcome === "queued") {
+    const id = (res as { request_id: string }).request_id;
+    ctx.out(c.yellow(`queued: #${safeTerm(name)} will be archived when the roster authority accepts the request (request ${id})`));
+  }
+  else if (outcome === "applied") ctx.out(`${c.green("archived")} #${safeTerm(name)}`);
+  if (outcome === "unconfirmed") {
+    ctx.err(`archive result for #${safeTerm(name)} is unconfirmed; inspect the channel and request status before retrying`);
+    return EXIT.error;
+  }
   return EXIT.ok;
 }
 
@@ -232,13 +339,13 @@ export function renderWho(team: TeamView, agents: AgentView[], now = Date.now(),
       lines.push(`    ${pad("", 22)} ${statsDetail(n)}`);
       for (const a of agents.filter((x) => x.node === n.node_id)) {
         const st = a.effective_state;
-        const label = a.status.title ?? (a.status.parent ? subagentLabel(a.status.subagent_type) : undefined);
+        const label = a.status.title ? displayStoredText(a.status.title) : (a.status.parent ? subagentLabel(a.status.subagent_type) : undefined);
         // ORCH-2: an orchestrator's line names its model.
         const model = a.agent === ORCHESTRATOR_AGENT && a.status.model ? `· ${a.status.model}` : "";
         const title = [label, a.status.task ? `(${a.status.task})` : "", model].filter(Boolean).join(" ");
         const subs = subagentsText(a.subagents?.working ?? 0);
         // A sub-agent (WALKIE-MISSION-SUB-1) is marked as its session's child.
-        const name = a.status.parent ? `↳ ${a.agent}` : agentDisplayName(a.agent); // ORCH-2: WalkieTalkie
+        const name = a.status.parent ? `↳ ${a.agent}` : agentDisplayName(a.agent); // ORCH-2: Talkie
         // AGENT-SEE-1: what kind of run it is, where the name doesn't say ("kimi · headless", "claude · acp").
         const kind = labelWorthShowing(a.status) ? c.dim(` · ${safeTerm(runtimeLabel(a.status))}`) : "";
         lines.push(`      ${pad(name, 20)} ${pad((STATE_COLOR[st] ?? c.dim)(st), 9)} ${pad(safeTerm(title).slice(0, 60), 62)} ${c.dim(ago(a.updated_at, now))}${kind}${subs ? c.dim(` · ${subs}`) : ""}`);
@@ -259,10 +366,36 @@ export function renderWho(team: TeamView, agents: AgentView[], now = Date.now(),
 const ROLES = ["owner", "member", "observer", "removed"];
 
 export async function teamCmd(ctx: Ctx): Promise<number> {
-  const sub = need(ctx.args, 0, "subcommand (add-machine | authority | offboard | revoke | role | peer-sig-strict)");
+  const sub = need(ctx.args, 0, "subcommand (pending | admit | link | add-machine | authority | offboard | revoke | role | peer-sig-strict)");
+  if (sub === "pending") {
+    if (ctx.args.pos.length !== 1) throw new UsageError("team pending takes no arguments");
+    const view = await ctx.client().request<{ requests: { node_id: string; hostname: string; handle?: string }[]; roster_requests: unknown[] }>("GET", "/v1/team/pending");
+    ctx.out(ctx.json ? JSON.stringify(view) : view.requests.length ? view.requests.map((r) => `${safeTerm(r.node_id)} ${safeTerm(r.hostname)}${r.handle ? ` @${safeTerm(r.handle)}` : ""}`).join("\n") : "no machines waiting to join");
+    return EXIT.ok;
+  }
+  if (sub === "admit") {
+    const node = need(ctx.args, 1, "machine node id");
+    if (!NodeId.safeParse(node).success || ctx.args.pos.length !== 2) throw new UsageError("team admit requires one machine node id");
+    const approve = !bool(ctx.args, "decline");
+    const client = await requireAdmin(ctx, `${approve ? "approve" : "deny"} the join of machine ${node}`, node);
+    const pending = await client.request<{ requests: { node_id: string; link?: string | null; generation?: string | null }[] }>("GET", "/v1/team/pending");
+    const request = pending.requests.find((r) => r.node_id === node);
+    if (!request) throw new UsageError("that machine is not waiting for admission on this authority");
+    const fleet = request.link !== undefined && request.link !== null;
+    if (fleet && (!request.generation || !/^[0-9a-f]{32}$/.test(request.generation))) throw new UsageError("fleet join binding is unavailable; inspect the pending request before deciding it");
+    const res = await client.request<unknown>("POST", fleet ? "/v1/team/admit-link" : "/v1/team/admit", {
+      node_id: node, approve, ...(fleet ? { link: request.link, generation: request.generation } : {}),
+    });
+    ctx.out(ctx.json ? JSON.stringify(res) : res && typeof res === "object" && "queued" in res
+      ? `queued: ${approve ? "approval" : "denial"} of ${safeTerm(node)} awaits the roster authority`
+      : `${approve ? "approved" : "denied"} join for ${safeTerm(node)}`);
+    return EXIT.ok;
+  }
+  if (sub === "link") return teamLink(ctx);
   if (sub === "offboard") return teamOffboard(ctx);
   if (sub === "role") return teamRole(ctx);
   if (sub === "add-machine") return addMachine(ctx);
+  if (sub === "link") return teamLink(ctx);
   if (sub === "peer-sig-strict") {
     const mode = ctx.args.pos[1];
     if (mode && mode !== "on" && mode !== "off") throw new UsageError("peer-sig-strict accepts on or off");
@@ -413,7 +546,7 @@ export async function whoCmd(ctx: Ctx): Promise<number> {
   return EXIT.ok;
 }
 
-const INSTALL_URL = "https://getwalkie.vercel.app/install.sh";
+const INSTALL_URL = "https://sqwakie.si/install.sh";
 
 /** "100.x.y.z", plus ":port" when the peer port isn't the default. */
 function joinTarget(me: { node: { ip: string; port: number } }): string {

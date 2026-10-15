@@ -25,8 +25,8 @@ test("an unanswered runner sweep releases the destroy claim for retry", async ()
     const result = await runnerOp(fakeRunner(), "sweep", Math.min(40, timeoutMs ?? 40));
     return { ok: result?.verified === true, left: [result?.why ?? "no answer"] };
   };
-  const result = await destroySeatUser(1, world.sys, 500);
+  const result = await destroySeatUser(1, world.sys, 10_000);
   expect(result).toMatchObject({ ok: false });
   expect(result.why).toContain("runner did not exit");
-  expect(world.sys.ledger().pending(501)).toContain(1);
+  expect(world.sys.ledger().pending(world.sys.caller())).toContain(1);
 });

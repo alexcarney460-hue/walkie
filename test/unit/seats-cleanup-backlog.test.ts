@@ -45,7 +45,7 @@ test("destroy's internal deadline bounds a stuck fake sweep and releases its led
   expect(result.ok).toBe(false);
   expect(result.why).toContain("cleanup timed out; retried later");
   expect(receivedTimeout).toBeLessThanOrEqual(15);
-  expect(world.sys.ledger().pending(501)).toContain(1);
+  expect(world.sys.ledger().pending(world.sys.caller())).toContain(1);
 });
 
 test("doctor shows an overdue in-flight user and an unfinished outer-bound helper", () => {

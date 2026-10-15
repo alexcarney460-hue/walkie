@@ -3,7 +3,7 @@ import { ScheduleClaim } from "./orchestrator/leadership.ts";
 import { ScheduleClaimResult } from "./orchestrator/schedule-claims.ts";
 import { ScheduleManagementResult, type ScheduleProgress } from "../protocol/talkie-management.ts";
 import type { SignedScheduleManagement, SignedSchedulePeer } from "./orchestrator/schedule-forward.ts";
-// HTTP client for other daemons' peer API (PROTOCOL §4), over Tailscale or Walkie Direct (src/daemon/transport.ts).
+// HTTP client for other daemons' peer API (PROTOCOL §4), over Tailscale or Sqwakie Direct (src/daemon/transport.ts).
 // A peer is not trusted to send well-formed or small responses: bodies are read with a streaming byte cap and
 // validated with zod.
 import { z, type ZodType, type ZodTypeDef } from "zod";
@@ -119,7 +119,7 @@ export class PeerClient {
 
   /**
    * Where to reach a roster node (PROTOCOL §4 "Mixed teams"): over a transport both machines serve, Tailscale first
-   * (its pinned tailnet ip:port), else Walkie Direct (its node key, only while this daemon runs Direct). Null when
+   * (its pinned tailnet ip:port), else Sqwakie Direct (its node key, only while this daemon runs Direct). Null when
    * they share none: that peer's events reach this node through machines that serve both.
    */
   addrOf(n: PeerNode): PeerAddr | null {
@@ -154,7 +154,7 @@ export class PeerClient {
   /** One exchange over the address's transport; a transport-level failure is `unreachable`. */
   private async send(addr: PeerAddr, method: string, path: string, headers: Record<string, string>, body: string | undefined, signal: AbortSignal): Promise<Response> {
     const t = this.transports.for(addr);
-    if (!t) throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (Walkie Direct is not running on this machine)`);
+    if (!t) throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (Sqwakie Direct is not running on this machine)`);
     try {
       return await t.request(addr, { method, path, headers, ...(body !== undefined ? { body } : {}), signal });
     } catch (err) {
@@ -190,10 +190,12 @@ export class PeerClient {
   private async call<T>(
     addr: PeerAddr, method: string, path: string, schema: ZodType<T, ZodTypeDef, unknown>, body?: unknown, timeoutMs = 2_000,
     validate?: (value: T, headers: Record<string, string>, raw: unknown) => T,
+    cancel?: AbortSignal,
   ): Promise<T> {
-    const signal = AbortSignal.timeout(timeoutMs);
+    const signal = cancel ? AbortSignal.any([AbortSignal.timeout(timeoutMs), cancel]) : AbortSignal.timeout(timeoutMs);
     const wire = body === undefined ? undefined : JSON.stringify(body);
     const headers = await this.requestHeaders(addr, method, path, wire);
+    signal.throwIfAborted();
     const res = await this.send(addr, method, path, headers, wire, signal);
     let data: unknown = {};
     try {
@@ -217,7 +219,7 @@ export class PeerClient {
   hello(addr: PeerAddr, timeoutMs = 5_000): Promise<PeerHello> {
     return this.call(addr, "GET", "/peer/v1/hello", PeerHelloRes, undefined, timeoutMs);
   }
-  join(addr: PeerAddr, body: { pubkey: string; hostname: string; ip: string; port: number; invite?: string }): Promise<PeerJoinRes> {
+  join(addr: PeerAddr, body: { pubkey: string; hostname: string; ip: string; port: number; invite?: string; link?: string }): Promise<PeerJoinRes> {
     // A Direct join may first have to find the authority through a relay and discovery.
     return this.call(addr, "POST", "/peer/v1/join", PeerJoinResSchema, body, addr.pubkey ? 30_000 : 10_000);
   }
@@ -275,16 +277,21 @@ export class PeerClient {
     return this.call(addr, "POST", "/peer/v1/vault/probe", PeerProbeRes, body, 10_000);
   }
   /** Asks the roster authority to append a roster event (PROTOCOL §4); `event` is the authority's. */
-  rosterRequest(addr: PeerAddr, req: RosterRequest): Promise<{ event?: unknown }> {
-    return this.call(addr, "POST", "/peer/v1/roster-request", RosterRequestRes, req, PEER_ROSTER_REQUEST_TIMEOUT_MS);
+  rosterRequest(addr: PeerAddr, req: RosterRequest, cancel?: AbortSignal): Promise<{ event?: unknown }> {
+    return this.call(addr, "POST", "/peer/v1/roster-request", RosterRequestRes, req, PEER_ROSTER_REQUEST_TIMEOUT_MS, undefined, cancel);
   }
   reportPeerProof(addr: PeerAddr, proof: PeerVvRelay): Promise<{ recorded: boolean }> {
     return this.call(addr, "POST", "/peer/v1/peer-proof", PeerVvRelayRes, proof, 5_000);
   }
 
-  /** AGENT-ADMIN-1: runs an allow-listed walkie command on that machine (a 404 = an older Walkie without it). */
+  /** AGENT-ADMIN-1: runs an allow-listed walkie command on that machine (a 404 = an older Sqwakie without it). */
   adminRun(addr: PeerAddr, body: Record<string, unknown>, timeoutMs: number): Promise<RemoteRunRes> {
     return this.call(addr, "POST", "/peer/v1/admin/run", RemoteRunRes, body, timeoutMs);
+  }
+
+  /** FLEET-LINK-1: registers, revokes or lists fleet links on the roster authority (an owner's machine only). */
+  links(addr: PeerAddr, body: unknown): Promise<unknown> {
+    return this.call(addr, "POST", "/peer/v1/links", z.unknown(), body, 15_000);
   }
 
   /** WALKIE-POOL-2: start / renew / stop this machine's stage of a split run on a worker. */
@@ -293,7 +300,7 @@ export class PeerClient {
   }
 
   /**
-   * WALKIE-POOL-2: one tunnel connection into a worker's stage. Walkie Direct: a CONNECT stream on the node-key
+   * WALKIE-POOL-2: one tunnel connection into a worker's stage. Sqwakie Direct: a CONNECT stream on the node-key
    * connection; Tailscale: a WebSocket on the peer API port with the usual identity headers (the worker's gate runs
    * `tailscale whois` on the source address before upgrading).
    */
@@ -302,7 +309,7 @@ export class PeerClient {
   }
 
   sshInfo(addr: PeerAddr): Promise<{ user: string }> {
-    if (!addr.pubkey) return Promise.reject(new PeerCallError(0, "direct_required", "SSH requires Walkie Direct"));
+    if (!addr.pubkey) return Promise.reject(new PeerCallError(0, "direct_required", "SSH requires Sqwakie Direct"));
     return this.call(addr, "GET", "/peer/v1/ssh/info", z.object({ user: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,79}$/) }), undefined, 5000);
   }
 
@@ -319,7 +326,7 @@ export class PeerClient {
   async tunnelTo(addr: PeerAddr, path: string, sshCaller?: SshCaller): Promise<End> {
     if (addr.pubkey) {
       const t = this.transports.direct;
-      if (!t?.openTunnel) throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (Walkie Direct is not running on this machine)`);
+      if (!t?.openTunnel) throw new PeerCallError(0, "unreachable", `${addrLabel(addr)} unreachable (Sqwakie Direct is not running on this machine)`);
       try {
         const headers = this.headers(false);
         if (sshCaller) {

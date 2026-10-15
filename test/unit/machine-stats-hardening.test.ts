@@ -1,8 +1,8 @@
 // WALKIE-POOL-LLM-1 part A: machine-stats audit follow-ups (docs/audits/2026-09-26-*machine-stats*.md).
 // CF type check + reference accounting on a fake IOKit, the optional pressure sysctl, schema bounds, the hwmon cap
 // and the worker deadline.
-import { describe, expect, test } from "bun:test";
-import { toBuffer } from "bun:ffi";
+import { afterEach, describe, expect, test } from "bun:test";
+import { toArrayBuffer } from "bun:ffi";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,7 +41,8 @@ function fakeLib(services: FakeService[], failAt?: "string" | "dict" | "client" 
       const name = props.get(r);
       if (typeof name !== "string") throw new Error("CFStringGetCString called on a non-string");
       const bytes = new TextEncoder().encode(name + "\0");
-      toBuffer(p, 0, len).set(bytes.subarray(0, len));
+      // Write through the reader's actual pointer, as CFStringGetCString does.
+      new Uint8Array(toArrayBuffer(p, 0, len)).set(bytes.subarray(0, len));
       return true;
     },
     CFRelease: (r: bigint) => {
@@ -216,7 +217,36 @@ test("hwmon: temperature inputs are picked before the 64-entry cap (a chip with 
 
 // ---- worker deadline ----------------------------------------------------------------------------------------
 
-const workerFrom = (code: string) => (): Worker => new Worker(URL.createObjectURL(new Blob([code], { type: "application/javascript" })));
+let fixtureWorkers: Array<{ worker: Worker; exited: Promise<void> }> = [];
+const workerFrom = (code: string) => (): Worker => {
+  const url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+  const worker = new Worker(url);
+  const exited = new Promise<void>((resolve) => worker.addEventListener("close", () => {
+    URL.revokeObjectURL(url);
+    resolve();
+  }, { once: true }));
+  fixtureWorkers = [...fixtureWorkers, { worker, exited }];
+  return worker;
+};
+
+/** Retirement is asynchronous; a fixed sleep does not prove the prior worker has exited. */
+async function waitForFixtureWorkers(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all(fixtureWorkers.map(({ exited }) => exited)),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("fixture worker did not close")), 5_000); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+afterEach(async () => {
+  for (const { worker } of fixtureWorkers) {
+    try { worker.postMessage({ type: "close" }); } catch { /* already exited */ }
+  }
+  await waitForFixtureWorkers();
+  fixtureWorkers = []; // Keep unclosed handles registered if cleanup rejects.
+});
 const CLOSES = `if (e.data && e.data.type === "close") { postMessage({ closed: true }); process.exit(0); }`;
 const ANSWERS = `self.onmessage = (e) => { ${CLOSES} postMessage({ id: e.data.id, sensors: [{ name: "PMU tdie1", c: 57 }], error: null }); };`;
 /** A read that waits 300 ms (past a 150 ms deadline); it handles "close" once the wait is over. */
@@ -249,9 +279,9 @@ describe("ThermalClient: the IOKit read runs in a worker with a deadline", () =>
     expect(r.error).toContain("longer than 150 ms");
     expect(took).toBeLessThan(1_000);
     expect(ticks).toBeGreaterThan(5); // the event loop kept running while the worker spun
-    for (let i = 1; i < MAX_TIMEOUTS; i++) { await sleep(300); await c.read(); }
+    for (let i = 1; i < MAX_TIMEOUTS; i++) { await waitForFixtureWorkers(); await c.read(); }
     expect(spawned).toBe(MAX_TIMEOUTS);
-    await sleep(300);
+    await waitForFixtureWorkers();
     const off = await c.read();
     expect(off.error).toContain("turned off until restart");
     expect(spawned).toBe(MAX_TIMEOUTS); // no more workers
@@ -315,7 +345,7 @@ describe("ThermalClient: the IOKit read runs in a worker with a deadline", () =>
     expect((await c.read()).error).toContain("longer than 100 ms");
     expect((await c.read()).error).toContain("still finishing"); // the retiring worker is still in its slow read
     expect(spawned).toBe(1);
-    await sleep(400); // the read returns, the worker handles "close", releases and exits
+    await waitForFixtureWorkers(); // the read returns, the worker handles "close", releases and exits
     expect(closed).toEqual([1]);
     expect(terminated).toBe(0);
     expect((await c.read()).error).toBeNull();
@@ -350,9 +380,11 @@ describe("ThermalClient: the IOKit read runs in a worker with a deadline", () =>
     let spawned = 0;
     const c = new ThermalClient({ deadlineMs: 60, retireGraceMs: 2_000, spawn: () => { spawned++; return workerFrom(SLOW_THEN_CLOSES)(); } });
     let last: string | null = null;
-    for (let i = 0; i < MAX_TOTAL_TIMEOUTS * 2 + 2 && !last?.includes("since start"); i++) {
+    for (let i = 0; i < MAX_TOTAL_TIMEOUTS; i++) {
+      expect((await c.read()).error).toBeNull(); // one successful read before each timed-out read
       last = (await c.read()).error;
-      if (last) await sleep(200); // let the retiring worker finish its slow read and close
+      expect(last).toContain("longer than 60 ms");
+      await waitForFixtureWorkers();
     }
     expect(last).toContain(`${MAX_TOTAL_TIMEOUTS} times since start; turned off until restart`);
     expect(spawned).toBe(MAX_TOTAL_TIMEOUTS);

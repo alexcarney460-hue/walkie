@@ -4,12 +4,38 @@ import { allow, clientIp, defaultHandlerDeps, errorResponse, notConfigured, secr
 import { readJsonObject } from '../_lib/body.js';
 import { fail, json } from '../_lib/http.js';
 import { optionalEnv } from '../_lib/env.js';
-import { acknowledgeHandover, clearRejectedHandover, finishHandover, liftExpiredHandover, objectHandover, rejectHandover, resolveFork, statusHandover } from '../_lib/compute/handover.js';
+import { acknowledgeHandover, clearRejectedHandover, finishHandover, liftExpiredHandover, objectHandover, rejectHandover, resolveFork, statusHandover, statusMessage } from '../_lib/compute/handover.js';
+import { createPublicKey, verify } from 'node:crypto';
 import { signedHandoverNotice } from './state.js';
 import type { SubscriptionLite } from '../_lib/stripe.js';
 import { ComputeError } from '../_lib/compute/service.js';
 import { RENEW_AUTHORITY_META, RENEW_CHAIN_META, RENEW_HASH_META, TEAM_META } from '../_lib/metadata.js';
 import { replayBindWrite } from '../_lib/compute/bind-write.js';
+
+/**
+ * Handover status limits (REVIEW-pre17-codex P2-5). A daemon checks status at most every 10 minutes while a notice is
+ * expected (src/daemon/compute/service.ts HANDOVER_CHECK_MS), so each owner (team + the owner key that signed the
+ * request, verified first) gets its own 12 an hour: owners and teams behind one IP no longer share one allowance. The
+ * per-IP ceiling is charged before any signature check and bounds unauthenticated floods (and their database writes)
+ * while leaving room for many owners behind one NAT. Other handover actions keep 10 per IP per hour.
+ */
+export const HANDOVER_STATUS_PER_OWNER_HOUR = 12;
+export const HANDOVER_STATUS_PER_IP_HOUR = 240;
+const HOUR_MS = 3_600_000;
+
+/** The owner key a status request is signed by (the daemon's statusMessage signature, unexpired), or null. */
+function signedStatusOwner(team: string, proof: unknown, now: number): string | null {
+  const p = proof as { key?: unknown; expires_at?: unknown; signature?: unknown } | null;
+  if (!p || typeof p.key !== 'string' || typeof p.signature !== 'string' || !Number.isSafeInteger(p.expires_at)) return null;
+  const expires = p.expires_at as number;
+  if (expires <= now || expires > now + 300_000) return null;
+  try {
+    const raw = Buffer.from(p.key, 'base64'), sig = Buffer.from(p.signature, 'base64');
+    if (raw.length !== 32 || raw.toString('base64') !== p.key || sig.length !== 64 || sig.toString('base64') !== p.signature) return null;
+    const key = createPublicKey({ format: 'jwk', key: { kty: 'OKP', crv: 'Ed25519', x: raw.toString('base64url') } });
+    return verify(null, Buffer.from(statusMessage(team, expires)), key, sig) ? p.key : null;
+  } catch { return null; }
+}
 
 export function makeHandover(deps: HandlerDeps): (req: Request) => Promise<Response> {
   return operationalHandler(deps, makeInner);
@@ -24,7 +50,12 @@ function makeInner(deps: HandlerDeps): (req: Request) => Promise<Response> {
     if (typeof team_id !== 'string' || !/^[0-9a-f]{16}$/.test(team_id) ||
         !['status', 'object', 'ack', 'complete', 'override_objection', 'reject', 'clear_rejection', 'lift_expired', 'resolve_fork'].includes(String(action))) return fail(400, 'invalid_handover_request');
     try {
-      if (!(await allow(d, `ip:${clientIp(req)}:handover:${action}`, 10, 3_600_000))) return fail(429, 'rate_limited');
+      if (action === 'status') {
+        if (!(await allow(d, `ip:${clientIp(req)}:handover:status`, HANDOVER_STATUS_PER_IP_HOUR, HOUR_MS))) return fail(429, 'rate_limited');
+        const owner = signedStatusOwner(team_id, proof, d.now());
+        if (owner && !(await allow(d, `team:${team_id}:owner:${owner}:handover:status`, HANDOVER_STATUS_PER_OWNER_HOUR, HOUR_MS)))
+          return fail(429, 'rate_limited');
+      } else if (!(await allow(d, `ip:${clientIp(req)}:handover:${action}`, 10, HOUR_MS))) return fail(429, 'rate_limited');
       if (action === 'complete' || action === 'override_objection' || action === 'reject' || action === 'clear_rejection' || action === 'lift_expired' || action === 'resolve_fork') {
         const configured = optionalEnv(deps.env, 'COMPUTE_HANDOVER_OPERATOR_SECRET');
         if (!configured || configured.length < 32) {

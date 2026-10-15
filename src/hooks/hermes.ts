@@ -99,5 +99,5 @@ export async function runHermesHook(raw: string, env: NodeJS.ProcessEnv = proces
     await recordHermesUpdate(raw, readHermesActivityProfiles(home), readSharePolicy(home, env), async (event) => {
       await new WalkieClient({ agent: `hermes-${event.profile}`, timeoutMs: 1500 }).hermesStatus(event);
     });
-  } catch { /* The next event is a fresh observation; hooks never block Hermes on Walkie availability. */ }
+  } catch { /* The next event is a fresh observation; hooks never block Hermes on Sqwakie availability. */ }
 }

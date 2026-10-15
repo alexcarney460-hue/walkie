@@ -14,7 +14,7 @@ const PREFIX = "walkie:ssh-revoke:v1:";
 const ADMIN_AGENT = "walkie-admin";
 export const SSH_REVOCATION_CAP = "ssh_revocation_v1";
 /** What a person is told when the only answers were 404s: released pre.10 / pre.10.1 daemons have no receipt route. */
-const OLDER_PEERS_MESSAGE = "SSH revocation is recorded on this machine only: the team machines asked run an older Walkie that cannot hold its receipt (update the roster authority first)";
+const OLDER_PEERS_MESSAGE = "SSH revocation is recorded on this machine only: the team machines asked run an older Sqwakie that cannot hold its receipt (update the roster authority first)";
 /** Defined in peer-timeouts so the offboard apply budget can add it without importing this module. */
 export { RECEIPT_PEER_TIMEOUT_MS };
 /** A receipt names a grant created in the last 91 days: a grant lives at most GRANT_DAYS (90), plus a day of clock slack. */

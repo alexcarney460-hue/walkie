@@ -4,7 +4,7 @@
 // git.ts (no system or global config, program-running settings off, its own process group); calls that check files
 // out in the person's clone also neutralize the filter drivers its config defines (filterOverrides).
 //
-// What Walkie owns in the person's clone (FO-2 r1 HIGH 1/2): worktrees under `.worktrees/<label>` it made (a marker
+// What Sqwakie owns in the person's clone (FO-2 r1 HIGH 1/2): worktrees under `.worktrees/<label>` it made (a marker
 // file in the worktree's admin directory, never in its tree) and branches `lane/…` / `walkie/…` it created (an
 // ownership ref `refs/walkie/lanes/<branch>`). Anything else of that name is refused, never reset or removed.
 import {
@@ -43,13 +43,13 @@ export function briefText(bytes: Uint8Array, max: number): string | null {
 export interface TaskFile {
   file: string; prompt: string; exclude?: string; hash?: string;
   /**
-   * The brief is written here first (a unique name of Walkie's next to it, in the plan: FO-2 r3 MED 3), fsynced, then
+   * The brief is written here first (a unique name of Sqwakie's next to it, in the plan: FO-2 r3 MED 3), fsynced, then
    * published under `file` in one step; a crash mid-write leaves only this, which cleanup removes whatever it holds.
    */
   tmp?: string;
 }
 
-/** The line before each pattern Walkie adds to a repository's info/exclude (so it can take exactly those out). */
+/** The line before each pattern Sqwakie adds to a repository's info/exclude (so it can take exactly those out). */
 const EXCLUDE_MARK = "# walkie seat brief (removed when no seat runs in this clone)";
 /** The line before the lanes' worktree directory in a clone's info/exclude (kept: the worktrees stay). */
 const WORKTREES_MARK = "# walkie seats: lane worktrees (.worktrees/<label>)";
@@ -425,21 +425,21 @@ export interface Worktree {
   branch?: string;
 }
 
-/** The marker Walkie writes into the admin directory of each worktree it makes (`<common>/worktrees/<name>/`). */
+/** The marker Sqwakie writes into the admin directory of each worktree it makes (`<common>/worktrees/<name>/`). */
 export const LANE_MARKER = "walkie-seat-lane";
-/** Walkie's record of the lane branches it created: `refs/walkie/lanes/<branch>` → the tip it last set. */
+/** Sqwakie's record of the lane branches it created: `refs/walkie/lanes/<branch>` → the tip it last set. */
 const LANES_REF = "refs/walkie/lanes/";
 /** Suffixes tried for a lane branch that can't be reused safely (`lane/x-2` … `lane/x-20`). */
 const MAX_BRANCH_TRIES = 20;
 
 /**
- * A same-user seat's workspace in the host's clone: `<clone>/.worktrees/<label>`, on a Walkie lane branch for a
+ * A same-user seat's workspace in the host's clone: `<clone>/.worktrees/<label>`, on a Sqwakie lane branch for a
  * build, detached at `sha` for an audit (FO-2 r1 HIGH 1/2/8):
  * - `.worktrees` and the label's path must be real directories inside the clone (no symlink on the way);
- * - an existing `.worktrees/<label>` is replaced only when it is a worktree Walkie made (its marker) and clean;
+ * - an existing `.worktrees/<label>` is replaced only when it is a worktree Sqwakie made (its marker) and clean;
  *   anything else there is refused;
- * - a branch is created (never `-B`), or reused only when Walkie created it (its ownership ref) and moving it to
- *   `sha` is a fast-forward; otherwise the next free `-<n>` suffix. A branch of that name Walkie didn't create is
+ * - a branch is created (never `-B`), or reused only when Sqwakie created it (its ownership ref) and moving it to
+ *   `sha` is a fast-forward; otherwise the next free `-<n>` suffix. A branch of that name Sqwakie didn't create is
  *   refused.
  */
 export async function addWorktree(
@@ -459,11 +459,11 @@ export async function addWorktree(
   const cfg = await safeFilters(real, env, signal);
   const replacing = existsSync(path) || isLink(path);
   if (!replacing) {
-    // A record of a worktree at this path whose directory is gone: Walkie's own is dropped (never `worktree prune`,
+    // A record of a worktree at this path whose directory is gone: Sqwakie's own is dropped (never `worktree prune`,
     // which would drop the person's other missing worktrees too); anyone else's is refused.
     const stale = adminDirOf(common, path);
     if (stale) {
-      if (!existsSync(join(stale, LANE_MARKER))) throw new SeatRefusal(`.worktrees/${label} is registered in this machine's clone as a worktree Walkie didn't make: refused`);
+      if (!existsSync(join(stale, LANE_MARKER))) throw new SeatRefusal(`.worktrees/${label} is registered in this machine's clone as a worktree Sqwakie didn't make: refused`);
       rmSync(stale, { recursive: true, force: true });
     }
   } else {
@@ -471,7 +471,7 @@ export async function addWorktree(
     if (isLink(path)) throw new SeatRefusal(`.worktrees/${label} is a symlink: refused`);
     const admin = adminDirOf(common, path);
     if (!admin || !existsSync(join(admin, LANE_MARKER))) {
-      throw new SeatRefusal(`.worktrees/${label} in this machine's clone isn't a worktree Walkie made: it is left alone (move it, or use another label)`);
+      throw new SeatRefusal(`.worktrees/${label} in this machine's clone isn't a worktree Sqwakie made: it is left alone (move it, or use another label)`);
     }
     // Clean, ignored files included (they would be deleted with it: FO-2 r2 LOW).
     const st = await git(["status", "--porcelain", "--ignored", "--untracked-files=all"], path, env, { signal, config: cfg });
@@ -482,7 +482,7 @@ export async function addWorktree(
   }
   await excludeFromGit(real, "/.worktrees/", env, signal, WORKTREES_MARK);
   // The branch is chosen (nothing changes yet), then the old worktree goes (no --force: git refuses a tree that got
-  // dirty since the check, FO-2 r3 LOW 4), then the branch and Walkie's record of it move together.
+  // dirty since the check, FO-2 r3 LOW 4), then the branch and Sqwakie's record of it move together.
   const plan = mode === "branch" ? await chooseLane(real, branch ?? `lane/${label}`, sha, replacing ? path : null, env, signal) : undefined;
   if (replacing) {
     const rm = await git(["worktree", "remove", path], real, env, { signal, config: cfg });
@@ -532,9 +532,9 @@ interface LanePlan { name: string; action: "create" | "move" | "keep"; tip: stri
 
 /**
  * The lane branch a build gets (FO-2 r1 HIGH 1, r2 LOW), decided without changing anything: `want` created at `sha`,
- * or reused when it is Walkie's — its ownership record names exactly its tip (a branch the person moved or re-made is
+ * or reused when it is Sqwakie's — its ownership record names exactly its tip (a branch the person moved or re-made is
  * theirs) — no other worktree has it checked out, and moving it loses nothing: a fast-forward, or its commits are
- * already on one of the person's branches (merged). Otherwise `want-2`, `want-3`… A `want` Walkie doesn't own is
+ * already on one of the person's branches (merged). Otherwise `want-2`, `want-3`… A `want` Sqwakie doesn't own is
  * refused; a suffixed name it doesn't own is skipped.
  */
 async function chooseLane(clone: string, want: string, sha: string, replacing: string | null, env: Record<string, string>, signal?: AbortSignal): Promise<LanePlan> {
@@ -555,7 +555,7 @@ async function chooseLane(clone: string, want: string, sha: string, replacing: s
     const record = await rev(`${LANES_REF}${name}`);
     if (!tip) return { name, action: "create", tip: null, staleRecord: record !== null };
     if (record !== tip) {
-      if (i === 1) throw new SeatRefusal(`branch ${name} exists in this machine's clone and isn't Walkie's (Walkie didn't create it, or someone moved it since): it is left alone (use another label)`);
+      if (i === 1) throw new SeatRefusal(`branch ${name} exists in this machine's clone and isn't Sqwakie's (Sqwakie didn't create it, or someone moved it since): it is left alone (use another label)`);
       continue;
     }
     if (checkedOut.has(`refs/heads/${name}`)) continue;
@@ -563,11 +563,11 @@ async function chooseLane(clone: string, want: string, sha: string, replacing: s
     const ff = (await git(["merge-base", "--is-ancestor", tip, sha], clone, env, { signal })).code === 0;
     if (ff || (await mergedElsewhere(clone, tip, env, signal))) return { name, action: "move", tip, staleRecord: false };
   }
-  throw new SeatRefusal(`every lane branch ${want}, ${want}-2 … ${want}-${MAX_BRANCH_TRIES} holds commits that aren't merged anywhere, or isn't Walkie's: merge or delete some (git branch -D ${want}-<n>) and retry`);
+  throw new SeatRefusal(`every lane branch ${want}, ${want}-2 … ${want}-${MAX_BRANCH_TRIES} holds commits that aren't merged anywhere, or isn't Sqwakie's: merge or delete some (git branch -D ${want}-<n>) and retry`);
 }
 
 /**
- * Applies a LanePlan: the branch and Walkie's ownership record change in ONE ref transaction (FO-2 r3 LOW 2: never a
+ * Applies a LanePlan: the branch and Sqwakie's ownership record change in ONE ref transaction (FO-2 r3 LOW 2: never a
  * moved branch without its record), each conditioned on what chooseLane saw. Refused if either changed meanwhile.
  */
 async function applyLane(clone: string, plan: LanePlan, sha: string, env: Record<string, string>, signal?: AbortSignal): Promise<string> {
@@ -589,9 +589,9 @@ async function mergedElsewhere(clone: string, tip: string, env: Record<string, s
 }
 
 /**
- * After a seat on a lane branch ends (FO-2 r3 LOW 3): Walkie's ownership record follows the branch to the seat's own
+ * After a seat on a lane branch ends (FO-2 r3 LOW 3): Sqwakie's ownership record follows the branch to the seat's own
  * result — only when the branch's tip is exactly the commit the seat's outcome saw (`seatHead`) and the record is
- * still where Walkie set it (`base`), in one conditioned update. Anything else (the person committed there since) is
+ * still where Sqwakie set it (`base`), in one conditioned update. Anything else (the person committed there since) is
  * left unclaimed: the lane is then the person's. With the branch gone, the record goes.
  */
 export async function recordLaneTip(clone: string, branch: string, env: Record<string, string>, seat?: { base: string; head: string }): Promise<void> {
@@ -600,7 +600,7 @@ export async function recordLaneTip(clone: string, branch: string, env: Record<s
   if (!seat || tip.out !== seat.head || seat.head === seat.base) return;
   const ahead = await git(["merge-base", "--is-ancestor", seat.base, seat.head], clone, env);
   if (ahead.code !== 0) return;
-  await git(["update-ref", `${LANES_REF}${branch}`, seat.head, seat.base], clone, env); // only from where Walkie set it
+  await git(["update-ref", `${LANES_REF}${branch}`, seat.head, seat.base], clone, env); // only from where Sqwakie set it
 }
 
 function isLink(p: string): boolean {
@@ -634,7 +634,7 @@ export function stageDir(walkieHome: string): string {
   const dir = join(walkieHome, "seats-stage");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const st = lstatSync(dir);
-  if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${dir} isn't a directory of Walkie's`);
+  if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${dir} isn't a directory of Sqwakie's`);
   if ((st.mode & 0o777) !== 0o700) chmodSync(dir, 0o700); // an existing one is tightened too (FO-2 r2 LOW)
   return dir;
 }

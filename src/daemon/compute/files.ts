@@ -1,4 +1,4 @@
-// This machine's compute files (RENT-2), both 0600 in the Walkie home, written atomically (as license-renew-token):
+// This machine's compute files (RENT-2), both 0600 in the Sqwakie home, written atomically (as license-renew-token):
 //   compute-account   {account_id, team, token, accounts?}: the team's compute accounts on the site. Tokens are bearer
 //                     credential: it is sent to the site only, never logged, printed or put on the chain.
 //   compute-rentals.json  what this daemon rented: each rental's invite chain ids (never the codes), so the machine
@@ -105,10 +105,10 @@ export function markAccountsScanned(home: string): void {
   writeAtomic(accountPath(home), JSON.stringify({ ...parsed, needs_scan: false }) + "\n");
 }
 
-/** The rentals file is there but is not this version's format: damaged, or written by a newer Walkie. */
+/** The rentals file is there but is not this version's format: damaged, or written by a newer Sqwakie. */
 export class RentalsFileError extends Error {
   constructor() {
-    super("compute-rentals.json can't be read (damaged, or written by a newer Walkie): it is left as it is, and no rented machine is revoked until it is fixed or moved aside");
+    super("compute-rentals.json can't be read (damaged, or written by a newer Sqwakie): it is left as it is, and no rented machine is revoked until it is fixed or moved aside");
   }
 }
 

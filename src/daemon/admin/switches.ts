@@ -6,7 +6,7 @@ import { saveConfigField } from "../config.ts";
 export interface AdminSwitches {
   /** Agents running here as this OS user may do this machine's setup (audited). */
   readonly agent_admin: boolean;
-  /** Owners, and this person's other machines, may run allow-listed admin commands here over Walkie. */
+  /** Owners, and this person's other machines, may run allow-listed admin commands here over Sqwakie. */
   readonly remote_admin: boolean;
 }
 

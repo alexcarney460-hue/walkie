@@ -18,7 +18,7 @@ function doWorld() {
   const fetchFn: Fetch = async (url, init) => {
     calls.push({ method: init.method ?? "GET", url });
     if (init.method === "POST") return new Response(JSON.stringify({ droplet: { id: next++ } }), { status: 202 });
-    return new Response(JSON.stringify({ droplets: [], links: {} }), { status: 200 });
+    return new Response(JSON.stringify({ droplets: [], links: {}, meta: { total: 0 } }), { status: 200 });
   };
   const driver = new DigitalOceanDriver("dop_v1_" + "0".repeat(64), fetchFn);
   const clock = { now: T0 };

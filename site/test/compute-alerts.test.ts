@@ -1,6 +1,10 @@
 import { test, expect } from 'bun:test';
 import { MemoryStore } from '../api/_lib/compute/memory-store.ts';
 import { sendAlert, alertFromLog } from '../api/_lib/compute/alerts.ts';
+import { RENTED_MACHINE_RELEASES } from '../api/_lib/compute/releases.ts';
+
+// The newest rentable release (a rent through the handlers must name a listed tag).
+const RELEASE = RENTED_MACHINE_RELEASES[RENTED_MACHINE_RELEASES.length - 1]!;
 const env = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 
 test('durable rolling dedupe agrees across senders, allows a different key and expiry', async () => {
@@ -61,7 +65,7 @@ test('request wrapper drains rejected stale admission alerts and dedupes later r
     alertFetch: async (_, init) => { sent.push(init!.body as string); return Response.json({ ok: true }); } });
   for (let i = 0; i < 2; i++) {
     const response = await handler(new Request('https://fixture.test', { method: 'POST', headers: { authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idempotency_key: idem(), machines: [{ tier: 'agent', count: 1 }], codes: codes(1), walkie_version: 'v0.2.0-pre.5' }) }));
+      body: JSON.stringify({ idempotency_key: idem(), machines: [{ tier: 'agent', count: 1 }], codes: codes(1), walkie_version: RELEASE }) }));
     expect(response.status).toBe(503);
   }
   expect(sent).toHaveLength(1);

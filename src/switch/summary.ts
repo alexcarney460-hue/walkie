@@ -9,11 +9,18 @@ import { join } from "node:path";
 import { redactSecrets } from "../protocol/safety.ts";
 
 export const CONTINUE_PROMPT =
-  "Continue where you left off. (Walkie moved this session to another account because the previous one reached its usage limit; the last turn may have been cut short.)";
+  "Continue where you left off. (Sqwakie moved this session to another account because the previous one reached its usage limit; the last turn may have been cut short.)";
 
 /** The continuation when a prompt was typed after the limit: it is in the transcript, unanswered. */
 export const ANSWER_PROMPT =
+  "Sqwakie moved this session to another account because the previous one reached its usage limit. Answer the most recent user message, which was sent after the limit was reached, and continue from there.";
+
+// Transcripts written before the rename retain these exact prefixes.
+const LEGACY_CONTINUE_PROMPT =
+  "Continue where you left off. (Walkie moved this session to another account because the previous one reached its usage limit; the last turn may have been cut short.)";
+const LEGACY_ANSWER_PROMPT =
   "Walkie moved this session to another account because the previous one reached its usage limit. Answer the most recent user message, which was sent after the limit was reached, and continue from there.";
+const SWITCH_PROMPTS = [CONTINUE_PROMPT, ANSWER_PROMPT, LEGACY_CONTINUE_PROMPT, LEGACY_ANSWER_PROMPT];
 
 const MAX_TOTAL = 6_000;
 const MAX_EACH = 700;
@@ -69,14 +76,14 @@ export function summaryPrompt(transcriptPath: string | null): string {
   }
   const picked: string[] = [];
   let total = 0;
-  for (const m of messagesFrom(lines).filter((x) => !x.text.startsWith(CONTINUE_PROMPT) && !x.text.startsWith(ANSWER_PROMPT)).reverse()) {
+  for (const m of messagesFrom(lines).filter((x) => !SWITCH_PROMPTS.some((prompt) => x.text.startsWith(prompt))).reverse()) {
     const entry = `${m.role === "user" ? "User" : "Assistant"}: ${clip(redactSecrets(m.text).text.replace(/\s+\n/g, "\n"), MAX_EACH)}`;
     if (total + entry.length > MAX_TOTAL) break;
     picked.unshift(entry);
     total += entry.length;
   }
   return [
-    "This continues an earlier session that ran on another account. Walkie moved it here because that account reached its usage limit, and this account could not resume the earlier conversation directly.",
+    "This continues an earlier session that ran on another account. Sqwakie moved it here because that account reached its usage limit, and this account could not resume the earlier conversation directly.",
     picked.length ? `The most recent part of that conversation (oldest first):\n\n${picked.join("\n\n")}` : "(The earlier conversation could not be read.)",
     transcriptPath ? `The full earlier transcript is at ${transcriptPath} if you need more.` : "",
     "Continue where it left off.",
@@ -95,5 +102,5 @@ export function writeSummaryFile(runDir: string, transcriptPath: string | null, 
 }
 
 export function summaryInstruction(path: string): string {
-  return `Walkie moved this session to another account, which could not resume the earlier conversation, so this is a new session. Read the file ${path} (a summary of the earlier conversation, secrets redacted) and continue where it left off.`;
+  return `Sqwakie moved this session to another account, which could not resume the earlier conversation, so this is a new session. Read the file ${path} (a summary of the earlier conversation, secrets redacted) and continue where it left off.`;
 }

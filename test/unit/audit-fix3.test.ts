@@ -482,9 +482,11 @@ describe("F4: a topic-only upsert can't declassify a channel", () => {
   test("the authority signs the previous members; only public: true opens the channel", () => {
     const { core } = authority();
     core.emit("channel.upsert", { name: "vault", members: ["alex"] });
+    const membershipPos = core.roster.channels.get("vault")?.membership_pos;
+    expect(typeof membershipPos).toBe("number");
     const topic = core.emit("channel.upsert", { name: "vault", topic: "renamed" });
     expect((topic.body as { members?: string[] }).members).toEqual(["alex"]);
-    expect(core.roster.channels.get("vault")).toEqual({ name: "vault", topic: "renamed", members: ["alex"] });
+    expect(core.roster.channels.get("vault")).toEqual({ name: "vault", topic: "renamed", members: ["alex"], membership_pos: membershipPos });
     core.emit("channel.upsert", { name: "vault", archived: true });
     expect((core.emit("channel.upsert", { name: "vault", topic: "t2" }).body as { archived?: boolean }).archived).toBe(true);
     core.emit("channel.upsert", { name: "vault", public: true });

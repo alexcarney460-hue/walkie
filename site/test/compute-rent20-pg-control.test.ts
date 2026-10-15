@@ -6,19 +6,23 @@ import postgres from 'postgres';
 import { PgStore } from '../api/_lib/compute/pg-store.ts';
 import { finishHandover, handoverKey, rejectHandover, type PendingHandover } from '../api/_lib/compute/handover.ts';
 import * as C from './rent6-fixtures.ts';
+import { postgresBinaries } from './postgres-binaries.ts';
 
 const port = 20_000 + Math.floor(Math.random() * 20_000);
 let dir = '';
 let sql: ReturnType<typeof postgres>;
 let store: PgStore;
+let pgctl: string;
 
 beforeAll(async () => {
+  const binaries = postgresBinaries();
+  pgctl = binaries.pgctl;
   dir = mkdtempSync(join(import.meta.dir, '.rent20-pg-'));
   const data = join(dir, 'data');
-  const init = spawnSync('/opt/homebrew/bin/initdb', ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8'],
+  const init = spawnSync(binaries.initdb, ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8'],
     { encoding: 'utf8' });
   if (init.status !== 0) throw Error(`local initdb failed: ${init.stderr}`);
-  const start = spawnSync('/opt/homebrew/bin/pg_ctl', ['-D', data, '-l', join(dir, 'log'), '-w',
+  const start = spawnSync(pgctl, ['-D', data, '-l', join(dir, 'log'), '-w',
     '-o', `-p ${port} -c unix_socket_directories='' -c listen_addresses='127.0.0.1'`, 'start'],
   { encoding: 'utf8' });
   if (start.status !== 0) throw Error(`local pg_ctl failed: ${start.stderr}`);
@@ -30,7 +34,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await sql?.end({ timeout: 5 });
   if (dir) {
-    spawnSync('/opt/homebrew/bin/pg_ctl', ['-D', join(dir, 'data'), '-m', 'immediate', 'stop']);
+    spawnSync(pgctl, ['-D', join(dir, 'data'), '-m', 'immediate', 'stop']);
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -46,7 +46,7 @@ test("shell-mode give-up after a crash loop: is the dedicated uid torn down?", a
   expect(host.shellUser.monitorFile).toBeNull();
   expect(existsSync(socket)).toBe(false);
   expect(v.state).toBe("failed");
-  expect(v.last_error).toContain("WalkieTalkie keeps failing");
+  expect(v.last_error).toContain("Talkie keeps failing");
 }, 60_000);
 
 test("too-old Claude also cleans up; platform give-up stays failed", async () => {

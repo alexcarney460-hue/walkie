@@ -1,11 +1,11 @@
-// TALKIE-OPS-1: WalkieTalkie's recommendations. Pure (no I/O): the daemon writes and reads them (daemon/orchestrator/recs.ts),
+// TALKIE-OPS-1: Talkie's recommendations. Pure (no I/O): the daemon writes and reads them (daemon/orchestrator/recs.ts),
 // the dashboard and the CLI show them, and everything decided here is tested without a daemon. docs/plans/TALKIE-OPS-1.md has
 // the design.
 //
 // No new event kind: a recommendation is an ordinary `msg.post` that carries `talkie_rec` next to its human-readable `text`.
-//   create   written by an owner's WalkieTalkie (agent `orchestrator`, which `core.emit` fences by the leadership lease): the
+//   create   written by an owner's Talkie (agent `orchestrator`, which `core.emit` fences by the leadership lease): the
 //            structured action, a plain-English summary and reason, the evidence, a dedup key and a time to live.
-//   resolve  approved or dismissed by a PERSON (never an agent), or superseded by an owner's WalkieTalkie when what it was
+//   resolve  approved or dismissed by a PERSON (never an agent), or superseded by an owner's Talkie when what it was
 //            about no longer holds.
 // A team project's recommendations are posted in the project's channel (its members get exactly them); owners-only ones (a
 // private project, a card labelled `confidential`, a machine) in the owner-only schedule channel. Older peers show the posts as
@@ -107,7 +107,7 @@ export const ASK_SETUP_SENTENCES: Readonly<Record<AskSetupStep, string>> = {
   seats_enable: "turn on seats there by running walkie seats enable on it.",
   seat_helper: "install or update its seat helper by running walkie seats setup-user --apply on it.",
   runtime_login: "sign in to Claude or Codex on it (run claude or codex there and log in).",
-  update: "update Walkie on it by running walkie update.",
+  update: "update Sqwakie on it by running walkie update.",
 };
 export const AskOrchestratorAction = z.object({
   kind: z.literal("ask_orchestrator"),
@@ -163,7 +163,7 @@ export const RecCreate = z.object({
   evidence: z.array(Line(200)).max(6),
   /**
    * What a model-driven duty wrote itself (its reason, note and evidence): shown to the person who answers, quoted and marked as
-   * WalkieTalkie's, and never sent, posted or commented in anyone's name.
+   * Talkie's, and never sent, posted or commented in anyone's name.
    */
   context: Line(MAX_CONTEXT).optional(),
   ttl_ms: z.number().int().min(60_000).max(7 * 24 * H),
@@ -344,17 +344,17 @@ export function askMessage(o: {
     : o.topic === "review" ? `Please take the review of ${card ?? "the card"}.`
     : o.topic === "take" ? `Could you take on ${card ?? "the card"}?`
     : o.topic === "status" ? (card ? `How is ${card} going? Please post an update on the card.` : "Could you post an update on what you are working on?")
-    : card ? `Please record your work on ${card} on the board.` : "Please record the work you are doing on the Walkie board: a card for it, kept current.";
+    : card ? `Please record your work on ${card} on the board.` : "Please record the work you are doing on the Sqwakie board: a card for it, kept current.";
   // The title is data on a line of its own, never part of the sender's sentence; a confidential card's is left out.
   const data = o.card ? (o.card.confidential ? `Card ${o.card.ref} is labelled confidential: its title is not repeated here.` : `Card ${o.card.ref}: ${o.card.title}`) : null;
-  return [recMarker(o.id), sentence, ...(data ? [data] : []), `(Sent by @${o.by} on WalkieTalkie's recommendation${o.reason ? `: ${o.reason}` : "."})`].join("\n").slice(0, 4_000);
+  return [recMarker(o.id), sentence, ...(data ? [data] : []), `(Sent by @${o.by} on Talkie's recommendation${o.reason ? `: ${o.reason}` : "."})`].join("\n").slice(0, 4_000);
 }
 
 /** The text of the post that carries a recommendation, and of its answers (what an older peer shows as an ordinary message). */
-export function createText(summary: string): string { return `WalkieTalkie recommends: ${summary}`.slice(0, 400); }
+export function createText(summary: string): string { return `Talkie recommends: ${summary}`.slice(0, 400); }
 export function resolveText(status: RecResolveT["status"], summary: string, by: string): string {
   const verb = status === "approved" ? "approved" : status === "dismissed" ? "dismissed" : "retired";
-  return `@${by} ${verb} WalkieTalkie's recommendation: ${summary}`.slice(0, 400);
+  return `@${by} ${verb} Talkie's recommendation: ${summary}`.slice(0, 400);
 }
 
 // ---- folding ------------------------------------------------------------------------------------------------------
@@ -392,7 +392,7 @@ export interface FoldContext {
   now: number;
   /**
    * A person's approve or dismiss counts only when this returns true. Absent: every person's answer counts.
-   * An owner's WalkieTalkie supersede is not asked. Every person's answer is asked, however it is marked: nothing
+   * An owner's Talkie supersede is not asked. Every person's answer is asked, however it is marked: nothing
    * the author wrote on it is believed. `e` is the answer, so the callback can judge it where it stands in the log.
    */
   canAnswer?: (handle: string, rec: Rec, e: RecEvent) => boolean;
@@ -400,7 +400,7 @@ export interface FoldContext {
 
 export function scheduleChannelRec(channel: string): boolean { return channel === SCHEDULE_CHANNEL; }
 
-/** An owner's WalkieTalkie wrote it. */
+/** An owner's Talkie wrote it. */
 function ownersWalkieTalkie(e: RecEvent, owners: ReadonlySet<string>): boolean {
   return e.author.agent === ORCHESTRATOR_AGENT && owners.has(e.author.handle);
 }
@@ -413,9 +413,9 @@ function placeOk(audience: "team" | "owners", channel: string): boolean {
 const earlier = (a: { at: number; id: string }, b: { at: number; id: string }): boolean => a.at < b.at || (a.at === b.at && a.id < b.id);
 
 /**
- * The recommendations these events make, newest first. A create counts only from an owner's WalkieTalkie and only in the channel
+ * The recommendations these events make, newest first. A create counts only from an owner's Talkie and only in the channel
  * its audience says; an answer counts only in its recommendation's channel: approved or dismissed by a person (no agent),
- * superseded by an owner's WalkieTalkie. The first answer by time, then id, wins, whatever order the events arrive in. A
+ * superseded by an owner's Talkie. The first answer by time, then id, wins, whatever order the events arrive in. A
  * recommendation nobody answered is expired once its time is up. Events that do not parse are not recommendations.
  */
 export function foldRecs(events: readonly RecEvent[], ctx: FoldContext): Rec[] {

@@ -75,7 +75,7 @@ function systemdQuote(a: string): string {
 function systemdPlan(cmd: string[], home: string, env: Record<string, string>): ServicePlan {
   const path = join(homedir(), ".config", "systemd", "user", "walkie.service");
   const content = `[Unit]
-Description=Walkie daemon (team agent network)
+Description=Sqwakie daemon (team agent network)
 After=network-online.target tailscaled.service
 Wants=network-online.target
 

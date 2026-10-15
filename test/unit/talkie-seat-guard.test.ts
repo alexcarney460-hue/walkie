@@ -9,11 +9,11 @@ import { seatsChannel } from "../../src/protocol/seats.ts";
 import { WalkieClient } from "../../src/client/index.ts";
 import { ORCHESTRATOR_TOKEN_ENV, ORCHESTRATOR_TOKEN_HEADER } from "../../src/protocol/orchestrator.ts";
 
-test("a scheduled WalkieTalkie turn cannot launch; an interactive turn and another agent can", () => {
+test("a scheduled Talkie turn cannot launch; an interactive turn and another agent can", () => {
   const core = {} as Core;
   let scheduled = true;
   registerHost(core, { scheduledTurnActive: () => scheduled } as unknown as OrchestratorHost);
-  expect(() => refuseScheduledSeatRun(core, "orchestrator")).toThrow("scheduled WalkieTalkie turns recommend");
+  expect(() => refuseScheduledSeatRun(core, "orchestrator")).toThrow("scheduled Talkie turns recommend");
   try { refuseScheduledSeatRun(core, "orchestrator"); } catch (err) {
     expect(err).toMatchObject({ status: 403, code: "scheduled_turn_cannot_launch" });
   }

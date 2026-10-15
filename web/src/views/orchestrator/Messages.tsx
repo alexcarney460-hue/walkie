@@ -55,7 +55,7 @@ export const Message = memo(function Message({ msg, opts }: { msg: ChatMessage; 
   }
   return (
     <div className="orch-msg orch-assistant">
-      <h3 className="sr-only">WalkieTalkie said:</h3>
+      <h3 className="sr-only">Talkie said:</h3>
       <ToolLine tools={msg.tools} />
       {msg.text && <RichMarkdown text={msg.text} opts={opts} />}
       <div className="orch-actions"><CopyReply text={msg.text} /></div>

@@ -1,4 +1,4 @@
-// The macOS half of owner-SSH enrollment: Walkie's own SSH service, so the person is never asked to turn on Remote Login
+// The macOS half of owner-SSH enrollment: Sqwakie's own SSH service, so the person is never asked to turn on Remote Login
 // (Remote Login answers on the whole network with password and PAM login; the consent they gave is for an SSH door that
 // opens onto this Mac only and only for the owner's key). It is a launchd SYSTEM daemon, `dev.walkie.sshd`, running
 // /usr/sbin/sshd -D with a config of its own: loopback only (127.0.0.1 and ::1, port 22022, src/daemon/ssh/server.ts), no
@@ -6,7 +6,7 @@
 // tagged owner key goes), and its own host key and pid file in a root-only directory.
 //
 // It runs as root inside the enrollment's ONE root batch (`walkie provision root-marker install <home> ssh-macos`, after
-// the marker; the terminal's sudo or the app's one administrator prompt). It touches only Walkie's own files (the plist
+// the marker; the terminal's sudo or the app's one administrator prompt). It touches only Sqwakie's own files (the plist
 // and that directory) and never Apple's com.openssh.sshd, /etc/ssh, `systemsetup` or the Remote Login setting. Every
 // system command is an absolute path and goes through `io.spawn`, so tests stub them; nothing is staged under TMPDIR.
 import { chmodSync, chownSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -15,7 +15,7 @@ import { basename, dirname, join } from "node:path";
 import { MACOS_SSH_PORT, realServerProbe, sshServerStatus } from "./server.ts";
 
 export const MAC_SSH_LABEL = "dev.walkie.sshd";
-/** Walkie's root-only directory for this service (0700): its config, host key and pid file. */
+/** Sqwakie's root-only directory for this service (0700): its config, host key and pid file. */
 export const MAC_SSH_DIR = "/Library/Application Support/Walkie/ssh";
 export const MAC_SSH_PLIST = `/Library/LaunchDaemons/${MAC_SSH_LABEL}.plist`;
 
@@ -47,7 +47,7 @@ export function macSshdConfig(user: string, dir: string = MAC_SSH_DIR): string {
   safeLogin(user);
   safeDir(dir);
   return [
-    "# Walkie's SSH service for the owner's key (launchd: dev.walkie.sshd). Written by walkie: a reinstall replaces this file.",
+    "# Sqwakie's SSH service for the owner's key (launchd: dev.walkie.sshd). Written by walkie: a reinstall replaces this file.",
     "# It listens only on this Mac and accepts only key logins (the keys in the enrolled person's own authorized_keys). It is not Remote Login and never changes it.",
     `Port ${MACOS_SSH_PORT}`,
     "ListenAddress 127.0.0.1",
@@ -70,7 +70,7 @@ export function macSshdConfig(user: string, dir: string = MAC_SSH_DIR): string {
 
 const xml = (text: string): string => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-/** The launchd job: sshd in the foreground (launchd supervises it) on Walkie's config, started at boot, restarted if it dies. */
+/** The launchd job: sshd in the foreground (launchd supervises it) on Sqwakie's config, started at boot, restarted if it dies. */
 export function macSshdPlist(dir: string = MAC_SSH_DIR): string {
   safeDir(dir);
   return [
@@ -157,7 +157,7 @@ function ensureRootDir(io: MacSshIo, dir: string): void {
   if (st.isSymbolicLink() || !st.isDirectory() || st.uid !== io.owner || (st.mode & 0o022) !== 0) throw new Error(`${dir} is not a root-owned directory that others cannot write to`);
 }
 
-/** Walkie's own directory: root-only (0700), a plain directory, never a link. A looser mode of our own directory is repaired. */
+/** Sqwakie's own directory: root-only (0700), a plain directory, never a link. A looser mode of our own directory is repaired. */
 function ensurePrivateDir(io: MacSshIo, dir: string): void {
   if (!lstatOrNull(dir)) mkdirSync(dir, { mode: 0o700 });
   const st = lstatSync(dir);
@@ -167,7 +167,7 @@ function ensurePrivateDir(io: MacSshIo, dir: string): void {
   io.chown(dir, io.owner, 0);
 }
 
-/** The people an existing Walkie config of ours allows (its AllowUsers line), or none when there is no config. */
+/** The people an existing Sqwakie config of ours allows (its AllowUsers line), or none when there is no config. */
 function existingUsers(io: MacSshIo): string[] {
   const path = join(io.dir, CONFIG);
   const st = lstatOrNull(path);
@@ -178,7 +178,7 @@ function existingUsers(io: MacSshIo): string[] {
 }
 
 /**
- * Whose service this is, for the un-enroll's ownership guard: the names on every AllowUsers line of Walkie's config. No directory
+ * Whose service this is, for the un-enroll's ownership guard: the names on every AllowUsers line of Sqwakie's config. No directory
  * or no config at all means nothing is configured to serve anyone. Anything else that does not plainly say whose it is (the
  * directory or the config is a link or not a plain file, it cannot be read, no line names anybody) is "unknown", with the reason:
  * the guard must never read "I could not tell" as "it is not anyone else's".
@@ -255,7 +255,7 @@ function undoActivation(io: MacSshIo): void {
  * it undoes the load. Refuses a service already installed for a different person rather than quietly cutting them off.
  */
 export async function installMacSshService(sudoUid: number, io: MacSshIo = realMacSshIo()): Promise<SshInstallResult> {
-  if (io.platform !== "darwin") return fail("Walkie's SSH service is installed on macOS by this step; Linux and WSL have their own");
+  if (io.platform !== "darwin") return fail("Sqwakie's SSH service is installed on macOS by this step; Linux and WSL have their own");
   if (io.euid !== 0) return fail("the SSH service install must run inside the administrator step (as root)");
   if (!Number.isInteger(sudoUid) || sudoUid <= 0) return fail("the SSH service is installed for an ordinary account, never for root");
   const user = io.userName(sudoUid);
@@ -266,7 +266,7 @@ export async function installMacSshService(sudoUid: number, io: MacSshIo = realM
     ensurePrivateDir(io, io.dir);
     const others = existingUsers(io).filter((name) => name !== user);
     if (others.length) {
-      return fail(`this Mac's Walkie SSH service is already installed for ${others.join(", ")}: they must un-enroll (walkie provision unenroll) before anyone else can enroll SSH here`);
+      return fail(`this Mac's Sqwakie SSH service is already installed for ${others.join(", ")}: they must un-enroll (walkie provision unenroll) before anyone else can enroll SSH here`);
     }
     const hostKeyProblem = ensureHostKey(io, staged);
     if (hostKeyProblem) return fail(hostKeyProblem);
@@ -319,7 +319,7 @@ export interface MacSshRemoval {
  * prints the commands that remove it by hand). `removed` is false with no `why` or `kept` when there was nothing to remove.
  */
 export function removeMacSshService(io: MacSshIo = realMacSshIo(), forUid?: number): MacSshRemoval {
-  if (io.platform !== "darwin") return { removed: false, why: "Walkie's macOS SSH service exists on macOS only" };
+  if (io.platform !== "darwin") return { removed: false, why: "Sqwakie's macOS SSH service exists on macOS only" };
   if (io.euid !== 0) return { removed: false, why: "removing the SSH service needs the administrator step (root)" };
   if (forUid !== undefined) {
     const me = io.userName(forUid);

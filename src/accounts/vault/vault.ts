@@ -1,14 +1,16 @@
 // The per-owner account vault (ACCOUNTS-2): ~/.walkie/vault.db, on this machine only (never replicated, never in an
-// event, never in a snapshot). It holds the logins `walkie claude` / `walkie codex` switch between:
+// event, never in a snapshot). It holds the logins `walkie claude` / `walkie codex` switch between, plus local Kimi seats:
 //   claude: a `claude setup-token` one-year token, sealed with AES-256-GCM (seal.ts) under a data key kept in the OS
-//           key store (keystore.ts). Walkie never refreshes it (a setup-token has no refresh token).
+//           key store (keystore.ts). Sqwakie never refreshes it (a setup-token has no refresh token).
 //   codex:  a dedicated CODEX_HOME directory (~/.walkie/vault/codex/<id>, 0700) that `codex login` wrote its own
 //           auth.json into; Codex refreshes that login itself, one refresher per login. Nothing secret is in the db.
+//   kimi:   a dedicated KIMI_CODE_HOME directory (~/.walkie/vault/kimi/<id>, 0700) written by `kimi login`.
+//           Its rotating credential never leaves this machine; only same-user seats use it.
 // Labels are the controlled ones of protocol/accounts.ts (a masked email or a provider label), never a full email.
-// Adding, removing and changing a policy are for people only (the CLI refuses agents); reading a token is
+// Adding, removing and changing a policy follow AGENT-ADMIN-1; Kimi login alone requires a person at a terminal. Reading a token is
 // in-process only (the wrapper, `walkie accounts exec`, and the daemon's usage poll / owner-checked hand-out).
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -17,8 +19,9 @@ import { isAccountLabel, PLAN_RE } from "../../protocol/accounts.ts";
 import { defaultKeyStore, fileKeyStore, type KeyStore } from "./keystore.ts";
 import { aadFor, openAtRest, sealAtRest } from "./seal.ts";
 import { codexAccessOnly, codexLeaseCopy, type CodexAccess } from "./codex-access.ts";
+import { readVaultCredential } from "./vault-path.ts";
 
-export const VAULT_PROVIDERS = ["claude", "codex"] as const;
+export const VAULT_PROVIDERS = ["claude", "codex", "kimi"] as const;
 export type VaultProvider = (typeof VAULT_PROVIDERS)[number];
 /**
  * local = this machine only (default) · own = also the owner's other machines · shared = also named teammates. The
@@ -45,7 +48,7 @@ export interface VaultEntry {
   created_at: number;
   /** claude: when the setup-token runs out (approximate: a year from when it was added). */
   expires_at: number | null;
-  /** codex: the account's CODEX_HOME. */
+  /** codex/kimi: the account's private CLI home. */
   home: string | null;
   /** The id is a real account id (the same account's browser login, metered elsewhere, shares it). */
   linked: boolean;
@@ -69,7 +72,7 @@ export function walkieHomeDir(): string {
 
 /**
  * Creates a private directory (0700). An existing directory keeps its mode (WALKIE_HOME might point somewhere shared by
- * mistake; the vault's own files are 0600 either way), except the directories Walkie itself owns under it.
+ * mistake; the vault's own files are 0600 either way), except the directories Sqwakie itself owns under it.
  */
 export function privateDir(path: string, tighten = false): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true, mode: 0o700 });
@@ -145,7 +148,7 @@ export class Vault {
       let share: string[] = [];
       try { share = (JSON.parse(d.share_with) as unknown[]).filter((h): h is string => typeof h === "string" && HANDLE_RE.test(h)); } catch { /* none */ }
       return [{
-        id: d.id, provider: d.provider, label: validLabel(d.label) ? d.label : d.provider === "claude" ? "Claude account" : "ChatGPT account",
+        id: d.id, provider: d.provider, label: validLabel(d.label) ? d.label : d.provider === "claude" ? "Claude account" : d.provider === "kimi" ? "Kimi account" : "ChatGPT account",
         plan: d.plan && PLAN_RE.test(d.plan) ? d.plan : null, policy: d.policy, share_with: share, created_at: d.created_at,
         expires_at: d.expires_at, home: d.home, linked: d.linked === 1, gen: d.gen, home_at: d.home_at ?? d.created_at, personal: d.personal === 1,
       }];
@@ -169,7 +172,7 @@ export class Vault {
   private missingKey(kind: string): Error {
     const n = this.sealedCount();
     return new Error(`the vault key is missing from the ${kind} key store${n ? ` while ${n} sealed token${n === 1 ? "" : "s"} exist` : ""}. `
-      + "Walkie will not make a new key that would orphan them: restore the key (Keychain item \"walkie-vault\", or ~/.walkie/vault.key), "
+      + "Sqwakie will not make a new key that would orphan them: restore the key (Keychain item \"walkie-vault\", or ~/.walkie/vault.key), "
       + "or remove those accounts (walkie accounts remove <account>) and add them again.");
   }
 
@@ -262,6 +265,14 @@ export class Vault {
     return this.get(a.id) as VaultEntry;
   }
 
+  addKimi(a: { id: string; label: string; plan: string | null; home: string; now?: number }): VaultEntry {
+    if (!/^[0-9a-f]{24}$/.test(a.id) || !validLabel(a.label)) throw new Error("invalid Kimi account");
+    this.checkRoom(a.id);
+    this.db.query("INSERT INTO accounts (id, provider, label, plan, policy, share_with, created_at, expires_at, secret, home, linked, gen) VALUES (?, 'kimi', ?, ?, 'local', '[]', ?, NULL, NULL, ?, 0, ?)")
+      .run(a.id, a.label, a.plan && PLAN_RE.test(a.plan) ? a.plan : null, a.now ?? Date.now(), a.home, randomBytes(8).toString("hex"));
+    return this.get(a.id) as VaultEntry;
+  }
+
   remove(id: string): VaultEntry | null {
     const e = this.get(id);
     if (!e) return null;
@@ -272,6 +283,7 @@ export class Vault {
   setPolicy(id: string, policy: Policy, shareWith: readonly string[] = []): VaultEntry {
     const e = this.get(id);
     if (!e) throw new Error("no such account in the vault");
+    if (e.provider === "kimi" && policy !== "local") throw new Error("Kimi's rotating token stays on the machine holding its vault login");
     // COMPANY POOL: a Codex login may be lent too — as an access-only lease (codex-access.ts); its refresh token never
     // leaves this machine, so this machine stays its only refresher.
     const share = policy === "shared" ? [...new Set(shareWith)] : [];
@@ -318,14 +330,7 @@ export class Vault {
   private codexAuthText(id: string): string | null {
     const e = this.get(id);
     if (!e || e.provider !== "codex" || !e.home) return null;
-    const file = join(e.home, "auth.json");
-    try {
-      const st = statSync(file);
-      if (!st.isFile() || st.size > 64 * 1024) return null;
-      return readFileSync(file, "utf8");
-    } catch {
-      return null;
-    }
+    return readVaultCredential(dirname(this.path), "codex", e.home, "auth.json");
   }
 
   /** The Claude setup-token, decrypted in memory for one launch / one request. Never logged, never stored elsewhere. */

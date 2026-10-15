@@ -1,5 +1,5 @@
 // ACCOUNTS-2 shims: `claude` / `codex` in ~/.walkie/bin exec `walkie claude|codex` when a vault exists, else the real
-// CLI; they never run themselves (no recursion) and the Walkie side never resolves a shim as the real CLI.
+// CLI; they never run themselves (no recursion) and the Sqwakie side never resolves a shim as the real CLI.
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -86,7 +86,7 @@ describe("shims", () => {
     expect(u.removed.length).toBe(2);
     expect(readFileSync(profile, "utf8")).toBe("export FOO=1\n");
     writeFileSync(join(shimDir(s.walkie), "claude"), "#!/bin/sh\necho mine\n");
-    expect(() => installShims(s.walkie, { walkie: ["/bin/true"] })).toThrow(/not a Walkie shim/);
+    expect(() => installShims(s.walkie, { walkie: ["/bin/true"] })).toThrow(/not a Sqwakie shim/);
   });
 });
 

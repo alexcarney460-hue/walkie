@@ -136,7 +136,7 @@ describe("it is only the Windows enrollment's step", () => {
   });
 });
 
-describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 inside WSL (final review A, MEDIUM)", () => {
+describe("an SSH server that is not Sqwakie's already answers on 127.0.0.1:22 inside WSL (final review A, MEDIUM)", () => {
   const ready: SshStatus = { owner_key_present: true, tunnel_allowed: true, reason: null, server: { enabled: true, detail: "up" } };
   /** A loopback listener standing in for a stock sshd on port 22, read through the daemon's own Linux probe. */
   async function stockSshd(): Promise<SshStatus> {
@@ -157,11 +157,11 @@ describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 ins
     expect(String(body.consent_text)).not.toContain("SSH");
     expect(JSON.stringify(d.posts)).not.toContain(e.packet.signature);
     const printed = ctx.lines.join("\n");
-    expect(printed).toContain("This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The enrollment continues without SSH.");
+    expect(printed).toContain("This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The enrollment continues without SSH.");
     expect(printed).not.toContain("owner SSH is ready");
     for (const secret of [e.encoded, e.packet.signature, e.packet.public_key]) expect(printed).not.toContain(secret);
   });
-  test("Walkie's own SSH service answering keeps the packet in the one grant, as before", async () => {
+  test("Sqwakie's own SSH service answering keeps the packet in the one grant, as before", async () => {
     const e = enrollment();
     const d = up();
     const ctx = ctxFor(d);
@@ -169,11 +169,11 @@ describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 ins
     expect((d.posts[0] as { body: Record<string, unknown> }).body).toHaveProperty("owner_ssh", e.packet);
     expect(ctx.lines.join("\n")).not.toContain("already runs its own SSH server");
   });
-  test("Walkie's own running service, as systemd tells the unprivileged person, keeps the packet; the same server under any other systemd answer does not (final review C, F1)", async () => {
-    // The install script once left /etc/systemd/system root-only, so the unit FILE could not be seen by the person and Walkie's own
+  test("Sqwakie's own running service, as systemd tells the unprivileged person, keeps the packet; the same server under any other systemd answer does not (final review C, F1)", async () => {
+    // The install script once left /etc/systemd/system root-only, so the unit FILE could not be seen by the person and Sqwakie's own
     // service read as someone else's: the WSL step dropped owner SSH on a healthy enrollment. systemd's answer is what counts now.
     const answering = await stockSshd();
-    for (const [name, text, kept] of [["Walkie's own, running", SERVICES.walkies, true], ["Walkie's own, stopped", SERVICES.stopped, false],
+    for (const [name, text, kept] of [["Sqwakie's own, running", SERVICES.walkies, true], ["Sqwakie's own, stopped", SERVICES.stopped, false],
       ["another unit of that name", SERVICES.foreign, false], ["no such unit", SERVICES.missing, false], ["systemctl unavailable", null, false]] as const) {
       const e = enrollment();
       const d = up();

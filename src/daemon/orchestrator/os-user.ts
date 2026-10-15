@@ -1,4 +1,4 @@
-// Shell-capable WalkieTalkie runs as a dedicated uid. The root-owned seat helper owns its lifecycle; a
+// Shell-capable Talkie runs as a dedicated uid. The root-owned seat helper owns its lifecycle; a
 // token-checked socket lets that uid use the daemon only as the reserved orchestrator agent.
 import type { Server } from "bun";
 import { chmodSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -152,8 +152,8 @@ export class TalkieOsUser {
   get active(): boolean { return this.home !== null && this.directory !== null && this.server !== null; }
   get runner(): string { return this.deps.runner ?? DEFAULT_RUNNER; }
   get runtime(): string { return this.deps.runtime ?? `${RUNTIMES_DIR}/claude`; }
-  get leaseDirectory(): string { if (!this.directory) throw new Error("WalkieTalkie's OS user is not ready"); return this.directory; }
-  get userHome(): string { if (!this.home) throw new Error("WalkieTalkie's OS user is not ready"); return this.home; }
+  get leaseDirectory(): string { if (!this.directory) throw new Error("Talkie's OS user is not ready"); return this.directory; }
+  get userHome(): string { if (!this.home) throw new Error("Talkie's OS user is not ready"); return this.home; }
   get socket(): string { return join(this.leaseDirectory, "talkie.sock"); }
   private get cleanupFile(): string { return this.deps.cleanupFile ?? join(this.deps.socketRoot ?? dirname(this.daemonSocket), "orchestrator-uid-cleanup.sqlite"); }
   private get obligation(): CleanupObligation { return new CleanupObligation(this.cleanupFile); }
@@ -201,7 +201,7 @@ export class TalkieOsUser {
         });
       } catch { return false; }
     });
-    if (!ready()) throw new HttpError(409, "seat_helper_required", `WalkieTalkie shell access needs the seat helper: ${SETUP_USER_COMMAND}`);
+    if (!ready()) throw new HttpError(409, "seat_helper_required", `Talkie shell access needs the seat helper: ${SETUP_USER_COMMAND}`);
   }
 
   private admin(verb: "talkie-create" | "talkie-destroy" | "talkie-reconcile" | "talkie-status", generation?: string, signal?: AbortSignal): Promise<AdminResult | null> {
@@ -288,10 +288,10 @@ export class TalkieOsUser {
       const path = uidMonitorFailureFile(file);
       if (statSync(path).size <= 1024) detail = readFileSync(path, "utf8").trim().slice(0, 240);
     } catch { /* no diagnostic file */ }
-    const reason = code === 0 ? "WalkieTalkie uid monitor cleaned the shell user while it was running"
-      : code === 2 ? "WalkieTalkie uid monitor stopped because the seat helper was uninstalled"
-      : code === 3 ? "another live uid monitor owns WalkieTalkie cleanup"
-      : `WalkieTalkie uid monitor exited repeatedly (code ${code ?? "signal"})`;
+    const reason = code === 0 ? "Talkie uid monitor cleaned the shell user while it was running"
+      : code === 2 ? "Talkie uid monitor stopped because the seat helper was uninstalled"
+      : code === 3 ? "another live uid monitor owns Talkie cleanup"
+      : `Talkie uid monitor exited repeatedly (code ${code ?? "signal"})`;
     if (code !== 0) this.armRetry(0);
     if (this.deps.monitorFailure) this.deps.monitorFailure(detail ? `${reason}: ${detail}` : reason);
     else void this.destroy().catch(() => undefined);
@@ -304,17 +304,17 @@ export class TalkieOsUser {
     this.assertInstalled();
     const generation = await this.expectedStaleGeneration();
     const result = await this.admin("talkie-reconcile", generation);
-    if (!result?.ok) throw new Error(`WalkieTalkie's stale uid was not cleaned: ${result?.why ?? "the helper did not answer"}`);
+    if (!result?.ok) throw new Error(`Talkie's stale uid was not cleaned: ${result?.why ?? "the helper did not answer"}`);
   }
 
   private async expectedStaleGeneration(signal?: AbortSignal): Promise<string> {
     const status = await this.admin("talkie-status", undefined, signal);
-    if (!status?.ok || !status.status) throw new HttpError(409, "talkie_cleanup_failed", "WalkieTalkie's shell owner could not be checked");
+    if (!status?.ok || !status.status) throw new HttpError(409, "talkie_cleanup_failed", "Talkie's shell owner could not be checked");
     const { generation, instance } = status.status;
     if (instance !== this.instance || !generation) {
       throw new HttpError(409, "talkie_user_owned", instance
-        ? "Another Walkie daemon owns shell access on this machine; stop it before starting here"
-        : "WalkieTalkie's shell user has no recorded daemon owner; run walkie talkie cleanup --repair");
+        ? "Another Sqwakie daemon owns shell access on this machine; stop it before starting here"
+        : "Talkie's shell user has no recorded daemon owner; run walkie talkie cleanup --repair");
     }
     return generation;
   }
@@ -323,13 +323,13 @@ export class TalkieOsUser {
     const status = await this.admin("talkie-status", undefined, signal);
     // Legacy unit fixtures omit a status reply; installed helpers always provide one.
     if (this.deps.admin && status?.ok && !status.status) return null;
-    if (!status?.ok || !status.status) throw new HttpError(409, "talkie_cleanup_failed", "WalkieTalkie's shell owner could not be checked; run walkie talkie cleanup --repair");
+    if (!status?.ok || !status.status) throw new HttpError(409, "talkie_cleanup_failed", "Talkie's shell owner could not be checked; run walkie talkie cleanup --repair");
     if (!status.status.ledgerOwner) return null;
     const { generation, instance } = status.status;
     if (generation && instance === this.instance) return generation;
     throw new HttpError(409, "talkie_user_owned", instance
-      ? "Another Walkie daemon owns shell access on this machine; run walkie talkie cleanup --repair if the uid is empty"
-      : "WalkieTalkie's shell owner has no current daemon identity; run walkie talkie cleanup --repair");
+      ? "Another Sqwakie daemon owns shell access on this machine; run walkie talkie cleanup --repair if the uid is empty"
+      : "Talkie's shell owner has no current daemon identity; run walkie talkie cleanup --repair");
   }
 
   async prepare(signal?: AbortSignal): Promise<void> {
@@ -350,7 +350,7 @@ export class TalkieOsUser {
     }
     if (signal?.aborted) throw new Error("shell preparation cancelled");
     if (this.active) return;
-    if (this.pendingCleanup) throw new HttpError(409, "talkie_cleanup_pending", "WalkieTalkie shell user cleanup pending; the dedicated uid must be verified clean before another shell run");
+    if (this.pendingCleanup) throw new HttpError(409, "talkie_cleanup_pending", "Talkie shell user cleanup pending; the dedicated uid must be verified clean before another shell run");
     if (cleanupError) {
       let completed = false;
       try { completed = !!cleaningRun && this.obligation.completed(cleaningRun); }
@@ -364,13 +364,13 @@ export class TalkieOsUser {
       try { st = statSync(home); } catch { /* fail closed */ }
       return homeProblem(home, st, []) ?? aclProblem(home, listAcl(home));
     })();
-    if (homeIssue) throw new HttpError(409, "talkie_home_open", `WalkieTalkie shell access needs a private home: ${homeIssue}`);
+    if (homeIssue) throw new HttpError(409, "talkie_home_open", `Talkie shell access needs a private home: ${homeIssue}`);
     // The expected generation is fixed before queuing on the helper lock. An aborted call cannot sweep a newer run.
     const existing = (this.deps.existing ?? (() => lookupOsUser(TALKIE_USER) !== null))();
     const expected = existing ? await this.expectedStaleGeneration(signal) : await this.emptyOwnerGeneration(signal) ?? randomUUID();
     const old = await this.admin("talkie-reconcile", expected, signal);
     if (signal?.aborted) throw new Error("shell preparation cancelled");
-    if (!old?.ok) throw new HttpError(409, "talkie_cleanup_failed", `WalkieTalkie's OS user could not be cleaned: ${old?.why ?? "the helper did not answer"}`);
+    if (!old?.ok) throw new HttpError(409, "talkie_cleanup_failed", `Talkie's OS user could not be cleaned: ${old?.why ?? "the helper did not answer"}`);
     const run = randomUUID();
     // Record the generation before the helper runs: an interrupted create may already have changed OS state.
     this.generation = run;
@@ -384,17 +384,17 @@ export class TalkieOsUser {
       || (!this.deps.privateHome && created.generation !== run)) {
       if (created?.ok === false && ["used", "refused", "busy"].includes(created.code ?? "")) this.generation = null;
       else void this.destroy().catch(() => undefined);
-      throw new HttpError(409, "talkie_user_failed", `WalkieTalkie's OS user could not be created: ${created?.why ?? "the helper did not return its expected identity"}`);
+      throw new HttpError(409, "talkie_user_failed", `Talkie's OS user could not be created: ${created?.why ?? "the helper did not return its expected identity"}`);
     }
     this.home = created.home;
     this.generation = run;
     try {
       if (!this.deps.privateHome) {
         const user = lookupOsUser(TALKIE_USER);
-        if (!user || user.uid !== TALKIE_UID) throw new HttpError(409, "talkie_user_failed", "WalkieTalkie's dedicated user identity could not be checked");
+        if (!user || user.uid !== TALKIE_UID) throw new HttpError(409, "talkie_user_failed", "Talkie's dedicated user identity could not be checked");
         const home = homedir();
         const why = homeProblem(home, statSync(home), user.gids);
-        if (why) throw new HttpError(409, "talkie_home_open", `WalkieTalkie shell access needs a private home: ${why}`);
+        if (why) throw new HttpError(409, "talkie_home_open", `Talkie shell access needs a private home: ${why}`);
       }
       this.directory = makeSeatSocketDir(this.deps.socketRoot);
       this.server = Bun.serve({ unix: this.socket, maxRequestBodySize: 8 * 1024 * 1024,
@@ -435,7 +435,7 @@ export class TalkieOsUser {
         ...(body ? { body } : {}),
       } as RequestInit);
       return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
-    } catch { return new Response("Walkie daemon unavailable", { status: 503 }); }
+    } catch { return new Response("Sqwakie daemon unavailable", { status: 503 }); }
   }
 
   /**
@@ -487,7 +487,7 @@ export class TalkieOsUser {
       this.monitorFile = null;
       this.armRetry(cleanupDelay(this.pendingCleanup?.attempts ?? 1));
     }
-    throw new Error(`WalkieTalkie uid cleanup was not verified: ${this.pendingCleanup?.diagnostic ?? "the helper did not answer"}`);
+    throw new Error(`Talkie uid cleanup was not verified: ${this.pendingCleanup?.diagnostic ?? "the helper did not answer"}`);
   }
 
   private async attemptCleanup(run: string, signal?: AbortSignal): Promise<boolean> {

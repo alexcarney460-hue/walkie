@@ -3,6 +3,7 @@ import * as C from './rent6-fixtures.ts';
 import { renewHash } from '../api/_lib/metadata.ts';
 import { PgStore } from '../api/_lib/compute/pg-store.ts';
 import postgres from 'postgres';
+import { COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION } from '../api/_lib/compute/release-gate.ts';
 
 const signer = C.LH.testKeypair();
 const env = C.LH.fullEnv(signer.pem);
@@ -26,7 +27,8 @@ test('signed bind refuses expired and far-future proof claims before Stripe muta
       stripe.subs.set(lic, C.LH.subscription({ id: lic }));
       const proof = { genesis: first.genesis, authority_chain: [], roster_events: [], expires_at,
         bind_signature: first.f.sign(C.bindMessage(first.team, lic, expires_at)) };
-      const bind = C.makeBind(C.LH.deps(stripe, env));
+      const store = C.world().store; // the compute-capable site binds only with its store (lane C round 11)
+      const bind = C.makeBind({ ...C.LH.deps(stripe, env), computeStore: () => store });
       const response = await bind(new Request('https://site.test/api/license/bind', {
         method: 'POST', body: JSON.stringify({ code: codeFor(lic), team_id: first.team, proof }),
       }));
@@ -36,7 +38,10 @@ test('signed bind refuses expired and far-future proof claims before Stripe muta
   } finally { globalThis.fetch = previous; }
 });
 
-test('no-store first claim writes only main metadata and rebind makes no write', async () => {
+// The no-store path exists only in the locked (released) site: the compute-capable site refuses to bind without its store
+// (lane C round 11), so these two run while the lock is on, against the handler the deployed site runs.
+const lockedBind = (stripe: C.LH.MockStripe) => C.makeBind({ ...C.LH.deps(stripe, env), previewCompute: false });
+test.skipIf(COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION)('no-store first claim writes only main metadata and rebind makes no write', async () => {
   const previous = globalThis.fetch;
   globalThis.fetch = (async () => { throw Error('unexpected network request'); }) as unknown as typeof fetch;
   try {
@@ -50,7 +55,7 @@ test('no-store first claim writes only main metadata and rebind makes no write',
       if (++writes === 2) await Bun.sleep(40);
       await write(id, metadata);
     };
-    const bind = C.makeBind(C.LH.deps(stripe, env));
+    const bind = lockedBind(stripe);
     const firstResponse = await bind(request(first.team));
     const secondResponse = await bind(request(second.team));
     const responses = [firstResponse, secondResponse];
@@ -77,7 +82,7 @@ test('no-store first claim writes only main metadata and rebind makes no write',
   } finally { globalThis.fetch = previous; }
 });
 
-test('no-store Stripe write failure matches main and permits retry', async () => {
+test.skipIf(COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION)('no-store Stripe write failure matches main and permits retry', async () => {
   const previous = globalThis.fetch;
   globalThis.fetch = (async () => { throw Error('unexpected network request'); }) as unknown as typeof fetch;
   try {
@@ -90,7 +95,7 @@ test('no-store Stripe write failure matches main and permits retry', async () =>
       if (++attempts === 1) throw Error('injected 500');
       await write(id, metadata);
     };
-    const bind = C.makeBind(C.LH.deps(stripe, env));
+    const bind = lockedBind(stripe);
     const failed = await bind(request(first.team));
     expect([failed.status, await failed.json()]).toEqual([502, { error: 'stripe_unavailable' }]);
     const retry = await bind(request(first.team));

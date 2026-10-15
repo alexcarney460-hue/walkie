@@ -1,6 +1,6 @@
 // Limit resets on an account tile (ACCOUNTS-RESET-1). Codex: "Resets available: N" and a "Use a reset" button that
 // asks first, then has THIS machine's daemon use one through the Codex CLI. Claude: its resets are used on claude.ai
-// (Anthropic's help centre: Settings > Usage > "Reset for free"), so the button opens that page and Walkie re-reads the
+// (Anthropic's help centre: Settings > Usage > "Reset for free"), so the button opens that page and Sqwakie re-reads the
 // meter when the person comes back. Kimi and Grok have no resets. Agents can't reach any of this: the daemon serves
 // the reset routes to a dashboard session only and refuses a request that names an agent.
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -36,7 +36,7 @@ export function ResetsRow({ account: a, now, useReset = api.useReset, prepareRes
       openedPage.current = false;
       api.refreshAccount(a.id)
         .then((r) => setNote({ tone: "info", text: r.scheduled ? "Re-reading this account's usage now."
-          : r.held ? "The provider asked Walkie to wait before reading usage again; the meter updates when it allows." : "Usage was re-read moments ago; the meter updates on the next reading." }))
+          : r.held ? "The provider asked Sqwakie to wait before reading usage again; the meter updates when it allows." : "Usage was re-read moments ago; the meter updates on the next reading." }))
         .catch((err) => setNote({ tone: "bad", text: friendlyError(err) }));
     };
     window.addEventListener("focus", back);
@@ -68,7 +68,7 @@ export function ResetsRow({ account: a, now, useReset = api.useReset, prepareRes
         </div>
       ) : (
         <p className="acct-resets-hint muted">
-          Use on {holder?.hostname ?? "the machine with this login"}: a reset is used from Walkie's dashboard on the machine that holds the login.
+          Use on {holder?.hostname ?? "the machine with this login"}: a reset is used from Sqwakie's dashboard on the machine that holds the login.
         </p>
       ))}
       {page && (
@@ -78,7 +78,7 @@ export function ResetsRow({ account: a, now, useReset = api.useReset, prepareRes
           </a>
           <span className="acct-resets-hint muted">
             {how === "web"
-              ? `${PROVIDER_NAME[a.provider]} resets are used on its own page (Settings › Usage › Reset for free), not in Walkie. ${here ? "Walkie re-reads this meter when you come back." : `Walkie on ${holder?.hostname ?? "that machine"} re-reads it within 5 minutes.`}`
+              ? `${PROVIDER_NAME[a.provider]} resets are used on its own page (Settings › Usage › Reset for free), not in Sqwakie. ${here ? "Sqwakie re-reads this meter when you come back." : `Sqwakie on ${holder?.hostname ?? "that machine"} re-reads it within 5 minutes.`}`
               : `${PROVIDER_NAME[a.provider]} has no limit resets.`}
           </span>
         </div>
@@ -199,14 +199,14 @@ export function ResetSheet({ account: a, resets, useReset, prepareReset = api.pr
         <p className="muted">Codex refills this account's limits; your weekly reset day stays the same.</p>
         {others.length > 0 && (
           <p className="acct-resets-note tone-info">
-            This login is also on {others.join(", ")}. A reset used there counts against the same account, and Walkie can't
+            This login is also on {others.join(", ")}. A reset used there counts against the same account, and Sqwakie can't
             coordinate the two machines.
           </p>
         )}
         {earlier && !result && (
           <p className="acct-resets-note tone-bad" role="status">
             An earlier attempt may have gone through. Check usage before trying again.{" "}
-            {waiting ? "Walkie is re-reading it now…" : `Usage was re-read: ${resetsText(a.provider, resetsDisplay(a.usage))}. Trying again repeats that same attempt, so it can't use a second reset.`}
+            {waiting ? "Sqwakie is re-reading it now…" : `Usage was re-read: ${resetsText(a.provider, resetsDisplay(a.usage))}. Trying again repeats that same attempt, so it can't use a second reset.`}
           </p>
         )}
         {resets.applicable === 0 && !result && !earlier && (

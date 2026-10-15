@@ -73,7 +73,7 @@ export type AccountWindow = z.infer<typeof AccountWindow>;
 
 /**
  * Limit resets the provider says the account holds (ACCOUNTS-RESET-1). Absent: the provider does not report resets
- * to Walkie (Claude serves its count to claude.ai only; Kimi and Grok have none). Only two small integers travel.
+ * to Sqwakie (Claude serves its count to claude.ai only; Kimi and Grok have none). Only two small integers travel.
  */
 export const AccountResets = z.object({
   /** Resets available to use. */
@@ -182,6 +182,8 @@ export const AccountSummary = z.object({
   /** Last time a session was seen using it (reporting node's clock). */
   last_seen: Ts,
   vault: AccountVault.optional(),
+  /** Digest of the Codex refresh token, for detecting copied logins on another machine; never the token. */
+  fingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   /**
    * RESET-CLOCK-1: the remembered reset times (reporting node's clock). Optional and additive: pre-RESET-CLOCK peers
    * strip it (zod objects drop unknown keys); a malformed list is dropped on its own, never the snapshot.
@@ -198,7 +200,7 @@ export const MAX_LEASES_PER_NODE = 64;
  */
 export const AccountLease = z.object({
   account: AccountId,
-  provider: z.enum(["claude", "codex"]),
+  provider: z.enum(["claude", "codex", "kimi"]),
   agent: AgentRef.optional(),
   since: Ts,
   owner: HandleRef.optional(),
@@ -227,6 +229,7 @@ export interface AccountMachineView {
   usage: AccountUsage | null;
   /** ACCOUNTS-2: this machine holds the account in its vault. */
   vault?: AccountVault;
+  fingerprint?: string;
   /** RESET-CLOCK-1: the reset times this machine remembers (on this node's clock). */
   clock?: ResetClock[];
 }

@@ -18,20 +18,54 @@
 .update-empty { margin: 0; color: var(--text-3); font-size: var(--fs-13); }
 .update-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 0; font-size: var(--fs-12); }
 .update-links a,
-.updates-off a,
+.updates-pick a,
 .updates-link { color: var(--accent-text); font-weight: 500; }
 .update-links a:hover,
-.updates-off a:hover { text-decoration: underline; }
+.updates-pick a:hover { text-decoration: underline; }
 .update-links a { display: inline-flex; align-items: center; min-height: 44px; }
 .update-links a:focus-visible,
-.updates-off a:focus-visible,
-.updates-off summary:focus-visible,
+.updates-pick a:focus-visible,
+.updates-pick summary:focus-visible,
 .updates-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-chip); }
-.updates-off { color: var(--text-2); font-size: var(--fs-13); }
-/* A list item keeps the open/close marker; the padding makes it a 44 px target. */
-.updates-off summary { display: list-item; padding-block: 13px; cursor: pointer; font-weight: 500; }
-.updates-off ul { display: grid; gap: 2px; margin-top: 6px; }
-.updates-off li a { display: inline-flex; align-items: center; min-height: 44px; }
+
+/* ---- the picker (WALK-121): which projects get an hourly update, a switch on each row ---- */
+.updates-pick { margin: 0 0 24px; color: var(--text-2); font-size: var(--fs-13); }
+.updates-pick-intro { max-width: 72ch; margin: 0 0 12px; }
+/* The summary is a bar like the link to this page on the Projects list, so the picker is found; the marker stays, inside the bar. */
+.updates-pick-details > summary {
+  display: list-item;
+  list-style-position: inside;
+  min-height: 44px;
+  margin-bottom: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-card);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 650;
+  cursor: pointer;
+}
+.updates-pick-find { max-width: 360px; margin-bottom: 10px; }
+.updates-pick-list { display: grid; gap: 6px; }
+.updates-pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 14px;
+  padding: 0 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+/* The name takes what the switch leaves and wraps inside it; only when even that is too narrow does the switch drop below. */
+.updates-pick-name { flex: 1 1 8rem; min-width: 0; padding-block: 10px; color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+.updates-pick-folder { color: var(--text-3); font-weight: 400; }
+.updates-pick-control { display: flex; flex: none; align-items: center; min-width: 0; min-height: 44px; }
+.updates-pick-control .toggle-row { min-height: 44px; }
+/* The phone rule for the switch on the Projects list pads and left-aligns it under a row; here it sits in the row. */
+.updates-pick-control .project-report-switch { padding: 0; justify-items: end; }
+.updates-pick-none { margin: 10px 0 0; font-size: var(--fs-12); }
 
 /* The way to the page from the Projects list (the phone tab bar has no room for it). */
 .updates-link {

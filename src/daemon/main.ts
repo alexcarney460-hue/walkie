@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import type { LicenseVerifier } from "../license/format.ts";
 import { IntegrationSlots } from "../license/integrations.ts";
 import { LicenseRenewer, type RenewOptions } from "../license/renew.ts";
@@ -19,6 +20,7 @@ import { loadOrCreateKeys } from "./keys.ts";
 import { LocalApi } from "./local-api.ts";
 import { createLogger, type Level, type Logger } from "./logger.ts";
 import { DirectLink } from "./direct/link.ts";
+import { resumeLinkWait, stopLinkWait } from "./join.ts";
 import type { DirectOptions } from "./direct/net.ts";
 import { PeerApi } from "./peer-api.ts";
 import { PeerClient } from "./peer-client.ts";
@@ -39,6 +41,7 @@ import { MachineStatsSampler, type SamplerOptions } from "./machine-stats/sample
 import { readAccel } from "./machine-stats/accel.ts";
 import { locateRuntime, metalBudget } from "../pool/run/runtime.ts";
 import { AccountsService, type AccountsOptions } from "../accounts/service.ts";
+import { postAccountImportNotice } from "../accounts/import-notice.ts";
 import { lazyVault } from "../accounts/vault/source.ts";
 import { liveVaultSharing } from "./vault-lease.ts";
 import { localTeamPolicy } from "../accounts/pool.ts";
@@ -59,15 +62,24 @@ import type { End } from "../pool/run/tunnel.ts";
 import { nodeMember } from "./roster.ts";
 import { recordPeerSignature } from "./peer-capabilities.ts";
 import "../accounts/routes.ts"; // registers /v1/accounts/reset and /v1/accounts/refresh
-import "./mobile/routes.ts"; // registers /v1/mobile (Walkie on your phone)
+import "./mobile/routes.ts"; // registers /v1/mobile (Sqwakie on your phone)
 import { MobileManager, type MobileOptions } from "./mobile/manager.ts";
 import { OrchestratorHost, registerHost, type OrchestratorOptions } from "./orchestrator/host.ts";
 import "./orchestrator/routes.ts"; // registers /v1/orchestrator
+import { closeBrowser } from "./browser/routes.ts";
+import "./channels/routes.ts";
+import { channelsFor } from "./channels/manager.ts";
 import "./orchestrator/schedule-routes.ts";
 import "./projects/routes.ts"; // registers /v1/projects, /v1/tasks (WALKIE-PROJECTS-1)
 import "./projects/room-routes.ts"; // registers /v1/projects/:ch/room, /v1/tasks/:ref/context (DATA-ROOM-1)
 import "./projects/page-routes.ts"; // registers /v1/projects/:ch/page (PROJECT-PAGES-1)
 import "./memory/routes.ts"; // registers /v1/memory (ORG-MEMORY-1 personal scope; this machine only)
+import "./skills/routes.ts";
+import { reconcileCatalog } from "./skills/install.ts";
+import { TOOLS as CATALOG_TOOLS } from "../mcp/tools.ts";
+import { MemoryStore } from "./memory/store.ts";
+import { legacyOwner, recordStartupDecision, startupAdmits } from "./memory/ownership.ts";
+import { recoverBackupRestore } from "./memory/backup.ts";
 import "./admin/routes.ts"; // registers /v1/admin (AGENT-ADMIN-1: switches, audit, remote admin)
 import "./history-routes.ts"; // registers GET /v1/history (WALK-70 phase 0: local read of audits already stored)
 import "./provision/routes.ts"; // local enrollment grant and bounded profile status/apply
@@ -82,6 +94,7 @@ import { StewardLoop } from "./projects/steward-run.ts";
 import { prepareProjectReports } from "./projects/status-report.ts";
 import { prepareOrchestrationPoll } from "./orchestrator/poll.ts";
 import { prepareCardCuration } from "./orchestrator/curation.ts";
+import "./fleet-link-routes.ts"; // registers /v1/team/links (FLEET-LINK-1)
 import { ProjectsIndex } from "./projects/index.ts";
 import { RestrictedMembership } from "./projects/members.ts";
 import { authorityProjectQuota } from "./projects/service.ts";
@@ -123,7 +136,7 @@ export interface DaemonOptions {
   logStderr?: boolean;
   logLevel?: Level;
   heartbeatMs?: number;
-  /** AGENT-ADMIN-1: post the one-time "owners can now set Walkie up here" notice (default true; test clusters turn it off). */
+  /** AGENT-ADMIN-1: post the one-time "owners can now set Sqwakie up here" notice (default true; test clusters turn it off). */
   adminNotice?: boolean;
   /** Apply WALKIE_* env overrides to config (default true). */
   env?: boolean;
@@ -159,13 +172,13 @@ export interface DaemonOptions {
   machineStats?: SamplerOptions | false;
   /** Provider accounts (config `accounts`, default on); false disables it, tests inject files, fetch and clock. */
   accounts?: AccountsOptions | false;
-  /** Walkie Direct endpoint options (tests: preset "minimal", a loopback bind and a shared address book). */
+  /** Sqwakie Direct endpoint options (tests: preset "minimal", a loopback bind and a shared address book). */
   direct?: DirectOptions;
   /** WALKIE-POOL-2 split runs (tests: the runtime directory, extra llama.cpp arguments, the stage lease). */
   pool?: PoolOptions;
   /** Tests can start the guest listener with a local fake tunnel assertion key. */
   guestGateway?: { port: number; tunnelKey: Uint8Array };
-  /** Walkie on your phone (off until `walkie mobile pair`); tests point it at a local relay. */
+  /** Sqwakie on your phone (off until `walkie mobile pair`); tests point it at a local relay. */
   mobile?: MobileOptions;
   /** RENT-2 rental compute: the site (tests inject base + fetch), poll timing, a release tag for dev builds. */
   compute?: ComputeOptions;
@@ -179,9 +192,9 @@ export interface DaemonHandle {
   readonly integrations: IntegrationManager;
   /** The Linear import (LINEAR-IMPORT-1). */
   readonly linearImport: LinearImportService;
-  /** The peer API client (Tailscale or Walkie Direct) and the transport this daemon runs. */
+  /** The peer API client (Tailscale or Sqwakie Direct) and the transport this daemon runs. */
   readonly client: PeerClient; readonly transport: DirectLink;
-  /** Walkie on your phone (tests inspect it). */
+  /** Sqwakie on your phone (tests inspect it). */
   readonly mobile: MobileManager;
   /** The board index (WALKIE-PROJECTS-1). */
   readonly projects: ProjectsIndex;
@@ -308,31 +321,41 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     ...(opts.licenseVerifier ? { licenseVerifier: opts.licenseVerifier } : {}),
     ...(opts.clock ? { clock: opts.clock } : {}),
   });
+  // Pin the database and roster decision at startup, even when no database existed yet.
+  // A file that appears later has a different identity and its old rows remain quarantined.
+  recoverBackupRestore(paths.home);
+  const memory = MemoryStore.open(paths.home);
+  try {
+    const proof = legacyOwner(core);
+    recordStartupDecision(paths.home, memory, proof);
+    memory.resolveLegacy(proof, startupAdmits(paths.home, memory, proof));
+  } finally { memory.close(); }
   const licenseService = new LicenseService({ ...(opts.env !== false ? { base: serviceBaseFromEnv() } : {}), ...opts.licenseService });
   const renewer = opts.licenseRenew === false ? null : new LicenseRenewer(core, log, { ...opts.licenseRenew, service: licenseService });
 
   const client = new PeerClient({ team: () => core.teamId, nodeId: keys.nodeId, keys, self: () => core.roster.nodes.get(keys.nodeId) });
   let watchdog: LoopWatchdog | null = null;
-  // Set below, once the Direct link exists: this node should run Walkie Direct but its endpoint is not up.
+  // Set below, once the Direct link exists: this node should run Sqwakie Direct but its endpoint is not up.
   let directPending = (): boolean => false;
   const sync = new SyncManager(core, client, { ...opts.sync,
     stallTotal: opts.sync?.stallTotal ?? (() => watchdog?.stallTotalMs() ?? 0),
     directPending: () => directPending(),
   });
   const linkIdentity: Identity = { kind: identity.kind, whois: (ip, h) => identity.whois(ip, h), self: () => selfWithin(identity, IDENTITY_HANG_MS) };
-  // Set below: a dual node keeps syncing over Walkie Direct while its tailnet listener is down.
+  // Set below: a dual node keeps syncing over Sqwakie Direct while its tailnet listener is down.
   let directUp = (): boolean => false;
   const link = new PeerLink({
     core, sync, client, identity: linkIdentity, log, port: opts.peerPort ?? config.peer_port, ...(fixedHost ? { fixedHost } : {}),
     directUp: () => directUp(),
   }, opts.peerLink);
-  // Walkie Direct: started now if this node is on a Direct team, or later by init/join (src/daemon/direct/link.ts).
+  // Sqwakie Direct: started now if this node is on a Direct team, or later by init/join (src/daemon/direct/link.ts).
   const direct = new DirectLink({
     core, sync, client, api: new PeerApi(core, { ...(opts.sshPort ? { port: opts.sshPort } : {}) }), log, stopTailscale: () => link.stop(),
     options: { ...(config.relays ? { relays: config.relays } : {}), ...opts.direct },
   }, config);
   directUp = () => direct.direct() !== null;
   directPending = () => direct.pending();
+  core.relayHint = (ms) => direct.relayHint(ms); // a fleet link's relay hint (FLEET-LINK-1)
   // Projects (WALKIE-PROJECTS-1): boards folded from project channels' posts; restricted members follow the roster.
   const projects = new ProjectsIndex(core, log);
   const guestRegistry = new GuestRegistry(store);
@@ -368,7 +391,10 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   registerSeats(core, seats);
   // JOIN-STATUS-1: the one #general post after this machine is admitted (retried until the channel is synced).
   const joinStatus = new JoinStatusReporter(core, log);
-  // Tests inject a local site; the shipped daemon never starts a rental poller in this version.
+  // The shipped daemon runs the rental service from pre.17; tests inject a local site. Its poller calls the site only for
+  // this machine's compute accounts (state, with their bearer tokens) and, while a handover notice is expected for the
+  // team, a handover status request carrying the team's roster proof (ComputeService HANDOVER_CHECK_MS). An owner on a
+  // team that never rented makes no site call.
   const compute = RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION || opts.compute?.site
     ? new ComputeService({ core, client, catchUp: sync.requestCatchUp, log, transport: () => direct, authoritySyncedAt: () => authorityLevelAt(core, (id) => sync.peerState(id)) }, {
       ...opts.compute, site: opts.compute?.site ?? new ComputeSite({ base: opts.env !== false ? computeBaseFromEnv() : undefined }),
@@ -390,6 +416,18 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   let sshBridge: Awaited<ReturnType<typeof startSshBridge>> | null = null;
   try {
     core.onLocalEvent = (ev) => sync.push(ev);
+    core.onCatalogChange = () => {
+      try {
+        const result = reconcileCatalog(core, CATALOG_TOOLS.map((tool) => tool.name));
+        core.catalogFailures = result.blocked;
+        for (const reason of result.blocked) core.log.warn("skill_catalog_blocked", { reason });
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        core.catalogFailures = [reason];
+        core.log.warn("skill_catalog_failed", { reason });
+      }
+    };
+    core.onCatalogChange();
     core.onRosterChange = () => {
       sync.rosterChanged(); direct.rosterChanged(); mobile.rosterChanged(); core.pool?.rosterChanged();
       projects.rosterChanged(); restricted.rosterChanged(); orchestrator.rosterChanged(); joinStatus.rosterChanged();
@@ -411,7 +449,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       return addr;
     };
     // POOL-REAL-1: which transport pool tunnels use to a machine that serves both. "auto" = the usual choice
-    // (addrOf: Tailscale first). Measured on atlas-wsl <-> hestia-wsl (docs/plans/POOL-REAL-1.md): Walkie Direct was
+    // (addrOf: Tailscale first). Measured on atlas-wsl <-> hestia-wsl (docs/plans/POOL-REAL-1.md): Sqwakie Direct was
     // not clearly faster than Tailscale there, and right after a restart its address lookup can fail, so it is an
     // opt-in (config pool_transport / WALKIE_POOL_TRANSPORT) that falls back to the usual transport when unreachable.
     let resampleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -497,13 +535,16 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
     // Binds the peer API and starts sync now if Tailscale answers, else keeps retrying in the background. A slow
     // first answer finishes in the background too: the rest of startup doesn't wait past the budget.
     await settleWithin(link.start(), IDENTITY_STARTUP_MS, () => undefined);
-    // A dual node (config `direct`, or its record serves Direct) also runs the Walkie Direct endpoint.
+    // A dual node (config `direct`, or its record serves Direct) also runs the Sqwakie Direct endpoint.
     if (direct.wantsDirect()) await direct.startWithRetry();
   }
+  // A machine a fleet link queued for an owner's approval keeps asking after a restart (FLEET-LINK-1).
+  await resumeLinkWait(core, sync, client, () => direct.enableDirect())
+    .catch((err: unknown) => log.warn("link_wait_resume_failed", { err: (err as Error).message }));
   manager.start();
   renewer?.start();
   mobile.start();
-  compute?.start();
+  if (opts.compute?.autostart !== false) compute?.start();
   // An upgrade (WALKIE-MISSION-SUB-1): Claude hooks an older version installed get this version's events (sub-agents).
   // Only a compiled install with the environment on: tests and runs from source never touch ~/.claude.
   if (opts.env !== false && isCompiledWalkie()) {
@@ -531,7 +572,13 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   core.teamPool = () => teamPool.current(core, sync);
   // Provider accounts the running sessions use, their usage left, shared on `vv` (src/accounts/service.ts).
   const accounts = opts.accounts !== false && config.accounts
-    ? new AccountsService(paths.home, log, (snap) => { core.accounts = snap; hub.accountsChanged(); }, { vault: vault, teamPolicy: () => localTeamPolicy(paths.config), poolOn: () => core.teamPolicy() === "company", ...(opts.accounts || {}) })
+    ? new AccountsService(paths.home, log, (snap) => { core.accounts = snap; hub.accountsChanged(); }, { vault: vault, teamPolicy: () => localTeamPolicy(paths.config), poolOn: () => core.teamPolicy() === "company",
+      remoteFingerprints: () => [...core.roster.nodes.values()].filter((n) => n.node_id !== core.nodeId).flatMap((n) =>
+        sync.peerState(n.node_id)?.accounts?.accounts.flatMap((a) => a.fingerprint ? [{ id: a.id, fingerprint: a.fingerprint }] : []) ?? []),
+      importNotice: (text) => {
+        postAccountImportNotice(core, text);
+      },
+      ...(opts.accounts || {}) })
     : null;
   if (!accounts) {
     // An owner's machine with accounts off still tells the team its pool setting (an otherwise empty snapshot).
@@ -561,6 +608,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
   // Sub-agent hook state of sessions that ended or crashed (WALKIE-MISSION-SUB-1): at start and hourly.
   const stopHookPrune = startHookStatePrune(paths.home, core, log, () => discovery?.runningAgents() ?? null);
   orchestrator.init(); // resumes an orchestrator that ran here before a restart
+  channelsFor(core).start();
   seats.init(); // takes seat requests again if this machine allows seats
   // This machine's memory and temperature, published to the team on `vv` (machine-stats/sampler.ts).
   const sampler = statsSampler = opts.machineStats !== false && config.machine_stats
@@ -613,6 +661,8 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       clearInterval(planClock);
       clearInterval(announce);
       await orchestrator.close();
+      await closeBrowser(core);
+      await channelsFor(core).close();
       await seats.close();
       await core.pool?.stop().catch((err: unknown) => log.warn("pool_stop_failed", { err: (err as Error).message }));
       manager.stop();
@@ -631,6 +681,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
       accounts?.stop();
       guestGateway?.stop();
       core.statuses.stop();
+      stopLinkWait(core);
       core.close();
       sync.stop();
       local.stop();
@@ -646,7 +697,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<DaemonHandl
 
 /** `walkie daemon run`: foreground daemon with clean shutdown on SIGTERM/SIGINT. */
 export async function runForeground(opts: DaemonOptions = {}): Promise<void> {
-  // ORCH-2: the real daemon starts WalkieTalkie on its own (the team's lead with a model login).
+  // ORCH-2: the real daemon starts Talkie on its own (the team's lead with a model login).
   const d = await startDaemon({ logStderr: true, writePid: true, ...opts, orchestrator: { auto: true, ...opts.orchestrator } });
   const shutdown = async (sig: string): Promise<void> => {
     d.log.info("signal", { sig });

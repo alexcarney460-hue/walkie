@@ -1,4 +1,4 @@
-// Walkie on your phone: service worker (WALKIE-PWA-1). Caches the app shell only (the page, its script, style and
+// Sqwakie on your phone: service worker (WALKIE-PWA-1). Caches the app shell only (the page, its script, style and
 // icons) so the app opens offline and can say the computer is unreachable. It never sees private data: that travels
 // over an end-to-end encrypted WebSocket, which a service worker doesn't intercept, and nothing else is cached.
 //

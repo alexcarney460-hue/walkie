@@ -63,8 +63,8 @@ function unchanged(a: KeyVersion, b: KeyVersion): boolean {
 }
 
 /**
- * The mode the person's file already has: Walkie's edit must not change who can read it. sshd refuses a file that
- * others can write, so that is the only case tightened (to 0600); a file Walkie creates is private.
+ * The mode the person's file already has: Sqwakie's edit must not change who can read it. sshd refuses a file that
+ * others can write, so that is the only case tightened (to 0600); a file Sqwakie creates is private.
  */
 function keptMode(stat: BigIntStats | null): number {
   if (!stat) return 0o600;
@@ -117,7 +117,7 @@ function editKeys<T>(path: string, apply: (contents: Buffer) => { next: Buffer; 
       return result;
     } finally { rmSync(tmp, { force: true }); }
   }
-  throw new Error("authorized_keys changed during Walkie's edit; retry after other key edits finish");
+  throw new Error("authorized_keys changed during Sqwakie's edit; retry after other key edits finish");
 }
 
 interface ManagedLine { line: string; added_separator: boolean; previous?: ManagedLine }
@@ -196,7 +196,7 @@ function withoutManaged(contents: Buffer, entry: ManagedLine): { next: Buffer; r
   return { next: Buffer.concat([contents.subarray(0, cut), contents.subarray(end)]), removed: true };
 }
 
-/** Only lines recorded when Walkie installed them are replaced; arbitrary matching comments are untouched. */
+/** Only lines recorded when Sqwakie installed them are replaced; arbitrary matching comments are untouched. */
 export function authorizeOwnerKey(home: string, team: string, handle: string, publicKey: string,
   afterWrite?: (step: "record_prepared" | "before_rename" | "key_written" | "record_finalized") => void,
   sync: typeof fsyncSync = fsyncSync): void {

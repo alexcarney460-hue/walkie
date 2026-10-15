@@ -80,7 +80,9 @@ describe("license end to end", () => {
     expect(cli.err).not.toContain("/api/checkout");
     expect((await alex.client().team()).members.length).toBe(2);
     // Restricted channels are part of Team.
-    expect((await alex.client().channel({ name: "core", members: ["alex", "bea"] })).event.kind).toBe("channel.upsert");
+    const upsert = await alex.client().channel({ name: "core", members: ["alex", "bea"] });
+    if (!("event" in upsert)) throw new Error("channel upsert was queued");
+    expect(upsert.event.kind).toBe("channel.upsert");
   });
 
   test("walkie upgrade sends a subscriber to the billing portal (never a second checkout); doctor shows the plan", async () => {

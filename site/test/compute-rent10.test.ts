@@ -2,7 +2,9 @@ import { expect, test } from 'bun:test';
 import * as C from './rent6-fixtures.ts';
 import { accountForToken } from '../api/_lib/compute/service.ts';
 import { acknowledgeHandover, ackMessage, objectHandover, objectionMessage, statusHandover, statusMessage } from '../api/_lib/compute/handover.ts';
-import { makeHandover } from '../api/compute/handover.ts';
+import { HANDOVER_STATUS_PER_IP_HOUR, makeHandover } from '../api/compute/handover.ts';
+import { makeState } from '../api/compute/state.ts';
+import { saveAccounts } from '../../src/daemon/compute/files.ts';
 import { makeTick } from '../api/compute/tick.ts';
 import { makeAccount } from '../api/compute/account.ts';
 import { ComputeService } from '../../src/daemon/compute/service.ts';
@@ -162,7 +164,10 @@ test('handover actions have separate per-IP limits before proof or operator chec
   const request = (action: string, ip = '192.0.2.1') => handler(new Request('https://site.test/api/compute/handover', {
     method: 'POST', headers: { 'x-real-ip': ip }, body: JSON.stringify({ team_id: t.team, action, proof: {} }) }));
   for (const action of ['status', 'object', 'ack', 'clear_rejection', 'complete', 'reject', 'resolve_fork']) {
-    for (let i = 0; i < 10; i++) expect((await request(action)).status).not.toBe(429);
+    // status: a larger per-IP ceiling before the proof check; fairness between owners is its per-owner bucket
+    // (compute-handover-limit.test.ts).
+    const limit = action === 'status' ? HANDOVER_STATUS_PER_IP_HOUR : 10;
+    for (let i = 0; i < limit; i++) expect((await request(action)).status).not.toBe(429);
     const limited = await request(action);
     expect(limited.status).toBe(429);
     expect((await limited.json() as { error: string }).error).toBe('rate_limited');
@@ -297,10 +302,15 @@ test('owner daemon posts a notice but does not acknowledge its own post', async 
     await C.createAccount(w.d, team, C.proof(next.keys, team, w.clock.now, create,
       [{ event: transfer, key: next.keys.pubkey }], { roster_events: [member, node, transfer] }));
     const signer = C.LH.testKeypair();
-    const handler = makeHandover({ env: { WALKIE_LICENSE_SIGNING_KEY: signer.pem }, compute: () => w.d,
-      stripe: () => null } as any);
-    const site = new ComputeSite({ base: 'https://site.test', fetch: (url, init) =>
-      handler(new Request(String(url), init)) });
+    const deps = { env: { WALKIE_LICENSE_SIGNING_KEY: signer.pem }, compute: () => w.d, stripe: () => null } as any;
+    const handler = makeHandover(deps), stateHandler = makeState(deps);
+    let statusCalls = 0;
+    const site = new ComputeSite({ base: 'https://site.test', fetch: (url, init) => {
+      if (String(init?.body ?? '').includes('"action":"status"')) statusCalls++;
+      return (String(url).endsWith('/api/compute/state') ? stateHandler : handler)(new Request(String(url), init));
+    } });
+    // The founder's daemon holds the account it created (a daemon without one sends no team proof: lane D round 3).
+    saveAccounts(core.paths.home, [{ account_id: a.account_id, token: a.token, team }]);
     const warnings: string[] = [];
     const service = new ComputeService({ core, log: { warn: (code: string) => warnings.push(code), info: () => {} } as any,
       transport: () => undefined } as any, { site, noticePublicKey: signer.publicB64 });
@@ -313,7 +323,12 @@ test('owner daemon posts a notice but does not acknowledge its own post', async 
     const status = await site.handoverStatus(team, { key: founder.keys.pubkey, expires_at: statusExpiry,
       roster: rosterProof(core), signature: founder.keys.sign(statusMessage(team, statusExpiry)) });
     expect(status.notice).toBeTruthy();
-    await service.pollOnce();
+    statusCalls = 0;
+    await service.pollOnce(); // the state poll carries the notice: posted to #general
+    expect(statusCalls).toBe(0);
+    w.clock.now += 60_000;
+    await service.pollOnce(); // expected now: the status check, which must not acknowledge the daemon's own post
+    expect(statusCalls).toBe(1);
     expect(warnings).toEqual([]);
     const p = await pending(w, team);
     expect(p.acknowledged_by).toBeUndefined();

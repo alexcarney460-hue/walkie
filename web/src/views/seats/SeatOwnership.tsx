@@ -4,8 +4,8 @@ const cap = (text: string): string => text.charAt(0).toUpperCase() + text.slice(
 const names = (users: readonly string[]): string => `${users.slice(0, 5).join(", ")}${users.length > 5 ? " …" : ""}`;
 
 /**
- * WALK-103: which Walkie on this machine owns its seat users (the root-owned record setup-user writes), the helper's
- * list when it can't be read, seat users this Walkie leaves alone, and leftovers that still run. Shown whether seats are
+ * WALK-103: which Sqwakie on this machine owns its seat users (the root-owned record setup-user writes), the helper's
+ * list when it can't be read, seat users this Sqwakie leaves alone, and leftovers that still run. Shown whether seats are
  * on or off: these matter most when someone wonders why seat users stay.
  */
 export function SeatOwnership({ local }: { local: SeatsLocalView }) {
@@ -20,18 +20,18 @@ export function SeatOwnership({ local }: { local: SeatsLocalView }) {
         </p>
       )}
       {local.reconcile_error && (
-        <p className="int-error" role="alert">New seat users wait: the seat users the helper still holds couldn't be listed ({local.reconcile_error}). Walkie asks again every 30 s.</p>
+        <p className="int-error" role="alert">New seat users wait: the seat users the helper still holds couldn't be listed ({local.reconcile_error}). Sqwakie asks again every 30 s.</p>
       )}
       {foreign.length ? (
         <p className="field-hint">
-          {foreign.length} seat user{foreign.length === 1 ? "" : "s"} here {foreign.length === 1 ? "isn't" : "aren't"} this Walkie's to remove (made before this update, or by another Walkie on this machine): <span className="mono">{names(foreign)}</span>. Walkie leaves {foreign.length === 1 ? "it" : "them"} and every process of {foreign.length === 1 ? "it" : "them"} as they are{local.seat_scope?.state === "other" ? "" : <>; after <span className="mono">walkie seats setup-user --apply</span>, then restart the Walkie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update</>}.
+          {foreign.length} seat user{foreign.length === 1 ? "" : "s"} here {foreign.length === 1 ? "isn't" : "aren't"} this Sqwakie's to remove (made before this update, or by another Sqwakie on this machine): <span className="mono">{names(foreign)}</span>. Sqwakie leaves {foreign.length === 1 ? "it" : "them"} and every process of {foreign.length === 1 ? "it" : "them"} as they are{local.seat_scope?.state === "other" ? "" : <>; after <span className="mono">walkie seats setup-user --apply</span>, then restart the Sqwakie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update</>}.
         </p>
       ) : null}
       {running.length ? (
         <p className="int-error" role="alert">
           {running.length} leftover seat user{running.length === 1 ? "" : "s"} still {running.length === 1 ? "runs" : "run"} processes no current seat started (<span className="mono">{names(running)}</span>): {running.length === 1
-            ? "it holds a seat slot until those processes end, then Walkie removes it. To end it now"
-            : "each holds a seat slot until those processes end, then Walkie removes that user. To end the first now"}: <span className="mono">sudo pkill -KILL -u {running[0]}</span>.
+            ? "it holds a seat slot until those processes end, then Sqwakie removes it. To end it now"
+            : "each holds a seat slot until those processes end, then Sqwakie removes that user. To end the first now"}: <span className="mono">sudo pkill -KILL -u {running[0]}</span>.
         </p>
       ) : null}
     </div>

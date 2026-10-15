@@ -179,6 +179,14 @@ describe("who may launch", () => {
     expect(decideStop(agent, ctxFor(t, refused, agent.ts))).toMatchObject({ ok: false, reason: "agent_not_allowed" });
   });
 
+  test("an opted-in control launch refuses while native control is unverified, before one-shot execution", () => {
+    const t = team();
+    const controlled = { op: "run", v: 2, runtime: "codex", brief: "a".repeat(64), timeout_s: 600, max_concurrent: 1,
+      control: { v: 1, adapter: "codex-app-server" } };
+    const req = ev(t.id, t.alex, "msg.post", { text: "go", seat: controlled } as never, { channel: t.channel });
+    expect(decideRun(req, ctxFor(t, POLICY, req.ts))).toMatchObject({ ok: false, reason: "turn_control_unverified" });
+  });
+
   test("decideRun: fresh, allowed, runtime allowed; stale and turned-off requests are refused", () => {
     const t = team();
     const req = ev(t.id, t.alex, "msg.post", { text: "go", seat: RUN } as never, { channel: t.channel });
@@ -362,8 +370,15 @@ describe("the host's git calls", () => {
     const res = await call;
     expect(res.code).toBe(-1);
     expect(Date.now() - started).toBeLessThan(10_000);
-    await Bun.sleep(100);
-    expect(() => process.kill(child, 0)).toThrow();
+    // A child subreaper (the Linux zombie tests arm it for this process) keeps the killed grandchild until
+    // the 200 ms sweep waitpids it. Poll past one sweep. A process that is still running fails the deadline.
+    let gone = false;
+    const deadline = Date.now() + 1_000;
+    while (Date.now() < deadline) {
+      try { process.kill(child, 0); } catch { gone = true; break; }
+      await Bun.sleep(50);
+    }
+    expect(gone).toBe(true);
 
     const gitDir = join(dir, "g");
     const { mkdirSync } = await import("node:fs");

@@ -58,7 +58,7 @@ test("Mission Control card: the best group, its single-machine and split picks, 
 test("card when nothing fits now: says so and names what idle machines could run; empty team", () => {
   const busy = renderToStaticMarkup(<LocalModelsCard nodes={[node("me", { self: true }, 16, 12.3, "Apple M5")]} models={legacy} />);
   expect(busy).toContain("Nothing in the catalog fits in the memory free right now.");
-  // Audit 2026-09-26 finding 7: Walkie doesn't attribute memory to agents, so the card doesn't claim stopping them helps.
+  // Audit 2026-09-26 finding 7: Sqwakie doesn't attribute memory to agents, so the card doesn't claim stopping them helps.
   expect(busy).not.toContain("agents stopped");
   expect(busy).toContain("If the machines were otherwise idle</span>: <strong>Qwen3 14B · 4-bit</strong> on me");
   expect(busy).toContain("only the OS and about 4 GB of apps running");
@@ -174,7 +174,7 @@ test("Mission Control card: the best overall first, the source line, then the fa
 });
 
 test("a list that could not be read: the built-in list's name and the reason, in words, with a way to ask again", () => {
-  const note = `Couldn't reach Hugging Face (no network), so this is the list built into Walkie (updated ${CATALOG.updated}).`;
+  const note = `Couldn't reach Hugging Face (no network), so this is the list built into Sqwakie (updated ${CATALOG.updated}).`;
   const out = renderToStaticMarkup(<LocalModelsSection nodes={sparks()} models={{ catalog: CATALOG, source: "built-in", state: "built-in", checkedAt: null, note }} />);
   expect(out).toContain(`Built-in list (v${CATALOG.version}, updated ${CATALOG.updated})`);
   expect(out).toContain(note.replace("'", "&#x27;"));
@@ -189,12 +189,12 @@ test("while Hugging Face is being read: says so (a status region) and still show
   expect(out).toContain("Local network · 2 machines");
 });
 
-test("a pick Walkie cannot start says so; the split-run button only ever offers pinned models", () => {
+test("a pick Sqwakie cannot start says so; the split-run button only ever offers pinned models", () => {
   // A model the shipped pinned list has never heard of, the best of its list (so this does not depend on what ships).
   const novel = catalogOf([mk("zz-novel-30b", { params_b: 30, released: "2026-09-30", quality: rated(2, { GPQA: 95 }) }), ...liveCatalog.models.slice(0, 6)]);
   const out = renderToStaticMarkup(<LocalModelsSection nodes={sparks()} models={{ ...live, catalog: novel }} />);
   expect(out).toContain("zz-novel-30b");
-  expect(out).toContain("Walkie starts only the models in its pinned list");
+  expect(out).toContain("Sqwakie starts only the models in its pinned list");
 });
 
 test("a pick row that shows its facts carries the has-meta class (the stylesheet lays it out in three rows); one without does not", () => {
@@ -209,7 +209,7 @@ test("a pick row that shows its facts carries the has-meta class (the stylesheet
 
 test("when every pick is in the pinned list there is no such note", () => {
   const out = renderToStaticMarkup(<LocalModelsSection nodes={sparks()} models={{ ...live, catalog: catalogOf(CATALOG.models) }} />);
-  expect(out).not.toContain("Walkie starts only the models in its pinned list");
+  expect(out).not.toContain("Sqwakie starts only the models in its pinned list");
 });
 
 test("a hostile maker or model name from the list renders as text", () => {

@@ -7,7 +7,7 @@
 // running release rides along (`&v=v0.2.0-pre.2`) so the page's command installs the same version the team runs, and
 // `&a=1` when that build's setup asks the consent question (the page only then describes it).
 
-export const SITE_URL = "https://getwalkie.vercel.app";
+export const SITE_URL = "https://sqwakie.si";
 export const INSTALL_URL = `${SITE_URL}/install.sh`;
 export const JOIN_URL = `${SITE_URL}/join`;
 

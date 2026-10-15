@@ -1,4 +1,4 @@
-# Walkie on your phone (WALKIE-PWA-1, ALE-5293)
+# Sqwakie on your phone (WALKIE-PWA-1, ALE-5293)
 
 A phone gets Mission Control for its owner's computer: who is working on which machine, the asks waiting for the
 person (answer or decline), and channel posts with a reply box. Nothing is installed on the phone but a web app, and
@@ -6,12 +6,12 @@ nothing on the computer listens for it: the phone and the daemon meet at a relay
 frames it can't read.
 
 ```
-phone (PWA, getwalkie.vercel.app/m)  ──wss──▶  walkie-relay (Fly)  ◀──wss──  daemon (the owner's computer)
+phone (PWA, sqwakie.si/m)  ──wss──▶  walkie-relay (Fly)  ◀──wss──  daemon (the owner's computer)
           └──────────── end-to-end: P-256 ECDH + PSK handshake, AES-256-GCM ───────────┘
 ```
 
 Design decisions (Alex, 2026-09-26): no Tailscale on the phone, no dashboard listener exposed anywhere; a static app on
-the Walkie site, a stateless relay, a QR code with a one-time secret, a long-lived device key.
+the Sqwakie site, a stateless relay, a QR code with a one-time secret, a long-lived device key.
 
 ## Pairing
 
@@ -20,7 +20,7 @@ the Walkie site, a stateless relay, a QR code with a one-time secret, a long-liv
    newer one retires the oldest, and every retired, expired or voided pairing gives its relay room up; so does a
    consumed one, whether its registration succeeded or failed, and one the relay drops, which withdraws the code and
    says so in `walkie mobile` and Team → Devices). The code is
-   `<room>.<secret>`; the QR carries `https://getwalkie.vercel.app/m#pair=<room>.<secret>`, and it is shown only once
+   `<room>.<secret>`; the QR carries `https://sqwakie.si/m#pair=<room>.<secret>`, and it is shown only once
    the relay has confirmed the room (else "relay unavailable"). The code is in the **fragment**, which no browser sends
    to any server, the site included; the app removes it from the address bar on load.
 2. The daemon connects to the relay (only now) and claims the room; the phone joins that room and derives the
@@ -41,7 +41,7 @@ the Walkie site, a stateless relay, a QR code with a one-time secret, a long-liv
 
 **iPhone.** A Home Screen web app has its own storage, separate from Safari's, so a pairing made in Safari would not
 be in the installed app. When the QR code opens in Safari (not standalone), the app shows the steps: copy the code,
-Share → Add to Home Screen, open Walkie there and paste the code. "Use Walkie in Safari instead" pairs right there.
+Share → Add to Home Screen, open Sqwakie there and paste the code. "Use Sqwakie in Safari instead" pairs right there.
 Android shares storage between Chrome and the installed app: pairing happens at once, and an Install banner follows.
 
 A pairing link that ends without registering counts as a failed attempt (with a wrong secret only the phone can
@@ -190,7 +190,7 @@ and an open settles only once its first encrypted ping is out.
 
 **Versions.** The daemon connects to `/v1/daemon?v=2` and the relay's first message is `hello {v: 2}`. A relay of
 another protocol refuses with HTTP 426 (and `X-Walkie-Relay-Protocol`); a relay that says an older version, or says
-nothing within 5 s, is reported as "the relay is older than this Walkie" (in `walkie mobile` and Team → Devices) and
+nothing within 5 s, is reported as "the relay is older than this Sqwakie" (in `walkie mobile` and Team → Devices) and
 tried again only every minute or so. **The relay and the daemon ship together**: deploy the relay from the same
 release as the daemons that use it.
 
@@ -246,7 +246,7 @@ Bun WebSocket server, nothing stored, nothing logged about frames, rooms or addr
 | 10 | Caching / CDN | **Inherited**: Vercel CDN for the static app (`no-cache` revalidation on `/m*`); the service worker caches the shell only, network first, versioned (`VERSION`), with a kill switch (`KILL`) and `/m/reset` (a "Reset this phone" button; nothing is cleared on load) for recovery |
 | 11 | Scaling | **Covered for one machine** (5 000 sockets). Rooms are in memory, so a daemon and its phone must reach the same instance: more machines need room affinity (e.g. `fly-replay` to a machine chosen by hashing the room id) before scaling out |
 | 12 | Errors / logs | **Covered**: daemon logs `mobile_*` events (pairing opened, paired, revoked, link up/down, refused with the stage, never keys or payloads); relay logs only startup; Fly health check `/healthz`. No Sentry (none in the stack) |
-| 13 | Availability | **Covered**: relay down = phones show "your computer is offline or unreachable" and retry; nothing else in Walkie depends on it (peers, dashboard, agents unaffected). The daemon re-links with backoff (a connect, TLS or upgrade stuck past 15 s is abandoned and retried; a silent link is pinged every 30 s and a dead path noticed within 20 s more); a daemon restart keeps devices (persisted). The app shows how fresh its data is ("live" only while the stream runs on a heartbeat-proven link), says when live updates stop and resubscribes with backoff. SLO target for the relay: best effort, one region |
+| 13 | Availability | **Covered**: relay down = phones show "your computer is offline or unreachable" and retry; nothing else in Sqwakie depends on it (peers, dashboard, agents unaffected). The daemon re-links with backoff (a connect, TLS or upgrade stuck past 15 s is abandoned and retried; a silent link is pinged every 30 s and a dead path noticed within 20 s more); a daemon restart keeps devices (persisted). The app shows how fresh its data is ("live" only while the stream runs on a heartbeat-proven link), says when live updates stop and resubscribes with backoff. SLO target for the relay: best effort, one region |
 
 ## Later (not in phase 1)
 

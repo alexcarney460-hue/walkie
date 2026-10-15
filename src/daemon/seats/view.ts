@@ -139,7 +139,7 @@ export function seatsList(core: Core, only?: string): SeatView[] {
 
 function runView(ev: Event, run: AnySeatRun, host: SeatView["host"], hostname: string): SeatView {
   const v2 = run.v === 2 ? {
-    v: 2 as const, prompt: "", brief: run.brief, ...(run.label ? { label: run.label } : {}), ...(run.workspace ? { workspace: run.workspace } : {}),
+    v: 2 as const, ...(run.local_provider ? { local_provider: run.local_provider } : {}), prompt: "", brief: run.brief, ...(run.label ? { label: run.label } : {}), ...(run.workspace ? { workspace: run.workspace } : {}),
     ...(run.account ? { account: run.account } : {}), ...(run.result_file ? { result_file: run.result_file } : {}),
   } : { prompt: run.prompt, ...(run.bundle ? { bundle: run.bundle } : {}) };
   return {

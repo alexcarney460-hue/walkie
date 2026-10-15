@@ -63,7 +63,7 @@ describe("SEATS-FIX-8", () => {
     const before = world.created.length;
     const s = await ended((await alex.client().seatRun({ machine: arvid.d.nodeId, runtime: "codex", prompt: "while unknown" })).seat);
     expect(s.state).toBe("failed");
-    expect(s.reason).toMatch(/no seat user can be made yet: Walkie couldn't list the seat users its helper still holds/);
+    expect(s.reason).toMatch(/no seat user can be made yet: Sqwakie couldn't list the seat users its helper still holds/);
     expect(world.created.length).toBe(before);
     pendingFails = false; // the next retry lists them
     await waitFor(async () => ((await arvid.client("").seats()).local.reconcile_error === undefined ? true : null), { what: "reconciled on retry" });

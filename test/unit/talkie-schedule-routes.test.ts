@@ -41,7 +41,7 @@ function harness() {
     edit: (id: string, body: unknown) => { calls.push(["edit", id, body]); return { id }; },
     runNow: (id: string) => { calls.push(["run", id]); return "run-id"; },
     reset: (id: string) => {
-      core.emit("msg.post", { text: `[admin] reset WalkieTalkie schedule ${id}` },
+      core.emit("msg.post", { text: `[admin] reset Talkie schedule ${id}` },
         { channel: "general", agent: "walkie-admin" });
       calls.push(["reset", id]);
       return { id };
@@ -105,7 +105,7 @@ describe("schedule routes", () => {
     Object.assign(h.core, { roster: { channels: new Map([["general", { name: "general" }]]) },
       visible: () => true, config: { redact: false }, limits: { agentWrite: {}, humanWrite: {} },
       limiter: { take: () => true }, store: { transaction: (fn: () => void) => fn() } });
-    const body = { channel: "general", text: "WalkieTalkie fleet capacity: mac-a 2 free" };
+    const body = { channel: "general", text: "Talkie fleet capacity: mac-a 2 free" };
     await expect(h.request("POST", "/v1/post", body, "orchestrator")).rejects.toMatchObject({ status: 403 });
     expect(recorded).toEqual([]);
     expect(h.posts).toEqual([]);
@@ -160,7 +160,7 @@ describe("schedule routes", () => {
       expect(await allowed.json()).toEqual({ cleared: 2 });
       expect(h.posts).toEqual([]); // #general exists, so a post would have been emitted had the route asked for one
       expect(readAudit(dir)).toEqual([expect.objectContaining({ actor: "@alex/authority/helper", via: "local",
-        action: "acknowledged older WalkieTalkie schedule completion outcomes" })]);
+        action: "acknowledged older Talkie schedule completion outcomes" })]);
       writeFileSync(config, JSON.stringify({ agent_admin: false }));
       await expect(h.request("POST", path, {}, "helper")).rejects.toMatchObject({ status: 403, code: "agent_admin_off" });
       expect(readAudit(dir)[0]).toMatchObject({ refused: "agent_admin_off" }); // newest first
@@ -215,14 +215,14 @@ describe("schedule routes", () => {
     await expect(h.request("PATCH", path, { enabled: false })).rejects.toMatchObject({ status: 403 });
     expect(h.calls).toHaveLength(1);
   });
-  test("a 404 from the authority asks for its Walkie update", async () => {
+  test("a 404 from the authority asks for its Sqwakie update", async () => {
     const h = harness();
     Object.assign(h.core, { isAuthority: () => false, authority: "authority-node",
       roster: { nodes: new Map([["authority-node", { hostname: "lead-laptop" }]]) } });
     h.client.scheduleManage = async () => { throw new PeerCallError(404, "not_found", "not found"); };
     await expect(h.request("PATCH", "/v1/orchestrator/schedules/11111111-1111-4111-8111-111111111111",
       { enabled: false })).rejects.toMatchObject({ status: 409, code: "authority_outdated",
-      message: expect.stringContaining("lead-laptop runs an older Walkie; update it") });
+      message: expect.stringContaining("lead-laptop runs an older Sqwakie; update it") });
   });
   test("a co-owner reset is refused locally before any forwarding", async () => {
     const h = harness();
@@ -232,7 +232,7 @@ describe("schedule routes", () => {
       { confirm: "11111111-1111-4111-8111-111111111111" })).rejects.toMatchObject({ status: 403 });
     expect(h.calls).toHaveLength(0);
   });
-  test("WalkieTalkie's restricted caller may run but cannot edit schedules", async () => {
+  test("Talkie's restricted caller may run but cannot edit schedules", async () => {
     const h = harness();
     await expect(h.request("PATCH", "/v1/orchestrator/schedules/11111111-1111-4111-8111-111111111111", { enabled: false }, "orchestrator")).rejects.toThrow("cannot edit schedules");
     expect((await h.request("POST", "/v1/orchestrator/schedules/11111111-1111-4111-8111-111111111111/run-now", undefined, "orchestrator")).status).toBe(200);

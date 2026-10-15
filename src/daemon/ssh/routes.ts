@@ -61,7 +61,7 @@ route("GET", "/v1/ssh/target", async (c) => {
   const matches = [...c.core.roster.nodes.values()].filter((n) => !n.revoked && (n.hostname === name || n.node_id === name));
   if (matches.length !== 1) throw new HttpError(404, "not_found", "name one admitted machine");
   const addr = c.client.addrVia(matches[0]!, "direct");
-  if (!addr) throw new HttpError(409, "target_outdated", "target does not serve Walkie Direct");
+  if (!addr) throw new HttpError(409, "target_outdated", "target does not serve Sqwakie Direct");
   try { return json(await c.client.sshInfo(addr)); }
   catch (err) {
     if (err instanceof PeerCallError && err.status === 404) throw new HttpError(409, "target_outdated", "target does not support SSH tunnels");

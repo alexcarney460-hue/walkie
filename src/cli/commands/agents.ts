@@ -19,6 +19,7 @@ import { runMcpServer } from "../../mcp/server.ts";
 import { bool, need, str, UsageError, type Args } from "../args.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { c } from "../format.ts";
+import { runJsonCommand } from "../json-result.ts";
 import { writeOut } from "../stdio.ts";
 import { gateLocal, recordLocal } from "../admin-gate.ts";
 
@@ -62,7 +63,7 @@ export async function hook(ctx: Ctx): Promise<number> {
  */
 function hooksAuditLine(action: string, target: string, done: boolean, activity?: readonly string[]): string {
   const verb = action === "install" ? (done ? "installed" : "tried to install") : (done ? "removed" : "tried to remove");
-  const what = `${verb} the Walkie hooks for ${target}`;
+  const what = `${verb} the Sqwakie hooks for ${target}`;
   // A Hermes command that sets the activity list changes what the team sees, so the line says how many profiles may now show activity text.
   if (target === "hermes" && activity) {
     return `${what}, with activity text ${activity.length ? `shown for ${activity.length} profile${activity.length === 1 ? "" : "s"}` : "hidden for every profile"}`;
@@ -73,7 +74,7 @@ function hooksAuditLine(action: string, target: string, done: boolean, activity?
 }
 
 /** What an agent may not do while agent admin is off, for the refusal's sentence. */
-const hooksRefusal = (action: string, target: string): string => `${action} the Walkie hooks for ${target}`;
+const hooksRefusal = (action: string, target: string): string => `${action} the Sqwakie hooks for ${target}`;
 
 /** The reason a failed hooks command gives, short and on one line, for the audit line. */
 function failureReason(error: unknown): string {
@@ -83,17 +84,32 @@ function failureReason(error: unknown): string {
 
 const GROK_SHARED_EVENTS = "session start and end, prompts, finished turns, tool results and notifications";
 
+/** What one runtime's install or uninstall changed, for `walkie hooks … --json`. */
+export interface HooksReport { target: string; changed: string[]; commands: string[]; note?: string }
+
 export async function hooks(ctx: Ctx): Promise<number> {
+  if (!ctx.json) return (await hooksRun(ctx)).code;
+  const action = ctx.args.pos[0];
+  const command = action === "install" || action === "uninstall" ? `hooks ${action}` : "hooks";
+  return runJsonCommand(ctx, command, async (quiet) => {
+    const { code, reports } = await hooksRun(quiet);
+    return { exit: code, facts: { action, target: ctx.args.pos[1], dry_run: bool(ctx.args, "dry-run"), hooks: reports } };
+  });
+}
+
+async function hooksRun(ctx: Ctx): Promise<{ code: number; reports: HooksReport[] }> {
   const action = need(ctx.args, 0, "install|uninstall");
   const target = need(ctx.args, 1, "claude|codex|kimi|grok|hermes|all");
   if (action !== "install" && action !== "uninstall") throw new UsageError(`unknown action ${action}`);
   if (target === "all") {
-    // Every runtime Walkie connects (AGENT-ADMIN-1: one call for an agent setting a machine up).
+    // Every runtime Sqwakie connects (AGENT-ADMIN-1: one call for an agent setting a machine up).
+    const reports: HooksReport[] = [];
     for (const t of ["claude", "codex"]) {
-      const code = await hooks({ ...ctx, args: { ...ctx.args, pos: [action, t, ...ctx.args.pos.slice(2)] } });
-      if (code !== EXIT.ok) return code;
+      const one = await hooksRun({ ...ctx, args: { ...ctx.args, pos: [action, t, ...ctx.args.pos.slice(2)] } });
+      reports.push(...one.reports);
+      if (one.code !== EXIT.ok) return { code: one.code, reports };
     }
-    return EXIT.ok;
+    return { code: EXIT.ok, reports };
   }
   const opts = { dryRun: bool(ctx.args, "dry-run"), uninstall: action === "uninstall" };
   // Hermes hooks go only into the profiles the person names, so a missing --profiles is a usage error before any gate or audit line.
@@ -105,19 +121,20 @@ export async function hooks(ctx: Ctx): Promise<number> {
   // to be written first, so an install the settings file refused still left a line saying the hooks were installed.
   const audited = !opts.dryRun && (target === "claude" || target === "codex" || target === "kimi" || target === "grok" || target === "hermes");
   if (audited) await gateLocal(ctx, hooksRefusal(action, target), hooksAuditLine(action, target, false, activity));
+  let report: HooksReport;
   try {
-    await runHooks(ctx, action, target, opts, hermesProfiles, activity);
+    report = await runHooks(ctx, action, target, opts, hermesProfiles, activity);
   } catch (error) {
     if (audited) await recordLocal(ctx, hooksAuditLine(action, target, false, activity), failureReason(error));
     throw error;
   }
   if (audited) await recordLocal(ctx, hooksAuditLine(action, target, true, activity));
-  return EXIT.ok;
+  return { code: EXIT.ok, reports: [report] };
 }
 
 /**
  * `--activity name[,name]`, Hermes only: the profiles whose status may carry activity text (config.json hermes_activity_profiles).
- * `--activity ""` is the empty list, so it clears it; no flag leaves the list alone (undefined). A name Walkie cannot carry is a usage
+ * `--activity ""` is the empty list, so it clears it; no flag leaves the list alone (undefined). A name Sqwakie cannot carry is a usage
  * error, not a silent drop: a typo must not read as "shown" or "hidden" by accident.
  */
 function hermesActivityArg(args: Args, target: string): string[] | undefined {
@@ -126,7 +143,7 @@ function hermesActivityArg(args: Args, target: string): string[] | undefined {
   if (target !== "hermes") throw new UsageError("--activity is only for hermes");
   const names = [...new Set(raw.split(",").map((p) => p.trim()).filter(Boolean))];
   const bad = names.find((p) => !HERMES_PROFILE.test(p));
-  if (bad !== undefined) throw new UsageError(`--activity names "${bad.slice(0, 40)}", which is not a Hermes profile name Walkie can carry (lowercase letters, digits and dashes, up to 32)`);
+  if (bad !== undefined) throw new UsageError(`--activity names "${bad.slice(0, 40)}", which is not a Hermes profile name Sqwakie can carry (lowercase letters, digits and dashes, up to 32)`);
   if (names.length > HERMES_ACTIVITY_PROFILES_MAX) throw new UsageError(`--activity names more than ${HERMES_ACTIVITY_PROFILES_MAX} profiles`);
   return names;
 }
@@ -142,7 +159,7 @@ function activityNote(profiles: readonly string[], dryRun: boolean, given: boole
 }
 
 async function runHooks(ctx: Ctx, action: string, target: string, opts: { dryRun: boolean; uninstall: boolean }, hermesProfiles: readonly string[],
-  activity: readonly string[] | undefined): Promise<void> {
+  activity: readonly string[] | undefined): Promise<HooksReport> {
   if (target === "claude") {
     const r = await installClaude(opts);
     ctx.out([
@@ -151,22 +168,26 @@ async function runHooks(ctx: Ctx, action: string, target: string, opts: { dryRun
       ...(r.note ? [`${c.yellow("note:")} ${r.note}`] : []),
       ...(opts.uninstall || r.note ? [] : [`Restart Claude Code sessions to load the hooks. For instant push, launch with:\n  claude --dangerously-load-development-channels server:walkie`]),
     ].join("\n"));
+    return { target, changed: r.changed, commands: r.commands, ...(r.note ? { note: r.note } : {}) };
   } else if (target === "codex") {
     const r = await installCodex(opts);
     ctx.out(`${c.green(opts.dryRun ? "would update" : "updated")} ${r.changed.join(", ")}` +
       (r.notifySkipped ? `\n${c.yellow("note:")} config.toml already has a notify command; add \`walkie hook codex\` to it yourself to report Codex status.` : ""));
+    return { target, changed: r.changed, commands: r.commands, ...(r.notifySkipped ? { note: "config.toml already has a notify command; add `walkie hook codex` to it yourself to report Codex status." } : {}) };
   } else if (target === "kimi") {
     const r = await installKimi(opts);
     ctx.out(`${opts.dryRun ? "would update" : "updated"} ${r.changed.join(", ")}`);
+    return { target, changed: r.changed, commands: r.commands };
   } else if (target === "grok") {
     const r = await installGrok(opts);
-    // Grok also runs Walkie's Claude hooks (its Claude-compatibility scan: compat.claude.hooks), which own the rest of the events (src/hooks/grok-events.ts).
+    // Grok also runs Sqwakie's Claude hooks (its Claude-compatibility scan: compat.claude.hooks), which own the rest of the events (src/hooks/grok-events.ts).
     ctx.out([
       `${opts.dryRun ? "would update" : "updated"} ${r.changed.join(", ")}`,
       opts.uninstall
-        ? `Walkie's Claude hooks in ~/.claude/settings.json stay in place, since they are Claude Code's hooks too. Grok keeps reporting ${GROK_SHARED_EVENTS} through them until you run walkie hooks uninstall claude or turn off Grok's compat.claude.hooks.`
-        : `The Grok file reports tool starts, failed tool calls and failed or cancelled turns. Walkie's hooks in ~/.claude/settings.json report ${GROK_SHARED_EVENTS}; Grok runs them through its Claude compatibility (compat.claude.hooks, on by default), so keep that on.`,
+        ? `Sqwakie's Claude hooks in ~/.claude/settings.json stay in place, since they are Claude Code's hooks too. Grok keeps reporting ${GROK_SHARED_EVENTS} through them until you run walkie hooks uninstall claude or turn off Grok's compat.claude.hooks.`
+        : `The Grok file reports tool starts, failed tool calls and failed or cancelled turns. Sqwakie's hooks in ~/.claude/settings.json report ${GROK_SHARED_EVENTS}; Grok runs them through its Claude compatibility (compat.claude.hooks, on by default), so keep that on.`,
     ].join("\n"));
+    return { target, changed: r.changed, commands: r.commands };
   } else if (target === "hermes") {
     const r = await installHermes({ ...opts, profiles: hermesProfiles });
     // The list is config.json's, written after the hooks: if the hooks fail the list is not touched, so nothing is shown that was not
@@ -177,6 +198,7 @@ async function runHooks(ctx: Ctx, action: string, target: string, opts: { dryRun
       "Hermes must consent to each shell hook and reload the chosen profiles before statuses appear.",
       ...(opts.uninstall && activity === undefined ? [] : [activityNote(activity ?? readHermesActivityProfiles(defaultHome()), opts.dryRun, activity !== undefined)]),
     ].join("\n"));
+    return { target, changed: r.changed, commands: r.commands };
   } else {
     throw new UsageError(`unknown target ${target}`);
   }

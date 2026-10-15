@@ -6,7 +6,7 @@
 //   passive:  the newest session file's `event_msg` / `token_count` `rate_limits` (free, no request).
 // Never calls a token or refresh endpoint.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { AccountResets, AccountWindow } from "../../protocol/accounts.ts";
 import { getUsageJson, USAGE_URLS, type FetchLike } from "../http.ts";
@@ -14,6 +14,7 @@ import { tailText } from "../tail.ts";
 import { accountId, maskEmail, titlePlan } from "../mask.ts";
 import type { AccessToken, Identity, Login, Reading } from "../types.ts";
 import { kindForSeconds, num, readingFrom, toMs, window } from "../windows.ts";
+import { inferredVaultHome, readVaultCredential } from "../vault/vault-path.ts";
 
 /** The payload of a JWT, or null. Used for the id_token's identity claims and the access token's expiry only. */
 export function jwtClaims(jwt: unknown): Record<string, unknown> | null {
@@ -38,15 +39,16 @@ const Auth = z.object({
   }).nullable().optional(),
 });
 
-function readAuth(login: Login): z.infer<typeof Auth> | null {
+function readAuth(login: Login, refusal: (reason: string) => void = () => undefined): z.infer<typeof Auth> | null {
   const path = join(login.dir, "auth.json");
-  if (!existsSync(path)) return null;
   try {
-    const a = Auth.safeParse(JSON.parse(readFileSync(path, "utf8")));
+    const vault = inferredVaultHome("codex", login.dir);
+    const text = login.vault || vault ? readVaultCredential(vault?.walkieHome ?? dirname(dirname(dirname(login.dir))), "codex", vault?.home ?? login.dir, "auth.json", 64 * 1024, refusal)
+      : existsSync(path) ? readFileSync(path, "utf8") : null;
+    if (text === null) return null;
+    const a = Auth.safeParse(JSON.parse(text));
     return a.success ? a.data : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 /** Identity from a parsed auth.json (exported for fixtures). API-key logins have no plan to meter: null. */
@@ -64,13 +66,13 @@ export function codexIdentityFrom(auth: unknown): Identity | null {
   };
 }
 
-export function identifyCodex(login: Login): Identity | null {
-  const a = readAuth(login);
+export function identifyCodex(login: Login, refusal: (reason: string) => void = () => undefined): Identity | null {
+  const a = readAuth(login, refusal);
   return a ? codexIdentityFrom(a) : null;
 }
 
 /**
- * The login's identity as ONE read of auth.json (RESET-2/3): the Walkie account id and the ChatGPT account id the
+ * The login's identity as ONE read of auth.json (RESET-2/3): the Sqwakie account id and the ChatGPT account id the
  * Codex app-server must answer with. A reset attempt is bound to these (and the login directory); an email or
  * sign-in-mode change with the same account id is the same account. null: no ChatGPT login there.
  */
@@ -84,8 +86,8 @@ export function codexAuthSnapshot(login: Login): CodexAuthSnapshot | null {
   return identity ? { identityId: identity.id, chatgptAccount: account } : null;
 }
 
-export function readCodexToken(login: Login): AccessToken | "none" {
-  const a = readAuth(login);
+export function readCodexToken(login: Login, refusal: (reason: string) => void = () => undefined): AccessToken | "none" {
+  const a = readAuth(login, refusal);
   if (!a) return "none";
   const t = a.tokens;
   if (!t?.access_token || !t.account_id) {

@@ -15,13 +15,25 @@ const GiB = 1024 ** 3;
 const SHARE = { share: true, cap: null, runtime: true, busy: false };
 function node(id: string, totalGb: number, usedGb: number, over: Partial<GroupInput> = {}): GroupInput {
   return {
-    node_id: id, hostname: id, handle: id, online: true, self: false, rtt_ms: 20,
+    node_id: id, hostname: id, handle: id, online: true, self: false, rtt_ms: 2,
     stats: { at: 1, temp_c: 40, sys: { os: "darwin", arch: "arm64", cpus: 8, load1: 0 }, mem: { total: totalGb * GiB, used: usedGb * GiB, swap_used: 0, pressure: "normal" }, accel: { chip: "Apple M4", unified: true, gpu_limit: null, gpus: [] } } as MachineStats,
     ...over,
   };
 }
 
 describe("planning a run", () => {
+  test("unnamed runs use the local latency group even when a distant worker has more memory", () => {
+    const nodes = [
+      node("me", 16, 4, { self: true, rtt_ms: null }),
+      node("lan", 36, 10, { pool: SHARE, rtt_ms: 5 }),
+      node("far", 128, 4, { pool: SHARE, rtt_ms: 6 }),
+      node("unknown", 128, 4, { pool: SHARE, rtt_ms: null }),
+    ];
+    expect(planRun(nodes, 20 * GiB).stages.map((s) => s.hostname)).toEqual(["me", "lan"]);
+    expect(() => planRun(nodes, 40 * GiB)).toThrow(PlanError);
+    expect(planRun(nodes, 20 * GiB, ["far"]).stages.map((s) => s.hostname)).toEqual(["me", "far"]);
+  });
+
   test("unnamed: this machine + the sharing machines, largest first; a model that fits here stays here", () => {
     const nodes = [node("me", 16, 4, { self: true }), node("kira", 36, 10, { pool: SHARE }), node("nope", 64, 4)];
     const small = planRun(nodes, 3 * GiB);

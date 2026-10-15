@@ -62,14 +62,14 @@ test('duplicate cleanup keeps the canonical machine and does not charge the rent
   expect(await w.store.tx(t => t.balance(w.account))).toBe(before);
 });
 
-test('disabled idle tick does no provider work and leaves last_tick unchanged', async () => {
+test('disabled idle tick does no provider work and records its health', async () => {
   const w = world();
-  const before = await w.store.tx(t => t.control('last_tick'));
   let lists = 0; w.cloud.list = async () => { lists++; return []; };
   w.advance(5 * MIN);
   await tick({ ...w.d, enabled: false });
   expect(lists).toBe(0);
-  expect(await w.store.tx(t => t.control('last_tick'))).toBe(before);
+  // Round 2 (REVIEW-A-opus.md P2-1): an idle drain records last_tick, so /state shows no false tick_stale.
+  expect(await w.store.tx(t => t.control('last_tick'))).toBe(w.d.now());
   expect(w.logs).toEqual([]);
 });
 
@@ -153,7 +153,7 @@ test('per-call deadline aborts a stuck deletion and keeps its durable retry', as
   const r = await w.store.tx(async t => (await markStopped(t, await t.activeRentals(), 'user', w.d.now()))[0]!);
   let aborted = false;
   const driver = { ...w.cloud, name: 'fake', provision: w.cloud.provision.bind(w.cloud), list: w.cloud.list.bind(w.cloud),
-    setPaidUntil: w.cloud.setPaidUntil.bind(w.cloud), terminate: async (_id: string, signal?: AbortSignal) => new Promise<void>(() => { signal!.addEventListener('abort', () => { aborted = true; }); }) };
+    setPaidUntil: w.cloud.setPaidUntil.bind(w.cloud), instanceGone: w.cloud.instanceGone.bind(w.cloud), terminate: async (_id: string, signal?: AbortSignal) => new Promise<void>(() => { signal!.addEventListener('abort', () => { aborted = true; }); }) };
   expect(await terminate({ ...w.d, driver: () => driver }, r, 10)).toBe(false);
   expect(aborted).toBe(true);
   expect(await hasCleanup(w.d)).toBe(true);

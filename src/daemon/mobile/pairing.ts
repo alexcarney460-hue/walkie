@@ -1,6 +1,6 @@
 // One-time pairing codes for the phone app (WALKIE-PWA-1). `walkie mobile pair` (or Team → Devices) mints one: a relay
 // room claimed with a random key only this daemon holds, and a 128-bit secret; the code `<room>.<secret>` is the
-// fragment of https://getwalkie.vercel.app/m#pair=<code> in a QR code (a fragment is never sent to any server, the site
+// fragment of https://sqwakie.si/m#pair=<code> in a QR code (a fragment is never sent to any server, the site
 // included). The phone joins the room and derives the handshake PSK from the secret (src/mobile/crypto.ts
 // pairingKeys); nobody holding the code can claim the room. It lives 10 minutes, is used once (consumed when the phone
 // registers), and five failed handshakes in its room void it.

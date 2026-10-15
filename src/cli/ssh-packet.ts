@@ -94,6 +94,6 @@ export async function checkOwnerSsh(client: Pick<WalkieClient, "provisionCheck">
       const line = ownerSshRefusalLine(error.code, error.message);
       if (line) return line;
     }
-    return `this machine's Walkie could not check the owner's SSH authorization (${error instanceof Error ? error.message : String(error)}). Run walkie doctor, then run the same command again.`;
+    return `this machine's Sqwakie could not check the owner's SSH authorization (${error instanceof Error ? error.message : String(error)}). Run walkie doctor, then run the same command again.`;
   }
 }

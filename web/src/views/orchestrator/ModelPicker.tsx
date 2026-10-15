@@ -53,14 +53,14 @@ export function ModelPicker({ value, onPick, disabled, compact, id = "orch-model
   );
 }
 
-/** The chat header's access switch (ORCH-2): Walkie tools only, or every tool. */
+/** The chat header's access switch (ORCH-2): Sqwakie tools only, or every tool. */
 export function AccessSelect({ value, onPick, disabled }: { value: OrchestratorAccess; onPick: (a: OrchestratorAccess) => void; disabled?: boolean }) {
   return (
     <span className="orch-model is-compact">
       <label htmlFor="orch-head-access" className="orch-model-label">Access</label>
       <select id="orch-head-access" className="orch-model-select" value={value} disabled={disabled}
         onChange={(e) => { const v = e.target.value as OrchestratorAccess; if (v !== value) onPick(v); }}>
-        <option value="platform">Walkie tools</option>
+        <option value="platform">Sqwakie tools</option>
         <option value="full">Full access</option>
       </select>
     </span>
@@ -90,7 +90,7 @@ export function HeaderModel({ refresh }: { refresh: string }) {
     }
   };
   const pickAccess = (a: OrchestratorAccess) => {
-    if (a === "full" && !window.confirm("Give WalkieTalkie full access? Every tool runs on this machine without asking (Claude's bypass permissions).")) return;
+    if (a === "full" && !window.confirm("Give Talkie full access? Every tool runs on this machine without asking (Claude's bypass permissions).")) return;
     void run(() => api.orchestratorAccess(a));
   };
   return (

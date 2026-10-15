@@ -4,7 +4,7 @@
 // of llama-server (a stand-in here: fixtures/pool/fake-llama-server.ts; the real one ran on the team's GPUs, see
 // docs/plans/POOL-REAL-1.md). Consent, keys and teardown are checked on the way.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { ACCEPT_STANDIN, fakeServeRuntime, placeModel } from "../helpers/pool-runtime.ts";
@@ -67,7 +67,7 @@ describe("serve a model on one machine, use it from another through Walkie", () 
       expect(conn.endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1$/);
       // The key file is this user's alone.
       expect((await Bun.file(conn.api_key_file).exists())).toBe(true);
-      expect(Bun.spawnSync(["stat", "-f", "%Lp", conn.api_key_file]).stdout.toString().trim()).toBe("600");
+      expect(statSync(conn.api_key_file).mode & 0o7777).toBe(0o600);
 
       const served = await waitFor(async () => { const s = (await host.client().pool()).serve; return s?.state === "serving" ? s : null; }, { timeoutMs: 30_000, what: "host serving" });
       expect(served.started_by?.hostname).toBe(user.hostname);

@@ -298,7 +298,10 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
     expect(found.length).toBe(1);
     expect(src).toContain('VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"');
     const changelog = readFileSync(join(import.meta.dir, "..", "..", "CHANGELOG.md"), "utf8");
-    expect(changelog).toContain(`\n## ${found[0]}\n`);
+    // release.sh accepts either exact heading, but refuses duplicates across both forms.
+    const heading = `## ${found[0]}`;
+    const sections = changelog.split("\n").filter((line) => line === heading || line === `${heading} (unreleased)`);
+    expect(sections).toHaveLength(1);
   });
 
   test("without openssl on PATH the installer refuses rather than trusting the download", async () => {

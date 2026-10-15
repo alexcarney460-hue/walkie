@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import Stripe from "stripe";
 import { makeVerifier } from "../../src/license/format.ts";
 import { makeCheckout } from "../api/checkout.ts";
+import { siteOrigin } from "../api/_lib/http.ts";
 import { signLicense, signingKeyFromPem, type LicensePayload } from "../api/_lib/license.ts";
 import { renewHash } from "../api/_lib/metadata.ts";
 import type { SubscriptionLite } from "../api/_lib/stripe.ts";
@@ -17,6 +18,7 @@ import { makeRenew } from "../api/license/renew.ts";
 import { makePortal } from "../api/portal.ts";
 import { makeWebhook } from "../api/webhook.ts";
 import { body, deps, fullEnv, MockStripe, NOW, PERIOD_END_S, stripeError, subscription, testKeypair, WEBHOOK_SECRET } from "./helpers.ts";
+import { MemoryStore } from "../api/_lib/compute/memory-store.ts";
 
 const kp = testKeypair();
 const verify = makeVerifier(kp.publicB64);
@@ -38,6 +40,11 @@ const without = (name: string): Record<string, string | undefined> => ({ ...ENV,
 // ---- checkout ----------------------------------------------------------------------------------
 
 describe("GET /api/checkout", () => {
+  test("site origin fallback accepts both the product host and existing install host", () => {
+    for (const host of ["sqwakie.si", "getwalkie.vercel.app"]) {
+      expect(siteOrigin(new Request(`https://${host}/api/checkout`), undefined)).toBe(`https://${host}`);
+    }
+  });
   test("creates a subscription session with quantity = seats and the configured price, 303 to it", async () => {
     const s = new MockStripe();
     const res = await makeCheckout(deps(s, ENV))(get("/api/checkout?plan=business&interval=year&seats=12"));
@@ -307,6 +314,10 @@ const genesis = signEvent(teamKeys, { v: PROTOCOL_VERSION, team: TEAM_A, id: `${
 const bindBody = (lic_id = 'sub_ABC123') => { const expires_at = NOW + 240_000; return { code: codeFor({ lic_id }), team_id: TEAM_A,
   proof: { genesis, authority_chain: [], expires_at, bind_signature: teamKeys.sign(bindMessage(TEAM_A, lic_id, expires_at)) } }; };
 
+/** The compute-capable bind records every binding in its store and refuses without one (lane C round 11): each bind
+ *  handler gets a fresh empty store. The released (locked) site's no-store path is tested in license-legacy-renew. */
+const bindDeps = (s: MockStripe, env: typeof ENV) => { const store = new MemoryStore(); return { ...deps(s, env), computeStore: () => store }; };
+
 function codeFor(over: Partial<LicensePayload> = {}): string {
   return signLicense({
     v: 2, kind: "activation", lic_id: "sub_ABC123", plan: "team", seats: 7, email: "lead@kestrel.test",
@@ -317,7 +328,7 @@ function codeFor(over: Partial<LicensePayload> = {}): string {
 describe("POST /api/license/bind", () => {
   test('E1: a forged roster authority proof cannot bind the team', async () => {
     const s = new MockStripe(); s.subs.set('sub_ABC123', subscription());
-    const handler = makeBind(deps(s, ENV));
+    const handler = makeBind(bindDeps(s, ENV));
     const attacker = generateKeys();
     const forged = { ...bindBody(), proof: { ...bindBody().proof,
       bind_signature: attacker.sign(bindMessage(TEAM_A, 'sub_ABC123', NOW + 240_000)) } };
@@ -327,7 +338,7 @@ describe("POST /api/license/bind", () => {
   });
   test('an older peer can bind an unclaimed subscription without a roster proof', async () => {
     const s = new MockStripe(); s.subs.set('sub_ABC123', subscription());
-    const handler = makeBind(deps(s, ENV));
+    const handler = makeBind(bindDeps(s, ENV));
     const response = await handler(post('/api/license/bind', { code: codeFor(), team_id: TEAM_A }));
     expect(response.status).toBe(200);
     expect(Object.keys(await body(response)).sort()).toEqual(['key', 'renewal_token']);
@@ -336,7 +347,7 @@ describe("POST /api/license/bind", () => {
   test("first bind: a team-bound key + a 32-byte renewal token; only the token's sha256 is stored", async () => {
     const s = new MockStripe();
     s.subs.set("sub_ABC123", subscription());
-    const res = await makeBind(deps(s, ENV))(post("/api/license/bind", bindBody()));
+    const res = await makeBind(bindDeps(s, ENV))(post("/api/license/bind", bindBody()));
     expect(res.status).toBe(200);
     const b = await body(res);
     expect(Object.keys(b).sort()).toEqual(["key", "renewal_token"]);
@@ -352,14 +363,14 @@ describe("POST /api/license/bind", () => {
     const genesisHash = teamAuthority(TEAM_A, { genesis })!.chainId;
     expect(meta).toEqual({ walkie_team: TEAM_A, walkie_authority: teamKeys.pubkey,
       walkie_authority_depth: '0', walkie_authority_chain: genesisHash, walkie_authority_path_0: genesisHash,
-      walkie_renew_hash: renewHash(token) });
+      walkie_renew_authority: teamKeys.pubkey, walkie_renew_chain: genesisHash, walkie_renew_hash: renewHash(token) });
     expect(JSON.stringify(meta)).not.toContain(token);
   });
 
   test("the same team again: a fresh key, no token (idempotent); another team: 409 license_bound_elsewhere", async () => {
     const s = new MockStripe();
     s.subs.set("sub_ABC123", subscription());
-    const h = makeBind(deps(s, ENV));
+    const h = makeBind(bindDeps(s, ENV));
     await h(post("/api/license/bind", bindBody()));
     const hash = s.subs.get("sub_ABC123")?.metadata.walkie_renew_hash;
     const again = await h(post("/api/license/bind", bindBody()));
@@ -373,7 +384,7 @@ describe("POST /api/license/bind", () => {
     const stored = s.subs.get("sub_ABC123")?.metadata ?? {};
     expect(stored).toEqual({ walkie_team: TEAM_A, walkie_authority: teamKeys.pubkey,
       walkie_authority_depth: '0', walkie_authority_chain: genesisHash, walkie_authority_path_0: genesisHash,
-      walkie_renew_hash: hash as string });
+      walkie_renew_authority: teamKeys.pubkey, walkie_renew_chain: genesisHash, walkie_renew_hash: hash as string });
     expect(s.calls.metadata.length).toBe(1);
   });
 
@@ -383,7 +394,7 @@ describe("POST /api/license/bind", () => {
     const orig = s.setSubscriptionMetadata.bind(s);
     // Team B's write lands right after team A's.
     s.setSubscriptionMetadata = async (id, m) => { await orig(id, m); if (m.walkie_team === TEAM_A) await orig(id, { walkie_team: TEAM_B, walkie_renew_hash: "f".repeat(64) }); };
-    const res = await makeBind(deps(s, ENV))(post("/api/license/bind", bindBody()));
+    const res = await makeBind(bindDeps(s, ENV))(post("/api/license/bind", bindBody()));
     expect([res.status, await body(res)]).toEqual([409, { error: "license_bound_elsewhere" }]);
   });
 
@@ -391,7 +402,7 @@ describe("POST /api/license/bind", () => {
     for (const status of ["trialing", "past_due", "canceled", "incomplete"]) {
       const s = new MockStripe();
       s.subs.set("sub_ABC123", subscription({ status }));
-      const r = await makeBind(deps(s, ENV))(post("/api/license/bind", bindBody()));
+      const r = await makeBind(bindDeps(s, ENV))(post("/api/license/bind", bindBody()));
       expect({ status, got: r.status, body: await body(r) }).toEqual({ status, got: 402, body: { error: "subscription_inactive" } });
       expect(s.calls.metadata).toEqual([]);
     }
@@ -400,7 +411,7 @@ describe("POST /api/license/bind", () => {
   test("refuses anything that isn't our activation code: a license key, a forged code, junk; bad team ids; 404; 413; 503; 502", async () => {
     const s = new MockStripe();
     s.subs.set("sub_ABC123", subscription());
-    const h = makeBind(deps(s, ENV));
+    const h = makeBind(bindDeps(s, ENV));
     const licenseKey = signLicense({ ...(verify(codeFor()) as { payload: LicensePayload }).payload, kind: "license", team: TEAM_A }, signingKeyFromPem(kp.pem));
     const forged = signLicense({ v: 2, kind: "activation", lic_id: "sub_ABC123", plan: "business", seats: 900, email: "x@y.z", interval: "year", issued_at: NOW, expires_at: EXPIRES },
       signingKeyFromPem(testKeypair().pem));
@@ -417,7 +428,7 @@ describe("POST /api/license/bind", () => {
     }
     expect((await h(post("/api/license/bind", "x".repeat(70_000)))).status).toBe(413);
     expect(s.calls.metadata).toEqual([]);
-    expect((await makeBind(deps(s, without("WALKIE_LICENSE_SIGNING_KEY")))(post("/api/license/bind", bindBody()))).status).toBe(503);
+    expect((await makeBind(bindDeps(s, without("WALKIE_LICENSE_SIGNING_KEY")))(post("/api/license/bind", bindBody()))).status).toBe(503);
     s.fail = stripeError(500);
     expect((await h(post("/api/license/bind", bindBody()))).status).toBe(502);
   });
@@ -429,7 +440,7 @@ describe("POST /api/license/renew", () => {
   async function bound(status = "active") {
     const s = new MockStripe();
     s.subs.set("sub_ABC123", subscription());
-    const b = await body(await makeBind(deps(s, ENV))(post("/api/license/bind", bindBody())));
+    const b = await body(await makeBind(bindDeps(s, ENV))(post("/api/license/bind", bindBody())));
     const cur = s.subs.get("sub_ABC123") as SubscriptionLite;
     s.subs.set("sub_ABC123", { ...cur, status });
     return { s, token: b.renewal_token as string };

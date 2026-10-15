@@ -259,13 +259,13 @@ export function clockAvailability(clock: readonly ResetClock[] | undefined, usag
 // ---- limit resets (ACCOUNTS-RESET-1) ----------------------------------------------
 
 /**
- * How each provider's limit resets are used: "walkie" = Walkie can use one through the provider's own CLI on the
+ * How each provider's limit resets are used: "walkie" = Sqwakie can use one through the provider's own CLI on the
  * machine that holds the login (Codex app-server); "web" = only on the provider's own page (Claude: claude.ai
  * Settings > Usage > "Reset for free"); "none" = the provider has no resets (Kimi, Grok).
  */
 export const RESET_REDEEM: Record<AccountProvider, "walkie" | "web" | "none"> = { codex: "walkie", claude: "web", kimi: "none", grok: "none" };
 
-/** The provider's own usage page, when it has one Walkie can link to. */
+/** The provider's own usage page, when it has one Sqwakie can link to. */
 export const USAGE_PAGE: Record<AccountProvider, string | null> = {
   claude: "https://claude.ai/settings/usage",
   codex: null,
@@ -299,11 +299,11 @@ export function nextWindowReset(u: AccountUsage | null, now: number): string {
 
 /** Why a failed attempt failed, in words (nothing was sent in any of these). */
 const FAILURE_TEXT: Record<ResetFailure, string> = {
-  codex_missing: "The Codex CLI isn't installed where Walkie can find it on this machine.",
+  codex_missing: "The Codex CLI isn't installed where Sqwakie can find it on this machine.",
   not_signed_in: "Codex isn't signed in to this account on this machine: run `codex login`, then try again.",
   unreachable: "Couldn't reach Codex on this machine (it didn't start or didn't answer).",
   refused: "Codex refused to read this account's limits; if it asks you to sign in, run `codex login`.",
-  not_saved: "Walkie couldn't write down the attempt (is the disk full?), so it sent nothing.",
+  not_saved: "Sqwakie couldn't write down the attempt (is the disk full?), so it sent nothing.",
 };
 
 /** What the dashboard says after a reset attempt, and whether trying again (same attempt) makes sense. */
@@ -318,7 +318,7 @@ export function resetOutcomeText(r: Pick<ResetResult, "outcome" | "left" | "fail
     case "login_changed": return { text: "The login on this machine is now a different account (or signed out). Nothing was sent.", tone: "bad", retry: false };
     case "unverified": return { text: "Codex didn't say which account it is signed in as, so nothing was sent.", tone: "bad", retry: false };
     case "busy": return { text: "Another reset of this account is already in progress. Nothing more was sent.", tone: "info", retry: false };
-    case "check_usage": return { text: "An earlier attempt may have gone through. Check usage before trying again; Walkie is re-reading it now.", tone: "bad", retry: false };
+    case "check_usage": return { text: "An earlier attempt may have gone through. Check usage before trying again; Sqwakie is re-reading it now.", tone: "bad", retry: false };
     case "dismissed": return { text: "You marked the earlier attempt as checked. Nothing was sent.", tone: "info", retry: false };
     case "unconfirmed": return { text: "Couldn't confirm the reset went through. Check the meter; trying again repeats this same attempt, so it can't use a second reset.", tone: "bad", retry: true };
     case "failed": return { text: `${FAILURE_TEXT[r.failure ?? "unreachable"]} Nothing was used.`, tone: "bad", retry: true };

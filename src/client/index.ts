@@ -28,6 +28,7 @@ import type { MobileStatus, PairView } from "../daemon/mobile/manager.ts";
 import type { AddMachine } from "../protocol/add-machine.ts";
 import type { CreditBlock, LocalComputeState, LocalRentReq, Quotes, RentalView, RentResult } from "../protocol/compute.ts";
 import type { DisputeView } from "../protocol/projects/dispute.ts";
+import type { FleetLinkMinted, FleetLinkView, FleetLinksView } from "../protocol/fleet-link.ts";
 import type { BoardView, CardDetail, CardView, ProjectsPayload, ProjectView, TimelineEntry } from "../protocol/projects/schema.ts";
 import type { RoomFileDetail, RoomFileView, TaskContext } from "../protocol/projects/room.ts";
 import type { StatusPagePayload } from "../protocol/projects/status-page.ts";
@@ -156,14 +157,14 @@ export class WalkieClient {
   logoutDashboards() { return this.request<{ revoked: number }>("POST", "/v1/auth/logout", {}, 2_000); }
   /** Replaces local.token and signs out every dashboard (`walkie token rotate`; unix socket only). */
   rotateToken() { return this.request<{ rotated: true; path: string }>("POST", "/v1/auth/rotate", {}, 5_000); }
-  me() { return this.request<MeView>("GET", "/v1/me"); }
-  /** `transport` "direct" (Walkie Direct) or "tailscale"; omitted: the daemon's (Tailscale if signed in, else Direct). */
+  me(timeoutMs?: number) { return this.request<MeView>("GET", "/v1/me", undefined, timeoutMs ?? this.timeoutMs, timeoutMs === undefined ? undefined : "join approval wait expired"); }
+  /** `transport` "direct" (Sqwakie Direct) or "tailscale"; omitted: the daemon's (Tailscale if signed in, else Direct). */
   init(team_name: string, handle: string, transport?: "direct" | "tailscale") {
     return this.request<MeView>("POST", "/v1/init", { team_name, handle, ...(transport ? { transport } : {}) }, Math.max(this.timeoutMs, 30_000));
   }
-  /** `peer`: a teammate's tailnet machine, or a Walkie Direct invite code. */
-  join(peer: string) { return this.request<MeView & { admitted: boolean; reason?: string }>("POST", "/v1/join", { peer }, 60_000); }
-  /** Owner (Walkie Direct): a single-use invite code for `handle`, valid for 7 days. */
+  /** `peer`: a teammate's tailnet machine, or a Sqwakie Direct invite code. */
+  join(peer: string, timeoutMs?: number) { return this.request<MeView & { admitted: boolean; reason?: string }>("POST", "/v1/join", { peer }, timeoutMs ?? 60_000, timeoutMs === undefined ? undefined : "join approval wait expired"); }
+  /** Owner (Sqwakie Direct): a single-use invite code for `handle`, valid for 7 days. */
   inviteCode(handle: string, role = "member") {
     return this.request<{ code: string; handle: string; role: string; expires_at: number; existing_member: boolean }>(
       "POST", "/v1/team/invite-code", { handle, role }, Math.max(this.timeoutMs, 15_000));
@@ -173,6 +174,16 @@ export class WalkieClient {
   addMachine(handle: string) {
     return this.request<AddMachine>("POST", "/v1/team/add-machine", { handle }, Math.max(this.timeoutMs, 15_000));
   }
+  /** FLEET-LINK-1: join with a fleet link (the token, the /join link, or the install command holding it). */
+  joinLink(link: string) { return this.request<MeView & { admitted: boolean; reason?: string }>("POST", "/v1/join", { link }, 60_000); }
+  /** Owner, a person: a reusable link that admits up to `uses` machines as `for`'s (default: yours). */
+  mintLink(b: { for?: string; uses?: number; expires_days?: number; approve?: boolean; observer?: boolean; owner_machines?: boolean }) {
+    return this.request<FleetLinkMinted>("POST", "/v1/team/links", b, Math.max(this.timeoutMs, 30_000));
+  }
+  /** Owner: the team's fleet links (kept on the roster authority) and the machines that used them. */
+  links() { return this.request<FleetLinksView>("GET", "/v1/team/links", undefined, Math.max(this.timeoutMs, 20_000)); }
+  /** Owner, a person: revokes the fleet link whose id starts with `id`; machines it admitted stay. */
+  revokeLink(id: string) { return this.request<{ link: FleetLinkView }>("POST", "/v1/team/links/revoke", { id }, Math.max(this.timeoutMs, 20_000)); }
   team() { return this.request<TeamView>("GET", "/v1/team"); }
   /** This machine's admin audit and guest audit, oldest first. Reads only; nothing is recorded. */
   history(q: HistoryQuery = {}) { return this.request<HistoryView>("GET", historyPath(q)); }
@@ -227,7 +238,7 @@ export class WalkieClient {
     return this.request<{ event: Event | null } | { queued: true; request_id: string }>("POST", "/v1/team/revoke", { node });
   }
   channel(body: { name: string; topic?: string; members?: string[]; public?: boolean; archived?: boolean }) {
-    return this.request<{ event: Event }>("POST", "/v1/channels", body);
+    return this.request<{ event: Event } | { queued: true; request_id: string }>("POST", "/v1/channels", body);
   }
   events(q: Record<string, string | number | undefined> = {}) {
     const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
@@ -493,7 +504,7 @@ export class WalkieClient {
   /** The team's provider accounts and usage left (ACCOUNTS-1, watch-only). */
   /** `pool` (COMPANY POOL): the team accounts policy; absent from a pre-RESET-CLOCK daemon. */
   accounts() { return this.request<{ accounts: AccountView[]; pool?: { policy: "company" | "per-account"; at: number | null; by: string | null } }>("GET", "/v1/accounts"); }
-  /** Walkie on your phone (WALKIE-PWA-1): the relay link, pairing and paired devices. */
+  /** Sqwakie on your phone (WALKIE-PWA-1): the relay link, pairing and paired devices. */
   mobile() { return this.request<MobileStatus>("GET", "/v1/mobile"); }
   mobilePair() { return this.request<PairView>("POST", "/v1/mobile/pair", {}, 15_000); }
   mobileRevoke(id: string) { return this.request<{ revoked: true }>("DELETE", `/v1/mobile/devices/${encodeURIComponent(id)}`); }
@@ -514,7 +525,11 @@ export class WalkieClient {
   seats(seat?: string) { return this.request<SeatsView>("GET", `/v1/seats${seat ? `?seat=${encodeURIComponent(seat)}` : ""}`); }
   seatsCleanupRoot(id: string) { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/cleanup-root", { id }); }
   /** `walkie seats doctor`: checks this machine's Claude and Codex sign-ins now (`seats()` serves the last check's answer). */
-  seatsDoctor() { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/doctor", {}, 45_000); }
+  seatsDoctor(local_provider?: "ollama") { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/doctor", local_provider ? { local_provider } : {}, 45_000); }
+  seatsCodexOss(codex_oss_ollama: boolean) { return this.request<{ local: SeatsLocalView }>("POST", "/v1/seats/codex-oss", { codex_oss_ollama }); }
+  seatsOssPreflight(body: { machine: string; runtime: "codex"; local_provider: "ollama"; model: string }) {
+    return this.request<{ capability: string; native: "UNVERIFIED" }>("POST", "/v1/seats/oss-preflight", body);
+  }
   seatsConfig(body: {
     allow: boolean; mode?: "same_user" | "seat_users"; launchers?: string[] | null; max?: number | null; runtimes?: SeatRuntime[] | null; dir?: string | null; env?: string[] | null;
     ephemeral?: boolean | null; admin?: string | null; runner?: string | null; runtime_dir?: string | null; same_user?: boolean; accept_readable_home?: boolean;
@@ -527,7 +542,7 @@ export class WalkieClient {
     machine: string; runtime: SeatRuntime; model?: string; permission_mode?: SeatMode; prompt?: string; bundle?: string;
     timeout_s?: number; max_concurrent?: number;
     /** v2 (FO-2): any of these makes a v2 request (hosts announcing seats_v2 only). */
-    v?: 2; brief?: string; label?: string; workspace?: SeatWorkspace; account?: string; result_file?: string;
+    v?: 2; local_provider?: "ollama"; brief?: string; label?: string; workspace?: SeatWorkspace; account?: string; result_file?: string;
   }) {
     return this.request<{ event: Event; seat: string; host: { node: string; hostname: string; channel: string; availability?: HostAvailability } }>("POST", "/v1/seats/run", body);
   }
@@ -564,7 +579,7 @@ export class WalkieClient {
   talkieDismiss(id: string, note?: string) {
     return this.request<{ rec: RecView }>("POST", `/v1/talkie/recs/${encodeURIComponent(id)}/dismiss`, note === undefined ? {} : { note });
   }
-  /** Only authenticated WalkieTalkie duties may record; the daemon checks the existing child token. */
+  /** Only authenticated Talkie duties may record; the daemon checks the existing child token. */
   talkieRecommend(body: RecommendInputT) {
     return this.request<{ id: string; short: string } | { duplicate: true; reason?: string } | { suppressed: true }>("POST", "/v1/talkie/recs", body);
   }
@@ -589,7 +604,7 @@ export class WalkieClient {
   scheduleReset(id: string) { return this.request<{ schedule: Schedule }>("POST", `/v1/orchestrator/schedules/${encodeURIComponent(id)}/reset`, { confirm: id }); }
   /** ORCH-2: switches this machine's orchestrator to `model` (default, an alias or a full id), keeping the conversation. */
   orchestratorModel(model: string) { return this.request<OrchestratorView>("POST", "/v1/orchestrator/model", { model }, 60_000); }
-  /** ORCH-2: platform (Walkie tools) or full access, keeping the conversation. */
+  /** ORCH-2: platform (Sqwakie tools) or full access, keeping the conversation. */
   orchestratorAccess(access: OrchestratorAccess) { return this.request<OrchestratorView>("POST", "/v1/orchestrator/access", { access }, 60_000); }
   /** pre.8: back to automatic (clears a start or a stop by hand). */
   orchestratorAuto() { return this.request<OrchestratorView>("POST", "/v1/orchestrator/auto", {}, 30_000); }

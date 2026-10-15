@@ -62,7 +62,7 @@ export function connectionLines(x: ConnectionView): string[] {
   const out = [`${c.bold(`Connected to ${safeTerm(x.model.name)}${quantText(x.model.quant)} on ${safeTerm(x.hostname)}`)} · ${col(x.state)}`];
   if (x.error) out.push(`  ${c.red(safeTerm(x.error))}`);
   if (x.state === "connected") {
-    out.push(`  OpenAI-compatible endpoint on this machine, through Walkie: ${x.endpoint} (API key in ${x.api_key_file})`);
+    out.push(`  OpenAI-compatible endpoint on this machine, through Sqwakie: ${x.endpoint} (API key in ${x.api_key_file})`);
     out.push(`  ${c.dim(x.example)}`);
   }
   return out;
@@ -261,7 +261,7 @@ async function install(ctx: Ctx): Promise<number> {
   const client = ctx.client();
   let v = (await client.poolInstall()).install;
   if (ctx.json) { ctx.out(JSON.stringify({ install: v })); return EXIT.ok; }
-  ctx.out(`Installing llama.cpp ${v.build} for ${v.target} (sha256-checked, by this machine's Walkie)…`);
+  ctx.out(`Installing llama.cpp ${v.build} for ${v.target} (sha256-checked, by this machine's Sqwakie)…`);
   let shown = -1;
   for (;;) {
     const pct = v.total ? Math.floor((v.done / v.total) * 10) : 0;

@@ -1,14 +1,14 @@
-// Which of Walkie's two hook paths reports each Grok event, so that no Grok event has two delivery paths.
+// Which of Sqwakie's two hook paths reports each Grok event, so that no Grok event has two delivery paths.
 //
 // Grok merges the hooks of every source it scans and runs each matching handler of each (Grok 1.0.40 user guide,
-// 10-hooks.md "Hook Locations", "How a Hook Resolves"). Walkie reaches it two ways, and `walkie hooks install grok`
+// 10-hooks.md "Hook Locations", "How a Hook Resolves"). Sqwakie reaches it two ways, and `walkie hooks install grok`
 // installs both (install-grok.ts), so a machine with only Grok gets every event:
-//  - "claude": Walkie's Claude Code hook (`walkie hook claude`, in ~/.claude/settings.json). Grok scans that file by
-//    default ([compat.claude] hooks, 26-config-reference.md), so it runs Walkie's hook with its own variables set. This
+//  - "claude": Sqwakie's Claude Code hook (`walkie hook claude`, in ~/.claude/settings.json). Grok scans that file by
+//    default ([compat.claude] hooks, 26-config-reference.md), so it runs Sqwakie's hook with its own variables set. This
 //    path reports SessionStart, UserPromptSubmit, PostToolUse (the Claude install registers it for every tool, matcher
 //    "*"), Notification, Stop and SessionEnd.
 //  - "native": ~/.grok/hooks/walkie.json (`walkie hook grok`). It reports what the Claude path does not: PreToolUse for
-//    every tool (Bash included), and PostToolUseFailure, StopFailure and StopCancelled, which Walkie's Claude install
+//    every tool (Bash included), and PostToolUseFailure, StopFailure and StopCancelled, which Sqwakie's Claude install
 //    never registers. Without this file nothing reports a Grok PreToolUse, a sub-agent launch included.
 // An event belongs to one path, and each handler ignores an event it does not own, whatever any hook file registers
 // (grok.ts), so a stale, hand-edited or foreign registration cannot add a second path. The native file registers only
@@ -48,7 +48,7 @@ const BY_NAME = new Map<string, GrokEvent>(GROK_EVENTS.flatMap((e): [string, Gro
 
 /**
  * The event a Grok payload names: `hook_event_name` (Claude's PascalCase value), else `hookEventName` (Grok's
- * snake_case value) when the first is not one Walkie reports. Both paths resolve through this, so they agree.
+ * snake_case value) when the first is not one Sqwakie reports. Both paths resolve through this, so they agree.
  */
 export function grokEvent(input: { hook_event_name?: string; hookEventName?: string }): GrokEvent | undefined {
   for (const name of [input.hook_event_name, input.hookEventName]) {

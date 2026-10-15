@@ -1,13 +1,16 @@
 // walkie setup — one command from download to connected agents:
 //   install the binary on PATH → run the daemon as a service → create or join a team → connect agents.
 //   walkie setup                                  interactive (prompts for what it needs)
-//   walkie setup --team "Our Team" --handle alex  create a team (Walkie Direct; --tailscale for a tailnet team)
-//   walkie setup --invite wk1…                    join with a Walkie Direct invite code
+//   walkie setup --team "Our Team" --handle alex  create a team (Sqwakie Direct; --tailscale for a tailnet team)
+//   walkie setup --invite wk1…                    join with a Sqwakie Direct invite code
+//   walkie setup --join-link wl1…                 join with a fleet link (FLEET-LINK-1): no questions, defaults only
+//   walkie setup --join-link-stdin                the same, the link read from stdin (kept out of shell history)
 //   walkie setup --join 100.101.102.103           join a Tailscale team through a teammate's machine
 //   --no-service  --no-hooks  --bin-dir <dir>  --switching | --no-switching (account switching shims, ACCOUNTS-2)
 //   --allow-team-agents | --no-team-agents        the answer to "let your team start agents here?" (no terminal: no)
 //   --invite wk1… --company-machine --owner-ssh <packet>   the add-machine command: the packet (owner SSH) rides in the
 //                                                  one company consent; --owner-ssh is refused without --company-machine
+//   --json                                        one result object on stdout (src/cli/json-result.ts), prose on stderr; never prompts
 import { copyFileSync, chmodSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { basename, join } from "node:path";
@@ -20,8 +23,12 @@ import { installClaude, installCodex } from "../../hooks/install.ts";
 import { installShims, profileFile } from "../../switch/shims.ts";
 import { recordClis } from "./vault.ts";
 import { underAgent } from "../agent-output.ts";
-import { askLine, PromptCancelled, type Answer } from "../prompt.ts";
+import { askHidden, askLine, PromptCancelled, type Answer } from "../prompt.ts";
+import { linkTokenFrom } from "../../daemon/fleet-link.ts";
+import { LINK_REFUSALS } from "./team.ts";
 import { bool, str, UsageError } from "../args.ts";
+import { runJsonCommand, type JsonOutcome } from "../json-result.ts";
+import { setupResult, type ServiceState, type SetupFacts, type TeamResult } from "./setup-result.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { c } from "../format.ts";
 import type { MeView } from "../../protocol/schemas.ts";
@@ -52,9 +59,10 @@ function step(ctx: Ctx, n: number, text: string): void {
   ctx.out(`${c.bold(`${n}.`)} ${text}`);
 }
 
-async function ask(question: string, fallback?: string): Promise<string> {
-  if (!process.stdin.isTTY) {
+async function ask(question: string, fallback?: string, noPrompt = false): Promise<string> {
+  if (noPrompt || !process.stdin.isTTY) {
     if (fallback !== undefined) return fallback;
+    if (noPrompt) throw new WalkieError("input_required", `${question} (--json never asks: pass it as a flag, see walkie setup --help)`, 0);
     throw new UsageError(`${question} (not a terminal: pass it as a flag, see walkie setup --help)`);
   }
   let a: Answer;
@@ -89,7 +97,7 @@ async function ensureInstalled(ctx: Ctx, argv: string[]): Promise<number | null>
   return await child.exited;
 }
 
-export interface ServiceDeps extends RestartDeps { install?: () => Promise<unknown> }
+export interface ServiceDeps extends RestartDeps { install?: () => Promise<unknown>; onState?: (state: ServiceState) => void }
 
 /**
  * Brings the background service to this binary's version: already running as VERSION → nothing to do; running
@@ -102,18 +110,22 @@ export async function ensureService(ctx: Ctx, client: WalkieClient, deps: Servic
   const health = await probe().catch((): { ok: boolean; version: string } => ({ ok: false, version: "" }));
   if (health.ok && sameVersion(health.version, VERSION)) {
     ctx.out(`   daemon already running (${VERSION})`);
+    deps.onState?.("running");
     return true;
   }
   if (health.ok) {
     ctx.out(`   daemon running ${health.version}, not ${VERSION}; restarting…`);
-    return restartService(ctx, VERSION, deps);
+    const restarted = await restartService(ctx, VERSION, deps);
+    deps.onState?.(restarted ? "restarted" : "failed");
+    return restarted;
   }
   const install = deps.install ?? (() => installService(defaultHome(), false));
   await install();
   const limit = deps.timeoutMs ?? RESTART_WAIT_MS;
   const up = await waitForVersion(VERSION, probe, limit, deps.intervalMs);
-  if (up.ok) { ctx.out(`   ${c.green("running")} (starts at login, restarts on crash), answering as ${VERSION} after ${(up.ms / 1000).toFixed(1)} s`); return true; }
+  if (up.ok) { ctx.out(`   ${c.green("running")} (starts at login, restarts on crash), answering as ${VERSION} after ${(up.ms / 1000).toFixed(1)} s`); deps.onState?.("started"); return true; }
   ctx.err(c.red(`   the daemon did not come up within ${limit / 1000} s (last: ${up.last}); run walkie doctor`));
+  deps.onState?.("failed");
   return false;
 }
 
@@ -127,117 +139,199 @@ async function onPath(cmd: string): Promise<boolean> {
 }
 
 function tailscaleMissing(me: MeView): WalkieError {
-  return new WalkieError("tailscale_unavailable", `Tailscale isn't ready: ${me.tailscale.error ?? "sign in to Tailscale first"} (or join with a Walkie Direct invite code instead)`, 0);
+  return new WalkieError("tailscale_unavailable", `Tailscale isn't ready: ${me.tailscale.error ?? "sign in to Tailscale first"} (or join with a Sqwakie Direct invite code instead)`, 0);
 }
 
 /**
- * Create or join a team. Walkie Direct needs nothing else installed: a new team uses it unless --tailscale (or,
+ * Create or join a team. Sqwakie Direct needs nothing else installed: a new team uses it unless --tailscale (or,
  * with Tailscale signed in, the person picks it at the prompt; the default is Direct). Joining takes an invite
  * code (Direct) or, on a Tailscale team, a teammate's tailnet machine.
  */
-async function joinOrInit(ctx: Ctx, client: WalkieClient): Promise<void> {
+async function joinOrInit(ctx: Ctx, client: WalkieClient, joinLink: string | null): Promise<TeamResult> {
   const me = await client.me();
-  if (me.team) { ctx.out(`   already in ${c.bold(me.team.name)} as @${me.handle}`); return; }
+  if (me.team) { ctx.out(`   already in ${c.bold(me.team.name)} as @${me.handle}`); return "already_member"; }
+  if (joinLink) return joinWithLink(ctx, client, joinLink);
   const tailscale = me.tailscale.ok;
   let invite = str(ctx.args, "invite");
   let joinTarget = str(ctx.args, "join");
   let team = str(ctx.args, "team");
   if (joinTarget && isInviteCode(joinTarget)) { invite = joinTarget; joinTarget = undefined; }
   if (!invite && !joinTarget && !team) {
-    const choice = (await ask("Create a new team, or join one? (create/join)", "create")).toLowerCase();
+    const choice = (await ask("Create a new team, or join one? (create/join)", "create", ctx.json)).toLowerCase();
     if (choice.startsWith("j")) {
-      const answer = await ask(tailscale ? "Invite code (or a teammate's Tailscale machine):" : "Invite code (from a teammate's walkie invite):");
+      const answer = await ask(tailscale ? "Invite code (or a teammate's Tailscale machine):" : "Invite code (from a teammate's walkie invite):", undefined, ctx.json);
       if (isInviteCode(answer)) invite = answer;
       else if (tailscale) joinTarget = answer;
-      else throw new UsageError("that isn't a Walkie invite code (it starts with wk1); ask an owner to run: walkie invite --handle <you>");
+      else throw new UsageError("that isn't a Sqwakie invite code (it starts with wk1); ask an owner to run: walkie invite --handle <you>");
     } else {
-      team = await ask("Team name:");
+      team = await ask("Team name:", undefined, ctx.json);
     }
   }
   if (invite || joinTarget) {
     if (joinTarget && !tailscale) throw tailscaleMissing(me);
     const r = await client.join((invite ?? joinTarget) as string);
     if (!r.admitted) throw new WalkieError(r.reason ?? "join_failed", `join was not admitted: ${r.reason ?? "unknown reason"}`, 0);
-    ctx.out(`   ${c.green("joined")} ${r.team?.name ?? ""} as @${r.handle}${invite ? " (Walkie Direct)" : ""}`);
-    return;
+    ctx.out(`   ${c.green("joined")} ${r.team?.name ?? ""} as @${r.handle}${invite ? " (Sqwakie Direct)" : ""}`);
+    return "joined";
   }
   let transport: "direct" | "tailscale" = transportFlag(ctx) ?? "direct";
   if (!transportFlag(ctx) && tailscale) {
-    const pick = (await ask("Connect over Walkie Direct (nothing else to install) or your tailnet? (direct/tailscale)", "direct")).toLowerCase();
+    const pick = (await ask("Connect over Sqwakie Direct (nothing else to install) or your tailnet? (direct/tailscale)", "direct", ctx.json)).toLowerCase();
     transport = pick.startsWith("t") ? "tailscale" : "direct";
   }
   if (transport === "tailscale" && !tailscale) throw tailscaleMissing(me);
   const base = tailscale && transport === "tailscale" ? (me.tailscale.login ?? "").split("@")[0] : userInfo().username;
   const suggested = (base ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/^[^a-z]+/, "").slice(0, 24) || undefined;
-  const handle = str(ctx.args, "handle") ?? await ask("Your handle (what teammates call you):", suggested);
+  const handle = str(ctx.args, "handle") ?? await ask("Your handle (what teammates call you):", suggested, ctx.json);
   const r = await client.init(team as string, handle, transport);
-  ctx.out(`   ${c.green("created")} ${r.team?.name} — you are @${r.handle}, the owner${r.transport?.mode === "direct" ? " (Walkie Direct)" : ""}.`);
+  ctx.out(`   ${c.green("created")} ${r.team?.name} — you are @${r.handle}, the owner${r.transport?.mode === "direct" ? " (Sqwakie Direct)" : ""}.`);
   ctx.out(`   ${inviteHint(r)}`);
+  return "created";
+}
+
+/** How long setup waits for an owner to approve a machine a fleet link queued; WALKIE_LINK_WAIT_S may only shorten it. */
+export const LINK_APPROVAL_WAIT_MS = 2 * 60_000;
+
+function linkWaitMs(): number {
+  const v = Number(process.env.WALKIE_LINK_WAIT_S);
+  return Number.isFinite(v) && v >= 0 && process.env.WALKIE_LINK_WAIT_S !== "" ? Math.min(v * 1000, LINK_APPROVAL_WAIT_MS) : LINK_APPROVAL_WAIT_MS;
+}
+
+/**
+ * FLEET-LINK-1: join with a fleet link, no questions. A link that asks for approval queues this machine: setup waits
+ * a little for an owner, then carries on (the daemon keeps asking in the background and joins once approved).
+ */
+async function joinWithLink(ctx: Ctx, client: WalkieClient, token: string): Promise<TeamResult> {
+  const r = await client.joinLink(token);
+  if (r.admitted) {
+    ctx.out(`   ${c.green("joined")} ${r.team?.name ?? ""} as @${r.handle} on ${r.node.hostname} (fleet link, Sqwakie Direct)`);
+    return "joined";
+  }
+  if (r.reason !== "pending_approval") {
+    throw new WalkieError(r.reason ?? "join_failed", `join was not admitted: ${LINK_REFUSALS[r.reason ?? ""] ?? r.reason ?? "unknown reason"}`, 0);
+  }
+  ctx.out(`   ${c.yellow("waiting")} for an owner to approve this machine (dashboard: Team → Waiting to join)…`);
+  const deadline = Date.now() + linkWaitMs();
+  while (Date.now() < deadline) {
+    await Bun.sleep(2_000);
+    const me = await client.me().catch(() => null);
+    if (me?.team) { ctx.out(`   ${c.green("joined")} ${me.team.name} as @${me.handle} on ${me.node.hostname} (approved)`); return "joined"; }
+  }
+  ctx.out(c.dim("   not approved yet: this machine joins by itself once an owner approves it (it keeps asking for a day). Check: walkie who"));
+  return "pending_approval";
+}
+
+/** The fleet link setup was given: --join-link <link|command|token>, or --join-link-stdin (a hidden paste on a terminal). */
+async function joinLinkArg(ctx: Ctx): Promise<string | null> {
+  const given = str(ctx.args, "join-link");
+  const stdin = bool(ctx.args, "join-link-stdin");
+  if (given === undefined && !stdin) return null;
+  if (given !== undefined && stdin) throw new UsageError("--join-link and --join-link-stdin are exclusive");
+  if (str(ctx.args, "invite") || str(ctx.args, "join") || str(ctx.args, "team")) throw new UsageError("--join-link joins a team: leave out --invite, --join and --team");
+  let raw = given ?? "";
+  if (stdin) {
+    if (process.stdin.isTTY && ctx.json) throw new WalkieError("input_required", "--join-link-stdin reads the link from a pipe under --json (it never asks on a terminal): pipe it in, or pass --join-link", 0);
+    if (process.stdin.isTTY) {
+      const a = await askHidden("   Paste the fleet link (it isn't shown): ");
+      raw = a.text;
+    } else {
+      raw = await new Response(Bun.stdin.stream()).text();
+    }
+  }
+  const token = linkTokenFrom(raw);
+  if (!token) throw new UsageError("that isn't a Sqwakie fleet link (the token starts with wl1: copy the whole link or command again)");
+  return token;
 }
 
 /**
  * ACCOUNTS-2: with the person's consent, the claude / codex shims (and the one PATH line in their shell profile), so
  * every session moves to the next account before a usage limit. --switching / --no-switching answer without a prompt.
  */
-async function switching(ctx: Ctx): Promise<void> {
+async function switching(ctx: Ctx, unattended: boolean): Promise<SetupFacts["switching"]> {
   const home = defaultHome();
-  if (bool(ctx.args, "no-switching")) { ctx.out(c.dim("   skipped (--no-switching)")); return; }
+  if (bool(ctx.args, "no-switching")) { ctx.out(c.dim("   skipped (--no-switching)")); return { state: "skipped", reason: "--no-switching" }; }
   const profile = profileFile();
   let yes = bool(ctx.args, "switching");
-  if (!yes && process.stdin.isTTY && !underAgent()) {
+  if (!yes && process.stdin.isTTY && !underAgent() && !unattended && !ctx.json) {
     const a = await ask(`Move Claude Code / Codex sessions to another account automatically when one hits its usage limit? This adds claude/codex shims in ${join(home, "bin")} and one PATH line to ${profile}. (y/N)`, "n");
     yes = /^y/i.test(a);
   }
-  if (!yes) { ctx.out(c.dim("   not now (later: walkie accounts shims install --profile)")); return; }
+  if (!yes) { ctx.out(c.dim("   not now (later: walkie accounts shims install --profile)")); return { state: "declined", reason: "not asked: pass --switching to turn it on" }; }
   for (const l of recordClis(home)) ctx.out(`   ${l}`);
   const r = installShims(home, { profile });
   ctx.out(`   ${c.green("on")} — shims in ${r.dir}, PATH line in ${r.profile ?? profile}. Next: ${c.bold("walkie accounts add claude")} / ${c.bold("walkie accounts add codex")} for each of your accounts`);
+  return { state: "on" };
 }
 
 export async function setup(ctx: Ctx): Promise<number> {
+  if (ctx.json) return runJsonCommand(ctx, "setup", setupRun);
+  return (await setupRun(ctx)).exit;
+}
+
+/** The setup steps. Prints the prose; the outcome carries the facts for --json (gathered only then, so the prose path asks the daemon nothing new). */
+async function setupRun(ctx: Ctx): Promise<JsonOutcome> {
   if (bool(ctx.args, "company-machine") && !str(ctx.args, "invite")) throw new UsageError("--company-machine requires a private --invite code");
   if (str(ctx.args, "owner-ssh") !== undefined && !bool(ctx.args, "company-machine")) throw new UsageError("--owner-ssh is part of the company-machine consent: add --company-machine");
   teamAgentsFlag(ctx); // conflicting answers fail before anything changes
   if (bool(ctx.args, "seat-users") && !bool(ctx.args, "allow-team-agents") && !bool(ctx.args, "allow-seats"))
     throw new UsageError("--seat-users requires --allow-team-agents (or --allow-seats)");
   if (bool(ctx.args, "seat-users") && bool(ctx.args, "same-user")) throw new UsageError("choose --same-user or --seat-users");
+  if (ctx.json && bool(ctx.args, "seat-users")) throw new WalkieError("input_required", "--seat-users needs sudo at a terminal, which --json never opens: run walkie setup --seat-users without --json", 0);
   const reexec = await ensureInstalled(ctx, process.argv.slice(3));
-  if (reexec !== null) return reexec;
+  if (reexec !== null) return { exit: reexec, delegated: true };
   const client = new WalkieClient({ underAgent: ctx.agentMarker() !== null });
+  // A fleet link (FLEET-LINK-1) is the whole answer: no question is asked anywhere below; the defaults apply.
+  const joinLink = await joinLinkArg(ctx);
+  const unattended = joinLink !== null;
 
   step(ctx, 1, "Background service");
+  let service: SetupFacts["service"];
   if (bool(ctx.args, "no-service")) {
     ctx.out(c.dim("   skipped (--no-service); run walkie daemon start yourself"));
-  } else if (!(await ensureService(ctx, client))) {
-    return EXIT.error;
+    service = { state: "skipped", reason: "--no-service" };
+  } else {
+    let state: ServiceState = "failed";
+    if (!(await ensureService(ctx, client, { onState: (s) => { state = s; } }))) {
+      return { exit: EXIT.error, error: { code: "service_failed", message: "the background service did not come up as this version (see the lines on stderr); run walkie doctor" } };
+    }
+    service = { state };
   }
 
   step(ctx, 2, "Team");
-  await joinOrInit(ctx, client);
+  const team = await joinOrInit(ctx, client, joinLink);
 
   let n = 3;
   let ownerSsh: SshFinal | null = null;
   const companyOutcome = await teamAgentsStep(ctx, client, {
-    interactive: !!process.stdin.isTTY, ask: (q) => ask(q, ""), checkRuntime, installSeatUsers,
+    interactive: !!process.stdin.isTTY && !unattended && !ctx.json, ...(unattended ? { notAsked: "a fleet link's setup asks nothing" } : {}), ask: (q) => ask(q, "", ctx.json), checkRuntime, installSeatUsers,
     root: realRootBatch(defaultHome()), ssh: realSshStepDeps(client), onSsh: (result) => { ownerSsh = result; },
   }, () => step(ctx, n++, "Team agents on this machine"));
   const consentExit = companyConsentExit(ctx, companyOutcome);
-  if (consentExit !== null) return consentExit;
+  if (consentExit !== null) {
+    return { exit: consentExit, error: { code: "company_enrollment_incomplete", message: `Company enrollment is incomplete (team agents: ${companyOutcome}). Resolve the issue on stderr, then run walkie setup --invite <private-code> --company-machine on this machine's terminal and type yes.` } };
+  }
 
   step(ctx, n++, "Agents");
+  let hooks: SetupFacts["hooks"];
   if (bool(ctx.args, "no-hooks")) {
     ctx.out(c.dim("   skipped (--no-hooks)"));
+    hooks = { state: "skipped", reason: "--no-hooks" };
   } else {
     const found: string[] = [];
     if (await onPath("claude")) { await installClaude({ dryRun: false, uninstall: false }); found.push("Claude Code"); }
     if (await onPath("codex")) { await installCodex({ dryRun: false, uninstall: false }); found.push("Codex"); }
     ctx.out(found.length ? `   ${c.green("connected")} ${found.join(" + ")} — restart open sessions to pick it up` : c.yellow("   no Claude Code or Codex found on PATH; run walkie hooks install claude|codex later"));
+    hooks = { state: found.length ? "connected" : "none_found", agents: found };
   }
 
   step(ctx, n++, "Account switching (optional)");
-  await switching(ctx);
+  const switched = await switching(ctx, unattended);
 
   step(ctx, n, "Dashboard");
   ctx.out(`   ${c.bold("walkie dashboard")} opens it · ${c.bold("walkie who")} shows everyone in the terminal`);
-  return sshEnrollmentExit(ctx, ownerSsh) ?? EXIT.ok;
+  const exit = sshEnrollmentExit(ctx, ownerSsh) ?? EXIT.ok;
+  if (!ctx.json) return { exit };
+  const facts = setupResult({ me: await client.me(), team, service, teamAgents: companyOutcome, hooks, switching: switched });
+  if (exit === EXIT.ok) return { exit, facts };
+  return { exit, facts, error: { code: "ssh_enrollment_incomplete", message: "Company enrollment is incomplete: owner SSH is not ready (see stderr). Everything else was set up. Fix it as described, then run walkie ssh status." } };
 }

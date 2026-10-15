@@ -58,7 +58,7 @@ async function sendAudit(ctx: Ctx, action: string, refused?: string): Promise<vo
       const p = join(defaultHome(), "admin-audit.jsonl");
       appendFileSync(p, JSON.stringify({ ts: Date.now(), actor, action, machine: "", via: "local", ...(refused ? { refused } : {}) }) + "\n", { mode: 0o600 });
       chmodSync(p, 0o600);
-    } catch { /* no Walkie home yet: nothing to append to */ }
+    } catch { /* no Sqwakie home yet: nothing to append to */ }
   }
 }
 

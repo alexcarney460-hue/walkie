@@ -1,4 +1,4 @@
-/** Fixed profile metadata ships with Walkie. Remote callers may select only an id. */
+/** Fixed profile metadata ships with Sqwakie. Remote callers may select only an id. */
 export type ProfileId = "developer-worker" | "freight-worker";
 export type StepKind = "check" | "node_archive" | "npm_locked" | "installer_elevation";
 export interface Step {

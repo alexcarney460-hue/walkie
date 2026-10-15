@@ -1,7 +1,7 @@
-// AGENT-ADMIN-1: remote administration over Walkie (PROTOCOL §5 "Admin", §3 `/peer/v1/admin/run`). One generic route
+// AGENT-ADMIN-1: remote administration over Sqwakie (PROTOCOL §5 "Admin", §3 `/peer/v1/admin/run`). One generic route
 // runs an allow-listed `walkie <command>` on a team machine, never a shell. Who may: a team owner (or an owner's agent)
 // on any machine; anyone else on their own machines only. The target's person can refuse it (`walkie admin remote
-// off`); a target on an older Walkie answers 404 (`target_outdated`).
+// off`); a target on an older Sqwakie answers 404 (`target_outdated`).
 import { z } from "zod";
 import { isAbsolute } from "node:path";
 import { parseArgs, UsageError } from "../cli/args.ts";
@@ -162,7 +162,7 @@ export type RemoteRunRes = z.infer<typeof RemoteRunRes>;
 
 /** Machine-readable reasons a remote admin call didn't run (the CLI's --json `error.code`). */
 export const REMOTE_ERRORS = {
-  target_outdated: "that machine runs a Walkie without remote admin (v0.2.0-pre.6 or older): update it first",
+  target_outdated: "that machine runs a Sqwakie without remote admin (v0.2.0-pre.6 or older): update it first",
   remote_admin_off: "remote admin is switched off on that machine by its person",
   agent_admin_off: "agent admin is switched off by that machine's person",
   not_your_machine: "only a team owner may administer another person's machine",

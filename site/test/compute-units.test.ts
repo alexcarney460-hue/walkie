@@ -15,6 +15,10 @@ import { ConfigError, parsePrivateConfig } from "../api/_lib/compute/private-con
 import { tokenHash, tokenMatches, newToken } from "../api/_lib/compute/tokens.ts";
 import { checkHeartbeat, checkRent, checkStop } from "../api/_lib/compute/validate.ts";
 import { codes, configJson, joinCode, T0 } from "./compute-helpers.ts";
+import { RENTED_MACHINE_RELEASES } from "../api/_lib/compute/releases.ts";
+
+// The newest rentable release (a rent through the handlers must name a listed tag).
+const RELEASE = RENTED_MACHINE_RELEASES[RENTED_MACHINE_RELEASES.length - 1]!;
 
 describe("money", () => {
   test("started minutes and prices", () => {
@@ -67,7 +71,7 @@ describe("private config", () => {
 });
 
 describe("validation", () => {
-  const base = () => ({ idempotency_key: "k".repeat(20), machines: [{ tier: "agent", count: 2 }, { tier: "gpu-20", count: 1 }], codes: codes(3), walkie_version: "v0.2.0-pre.7" });
+  const base = () => ({ idempotency_key: "k".repeat(20), machines: [{ tier: "agent", count: 2 }, { tier: "gpu-20", count: 1 }], codes: codes(3), walkie_version: RELEASE });
   test("rent bodies", () => {
     expect(checkRent(base())).toMatchObject({ ok: true });
     expect(checkRent({ ...base(), codes: codes(2) })).toEqual({ ok: false, error: "codes_mismatch" });
@@ -79,6 +83,7 @@ describe("validation", () => {
     expect(checkRent({ ...base(), machines: [{ tier: "agent", count: 2 }], codes: [c, c] })).toEqual({ ok: false, error: "duplicate_code" });
     expect(checkRent({ ...base(), codes: ["wk1'; rm -rf /", ...codes(2)] })).toEqual({ ok: false, error: "invalid_code" });
     expect(checkRent({ ...base(), walkie_version: "latest" })).toEqual({ ok: false, error: "invalid_walkie_version" });
+    expect(checkRent({ ...base(), walkie_version: "v0.2.0-pre.7" })).toEqual({ ok: false, error: "unsupported_walkie_version" });
     expect(checkRent({ ...base(), cost: 1 })).toEqual({ ok: false, error: "unknown_field" });
   });
   test("stop and heartbeat bodies", () => {
@@ -100,7 +105,7 @@ describe("tokens", () => {
 describe("cloud-init user-data", () => {
   const params = () => ({
     rentalId: "r_0123456789abcdef", joinCode: joinCode(), heartbeatToken: newToken(), walkieVersion: "v0.2.0-pre.7",
-    siteOrigin: "https://getwalkie.vercel.app", hostname: "rent-agent-7f3a", egressRateMbit: 1000,
+    siteOrigin: "https://sqwakie.si", hostname: "rent-agent-7f3a", egressRateMbit: 1000,
   });
 
   test("valid bash; pins the signed release; joins with the code; team agents on as seat users; no same-user; no logins", () => {
@@ -113,7 +118,7 @@ describe("cloud-init user-data", () => {
     writeFileSync(join(dir, "hb.sh"), hb);
     expect(hb).toContain("/api/compute/heartbeat");
     expect(spawnSync("bash", ["-n", join(dir, "hb.sh")]).status).toBe(0);
-    expect(u).toContain(`curl -fsSL https://getwalkie.vercel.app/install.sh | WALKIE_VERSION=v0.2.0-pre.7 sh -s -- --invite ${p.joinCode} --allow-team-agents --seat-users`);
+    expect(u).toContain(`curl -fsSL https://sqwakie.si/install.sh | WALKIE_VERSION=v0.2.0-pre.7 sh -s -- --invite ${p.joinCode} --allow-team-agents --seat-users`);
     expect(u).not.toContain("same-user");
     expect(u).toContain("-d 169.254.0.0/16 -m owner ! --uid-owner 0 -j REJECT");
     expect(u).toContain("tbf rate 1000mbit");
@@ -165,7 +170,7 @@ describe("DigitalOcean driver (requests asserted, nothing sent)", () => {
   };
 
   test("provision looks up the launch tag, then creates one droplet with user_data, tags, no SSH keys, no agent", async () => {
-    const { fetch, calls } = fakeFetch((c) => c.method === "GET" ? { status: 200, body: { droplets: [], links: {} } } : { status: 202, body: { droplet: { id: 4242 } } });
+    const { fetch, calls } = fakeFetch((c) => c.method === "GET" ? { status: 200, body: { droplets: [], links: {}, meta: { total: 0 } } } : { status: 202, body: { droplet: { id: 4242 } } });
     const d = new DigitalOceanDriver(TOKEN, fetch);
     expect(await d.provision(req)).toEqual({ instance_id: "4242" });
     expect(calls[0]).toMatchObject({ method: "GET", url: "https://api.digitalocean.com/v2/droplets?tag_name=walkie-launch%3Ar_0123456789abcdef%3A1&per_page=200&page=1" });
@@ -180,15 +185,18 @@ describe("DigitalOcean driver (requests asserted, nothing sent)", () => {
   });
 
   test("a retried launch finds the droplet by its launch tag instead of making a second one", async () => {
-    const { fetch, calls } = fakeFetch(() => ({ status: 200, body: { droplets: [{ id: 99, status: "new", tags: [] }], links: {} } }));
+    const { fetch, calls } = fakeFetch(() => ({ status: 200, body: { droplets: [{ id: 99, status: "new", tags: [] }], links: {}, meta: { total: 1 } } }));
     expect(await new DigitalOceanDriver(TOKEN, fetch).provision(req)).toEqual({ instance_id: "99" });
     expect(calls.map((c) => c.method)).toEqual(["GET"]);
   });
 
-  test("limits and sold-out sizes are capacity (queue); other errors are driver errors, 429/5xx retryable", async () => {
-    const answer = (status: number, message: string) => fakeFetch((c) => c.method === "GET" ? { status: 200, body: { droplets: [] } } : { status, body: { id: "x", message } }).fetch;
+  test("limits are capacity (retried); a size, region or image not available and other errors are driver errors, 429/5xx retryable", async () => {
+    const answer = (status: number, message: string) => fakeFetch((c) => c.method === "GET" ? { status: 200, body: { droplets: [], links: {}, meta: { total: 0 } } } : { status, body: { id: "x", message } }).fetch;
     await expect(new DigitalOceanDriver(TOKEN, answer(422, "You have reached the droplet limit")).provision(req)).rejects.toBeInstanceOf(CapacityError);
-    await expect(new DigitalOceanDriver(TOKEN, answer(422, "Size is not available in this region.")).provision(req)).rejects.toBeInstanceOf(CapacityError);
+    const misconfigured = await new DigitalOceanDriver(TOKEN, answer(422, "Size is not available in this region.")).provision(req).catch((x) => x);
+    expect(misconfigured).toBeInstanceOf(DriverError);
+    expect(misconfigured).not.toBeInstanceOf(CapacityError);
+    expect(misconfigured.retryable).toBe(false);
     const e = await new DigitalOceanDriver(TOKEN, answer(429, "slow down")).provision(req).catch((x) => x);
     expect(e).toBeInstanceOf(DriverError);
     expect(e.retryable).toBe(true);
@@ -200,11 +208,12 @@ describe("DigitalOcean driver (requests asserted, nothing sent)", () => {
   test("terminate is DELETE and treats 404 as done; list pages through the managed tag and maps tags back", async () => {
     const { fetch, calls } = fakeFetch((c) => {
       if (c.method === "DELETE") return { status: c.url.endsWith("/1") ? 204 : 404 };
-      if (c.url.endsWith("/droplets/1")) return { status: 404 };
+      // Deleted droplets read back 404 (a DELETE's 204 or 404 is confirmed by that GET: REVIEW-merged-opus.md 11).
+      if (c.url.endsWith("/droplets/1") || c.url.endsWith("/droplets/2")) return { status: 404 };
       const page = new URL(c.url).searchParams.get("page");
       return page === "1"
-        ? { status: 200, body: { droplets: [{ id: 1, status: "active", tags: ["walkie-managed", "walkie-rental:r_0123456789abcdef"] }], links: { pages: { next: "p2" } } } }
-        : { status: 200, body: { droplets: [{ id: 2, status: "archive", tags: [] }], links: {} } };
+        ? { status: 200, body: { droplets: [{ id: 1, status: "active", tags: ["walkie-managed", "walkie-rental:r_0123456789abcdef"] }], links: { pages: { next: "p2" } }, meta: { total: 2 } } }
+        : { status: 200, body: { droplets: [{ id: 2, status: "archive", tags: [] }], links: {}, meta: { total: 2 } } };
     });
     const d = new DigitalOceanDriver(TOKEN, fetch);
     await d.terminate("1");

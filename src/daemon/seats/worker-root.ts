@@ -1,6 +1,6 @@
 // Private organization for a same-user seat. It is not an OS security boundary.
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CLAUDE_EVENTS, ourEntry, walkieArgv, walkieCommand, withCodexBlock } from "../../hooks/install.ts";
 
@@ -23,19 +23,31 @@ function parent(home: string): string {
   return dir;
 }
 
-export function createWorkerRoot(home: string, id: string): WorkerRoot {
+export function createWorkerRoot(home: string, id: string, template: "authenticated" | "oss" = "authenticated"): WorkerRoot {
   if (!/^[0-9a-f]{16}:[1-9][0-9]*$/.test(id)) throw new Error("invalid seat id for worker root");
+  if (template === "oss") {
+    if (!isAbsolute(home)) throw new Error("OSS worker home must be absolute");
+    for (let dir = home; ; dir = dirname(dir)) {
+      const st = lstatSync(dir);
+      if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("OSS worker home ancestry must not be symlinked");
+      if (dirname(dir) === dir) break;
+    }
+  }
   const p = paths(home, `${id}@${randomUUID().replaceAll("-", "")}`);
   parent(home);
   mkdirSync(p.root, { mode: 0o700 }); // an existing or linked root is never reused
   try {
+    if (template === "oss") {
+      for (const name of ["home", "codex", "tmp", "config", "cache", "data", "state"]) mkdirSync(join(p.root, name), { mode: 0o700 });
+      return p; // empty: no auth, config, hooks, skills, profiles or provider home copies
+    }
     for (const dir of [p.claude, p.codex, p.temp]) mkdirSync(dir, { mode: 0o700 });
     const hooks: Record<string, ReturnType<typeof ourEntry>[]> = {};
     for (const { event, matcher } of CLAUDE_EVENTS) hooks[event] = [ourEntry(walkieCommand(), matcher)];
     writeFileSync(join(p.claude, "settings.json"), JSON.stringify({ hooks }, null, 2) + "\n", { mode: 0o600, flag: "wx" });
-    writeFileSync(join(p.claude, "CLAUDE.md"), "# Walkie worker seat\n\nWork on the assigned task in this seat's workspace. Report progress and results through Walkie.\n", { mode: 0o600, flag: "wx" });
+    writeFileSync(join(p.claude, "CLAUDE.md"), "# Sqwakie worker seat\n\nWork on the assigned task in this seat's workspace. Report progress and results through Sqwakie.\n", { mode: 0o600, flag: "wx" });
     writeFileSync(join(p.codex, "config.toml"), withCodexBlock("", walkieArgv(), true).toml, { mode: 0o600, flag: "wx" });
-    writeFileSync(join(p.codex, "AGENTS.md"), "# Walkie worker seat\n\nWork on the assigned task in this seat's workspace. Report progress and results through Walkie.\n", { mode: 0o600, flag: "wx" });
+    writeFileSync(join(p.codex, "AGENTS.md"), "# Sqwakie worker seat\n\nWork on the assigned task in this seat's workspace. Report progress and results through Sqwakie.\n", { mode: 0o600, flag: "wx" });
     return p;
   } catch (err) {
     rmSync(p.root, { recursive: true, force: true });

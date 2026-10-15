@@ -4,16 +4,17 @@
 import { loadRenewToken } from "../../license/renew-token.ts";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  ACTIVE_STATES, RENTAL_CODE_TTL_MS, type ComputeState, type CreditBlock, type LocalComputeState, type LocalRentReq, type Quotes, type RentalView,
-  type RentResult,
+  ACTIVE_STATES, MAX_CREDIT_LOTS, RENTAL_CODE_TTL_MS, usd, type ComputeState, type CreditBlock, type LocalComputeState, type LocalRentReq,
+  type Quotes, type RentalView, type RentResult,
 } from "../../protocol/compute.ts";
 import { RELEASE_TAG_RE, releaseTag } from "../../protocol/add-machine.ts";
 import type { TransportControl } from "../direct/link.ts";
 import { HttpError } from "../http.ts";
 import { mintInviteCode, type MintedInvite } from "../invite-mint.ts";
+import { decodeInvite } from "../invite.ts";
 import type { Logger } from "../logger.ts";
 import { submitRequest } from "../requests.ts";
-import { inviteSpendsRemaining, transportFields } from "../roster.ts";
+import { inviteSpendsRemaining, nodeMember, transportFields } from "../roster.ts";
 import { VERSION } from "../version.ts";
 import { loadAccount, loadAccounts, loadRentals, loadPending, savePending, newRecord, saveAccounts, saveRentals, needsAccountScan,
   markAccountsScanned, RentalsFileError, type Rentals, type RentalRecord, type StoredAccount } from "./files.ts";
@@ -22,12 +23,75 @@ import { ComputeSite, ComputeSiteError, type StopReply } from "./site.ts";
 import { rosterProof } from './team-proof.ts';
 import { verifyHandoverNotice, handoverNoticeText } from './handover-notice.ts';
 import { VENDOR_PUBLIC_KEY_B64 } from '../../license/vendor-key.ts';
-import { postAudit } from '../admin/audit.ts';
+import { ADMIN_AGENT, postAudit } from '../admin/audit.ts';
 import { canonicalJson } from '../../protocol/canonical.ts';
 
 export const POLL_EVERY_MS = 60_000;
 export const POLL_JITTER_MS = 10_000;
 export const POLL_MAX_BACKOFF_MS = 30 * 60_000;
+/**
+ * The handover status request is the one site call that carries this team's roster proof (team-proof.ts: the signed
+ * genesis and owner admissions, with identities, node hostnames, addresses and keys). It is sent only while a handover
+ * notice is expected for this team (REVIEW-pre17-codex P1), never just because the daemon runs:
+ *   (a) this machine holds a compute account whose handover is pending (it proposed one), until it completes;
+ *   (b) its last state poll (bearer token only, no roster) carried a signed notice for the team;
+ *   (c) another current owner's daemon posted a handover notice in #general within HANDOVER_NOTICE_WINDOW_MS, and this
+ *       machine has not settled it (acknowledged it, or been told handover_not_found).
+ * A handover exists only for a team with funded compute accounts, and only a daemon holding one posts its notice, so an
+ * owner on a team that never rented makes no site call at all, while every owner who must acknowledge still sees the
+ * notice in #general and is asked. While a notice is expected: at once, then every HANDOVER_CHECK_MS (+ up to
+ * HANDOVER_CHECK_JITTER_MS), within the site's 12 per owner per hour (REVIEW-pre17-codex P2-5); failures, 429 included,
+ * back off on their own (HANDOVER_CHECK_MS × 2^failures, at most HANDOVER_BACKOFF_MAX_MS).
+ */
+export const HANDOVER_CHECK_MS = 10 * 60_000;
+export const HANDOVER_CHECK_JITTER_MS = 60_000;
+export const HANDOVER_BACKOFF_MAX_MS = 2 * 60 * 60_000;
+/** The site's acknowledgement window (site/api/_lib/compute/handover.ts ACK_EXPIRY_MS). */
+export const HANDOVER_NOTICE_WINDOW_MS = 72 * 60 * 60_000;
+/** A posted notice (handover-notice.ts handoverNoticeText); group 1 is the proposal's chain id. */
+const NOTICE_POST = /^Compute handover pending: [A-Za-z0-9+/]{43}= proposes control of .*Proposal ([0-9a-f]{64})\.$/s;
+/**
+ * Site refusals of a rent that resending the same request can't change. invalid_rental_invite is answered inside the
+ * site's rent() AFTER its replay lookup (REVIEW-merged-opus.md 5), so it also proves the rent was never recorded.
+ */
+const PERMANENT_RENT_REFUSALS: ReadonlySet<string> = new Set(['tier_unavailable', 'unsupported_walkie_version', 'invalid_rental_invite']);
+/**
+ * 5xx refusals the site answers before writing anything for a request (site service.ts rent(): the switch and
+ * tick-health checks run inside its transaction before any insert, or before rent() at all). A FIRST send refused with
+ * one of them recorded nothing, so its pending rent is dropped like a 4xx and the person's retry is the only send
+ * (pre.17 review P2-1). compute_busy is answered as a 429, so it is a 4xx already. Any other 5xx, a timeout or a lost
+ * answer leaves the outcome unknown: the pending rent is kept and sent again with the same key.
+ */
+const REFUSED_BEFORE_RECORDING: ReadonlySet<string> = new Set(['compute_tick_stale', 'compute_not_configured']);
+const refusedBeforeRecording = (err: unknown): err is ComputeSiteError => err instanceof ComputeSiteError &&
+  ((err.status >= 400 && err.status < 500) || (err.status >= 500 && REFUSED_BEFORE_RECORDING.has(err.code)));
+/**
+ * A rent kept pending because its outcome is unknown says only that, so nobody rents the same machine again. Not the
+ * refusal's own words: after a lost answer the site may have recorded the first send, and "nothing was rented: try
+ * again" (compute_busy, compute_tick_stale) would rent it twice (pre.17d review P3-1).
+ */
+const KEPT_PENDING_MESSAGE = "the request is kept and will be sent again automatically; don't rent again";
+function keptPending(err: unknown): never {
+  if (err instanceof ComputeSiteError) throw new HttpError(502, err.code, KEPT_PENDING_MESSAGE, err.details);
+  throw err;
+}
+
+/**
+ * A pending rent whose newest code expired this long ago is replayed once more (it still recovers a rent the site
+ * recorded) and then dropped whatever the answer: otherwise a drain (503) replays it every minute for as long as it
+ * lasts, using up the account's 30 rents an hour.
+ */
+export const PENDING_RENT_EXPIRED_MS = 10 * 60_000;
+
+/** When the newest of a pending rent's codes expires (each is minted for RENTAL_CODE_TTL_MS), or null if none decodes. */
+function codesExpireAt(codes: readonly string[]): number | null {
+  let latest: number | null = null;
+  for (const code of codes) {
+    const decoded = decodeInvite(code);
+    if (!('error' in decoded)) latest = Math.max(latest ?? 0, decoded.expires_at);
+  }
+  return latest;
+}
 /** An ended rental with no machine seen yet is watched this long more (its last code could still be used). */
 export const REVOKE_WATCH_MS = RENTAL_CODE_TTL_MS + 10 * 60_000;
 /** A revocation the authority accepted is not sent again for this long while this daemon's roster doesn't show it yet (sync is on its way). */
@@ -44,6 +108,8 @@ export interface ComputeOptions {
   readonly version?: string;
   /** Test signing key; production verifies against the pinned vendor key. */
   readonly noticePublicKey?: string;
+  /** false: the daemon doesn't start the poller (tests drive pollOnce() themselves); default true. */
+  readonly autostart?: boolean;
 }
 
 export interface ComputeDeps extends RevokeDeps {
@@ -66,13 +132,30 @@ function asHttp(err: unknown): never {
   throw err;
 }
 
-function messageFor(e: ComputeSiteError): string {
+export function messageFor(e: ComputeSiteError): string {
   switch (e.code) {
-    case "insufficient_credit": return "not enough compute credit: each machine needs its first hour covered (buy credit: walkie compute credit buy 50|200|1000)";
-    case "account_frozen": return "this team's compute account is frozen (a payment was disputed or refunded); contact Walkie support";
-    case "invalid_token": return "the Walkie site doesn't recognise this machine's compute account (compute-account file)";
-    case "rate_limited": return "the Walkie site is rate-limiting compute requests; try again in a minute";
-    case "compute_not_configured": return "rental compute isn't switched on yet on the Walkie site";
+    case "insufficient_credit": {
+      // The site names the credit it left out because it expires within the first hour (credit lasts 60 days).
+      const expiring = e.details.expiring_micros ?? 0;
+      return "not enough compute credit: each machine needs its first hour covered by credit that lasts through it" +
+        (expiring > 0 ? `; ${usd(expiring)} of the credit expires within the hour, so it can't cover a machine's first hour` : "") +
+        " (buy credit: walkie compute credit buy 50|200|1000)";
+    }
+    case "account_frozen": return "this team's compute account is frozen (a payment was disputed or refunded); contact Sqwakie support";
+    case "invalid_token": return "the Sqwakie site doesn't recognise this machine's compute account (compute-account file)";
+    case "rate_limited": return "the Sqwakie site is rate-limiting compute requests; try again in a minute";
+    // The site's locks were busy and it recorded nothing (a 429): nothing is pending, so the person sends it again.
+    case "compute_busy": return "the Sqwakie site is busy with this compute account; nothing was rented: try again in a few seconds";
+    case "compute_tick_stale": return "rental compute is paused while the Sqwakie site's minute check catches up; nothing was rented: try again in a few minutes";
+    case "compute_not_configured": return "rental compute isn't switched on yet on the Sqwakie site";
+    case "tier_unavailable": return "that machine type isn't offered right now (see walkie compute quotes for what is)";
+    case "unsupported_walkie_version": return "a rented machine can't be set up with this Sqwakie release; update this machine first (walkie update)";
+    // The site's retryable licence checks (lane C rounds 10-14): the dashboard shows these words, the CLI says the same.
+    case "licence_record_pruning": return "the Sqwakie site is clearing ended licences from this team's record; this is temporary: run the command again";
+    case "licence_backfill_pending": return "the Sqwakie site is still preparing rental compute for existing licences; this is temporary: run the command again later";
+    case "license_verification_unavailable": return "the Sqwakie site couldn't check this team's licence just now; this is temporary: run the command again in a minute";
+    case "compute_state_unavailable": return "the Sqwakie site's compute service is briefly unavailable; this is temporary: run the command again in a minute";
+    case "licence_bindings_overflow": return "this team has more licences than the Sqwakie site can check automatically; contact Sqwakie support";
     case "site_unreachable": return e.message;
     default: return e.message;
   }
@@ -88,6 +171,16 @@ export class ComputeService {
   private chain: Promise<unknown> = Promise.resolve();
   /** Rentals and pending rents already refused for a lost owner role (logged once each, WALK-74). */
   private readonly refused = new Set<string>();
+  /** Earliest clock time of the next handover status request while one is expected (handoverCheckDue). */
+  private nextHandoverCheck = 0;
+  /** Consecutive failed handover status requests: they back off on their own, apart from the poll round's failures. */
+  private handoverFailures = 0;
+  /** Expectations (proposal chain ids, pending-account keys) that already had their immediate check. */
+  private readonly checkedAtOnce = new Set<string>();
+  /** Proposals this machine settled (acknowledged, or handover_not_found); also kept in the store's meta. */
+  private readonly settled = new Set<string>();
+  /** Proposals of the signed notices the last state poll carried (expectation b). */
+  private stateProposals: readonly string[] = [];
 
   constructor(private readonly d: ComputeDeps, private readonly opts: ComputeOptions = {}) {
     this.site = opts.site ?? new ComputeSite();
@@ -119,7 +212,7 @@ export class ComputeService {
       const created = await this.site.createAccount(team, proof).catch(asHttp);
       const adopted = created.adopted_accounts ?? [{ account_id: created.account_id, token: created.token }];
       if (!adopted.some(a => a.account_id === created.account_id && a.token === created.token))
-        throw new HttpError(502, 'bad_site_reply', 'the Walkie site returned an inconsistent account list');
+        throw new HttpError(502, 'bad_site_reply', 'the Sqwakie site returned an inconsistent account list');
       const accounts = adopted.map(a => ({ ...a, team,
         ...(created.handover_pending ? { handover_pending_until: created.handover_pending.completes_at } : {}) }));
       saveAccounts(this.home, accounts);
@@ -153,7 +246,10 @@ export class ComputeService {
 
   async state(): Promise<LocalComputeState> {
     const accounts = this.accounts();
-    if (!accounts.length) return { account_id: null, team_id: this.d.core.teamId ?? "", status: "none", balance_micros: 0, burn_per_hour_micros: 0, hours_left: null, rentals: [] };
+    // No account here: one can be made only on the roster authority (ensureAccount), so say so instead of offering a
+    // rent that fails; the team's rentals are visible there too (REVIEW-codex P2-5).
+    if (!accounts.length) return { account_id: null, team_id: this.d.core.teamId ?? "", status: "none", balance_micros: 0, burn_per_hour_micros: 0, hours_left: null, rentals: [],
+      ...(this.d.core.isAuthority() ? {} : { authority_required: true as const }) };
     const ready = accounts.filter(a => !a.handover_pending_until || this.d.core.clock() >= a.handover_pending_until);
     if (!ready.length) return { account_id: null, team_id: this.d.core.teamId ?? '', status: 'none', balance_micros: 0,
       burn_per_hour_micros: 0, hours_left: null, rentals: [], handover_pending_until: accounts[0]!.handover_pending_until };
@@ -162,12 +258,21 @@ export class ComputeService {
     const burn = states.reduce((n, s) => n + s.burn_per_hour_micros, 0);
     const { recs, unreadable } = this.readRecords();
     const localAlerts = this.localAlerts(recs, unreadable);
-    return { ...states[0]!, balance_micros: balance, burn_per_hour_micros: burn, hours_left: burn ? balance / burn : null,
+    // Credit lots (the site lists them; an older site does not): every account's, soonest expiry first.
+    const lotted = states.some(s => s.credit_lots !== undefined);
+    const lots = states.flatMap(s => s.credit_lots ?? []).sort((a, b) => a.expires_at - b.expires_at).slice(0, MAX_CREDIT_LOTS);
+    // Each account's credit pays only its own machines, and the site forecasts each one from all of its lots: the team's
+    // hours left is when the first burning account runs out (pre.17 review: Codex P3-8).
+    const left = states.filter(s => s.burn_per_hour_micros > 0 && s.hours_left !== null).map(s => s.hours_left as number);
+    return { ...states[0]!, balance_micros: balance, burn_per_hour_micros: burn,
+      hours_left: left.length ? Math.min(...left) : null,
+      ...(lotted ? { credit_lots: lots, next_expiry_at: lots[0]?.expires_at ?? null } : {}),
       status: states.some(s => s.status === 'frozen') ? 'frozen' : 'active',
       ...(localAlerts.length ? { alerts: [...new Set([...(states[0]!.alerts ?? []), ...localAlerts])] } : {}),
       rentals: this.withKnownNodes(states.flatMap(s => s.rentals), recs),
       accounts: states.map(s => ({ account_id: s.account_id, status: s.status, balance_micros: s.balance_micros,
-        burn_per_hour_micros: s.burn_per_hour_micros, hours_left: s.hours_left })) };
+        burn_per_hour_micros: s.burn_per_hour_micros, hours_left: s.hours_left,
+        ...(s.credit_lots ? { credit_lots: s.credit_lots, next_expiry_at: s.next_expiry_at ?? null } : {}) })) };
   }
 
   /** The records for what owners are shown. An unreadable file is reported (never thrown) so state still answers; the poller refuses to run on it. */
@@ -224,7 +329,7 @@ export class ComputeService {
   private pinnedVersion(): string {
     const tag = releaseTag(VERSION) ?? this.opts.version ?? process.env.WALKIE_COMPUTE_VERSION?.trim();
     if (!tag || !RELEASE_TAG_RE.test(tag)) {
-      throw new HttpError(409, "dev_build", `this Walkie (${VERSION}) isn't a release, so a rented machine can't be pinned to it; update to a release (walkie update) or set WALKIE_COMPUTE_VERSION=vX.Y.Z`);
+      throw new HttpError(409, "dev_build", `this Sqwakie (${VERSION}) isn't a release, so a rented machine can't be pinned to it; update to a release (walkie update) or set WALKIE_COMPUTE_VERSION=vX.Y.Z`);
     }
     return tag;
   }
@@ -265,12 +370,13 @@ export class ComputeService {
     try {
       res = await this.site.rent(acc.token, body);
     } catch (err) {
-      if (err instanceof ComputeSiteError && err.status >= 400 && err.status < 500) {
+      // Only this first send's refusal can prove nothing was recorded (a resend after a lost answer cannot).
+      if (refusedBeforeRecording(err)) {
         await this.serial(async () => savePending(this.home, loadPending(this.home).filter(p => p.body.idempotency_key !== body.idempotency_key)));
         asHttp(err);
       }
-      if (!(err instanceof ComputeSiteError && err.status === 0)) asHttp(err);
-      res = await this.site.rent(acc.token, body).catch(asHttp);
+      if (!(err instanceof ComputeSiteError && err.status === 0)) keptPending(err);
+      res = await this.site.rent(acc.token, body).catch(keptPending);
     }
     await this.record(res.rentals, res.code_index, minted);
     await this.serial(async () => savePending(this.home, loadPending(this.home).filter(p => p.body.idempotency_key !== body.idempotency_key)));
@@ -378,10 +484,69 @@ export class ComputeService {
     return this.polling;
   }
 
+  /**
+   * Whether this round sends a handover status request (see HANDOVER_CHECK_MS): only while a notice is expected, at once
+   * for a new expectation unless failures are backing off, else when the cadence or backoff has run out.
+   */
+  private handoverCheckDue(): boolean {
+    const now = this.d.core.clock();
+    const expected = this.expectedHandovers(now);
+    if (!expected.length) return false;
+    const fresh = expected.filter(k => !this.checkedAtOnce.has(k));
+    if (fresh.length && this.handoverFailures === 0) {
+      if (this.checkedAtOnce.size > 1024) this.checkedAtOnce.clear();
+      for (const k of fresh) this.checkedAtOnce.add(k);
+      return true;
+    }
+    return now >= this.nextHandoverCheck;
+  }
+
+  /** The expectations (a)-(c) of HANDOVER_CHECK_MS that hold now: no network, local files and the local log only. */
+  private expectedHandovers(now: number): string[] {
+    const keys = new Set<string>();
+    for (const a of this.accounts()) if (a.handover_pending_until && now < a.handover_pending_until) keys.add(`pending:${a.account_id}:${a.handover_pending_until}`);
+    for (const chain of [...this.stateProposals, ...this.postedProposals(now)]) if (!this.isSettled(chain)) keys.add(chain);
+    return [...keys];
+  }
+
+  /** Proposals of the handover notices other current owners' daemons posted in #general within the window (c). */
+  private postedProposals(now: number): string[] {
+    // Admin audit posts only (the author_agent index), newest first: a notice older than the 1000 newest in the window
+    // is missed (a residual for teams with heavier admin traffic). Rows that can't be a notice aren't parsed.
+    const rows = this.d.core.store.queryEvents({ channel: 'general', kinds: ['msg.post'], agents: [ADMIN_AGENT],
+      since_ts: now - HANDOVER_NOTICE_WINDOW_MS, limit: 1000 });
+    const out: string[] = [];
+    for (const row of rows) {
+      if (!row.json.includes('Compute handover pending: ')) continue;
+      if (row.origin === this.d.core.nodeId || nodeMember(this.d.core.roster, row.origin)?.role !== 'owner') continue;
+      let text: unknown;
+      try { text = (JSON.parse(row.json) as { body?: { text?: unknown } }).body?.text; } catch { continue; }
+      const m = typeof text === 'string' ? NOTICE_POST.exec(text) : null;
+      if (m) out.push(m[1]!);
+    }
+    return out;
+  }
+
+  private isSettled(chain: string): boolean {
+    return this.settled.has(chain) || !!this.d.core.store.getMeta(`compute-handover-settled:${chain}`);
+  }
+
+  private settleHandover(chain: string): void {
+    this.settled.add(chain);
+    this.d.core.store.setMeta(`compute-handover-settled:${chain}`, '1');
+  }
+
+  /** After a status answer: the next request comes after the cadence, or after the backoff for a failure. */
+  private handoverAnswered(ok: boolean): void {
+    this.handoverFailures = ok ? 0 : this.handoverFailures + 1;
+    const wait = ok ? HANDOVER_CHECK_MS : Math.min(HANDOVER_CHECK_MS * 2 ** this.handoverFailures, HANDOVER_BACKOFF_MAX_MS);
+    this.nextHandoverCheck = this.d.core.clock() + wait + Math.floor((this.opts.random ?? Math.random)() * HANDOVER_CHECK_JITTER_MS);
+  }
+
   private async round(): Promise<void> {
     await this.checkHandoverNotice();
     const accounts = this.accounts().filter(a => !a.handover_pending_until || this.d.core.clock() >= a.handover_pending_until);
-    if (!accounts.length) return; // poll funded idle accounts for signed handover notices
+    if (!accounts.length) { this.stateProposals = []; return; }
     loadRentals(this.home); // throws on a file this version can't read: nothing below may run on it and then write it back
     if (!this.notOwner()) this.refused.clear(); // an owner again: a later loss of the role is said again
     for (const pending of loadPending(this.home)) {
@@ -390,6 +555,8 @@ export class ComputeService {
       // (WALK-107): an earlier replay in this round can outlive the role. Its codes stay with the pending rent.
       const reason = this.notOwner();
       if (reason) { this.refuseOnce(`pending:${pending.body.idempotency_key}`, "compute_rent_refused", { reason }); continue; }
+      const expiresAt = codesExpireAt(pending.body.codes);
+      const final = expiresAt !== null && this.d.core.clock() > expiresAt + PENDING_RENT_EXPIRED_MS;
       try {
         const acc = this.account(pending.account_id);
         if (!acc) throw new Error('pending compute account unavailable');
@@ -397,20 +564,38 @@ export class ComputeService {
         await this.record(recovered.rentals, recovered.code_index, pending.invite_ids.map(id => ({ id })));
         await this.serial(async () => savePending(this.home, loadPending(this.home).filter(p => p.body.idempotency_key !== pending.body.idempotency_key)));
       } catch (err) {
+        // A refusal that resending can't change (the tier is off sale, the site won't install this release, or the codes
+        // are no longer valid) drops the pending rent, said once. Its codes are left to expire within the hour rather
+        // than spent: a 400 from validation is answered before the site's replay lookup, so it doesn't prove the first
+        // send was refused. The final replay of an expired rent drops it whatever the answer.
+        const site = err instanceof ComputeSiteError ? err : null;
+        if (site && PERMANENT_RENT_REFUSALS.has(site.code)) {
+          await this.serial(async () => savePending(this.home, loadPending(this.home).filter(p => p.body.idempotency_key !== pending.body.idempotency_key)));
+          this.d.log.warn('compute_rent_dropped', { reason: site.code, message: messageFor(site), invites: pending.invite_ids.length });
+          continue;
+        }
+        if (final) {
+          await this.serial(async () => savePending(this.home, loadPending(this.home).filter(p => p.body.idempotency_key !== pending.body.idempotency_key)));
+          this.d.log.warn('compute_rent_dropped', { reason: 'codes_expired', last: site?.code ?? 'recovery_failed', invites: pending.invite_ids.length });
+          continue;
+        }
         // A failed replay must not block settlement/revocation of other rentals.
         this.d.log.warn('compute_recovery_pending', { err: err instanceof ComputeSiteError ? err.code : 'recovery_failed' });
       }
     }
     const states = await Promise.all(accounts.map(async acc => ({ acc, state: await this.site.state(acc.token) })));
+    const proposals: string[] = [];
     for (const { state } of states) {
       const notice = state.handover_notice && verifyHandoverNotice(state.handover_notice, this.d.core.teamId ?? '',
         this.opts.noticePublicKey ?? VENDOR_PUBLIC_KEY_B64);
       if (!notice) continue;
+      proposals.push(notice.proposed_chain);
       const key = `compute-handover-notice:${notice.proposed_chain}`;
       if (this.d.core.store.getMeta(key)) continue;
       if (!this.d.core.me() || !this.d.core.roster.channels.has('general')) continue;
       if (postAudit(this.d.core, handoverNoticeText(notice))) this.d.core.store.setMeta(key, '1');
     }
+    this.stateProposals = proposals; // expectation (b) for the next round's handover check
     for (const { acc, state } of states) for (const r of state.rentals) if (r.state === "needs_code") await this.supplyCode(acc, r);
     const rentals = states.flatMap(({ state }) => state.rentals);
     const byId = new Map(rentals.map((r) => [r.id, r]));
@@ -433,6 +618,7 @@ export class ComputeService {
   private async checkHandoverNotice(): Promise<void> {
     const team = this.d.core.teamId;
     if (!team || this.d.core.me?.()?.role !== 'owner' || !this.d.core.roster.channels?.has('general')) return;
+    if (!this.handoverCheckDue()) return;
     const key = this.d.core.keys.pubkey;
     const roster = rosterProof(this.d.core);
     const expires_at = this.d.core.clock() + 240_000;
@@ -441,10 +627,18 @@ export class ComputeService {
       status = await this.site.handoverStatus(team, { key, expires_at, roster,
         signature: this.d.core.keys.sign(`walkie-compute-handover-status-v1\n${team}\n${expires_at}`) });
     } catch (err) {
-      if (err instanceof ComputeSiteError && err.code === 'handover_not_found') return;
-      this.d.log.warn('compute_handover_status_failed', { err: err instanceof ComputeSiteError ? err.code : 'status_failed' });
+      if (err instanceof ComputeSiteError && err.code === 'handover_not_found') {
+        // Nothing this owner can act on: the notices that made it ask are settled, so they make it ask no more.
+        this.handoverAnswered(true);
+        for (const chain of this.expectedHandovers(this.d.core.clock())) if (!chain.startsWith('pending:')) this.settleHandover(chain);
+        return;
+      }
+      this.handoverAnswered(false);
+      this.d.log.warn('compute_handover_status_failed', { err: err instanceof ComputeSiteError ? err.code : 'status_failed',
+        failures: this.handoverFailures });
       return;
     }
+    this.handoverAnswered(true);
     if (status.completes_at !== null) {
       const accounts = this.accounts();
       if (accounts.some(a => a.handover_pending_until && a.handover_pending_until !== status.completes_at))
@@ -467,6 +661,7 @@ export class ComputeService {
       await this.site.handoverAck(team, { key, expires_at, roster, chain_id: status.chain_id,
         notice_event: received, notice_event_id: received.id, notice_event_hash,
         signature: this.d.core.keys.sign(`walkie-compute-handover-ack-v2\n${team}\n${status.chain_id}\n${received.id}\n${notice_event_hash}\n${expires_at}`) });
+      this.settleHandover(status.chain_id);
     } catch (err) {
       this.d.log.warn('compute_handover_ack_failed', { err: err instanceof ComputeSiteError ? err.code : 'ack_failed' });
     }

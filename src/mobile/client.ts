@@ -30,7 +30,7 @@ export type Registered = Extract<DaemonMsg, { op: "registered" }>;
 /** Why a link ended, in words for a person. */
 export function closeReason(code: number): string {
   switch (code) {
-    case CLOSE.daemonOffline: return "Your computer is offline, asleep, or its Walkie daemon isn't running.";
+    case CLOSE.daemonOffline: return "Your computer is offline, asleep, or its Sqwakie daemon isn't running.";
     case CLOSE.daemonLeft: return "Your computer went offline.";
     case CLOSE.kicked: return "Your computer ended the connection (if this keeps happening, unpair this phone and pair it again).";
     case CLOSE.limit: return "Too many requests or connections; try again in a moment.";
@@ -69,7 +69,7 @@ export class MobileLink {
       try {
         ws = new WS(`${o.relay}/v1/phone?room=${encodeURIComponent(o.room)}`);
       } catch {
-        reject(new LinkError("Can't reach the Walkie relay.", null));
+        reject(new LinkError("Can't reach the Sqwakie relay.", null));
         return;
       }
       ws.binaryType = "arraybuffer";

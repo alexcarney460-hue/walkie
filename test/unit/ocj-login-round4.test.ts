@@ -8,13 +8,15 @@ import { fakeSeatWorld } from "../helpers/fake-seat-users.ts";
 
 const command = (...args: string[]) => Bun.spawnSync(args, { stdout: "pipe", stderr: "pipe" }).exitCode;
 const clean = (root: string) => {
-  command("chflags", "-R", "nouchg,nouappnd", root);
-  command("chmod", "-R", "-N", root);
+  if (process.platform === "darwin") {
+    command("chflags", "-R", "nouchg,nouappnd", root);
+    command("chmod", "-R", "-N", root);
+  }
   rmSync(root, { recursive: true, force: true });
 };
 
 for (const attack of ["uchg-file", "uchg-dir", "acl-file", "acl-dir", "root-is-file"] as const) {
-  test(`projection drop clears ${attack} and destroy still sweeps`, async () => {
+  test.skipIf(process.platform !== "darwin" && attack !== "root-is-file")(`projection drop clears ${attack} and destroy still sweeps`, async () => {
     const root = mkdtempSync("/tmp/walkie-ocj-r4-");
     try {
       const world = fakeSeatWorld(root, join(root, "walkie-home"));

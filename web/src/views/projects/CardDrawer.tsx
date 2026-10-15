@@ -10,6 +10,7 @@ import { ErrorState, RelTime, SkeletonRows } from "../../components/primitives.t
 import { agentAddress, canAnswer } from "../../lib/format.ts";
 import { assignees } from "../../lib/projects.ts";
 import { useNow } from "../../lib/time.ts";
+import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
 import { projectsStore, useProjects } from "../../state/projects.ts";
 import { bytes } from "../../lib/format.ts";
 import { hrefFor } from "../../lib/route.ts";
@@ -17,6 +18,7 @@ import { draggedFiles, useRoomUpload } from "./RoomUpload.tsx";
 import { useStore } from "../../state/store.tsx";
 import { AgentFaces } from "./ProjectList.tsx";
 import { ProvenanceSection } from "./ProvenancePanel.tsx";
+import { useDialogFocus } from "./dialogFocus.ts";
 
 const IGNORED: Record<string, string> = {
   person_only: "only a person can delete or restore a card",
@@ -68,6 +70,7 @@ export function CardDrawer({ card, project, onClose, byCard }: {
   const [comment, setComment] = useState("");
   const [reason, setReason] = useState(card.blocked_reason ?? "");
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const board = project.boards.find((b) => b.id === card.board) ?? project.boards[0];
 
   // The timeline is what provenance is allowed to read. A response for a card the drawer has already left must not
@@ -90,20 +93,15 @@ export function CardDrawer({ card, project, onClose, byCard }: {
   const shown = detail?.cardId === card.id ? detail : null;
   const historyError = errorFor === card.id ? loadError : null;
   useEffect(() => { setTitle(card.title); setBody(card.body); setLabels(card.labels.join(", ")); setReason(card.blocked_reason ?? ""); }, [card.id, card.rev]);
-  useEffect(() => {
-    const prev = document.activeElement;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("keydown", onKey); (prev as HTMLElement | null)?.focus?.(); };
-  }, [card.id]);
+  useDialogFocus(dialogRef, closeRef, onClose);
 
   const save = async (fields: Record<string, unknown>) => {
+    const generation = projectsStore.accessGeneration();
     setBusy(true);
     setError(null);
     try {
       const { task } = await api.updateTask(card.id, fields);
-      projectsStore.card(task);
+      if (!storeWriteAnswer({ kind: "card", value: task }, generation, () => setError(null))) setError(SAVED_REFRESHING);
     } catch (err) {
       setError(friendlyError(err));
     } finally {
@@ -113,11 +111,12 @@ export function CardDrawer({ card, project, onClose, byCard }: {
   const send = async () => {
     const t = comment.trim();
     if (!t) return;
+    const generation = projectsStore.accessGeneration();
     setBusy(true);
     setError(null);
     try {
       const { task } = await api.commentTask(card.id, t);
-      projectsStore.card(task);
+      if (!storeWriteAnswer({ kind: "card", value: task }, generation, () => setError(null))) setError(SAVED_REFRESHING);
       setComment("");
     } catch (err) {
       setError(friendlyError(err));
@@ -134,7 +133,7 @@ export function CardDrawer({ card, project, onClose, byCard }: {
   return (
     <div className="drawer-layer">
       <div className="scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="drawer card-drawer" role="dialog" aria-modal="true" aria-labelledby="card-title">
+      <aside ref={dialogRef} className="drawer card-drawer" role="dialog" aria-modal="true" aria-labelledby="card-title" tabIndex={-1}>
         <header className="drawer-head">
           <div className="drawer-head-text">
             <div className="drawer-kicker">
@@ -289,8 +288,12 @@ function CardFiles({ card, project }: { card: CardView; project: ProjectView }) 
   const mine = live.filter((f) => f.cards.includes(card.id));
   const others = live.filter((f) => !f.cards.includes(card.id));
   const change = async (id: string, body: { attach?: string[]; detach?: string[] }) => {
+    const generation = projectsStore.accessGeneration();
     setError(null);
-    try { projectsStore.roomFile((await api.roomChange(project.channel, id, body)).file); } catch (err) { setError(friendlyError(err)); }
+    try {
+      const file = (await api.roomChange(project.channel, id, body)).file;
+      if (!storeWriteAnswer({ kind: "roomFile", value: file }, generation, () => setError(null))) setError(SAVED_REFRESHING);
+    } catch (err) { setError(friendlyError(err)); }
   };
   return (
     <div

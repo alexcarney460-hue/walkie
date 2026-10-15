@@ -98,7 +98,7 @@ describe("no cost in any customer-facing payload", () => {
 
   test("the Stripe Checkout the customer pays on (and its receipt) names the credit, not a cost", () => {
     const params = creditSessionParams({ accountId: "ca_0123456789abcdef", block: 200, successUrl: "https://site.test/ok", cancelUrl: "https://site.test/no" });
-    expect(params.line_items?.[0]?.price_data?.product_data?.name).toBe("Walkie compute credit ($200)");
+    expect(params.line_items?.[0]?.price_data?.product_data?.name).toBe("Sqwakie compute credit ($200)");
     expect(params.line_items?.[0]?.price_data?.unit_amount).toBe(20_000);
     expect(leaks("checkout", params)).toEqual([]);
   });

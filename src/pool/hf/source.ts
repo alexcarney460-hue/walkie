@@ -1,6 +1,6 @@
 // Where the model list comes from. Fetched when a person asks (the dashboard through the daemon, or `walkie pool`), by the
 // machine that asks, kept on disk for about a day, never on a timer. When Hugging Face cannot be used: the previous list
-// if it is under 30 days old, else the list built into Walkie, and the view says which and why. A failure is remembered
+// if it is under 30 days old, else the list built into Sqwakie, and the view says which and why. A failure is remembered
 // for 15 minutes so an offline machine is not retried on every command. docs/plans/LOCAL-MODELS-HF-1.md "Source".
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ const FILE_MAX = 2 << 20;
 
 export const cachePath = (home: string): string => join(home, "pool", "hf-catalog.json");
 export { lockPath };
-const BUSY_NOTE = "Another Walkie process is reading Hugging Face right now; this is the list there is, try again in a minute.";
+const BUSY_NOTE = "Another Sqwakie process is reading Hugging Face right now; this is the list there is, try again in a minute.";
 
 const Stats = z.object({ requests: z.number().int().nonnegative(), models: z.number().int().nonnegative(), skipped: z.record(z.string().max(30), z.number().int().nonnegative()) });
 const CacheFile = z.object({
@@ -42,7 +42,7 @@ export interface SourceOptions {
   home: string;
   fetch?: typeof fetch;
   now?: () => number;
-  /** The list shipped with Walkie. */
+  /** The list shipped with Sqwakie. */
   builtin?: Catalog;
   minModels?: number;
   ttlMs?: number;
@@ -164,7 +164,7 @@ export class ModelSource {
   private view(file: CacheFile | null, retryMinutes: number | null): ModelsView {
     const now = this.now();
     const usable = file?.catalog && file.fetched_at !== undefined && now >= file.fetched_at && now - file.fetched_at <= STALE_MS;
-    const retry = retryMinutes === null ? "" : ` Walkie will try again in ${retryMinutes} minute${retryMinutes === 1 ? "" : "s"}.`;
+    const retry = retryMinutes === null ? "" : ` Sqwakie will try again in ${retryMinutes} minute${retryMinutes === 1 ? "" : "s"}.`;
     const why = file?.failed ? reasonOf(file.failed.kind, file.failed.message) : null;
     if (usable && file.catalog && file.fetched_at !== undefined) {
       const fresh = now - file.fetched_at < this.ttl;
@@ -176,7 +176,7 @@ export class ModelSource {
     }
     return {
       catalog: this.builtin, source: "built-in", state: "built-in", checkedAt: null,
-      note: why ? `${why}, so this is the list built into Walkie (updated ${this.builtin.updated}).${retry}` : null,
+      note: why ? `${why}, so this is the list built into Sqwakie (updated ${this.builtin.updated}).${retry}` : null,
     };
   }
 

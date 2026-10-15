@@ -39,7 +39,7 @@ const button = () => mounted.one("button.btn-primary")!;
 function pending(value: boolean) {
   expect(button().hasAttribute("disabled")).toBe(value);
   expect(button().getAttribute("aria-busy")).toBe(String(value));
-  expect(button().textContent).toBe(value ? "Starting…" : "Start WalkieTalkie");
+  expect(button().textContent).toBe(value ? "Starting…" : "Start Talkie");
   expect(mounted.one("fieldset")!.hasAttribute("disabled")).toBe(value);
   expect(mounted.one("select")!.hasAttribute("disabled")).toBe(value);
 }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DashboardSessions, SESSION_MAX_MS } from "../../src/daemon/dashboard-sessions.ts";
 import { LocalApi, type LocalApiDeps } from "../../src/daemon/local-api.ts";
 import { Hub } from "../../src/daemon/sse.ts";
+import { VERSION } from "../../src/daemon/version.ts";
 import type { Event } from "../../src/protocol/schemas.ts";
 
 const HOST = "127.0.0.1:7457";
@@ -82,6 +83,7 @@ describe("one daemon per socket (lockfile held for the daemon's lifetime)", () =
       const refused = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
       expect(String(refused.reason)).toMatch(/already running|already listening/);
       expect((await fetch("http://walkie/v1/healthz", { unix: path } as RequestInit)).status).toBe(200);
+      expect(await (await fetch("http://walkie/v1/healthz", { unix: path } as RequestInit)).json()).toEqual({ ok: true, version: VERSION });
     } finally {
       a.stop();
       b.stop();

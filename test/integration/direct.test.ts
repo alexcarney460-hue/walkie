@@ -1,4 +1,4 @@
-// Walkie Direct (ALE-5156): a three-node team with no Tailscale anywhere, over iroh QUIC on loopback (no relays).
+// Sqwakie Direct (ALE-5156): a three-node team with no Tailscale anywhere, over iroh QUIC on loopback (no relays).
 // invite → join → replication, the peer gate by endpoint key (revoked, removed, outsider), single-use invites,
 // and an ask/answer round trip.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -41,7 +41,7 @@ afterAll(async () => {
 
 const alexAddr = () => ({ ip: "", port: 7458, pubkey: alex.d.core.keys.pubkey });
 
-describe("Walkie Direct: invite → join", () => {
+describe("Sqwakie Direct: invite → join", () => {
   test("init without Tailscale founds a Direct team", async () => {
     const me = await alex.client().init("acme", "alex");
     expect(me.team?.name).toBe("acme");
@@ -118,7 +118,7 @@ async function walkie(node: TestNode, args: string[], confirm?: string) {
   return confirm === undefined ? runAsPerson([process.execPath, CLI, ...args], env) : runConfirmed([process.execPath, CLI, ...args], env, confirm);
 }
 
-describe("Walkie Direct: the CLI", () => {
+describe("Sqwakie Direct: the CLI", () => {
   test("walkie invite --handle prints a code; walkie join <code> admits; who and doctor show Direct", async () => {
     const inv = await walkie(alex, ["invite", "--handle", "dana", "--role", "observer"], "dana");
     expect(inv.code).toBe(0);
@@ -136,7 +136,7 @@ describe("Walkie Direct: the CLI", () => {
     expect(who.out).toMatch(/dana-mbp .*· direct/);
     const doc = await walkie(dana, ["doctor", "--json"]);
     const checks = (JSON.parse(doc.out) as { checks: { name: string; level: string; detail: string }[] }).checks;
-    expect(checks.find((x) => x.name === "transport")?.detail).toContain("Walkie Direct");
+    expect(checks.find((x) => x.name === "transport")?.detail).toContain("Sqwakie Direct");
     expect(checks.find((x) => x.name === "walkie direct")?.detail).toContain("endpoint");
     expect(checks.some((x) => x.name.startsWith("tailscale"))).toBe(false);
   }, 30_000);
@@ -165,13 +165,13 @@ describe("Walkie Direct: the CLI", () => {
     expect(both.code).not.toBe(0);
     const r = await walkie(fay, ["init", "solo", "--handle", "fay", "--direct"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Walkie Direct");
+    expect(r.out).toContain("Sqwakie Direct");
     expect(r.out).toContain("walkie invite --handle <name>");
     expect((await fay.client().me()).transport?.mode).toBe("direct");
   }, 30_000);
 });
 
-describe("Walkie Direct: the peer gate is the authenticated key", () => {
+describe("Sqwakie Direct: the peer gate is the authenticated key", () => {
   test("an outsider key is refused on every endpoint, and can't join without an invite", async () => {
     await expect(outsider.client.vv(alexAddr())).rejects.toMatchObject({ status: 403, code: "not_member" });
     await expect(outsider.client.hello(alexAddr())).rejects.toMatchObject({ status: 403, code: "not_member" });

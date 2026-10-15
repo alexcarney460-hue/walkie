@@ -90,7 +90,7 @@ route("POST", "/v1/orchestrator/start", async (c) => {
   const b = parseWith(StartReq, await readJson(c.req, LOCAL_BODY_MAX));
   adminRead(c);
   if (agentCaller(c) && (b.access === "full" || b.claude !== undefined || b.path !== undefined || b.cwd !== undefined || (b.permission_mode && b.permission_mode !== "default"))) {
-    throw new HttpError(403, "person_only", "only a person can give WalkieTalkie shell access or elevated permissions or choose its binary and folder");
+    throw new HttpError(403, "person_only", "only a person can give Talkie shell access or elevated permissions or choose its binary and folder");
   }
   // ORCH-2: the audit line says which access and model an agent started it with (AGENT-ADMIN-1: agents may, audited).
   adminGate(c, `started the orchestrator (access: ${b.access ?? "platform"}, model: ${b.model ?? "default"})`);
@@ -125,9 +125,9 @@ route("POST", "/v1/orchestrator/access", async (c) => {
   noPhone(c);
   const b = parseWith(AccessReq, await readJson(c.req, LOCAL_BODY_MAX));
   if (agentCaller(c) && b.access === "full") {
-    throw new HttpError(403, "person_only", "only a person can give WalkieTalkie shell access");
+    throw new HttpError(403, "person_only", "only a person can give Talkie shell access");
   }
-  adminGate(c, `set WalkieTalkie's access to ${b.access}`);
+  adminGate(c, `set Talkie's access to ${b.access}`);
   c.noTimeout();
   return json({ local: await host(c).setAccess(b.access as "platform" | "full") });
 });
@@ -137,9 +137,9 @@ route("POST", "/v1/orchestrator/auto", async (c) => {
   requireTeam(c);
   noPhone(c);
   if (agentCaller(c) && host(c).wouldAutoElevate()) {
-    throw new HttpError(403, "person_only", "only a person can give WalkieTalkie shell access or elevated permissions");
+    throw new HttpError(403, "person_only", "only a person can give Talkie shell access or elevated permissions");
   }
-  adminGate(c, "returned WalkieTalkie to automatic");
+  adminGate(c, "returned Talkie to automatic");
   return json({ local: await host(c).resumeAuto() });
 });
 

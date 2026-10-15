@@ -8,7 +8,7 @@ import { cpus, loadavg } from "node:os";
 import { machineBusy, type MachineAccel, type MachineStats, type MachineSys } from "../../protocol/machine-stats.ts";
 import type { Logger } from "../logger.ts";
 import { VERSION } from "../version.ts";
-import { SEATS_V2_CAP } from "../../protocol/seats.ts";
+import { SEATS_V2_CAP, SEATS_CODEX_OSS_CAP } from "../../protocol/seats.ts";
 import { readAccel, readGpuNow, type GpuNow } from "./accel.ts";
 import { platformReader, type Reader, type Reading } from "./read.ts";
 
@@ -69,7 +69,7 @@ export function hostSys(platform: string = process.platform, arch: string = proc
     version: VERSION,
     cpus: Math.max(1, Math.min(4096, cpus().length || 1)),
     load1: rounded(loads[0]), load5: rounded(loads[1]), load15: rounded(loads[2]), cpu_busy_pct: busy,
-    caps: [SEATS_V2_CAP],
+    caps: [SEATS_V2_CAP, SEATS_CODEX_OSS_CAP],
   };
 }
 

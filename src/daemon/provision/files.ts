@@ -2,7 +2,7 @@ import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, un
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 
-/** The Walkie home is 0700. Never follow a preexisting grant/journal symlink. */
+/** The Sqwakie home is 0700. Never follow a preexisting grant/journal symlink. */
 export function readPrivate(path: string): string | null {
   let stat;
   try { stat = lstatSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }

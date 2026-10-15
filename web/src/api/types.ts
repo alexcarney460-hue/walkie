@@ -31,7 +31,7 @@ export type AnswerBody = BodyOf<"answer">;
 export type ArtifactBody = BodyOf<"artifact.share">;
 export type Runtime = StatusBody["runtime"];
 
-/** POST /v1/team/invite-code → a Walkie Direct invite (PROTOCOL §5). The code is a one-time credential. */
+/** POST /v1/team/invite-code → a Sqwakie Direct invite (PROTOCOL §5). The code is a one-time credential. */
 export interface InviteCode {
   code: string;
   handle: string;
@@ -49,6 +49,9 @@ export interface PendingJoin {
   hostname: string;
   ip: string;
   requested_at: number;
+  /** FLEET-LINK-1: the fleet link this machine presented (an approve-each-machine link). */
+  link?: string | null;
+  generation?: string | null;
 }
 
 /** Browser projection of the recommendation view; authority comes from the server. */
@@ -65,7 +68,7 @@ export interface Recommendation {
   can_dismiss: boolean;
   why_not?: string;
   resolved?: { status: "approved" | "dismissed" | "superseded"; by: string; at: number; note?: string };
-  /** What a model-driven duty wrote itself: shown quoted as WalkieTalkie's, never sent in anyone's name. */
+  /** What a model-driven duty wrote itself: shown quoted as Talkie's, never sent in anyone's name. */
   context?: string;
   /** Word for word what approving sends or makes in this person's name (an ask's message, a new card's title); null: its card is gone. */
   outgoing?: string | null;

@@ -57,7 +57,7 @@ function capBytes(s: string, max: number): Uint8Array {
   if (bytes.byteLength <= max) return bytes;
   let end = max - 64;
   while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
-  const note = new TextEncoder().encode("\n\n[truncated by Walkie: transcript exceeded 5 MB]\n");
+  const note = new TextEncoder().encode("\n\n[truncated by Sqwakie: transcript exceeded 5 MB]\n");
   const out = new Uint8Array(end + note.byteLength);
   out.set(bytes.subarray(0, end));
   out.set(note, end);

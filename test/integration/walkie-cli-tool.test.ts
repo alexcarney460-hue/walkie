@@ -33,6 +33,15 @@ describe("walkie_cli", () => {
     expect(r.timed_out).toBe(false);
   }, 30_000);
 
+  test("lets the owner's agent switch a project report through walkie_cli", async () => {
+    const project = (await alex.client().createProject({ name: "MCP report" })).project;
+    for (const [verb, mode] of [["on", "hourly"], ["off", "off"]] as const) {
+      const result = await runWalkieCli(["projects", "report", project.prefix, verb], env);
+      expect(result.exit).toBe(0);
+      expect((await alex.client().project(project.channel)).project.status_report).toBe(mode);
+    }
+  }, 30_000);
+
   test("refuses accounts exec (also behind a leading flag), trust-cli and other credential/program commands, without running anything", async () => {
     for (const bad of [["accounts", "exec", "--provider", "claude", "--", "sh"], ["accounts", "--json", "exec", "--", "id"], ["accounts", "trust-cli"],
       ["claude"], ["dashboard"], ["mobile", "pair"], ["token", "rotate"], ["update"], ["daemon", "stop"], ["talkie", "say", "hi"],
@@ -40,7 +49,7 @@ describe("walkie_cli", () => {
       ["seat", "run", "--agent", "helper"], ["post", "#general", "--agent=helper", "hello"], []]) {
       expect({ bad, refused: cliArgvProblem(bad) !== null }).toEqual({ bad, refused: true });
     }
-    for (const ok of [["who", "--json"], ["projects", "list", "--all", "--json"], ["team", "add-machine", "alex", "--json"], ["talkie", "status"],
+    for (const ok of [["who", "--json"], ["projects", "list", "--all", "--json"], ["projects", "report", "WEB", "on"], ["projects", "report", "WEB", "off"], ["team", "add-machine", "alex", "--json"], ["talkie", "status"],
       ["task", "create", "WEB", "Fix; ls ~/keys | cat", "--column", "todo"], ["admin", "--machine", "hestia", "seats", "enable"]]) {
       expect({ ok, problem: cliArgvProblem(ok) }).toEqual({ ok, problem: null });
     }

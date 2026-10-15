@@ -42,7 +42,7 @@ export function PendingJoins() {
     setError(null);
     setLimit(null);
     try {
-      await api.admit({ node_id: p.node_id, approve });
+      await api.admit({ node_id: p.node_id, approve, ...(p.link ? { link: p.link, generation: p.generation } : {}) });
       setItems((list) => (list ?? []).filter((x) => x.node_id !== p.node_id));
       refreshTeam();
     } catch (err) {
@@ -82,7 +82,7 @@ export function PendingJoins() {
 }
 
 /**
- * Owners add teammates the way this machine connects: a Walkie Direct invite code, or a Tailscale login. A machine
+ * Owners add teammates the way this machine connects: a Sqwakie Direct invite code, or a Tailscale login. A machine
  * that serves both (a mixed team's authority, `walkie direct enable`) offers both.
  */
 export function InviteForm() {
@@ -92,9 +92,9 @@ export function InviteForm() {
   return <TailscaleInviteForm />;
 }
 
-const INSTALL_URL = "https://getwalkie.vercel.app/install.sh";
+const INSTALL_URL = "https://sqwakie.si/install.sh";
 
-/** Walkie Direct: a single-use code, valid 7 days, that admits one machine as @handle. */
+/** Sqwakie Direct: a single-use code, valid 7 days, that admits one machine as @handle. */
 function DirectInviteForm() {
   const [handle, setHandle] = useState("");
   const [role, setRole] = useState<Role>("member");

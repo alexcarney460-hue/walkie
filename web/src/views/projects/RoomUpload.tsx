@@ -5,6 +5,8 @@ import { useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { api, friendlyError, secretFindings } from "../../api/client.ts";
 import type { RoomFileView } from "../../api/types.ts";
+import { ACCESS_REFRESHING } from "../../lib/status-report.ts";
+import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
 import { projectsStore } from "../../state/projects.ts";
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -27,13 +29,17 @@ export function useRoomUpload(channel: string) {
   const [flagged, setFlagged] = useState<Flagged[]>([]);
   const [done, setDone] = useState<string | null>(null);
 
-  const one = async (file: File, card: string | undefined, allowSecrets: boolean): Promise<RoomFileView | null> => {
+  const one = async (file: File, card: string | undefined, allowSecrets: boolean, generation: number): Promise<RoomFileView | "refreshing" | null> => {
+    if (!projectsStore.isVisible(channel, generation)) { setError(ACCESS_REFRESHING); return null; }
     if (file.size > MAX_FILE_BYTES) { setError(`${file.name} is over 25 MB (the most a Data Room file holds).`); return null; }
     if (file.size === 0) { setError(`${file.name} is empty.`); return null; }
     setBusy((n) => n + 1);
     try {
       const res = await api.roomAdd(channel, file, { name: file.name, ...(card ? { card } : {}), ...(allowSecrets ? { allowSecrets: true } : {}) });
-      projectsStore.roomFile(res.file);
+      if (!storeWriteAnswer({ kind: "roomFile", value: res.file }, generation, () => setDone(null))) {
+        setDone(SAVED_REFRESHING);
+        return "refreshing";
+      }
       setDone(res.unchanged ? `${res.file.name} is unchanged (same as v${res.version})` : res.created ? `Added ${res.file.name}` : `Added v${res.version} of ${res.file.name}`);
       return res.file;
     } catch (err) {
@@ -48,14 +54,19 @@ export function useRoomUpload(channel: string) {
 
   /** Uploads the files one by one (optionally attached to a card id); flagged ones wait for a decision. */
   const upload = async (files: readonly File[], card?: string): Promise<void> => {
+    const generation = projectsStore.accessGeneration();
     setError(null);
     setDone(null);
-    for (const f of files) await one(f, card, false);
-    void projectsStore.loadRoom(channel);
+    for (const f of files) {
+      if (!projectsStore.isVisible(channel, generation)) { setError(ACCESS_REFRESHING); return; }
+      const saved = await one(f, card, false, generation);
+      if (saved === "refreshing") return;
+    }
+    if (projectsStore.isVisible(channel, generation)) void projectsStore.loadRoom(channel);
   };
   const confirm = async (f: Flagged) => {
     setFlagged((xs) => xs.filter((x) => x !== f));
-    await one(f.file, f.card, true);
+    await one(f.file, f.card, true, projectsStore.accessGeneration());
   };
   const skip = (f: Flagged) => setFlagged((xs) => xs.filter((x) => x !== f));
 

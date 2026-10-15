@@ -2,6 +2,7 @@
 // see — tier id, name, specs, price and billing terms. Prices are fixed data here; they are NOT derived from any cost
 // at runtime. Which provider, size, region and image back a tier, what it costs us, and our provider limits live only
 // in the private control-plane config (private-config.ts, env COMPUTE_PRIVATE_CONFIG).
+import type { PrivateConfig } from "./private-config.js";
 import type { QuoteTier, Quotes, TierId } from "./types.js";
 
 export const HOURS_PER_MONTH = 730;
@@ -68,9 +69,19 @@ export function quoteTier(t: TierSpec): QuoteTier {
   };
 }
 
-export function quotes(): Quotes {
+/**
+ * A tier is on sale only while its quota group may hold a machine. A quota of 0 (GPU while the provider grants none)
+ * takes the tier off sale: it is not quoted and a rent naming it is refused, so it can never queue forever holding
+ * the customer's first hour of credit. Reads only the quota numbers; nothing private reaches a quote.
+ */
+export function tierOffered(config: Pick<PrivateConfig, "tiers" | "quotas">, id: TierId): boolean {
+  return (config.quotas[config.tiers[id].quota_group] ?? 0) > 0;
+}
+
+/** The catalogue; `offered` narrows it to the tiers on sale (all of them when the control plane isn't configured). */
+export function quotes(offered: (id: TierId) => boolean = () => true): Quotes {
   return {
-    currency: "usd", tiers: TIERS.map(quoteTier), credit_blocks: [...CREDIT_BLOCKS_USD], min_hours_covered: MIN_HOURS_COVERED,
+    currency: "usd", tiers: TIERS.filter((t) => offered(t.id)).map(quoteTier), credit_blocks: [...CREDIT_BLOCKS_USD], min_hours_covered: MIN_HOURS_COVERED,
     egress_included_gib: EGRESS_INCLUDED_GIB, egress_price_per_gib_micros: EGRESS_PRICE_PER_GIB_MICROS,
   };
 }

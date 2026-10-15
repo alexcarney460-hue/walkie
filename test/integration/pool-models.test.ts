@@ -81,7 +81,7 @@ describe("when Hugging Face cannot be reached", () => {
       const first = await n2.client().poolModels();
       expect(first.source).toBe("built-in");
       const after = await waitFor(async () => { const v = await n2.client().poolModels(); return v.refreshing ? null : v; }, { what: "the failed attempt", timeoutMs: 10_000 });
-      expect(after.note).toBe(`Couldn't reach Hugging Face (no network), so this is the list built into Walkie (updated ${CATALOG.updated}).`);
+      expect(after.note).toBe(`Couldn't reach Hugging Face (no network), so this is the list built into Sqwakie (updated ${CATALOG.updated}).`);
       const n = dead.calls.length;
       await n2.client().poolModels();
       expect(dead.calls.length).toBe(n);

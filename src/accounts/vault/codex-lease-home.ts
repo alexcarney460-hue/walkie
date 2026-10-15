@@ -5,8 +5,8 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { isAccessOnly } from "./codex-access.ts";
-import { syncCodexHome, vaultCodexRoot } from "./codex-home.ts";
-import { privateDir } from "./vault.ts";
+import { recordCodexSessionsLink, syncCodexHome, vaultCodexRoot } from "./codex-home.ts";
+import { checkVaultDirectories, checkVaultHome } from "./vault-path.ts";
 
 const LEASE_DIR_RE = /^lease-[0-9a-f]{16}$/;
 const OWNER_FILE = ".walkie-lease";
@@ -24,10 +24,10 @@ export function writeLeaseHome(walkieHome: string, baseHome: string, grant: stri
   if (!/^[0-9a-f]{16}$/.test(grant)) throw new Error("invalid lease grant");
   if (!isAccessOnly(authJson)) throw new Error("refusing a Codex login that is not access-only");
   const root = vaultCodexRoot(walkieHome);
-  privateDir(join(walkieHome, "vault"), true);
-  privateDir(root, true);
+  checkVaultDirectories(walkieHome, root, { create: true });
   const dir = join(root, `lease-${grant}`);
   mkdirSync(dir, { mode: 0o700 }); // throws when it exists: a grant backs one home
+  checkVaultHome(walkieHome, "codex", dir);
   try {
     // The session's pid AND its start time: a pid reused by another process never keeps a stale home alive.
     writeFileSync(join(dir, OWNER_FILE), `${pid} ${processStart(pid) ?? ""}`.trim(), { mode: 0o600, flag: "wx" });
@@ -42,17 +42,20 @@ export function writeLeaseHome(walkieHome: string, baseHome: string, grant: stri
 
 /**
  * Deletes a leased home: symlinks are unlinked (never followed), everything else in it (the access-only auth.json,
- * Walkie's config copies, files Codex made there) is removed. Refuses anything that is not a lease home.
+ * Sqwakie's config copies, files Codex made there) is removed. Refuses anything that is not a lease home.
  */
 export function removeLeaseHome(dir: string, walkieHome: string): void {
   if (!isLeaseHome(dir, walkieHome)) throw new Error("refusing to delete a directory that is not a leased Codex home");
-  if (!existsSync(dir)) return;
-  if (lstatSync(dir).isSymbolicLink()) { unlinkSync(dir); return; }
+  if (!checkVaultHome(walkieHome, "codex", dir, { missingOk: true })) return;
+  recordCodexSessionsLink(dir, walkieHome);
   for (const name of readdirSync(dir)) {
+    checkVaultHome(walkieHome, "codex", dir);
     const p = join(dir, name);
+    if (name === "auth.json" && !lstatSync(p).isFile()) throw new Error("Codex lease credential is not a regular file");
     if (lstatSync(p).isSymbolicLink()) unlinkSync(p);
     else rmSync(p, { recursive: true, force: true }); // rm never follows links inside a directory
   }
+  checkVaultHome(walkieHome, "codex", dir);
   rmdirSync(dir);
 }
 

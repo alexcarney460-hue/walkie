@@ -6,7 +6,7 @@
 // …), before the caller's own flags. Every TOML file of the account home — config.toml and each `<name>.config.toml`
 // profile — is a cleaned copy with the provider / base-URL keys removed (codex-home.ts); project-local configs cannot
 // set these keys (Codex ignores them there). A caller's own `-c` that names one of these keys anywhere (its key or its
-// value, e.g. an inline profile table) means no Walkie credentials for that run.
+// value, e.g. an inline profile table) means no Sqwakie credentials for that run.
 // Round 8 (Opus r7): the command line is read with a per-command option table generated from codex 0.156.1's own
 // `--help` (codex-cli-table.ts), so a value-taking flag before a nested subcommand (`exec -o file resume …`) cannot
 // hide it; a flag the table does not know (another Codex version, a typo) is ambiguous, and an ambiguous command line
@@ -26,7 +26,7 @@ export function codexPinArgs(o: CodexPins = {}): string[] {
     "-c", `model_provider=${q("openai")}`,
     "-c", `chatgpt_base_url=${q(o.chatgpt ?? OFFICIAL_CHATGPT_BASE_URL)}`,
     "-c", `openai_base_url=${q(o.openai ?? OFFICIAL_OPENAI_BASE_URL)}`,
-    // Round 7 (Codex r6 1): voice (realtime) has its own endpoints, settable from config layers Walkie does not own
+    // Round 7 (Codex r6 1): voice (realtime) has its own endpoints, settable from config layers Sqwakie does not own
     // (a trusted project's config): the transport is switched off for credentialed launches instead.
     "-c", "features.realtime_conversation=false",
   ];

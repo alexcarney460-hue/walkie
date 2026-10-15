@@ -81,7 +81,7 @@ describe("reading the packet before the consent is shown", () => {
       .toBe("owner key could not be installed: EACCES. Fix that, then run the Windows installer again: the same link still works.");
   });
   test("grantRefusalLine adds the root marker's two problems, whose own message is already complete, and nothing else", () => {
-    expect(grantRefusalLine("root_marker_invalid", "the marker is not what Walkie installed: fix it, then run the same command again")).toBe("the marker is not what Walkie installed: fix it, then run the same command again");
+    expect(grantRefusalLine("root_marker_invalid", "the marker is not what Sqwakie installed: fix it, then run the same command again")).toBe("the marker is not what Sqwakie installed: fix it, then run the same command again");
     expect(grantRefusalLine("root_marker_required", "the marker is missing")).toBe("the marker is missing");
     expect(grantRefusalLine("owner_ssh_spent", "x")).toBe(ownerSshRefusalLine("owner_ssh_spent", "x"));
     expect(grantRefusalLine("grant_exists", "x")).toBeNull();
@@ -123,8 +123,8 @@ describe("ready means server, owner key and tunnel, nothing less", () => {
     const off = sshVerdict(status({ server: { enabled: false, detail: "no SSH server on 127.0.0.1" } }), "linux");
     expect(off).toMatchObject({ state: "waiting", code: "ssh_server_off" });
   });
-  test("macOS: Walkie's own service not answering waits like Linux's, ends as a failure with `walkie ssh enable` as the fix, and never mentions Remote Login", () => {
-    const off = status({ server: { enabled: false, detail: "Walkie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } });
+  test("macOS: Sqwakie's own service not answering waits like Linux's, ends as a failure with `walkie ssh enable` as the fix, and never mentions Remote Login", () => {
+    const off = status({ server: { enabled: false, detail: "Sqwakie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } });
     const v = sshVerdict(off, "darwin");
     expect(v).toMatchObject({ state: "waiting", code: "ssh_server_off" });
     expect(sshReport(v)).toMatchObject({ state: "waiting", code: "ssh_server_off" });
@@ -132,7 +132,7 @@ describe("ready means server, owner key and tunnel, nothing less", () => {
     expect(JSON.stringify(v)).not.toContain("Remote Login");
     expect(v.state === "waiting" && v.fix).toContain("walkie ssh enable");
   });
-  test("Linux and WSL: Walkie's own unit is named only when it exists on this machine (review finding 5b)", () => {
+  test("Linux and WSL: Sqwakie's own unit is named only when it exists on this machine (review finding 5b)", () => {
     const off = status({ server: { enabled: false, detail: "no SSH server on 127.0.0.1" } });
     const withUnit = sshVerdict(off, "linux", { walkieUnit: true });
     expect(withUnit.state === "waiting" && withUnit.fix).toContain("sudo systemctl enable --now walkie-sshd");
@@ -150,7 +150,7 @@ describe("ready means server, owner key and tunnel, nothing less", () => {
     const final = sshFinal(sshVerdict(waiting, "linux"));
     expect(final).toMatchObject({ state: "failed", code: "ssh_team_waiting" });
     expect(final.state === "failed" && final.why).toContain("roster authority");
-    expect(final.state === "failed" && final.fix).toContain("Walkie Direct or Tailscale");
+    expect(final.state === "failed" && final.fix).toContain("Sqwakie Direct or Tailscale");
     const authority = sshFinal(sshVerdict({ ...waiting, is_authority: true }, "linux"));
     expect(authority.state === "failed" && authority.why).toContain("roster authority");
     expect(authority.state === "failed" && authority.fix).toContain("online");
@@ -177,7 +177,7 @@ describe("waiting for readiness", () => {
     return { final, reads, noted };
   }
   test("macOS waits until the server AND the key AND the tunnel all hold, then reads ready", async () => {
-    const off = status({ server: { enabled: false, detail: "Walkie's SSH service is not running" }, tunnel_allowed: false, reason: "ssh_team_waiting" });
+    const off = status({ server: { enabled: false, detail: "Sqwakie's SSH service is not running" }, tunnel_allowed: false, reason: "ssh_team_waiting" });
     const serverOnly = status({ tunnel_allowed: false, reason: "ssh_team_waiting" });
     const keyMissing = status({ owner_key_present: false, tunnel_allowed: false, reason: "ssh_team_waiting" });
     const r = run([off, off, serverOnly, ready], "darwin");
@@ -228,7 +228,7 @@ function stepDeps(platform: NodeJS.Platform, readings: SshStatus[]) {
 }
 
 describe("finishOwnerSsh", () => {
-  const off = status({ server: { enabled: false, detail: "Walkie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } });
+  const off = status({ server: { enabled: false, detail: "Sqwakie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } });
   test("macOS: ready only when the readings say so, and nothing is opened or asked of the person on the way", async () => {
     const { deps } = stepDeps("darwin", [ready]);
     const lines: string[] = [];
@@ -286,7 +286,7 @@ describe("walkie ssh status", () => {
     expect(JSON.parse(json.join(""))).toEqual({ state: "ready" });
   });
   test("not ready: exit 1 for a person, but --json always exits 0 and carries the state, code, why and fix", async () => {
-    const off = status({ server: { enabled: false, detail: "Walkie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } });
+    const off = status({ server: { enabled: false, detail: "Sqwakie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } });
     const human: string[] = [];
     expect(await sshStatusCommand([], deps("darwin", [off]), (l) => human.push(l))).toBe(1);
     expect(human.join("\n")).toContain("owner SSH is not ready yet");

@@ -8,7 +8,7 @@ import { defaultHome } from "../../src/daemon/paths.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
 import { testHome } from "../helpers/test-home.ts";
 
-const { home, realHome } = testHome();
+const { home, realHome, freshDefaultPaths } = testHome();
 const inside = (path: string): boolean => path === home || path.startsWith(`${home}/`);
 const spawnOut = (args: string[], options: Record<string, unknown> = {}): string => Bun.spawnSync(args, { stderr: "pipe", ...options }).stdout.toString().trim();
 const MAIN = join(import.meta.dir, "../../src/cli/main.ts");
@@ -40,10 +40,10 @@ describe("the throwaway home", () => {
 
   test("is where every default path lands: Walkie's home, and the Claude, Codex, Grok, Hermes and SSH directories", () => {
     expect(defaultHome()).toBe(join(home, ".walkie"));
+    expect(freshDefaultPaths).toBe(true); // checked when the throwaway home was created, before other shard files use it
     for (const dir of [".walkie", ".claude", ".codex", ".grok", ".hermes", ".ssh"]) {
       const path = join(homedir(), dir);
       expect(inside(path)).toBe(true);
-      expect(existsSync(path)).toBe(false); // a fresh machine: nothing of the developer's is there
     }
     mkdirSync(join(defaultHome(), "agents"), { recursive: true });
     writeFileSync(join(defaultHome(), "agents", "probe.json"), "{}");

@@ -238,13 +238,13 @@ describe("development URLs", () => {
     expect(mobileUrlsFromEnv({ ...env, WALKIE_DEV: undefined }, false)).toEqual({ relayUrl: RELAY_URL, appUrl: APP_URL });
     expect(mobileUrlsFromEnv({ WALKIE_DEV: "1", WALKIE_RELAY_URL: "wss://evil.example", WALKIE_MOBILE_APP_URL: "https://evil.example/m" }, false))
       .toEqual({ relayUrl: RELAY_URL, appUrl: APP_URL });
-    expect(APP_URL).toBe("https://getwalkie.vercel.app/m");
+    expect(APP_URL).toBe("https://sqwakie.si/m");
   });
 });
 
 describe("QR", () => {
   test("a square matrix, rendered two rows per line with a quiet zone", () => {
-    const rows = qrRows("https://getwalkie.vercel.app/m#pair=AAAAAAAAAAAAAAAAAAAAAA");
+    const rows = qrRows("https://sqwakie.si/m#pair=AAAAAAAAAAAAAAAAAAAAAA");
     expect(rows.length).toBeGreaterThanOrEqual(21);
     expect(rows.every((r) => r.length === rows.length)).toBe(true);
     expect(rows[0]?.startsWith("1111111")).toBe(true); // finder pattern

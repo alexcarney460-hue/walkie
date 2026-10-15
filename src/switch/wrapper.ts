@@ -2,7 +2,7 @@
 // account with the most room — and, when that account hits its limit, the same session resumed on another account.
 //   1. at launch: pick the account (select.ts: own accounts first, a teammate's only when borrowing is on and every own
 //      account is affirmatively at its limit) and lease it (leases.ts); hand its credential ONLY to the trusted native
-//      claude / codex binary (trusted.ts; anything else runs without Walkie credentials); Claude gets the setup-token
+//      claude / codex binary (trusted.ts; anything else runs without Sqwakie credentials); Claude gets the setup-token
 //      on fd 3, Codex the account's CODEX_HOME; the user's own CLAUDE_CONFIG_DIR / sessions stay, so `--resume` finds
 //      the conversation;
 //   2. watch the session (watch.ts) for the HARD limit (round 3: nothing is switched ahead of it) — a limit the API
@@ -227,28 +227,28 @@ export async function runWrapped(o: WrapOptions): Promise<number> {
     const trustNow = () => (o.trust ?? ((p: Provider, r: string) => checkTrusted(o.walkieHome, p, r, { cwd: o.cwd, shimDir: join(o.walkieHome, "bin") })))(provider, real);
     const trust = trustNow();
     if (!trust.ok) {
-      say(`walkie: ${plainText(trust.why, 300)}; running ${provider} without Walkie accounts (no switching)`);
+      say(`walkie: ${plainText(trust.why, 300)}; running ${provider} without Sqwakie accounts (no switching)`);
       return await passthrough();
     }
     // Round 5 (Codex 1): Codex routing is pinned with -c overrides; a caller's own override of those keys cannot be.
     const override = provider === "codex" ? routingOverride(o.args) : null;
     if (override) {
-      say(`walkie: your ${plainText(override, 60)} would send the account's requests elsewhere or load an unchecked config; running ${provider} without Walkie accounts (no switching)`);
+      say(`walkie: your ${plainText(override, 60)} would send the account's requests elsewhere or load an unchecked config; running ${provider} without Sqwakie accounts (no switching)`);
       return await passthrough();
     }
     // Round 8 (Opus r7): the pins must land after every subcommand; a line that cannot be read with certainty gets none.
     const plan = provider === "codex" ? planCodexArgv(o.args) : null;
     if (plan && !plan.ok) {
-      say(`walkie: this codex command line could not be read with certainty (${plainText(plan.why, 120)}); running ${provider} without Walkie accounts (no switching)`);
+      say(`walkie: this codex command line could not be read with certainty (${plainText(plan.why, 120)}); running ${provider} without Sqwakie accounts (no switching)`);
       return await passthrough();
     }
     // Round 4: a caller's own --settings is merged with the credential routing the wrapper pins; one that cannot be
-    // read cannot be merged, so that run gets no Walkie credentials.
+    // read cannot be merged, so that run gets no Sqwakie credentials.
     let userSettings: Record<string, unknown> | null = null;
     const rawSettings = provider === "claude" ? settingsValue(o.args) : null;
     if (rawSettings !== null) {
       try { userSettings = readUserSettings(rawSettings, o.cwd); } catch (err) {
-        say(`walkie: your --settings could not be read (${plainText((err as Error).message, 120)}); running ${provider} without Walkie accounts (no switching)`);
+        say(`walkie: your --settings could not be read (${plainText((err as Error).message, 120)}); running ${provider} without Sqwakie accounts (no switching)`);
         return await passthrough();
       }
     }
@@ -258,7 +258,7 @@ export async function runWrapped(o: WrapOptions): Promise<number> {
       const configDir = o.env.CLAUDE_CONFIG_DIR && o.env.CLAUDE_CONFIG_DIR.startsWith("/") ? o.env.CLAUDE_CONFIG_DIR : join(o.env.HOME ?? homedir(), ".claude");
       const own = ownCredentialSetting({ cwd: o.cwd, configDir, home: o.env.HOME ?? homedir(), user: userSettings });
       if (own) {
-        say(`walkie: ${plainText(own, 200)} gives this session its own credential; running ${provider} on it, without Walkie accounts (no switching)`);
+        say(`walkie: ${plainText(own, 200)} gives this session its own credential; running ${provider} on it, without Sqwakie accounts (no switching)`);
         return await passthrough();
       }
     }
@@ -478,7 +478,7 @@ class Session {
    * when its id is known) rather than leave nothing running.
    */
   private async ownLogin(n: Launch, why: string): Promise<number> {
-    this.c.say(`walkie: could not continue on a Walkie account (${plainText(why, 160)}); continuing on ${this.o.provider}'s own login`);
+    this.c.say(`walkie: could not continue on a Sqwakie account (${plainText(why, 160)}); continuing on ${this.o.provider}'s own login`);
     const argv = this.session ? this.argv(n, false) : this.c.parsed.original;
     const env = { ...this.c.baseEnv };
     for (const k of ["WALKIE_ACCOUNT", "WALKIE_SWITCH_PID", "WALKIE_SWITCH_EVENTS", "WALKIE_SWITCH_HOOKS"]) delete env[k];

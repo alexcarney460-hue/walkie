@@ -42,7 +42,7 @@ describe("join status: one #general post after a machine joins a team", () => {
       const p = (await joinStatusPosts(kira)).filter((t) => t.includes("@kira's kiras-mbp"));
       return p.length ? p[0] : null;
     }, { what: "kira's join status post" });
-    expect(kiraPost).toContain(`Walkie ${VERSION}`);
+    expect(kiraPost).toContain(`Sqwakie ${VERSION}`);
     expect(kiraPost).toMatch(/seats \d+\/\d+/);
 
     // The other side sees the same post (it replicates like any other #general message).

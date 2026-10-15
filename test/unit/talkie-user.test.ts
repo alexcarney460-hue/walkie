@@ -227,7 +227,7 @@ test("an unrecognized dedicated account is never killed or deleted", async () =>
     let killed = false;
     const result = await reconcileTalkieUser({ ...world.sys, signal: () => { killed = true; } });
     expect(result.ok).toBe(false);
-    expect(result.why).toContain("not created by Walkie");
+    expect(result.why).toContain("not created by Sqwakie");
     expect(killed).toBe(false);
     expect(world.users.has("walkie-talkie")).toBe(true);
   } finally { rmSync(root, { recursive: true, force: true }); }

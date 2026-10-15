@@ -96,7 +96,7 @@ describe("when Hugging Face cannot be used", () => {
     const { s, events } = source(hub, { t: T0 });
     const v = await s.load();
     expect(v).toMatchObject({ source: "built-in", state: "built-in", checkedAt: null });
-    expect(v.note).toBe(`Couldn't reach Hugging Face (no network), so this is the list built into Walkie (updated ${CATALOG.updated}).`);
+    expect(v.note).toBe(`Couldn't reach Hugging Face (no network), so this is the list built into Sqwakie (updated ${CATALOG.updated}).`);
     expect(events.map((e) => e.event)).toEqual(["pool_models_refresh_failed"]);
     expect(events[0]!.fields).toMatchObject({ kind: "offline" });
   });
@@ -148,7 +148,7 @@ describe("when Hugging Face cannot be used", () => {
   test("rate limited, malformed and too few models each say what happened", async () => {
     const limited = fakeHub();
     limited.inject("/api/models?", () => new Response("slow", { status: 429 }), 100);
-    expect((await source(limited, { t: T0 }).s.load()).note).toBe(`Hugging Face is limiting this machine's requests right now, so this is the list built into Walkie (updated ${CATALOG.updated}).`);
+    expect((await source(limited, { t: T0 }).s.load()).note).toBe(`Hugging Face is limiting this machine's requests right now, so this is the list built into Sqwakie (updated ${CATALOG.updated}).`);
     rmSync(cachePath(home)); // each scenario starts without the previous one's remembered failure
     const junk = fakeHub();
     junk.inject("/api/models?", () => new Response(JSON.stringify({ x: 1 })), 100);

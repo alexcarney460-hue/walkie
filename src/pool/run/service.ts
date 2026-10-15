@@ -239,7 +239,7 @@ export class PoolService {
   prepare(modelId: string, quant: Quant): PrepareView {
     const m = CATALOG.models.find((x) => x.id === modelId);
     const mf = m ? filesFor(m.id, quant) : null;
-    if (!m || !mf) throw new HttpError(400, "unknown_model", `no ${quant === "q8" ? "8-bit" : "4-bit"} GGUF of "${modelId}" in Walkie's list`);
+    if (!m || !mf) throw new HttpError(400, "unknown_model", `no ${quant === "q8" ? "8-bit" : "4-bit"} GGUF of "${modelId}" in Sqwakie's list`);
     if (this.prep && ["downloading", "preparing"].includes(this.prep.view.state)) throw new HttpError(409, "prepare_active", `already preparing ${this.prep.view.name}`);
     const view: PrepareView = { model: m.id, quant, name: m.name, state: "downloading", done: 0, total: mf.bytes, error: null };
     const job = { view, abort: new AbortController() };

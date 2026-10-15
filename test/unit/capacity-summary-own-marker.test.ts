@@ -16,7 +16,7 @@ const MIN = 60_000;
 const D = 24 * H;
 const GIB = 1024 ** 3;
 const NODE = "aaaaaaaaaaaaaaaa";
-const SUMMARY = "WalkieTalkie fleet capacity";
+const SUMMARY = "Talkie fleet capacity";
 const statsOf = () => ({ at: Date.now(), mem: { total: 16 * GIB, used: 4 * GIB, free: 8 * GIB, swap_used: 0, pressure: "normal" }, temp_c: null,
   sys: { os: "linux", arch: "x64", cpus: 8, load1: 0.5, cpu_busy_pct: 10 } });
 const node = (online = true): NodeView => ({

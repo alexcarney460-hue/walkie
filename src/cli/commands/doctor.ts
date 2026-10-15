@@ -21,7 +21,7 @@ import { recSealCheck } from "../../daemon/orchestrator/rec-seal.ts";
 type Level = "ok" | "warn" | "fail";
 interface Check { level: Level; name: string; detail: string }
 
-const MEMORY_WARNING = "this machine is low on memory and swapping; Walkie may stall: close idle apps or agents";
+const MEMORY_WARNING = "this machine is low on memory and swapping; Sqwakie may stall: close idle apps or agents";
 
 export function memoryCheck(stats: MachineStats | null | undefined): Check | null {
   const mem = stats?.mem;
@@ -66,7 +66,7 @@ export function sshStatusChecks(ssh: SshStatus): Check[] {
     { level: ssh.server.enabled ? "ok" : "warn", name: "ssh server", detail: ssh.server.detail },
     { level: ssh.owner_key_error ? "fail" : ssh.owner_key_present && !ssh.reason ? "ok" : "warn", name: "owner ssh key",
       detail: ssh.owner_key_error ?? (ssh.owner_key_present ? ssh.reason ? `still present; access denied (${ssh.reason})` : "authorized" : "absent") },
-    { level: ssh.tunnel_allowed ? "ok" : "warn", name: "ssh tunnel", detail: ssh.tunnel_allowed ? "allowed through Walkie Direct"
+    { level: ssh.tunnel_allowed ? "ok" : "warn", name: "ssh tunnel", detail: ssh.tunnel_allowed ? "allowed through Sqwakie Direct"
       : ssh.reason === "ssh_team_waiting" ? ssh.is_authority ? WAITING_ON_PEERS : WAITING_ON_AUTHORITY : ssh.reason ?? "not allowed" },
   ];
 }
@@ -162,7 +162,7 @@ interface Diag {
   pending: number; conflicts: { origin: string; n: number }[]; peer_listen: string | null; now: number;
   /** v0.1.2+: the peer API's state; older daemons only report peer_listen. */
   peer_api?: { state: "up"; listen: string } | { state: "retrying"; reason: string; next_in_ms: number };
-  /** v0.2: the transport, and Walkie Direct's endpoint while it runs. */
+  /** v0.2: the transport, and Sqwakie Direct's endpoint while it runs. */
   transport?: "direct" | "tailscale" | null; direct?: { endpoint: string; relay: string | null } | null;
   stats?: MachineStats | null;
 }
@@ -212,7 +212,7 @@ export function unreachedCheck(serving: readonly TransportKind[], nodes: readonl
   const off = many ? "those machines are off" : "that machine is off";
   const directOnlyHere = serving.includes("direct") && !serving.includes("tailscale");
   const hidden = gone.every((n) => n.unreached?.vouched === false);
-  const subject = `${gone.length} ${many ? "machines use" : "machine uses"} only ${directOnlyHere ? "Tailscale" : "Walkie Direct"} (${list})`;
+  const subject = `${gone.length} ${many ? "machines use" : "machine uses"} only ${directOnlyHere ? "Tailscale" : "Sqwakie Direct"} (${list})`;
   const effect = hidden
     ? `no machine that reaches ${them} is in sync now, so ${their} agents are hidden here (or ${off})`
     : `${their} agents show here only while another machine that reaches ${them} is in sync`;
@@ -274,8 +274,8 @@ async function daemonMode(): Promise<"direct" | "tailscale" | null> {
 
 export async function doctor(ctx: Ctx): Promise<number> {
   const checks: Check[] = [];
-  // A Walkie Direct node doesn't use Tailscale: its checks would only be noise.
-  if (await daemonMode() === "direct") checks.push({ level: "ok", name: "transport", detail: "Walkie Direct (Tailscale not needed)" });
+  // A Sqwakie Direct node doesn't use Tailscale: its checks would only be noise.
+  if (await daemonMode() === "direct") checks.push({ level: "ok", name: "transport", detail: "Sqwakie Direct (Tailscale not needed)" });
   else await tailscaleChecks(checks);
   await daemonChecks(checks);
   await localChecks(checks);

@@ -108,12 +108,14 @@ test("while it saves, an error is announced next to it", () => {
   expect(failed).toContain("only the project&#x27;s creator or an owner can turn its status report on or off");
 });
 
-test("a person who may not switch it sees a small marker on a project that has it on, and nothing on one that does not", () => {
+test("a person who may not switch it sees the read-only state and reason", () => {
   const props = { canSet: false, busy: false, error: null, onToggle: () => {} };
   const marked = renderToStaticMarkup(<sw.StatusReportSwitch project={project({ status_report: "hourly" })} {...props} />);
   expect(marked).toContain("Reported hourly");
   expect(marked).not.toContain("<input");
-  expect(renderToStaticMarkup(<sw.StatusReportSwitch project={project()} {...props} />)).toBe("");
+  const off = renderToStaticMarkup(<sw.StatusReportSwitch project={project()} {...props} />);
+  expect(off).toContain('class="project-report-off">Off</span>');
+  expect(off).toContain("Only the creator or an owner can change this.");
 });
 
 test("an archived project is not reported on, so it shows neither the switch nor the marker", () => {
@@ -147,6 +149,68 @@ test("a refusal comes back as its plain reason and leaves the project as it was"
   expect(st.projectsStore.get().projects[0]?.status_report).toBe("hourly");
 });
 
+// A list read answers with what the daemon held when it started: one that started before a successful switch must not undo it.
+type ListAnswer = { projects: ProjectView[]; stubs: never[] };
+async function withSlowList<T>(run: (answer: (projects: ProjectView[]) => void) => Promise<T>): Promise<T> {
+  const { api } = await import("../src/api/client.ts");
+  const orig = api.projects;
+  let release: (a: ListAnswer) => void = () => {};
+  api.projects = () => new Promise<ListAnswer>((resolve) => { release = resolve; });
+  try {
+    return await run((projects) => release({ projects, stubs: [] }));
+  } finally {
+    api.projects = orig;
+  }
+}
+const switchTo = (p: ProjectView) => ({ updateProject: async (_channel: string, body: Record<string, unknown>) => ({ project: { ...p, status_report: body.status_report as "hourly" | "off" } }) });
+
+test("a project list read that started before a successful switch cannot put the old setting back, here or in the list", async () => {
+  const p = project();
+  const other = project({ channel: "p-00000002", name: "Hiring", prefix: "HR" });
+  st.projectsStore.set({ status: "ready", error: null, projects: [p, other], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  await withSlowList(async (answer) => {
+    const slow = st.projectsStore.refresh(); // started while the project is still off
+    expect(await lib.toggleStatusReport(switchTo(p), st.projectsStore, p.channel, true)).toBeNull();
+    answer([p, { ...other, name: "Hiring team" }]); // the old answer: the project off, another one renamed
+    await slow;
+  });
+  const now = st.projectsStore.get().projects;
+  expect(now.find((x) => x.channel === p.channel)?.status_report).toBe("hourly");
+  // The read still brings in what the switch did not touch.
+  expect(now.find((x) => x.channel === other.channel)?.name).toBe("Hiring team");
+  // And the switch on the Projects list stays checked.
+  const state = { ...initialState, phase: "ready" as const, me: { handle: "kira", role: "owner" } as State["me"], agents: [] };
+  const list = renderToStaticMarkup(<StaticStore state={state}><ProjectList /></StaticStore>);
+  expect(list).toMatch(/aria-checked="true" aria-label="Hourly status report for Website"/);
+  expect(list).toMatch(/aria-checked="false" aria-label="Hourly status report for Hiring team"/);
+});
+
+test("a list read that starts after the switch is believed: someone else turning the report off shows", async () => {
+  const p = project();
+  st.projectsStore.set({ status: "ready", error: null, projects: [p], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  expect(await lib.toggleStatusReport(switchTo(p), st.projectsStore, p.channel, true)).toBeNull();
+  await withSlowList(async (answer) => {
+    const later = st.projectsStore.refresh();
+    answer([p]);
+    await later;
+  });
+  expect(st.projectsStore.get().projects[0]?.status_report).toBe("off");
+});
+
+test("a switch the daemon refused changes nothing, so an older list read still lands as it answered", async () => {
+  const p = project({ status_report: "hourly" });
+  st.projectsStore.set({ status: "ready", error: null, projects: [p], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  const { ApiError } = await import("../src/api/client.ts");
+  const refusing = { updateProject: async () => { throw new ApiError("forbidden", "observers can't change a project's status report", 403); } };
+  await withSlowList(async (answer) => {
+    const slow = st.projectsStore.refresh();
+    expect(await lib.toggleStatusReport(refusing, st.projectsStore, p.channel, false)).toContain("observers can't");
+    answer([{ ...p, status_report: "off" }]);
+    await slow;
+  });
+  expect(st.projectsStore.get().projects[0]?.status_report).toBe("off");
+});
+
 // ---- the project list -----------------------------------------------------------------------------------------------
 
 function listHtml(me: { handle: string; role: string }, projects: ProjectView[]): string {
@@ -165,10 +229,36 @@ test("each row of the project list has the switch for an owner, outside the link
   for (const inner of anchors) expect(inner).not.toContain("<input");
 });
 
-test("a member who is not the creator sees only the marker, and only where it is on", () => {
+test("the daemon's real owner /v1/me payload offers the switch on active project rows", async () => {
+  const { meView } = await import("../../src/daemon/views.ts");
+  const me = meView({
+    roster: { team: { id: "team-1", name: "Team" } },
+    me: () => ({ handle: "kira", role: "owner" }),
+    nodeId: "node-1", hostname: "computer", ip: "127.0.0.1", peerPort: 7458, login: "kira@example.test", plan: () => null,
+  } as unknown as Parameters<typeof meView>[0]);
+  st.projectsStore.set({ status: "ready", error: null, projects: [project()], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  const state = { ...initialState, phase: "ready" as const, me, agents: [] };
+  const html = renderToStaticMarkup(<StaticStore state={state}><ProjectList /></StaticStore>);
+  expect(me.handle).toBe("kira");
+  expect(me.role).toBe("owner");
+  expect(html).toContain('aria-label="Hourly status report for Website"');
+});
+
+test("a member who is not the creator sees the read-only state and reason on both rows", () => {
   const html = listHtml({ handle: "bob", role: "member" }, [project({ status_report: "hourly" }), project({ channel: "p-00000002", name: "Hiring", prefix: "HR" })]);
   expect(html).not.toContain('role="switch"');
   expect(html.match(/Reported hourly/g)).toHaveLength(1);
+  expect(html).toContain('class="project-report-off">Off</span>');
+  expect(html.match(/Only the creator or an owner can change this\./g)).toHaveLength(2);
+});
+
+test("an observer and a viewer without a handle get a reason but no switch", () => {
+  const observer = listHtml({ handle: "kira", role: "observer" }, [project()]);
+  expect(observer).not.toContain('role="switch"');
+  expect(observer).toContain("Observers can&#x27;t change this.");
+  const noHandle = listHtml({ handle: "", role: "owner" }, [project()]);
+  expect(noHandle).not.toContain('role="switch"');
+  expect(noHandle).toContain("Sign in to change this.");
 });
 
 // ---- the latest report ----------------------------------------------------------------------------------------------
@@ -184,7 +274,7 @@ test("the panel shows the latest report as Markdown with the time its facts are 
   expect(html).toContain("Checkout.");
   expect(html).toContain('dateTime="2026-10-01T14:00:00.000Z"');
   expect(html).toContain("as of");
-  expect(html).toContain("WalkieTalkie");
+  expect(html).toContain("Talkie");
 });
 
 test("with no report yet it says so plainly, and differently when reports are off", () => {

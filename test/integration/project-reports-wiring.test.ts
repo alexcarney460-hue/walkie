@@ -1,5 +1,5 @@
 // PROJECT-REPORTS-1 through a real daemon (the in-process Cluster): the CLI switches a project over the daemon's local API
-// and `projects show` reads it back, the dashboard's route answers (a fresh project has no report yet), an agent is refused
+// and `projects show` reads it back, the dashboard's route answers (a fresh project has no report yet), an owner's agent operates
 // the switch, and the host's own Schedules instance (the one main.ts builds) seeds the new duty into a team that already
 // has its older ones (unit tests show a Schedules built without the host's option does not).
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -19,6 +19,7 @@ async function walkie(node: TestNode, args: string[]) {
 
 let c: Cluster;
 let alex: TestNode;
+let bob: TestNode;
 let web: ProjectView;
 
 const url = (n: TestNode, path: string) => `http://127.0.0.1:${n.d.localPort as number}${path}`;
@@ -34,7 +35,10 @@ async function session(n: TestNode): Promise<Record<string, string>> {
 beforeAll(async () => {
   c = new Cluster();
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
+  bob = await c.add({ name: "bob", login: "bob@example.com", hostname: "bobs-mbp" });
   await alex.client().init("aka", "alex");
+  await alex.client().invite("bob@example.com", "bob", "member");
+  expect((await bob.client().join(alex.peerAddr)).admitted).toBe(true);
   web = (await alex.client().createProject({ name: "Website relaunch" })).project;
 }, 60_000);
 
@@ -54,13 +58,41 @@ test("the CLI switches a project's hourly status report on and off, and show rea
   expect((await alex.client().project(web.channel)).project.status_report).toBe("off");
 }, 60_000);
 
-test("an agent is refused the switch with a plain reason; nothing changes", async () => {
+test("an owner's agent switches through the API and the CLI", async () => {
   const agent = new WalkieClient({ socket: alex.socket, agent: "cc-reports", timeoutMs: 15_000 });
-  const err = await agent.request("POST", `/v1/projects/${web.channel}`, { status_report: "hourly" }).then(() => null, (e: WalkieError) => e);
-  expect(err?.status).toBe(403);
-  expect(err?.message).toContain("people only");
+  await agent.request("POST", `/v1/projects/${web.channel}`, { status_report: "hourly" });
+  expect((await alex.client().project(web.channel)).project.status_report).toBe("hourly");
+  const off = await runAsPerson([process.execPath, CLI, "projects", "report", web.prefix, "off"], {
+    PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: alex.home, WALKIE_SOCKET: alex.socket, WALKIE_AGENT: "cc-reports",
+  });
+  expect(off.code).toBe(0);
   expect((await alex.client().project(web.channel)).project.status_report).toBe("off");
 });
+
+test("an unattended CLI caller with no agent marker follows the agent-admin path", async () => {
+  const run = await walkie(alex, ["projects", "report", web.prefix, "on"]);
+  expect(run.code).toBe(0);
+  expect((await alex.client().project(web.channel)).project.status_report).toBe("hourly");
+  await walkie(alex, ["projects", "report", web.prefix, "off"]);
+});
+
+test("a person at a terminal still switches the report", async () => {
+  const run = await runAsPerson([process.execPath, CLI, "projects", "report", web.prefix, "on"], {
+    PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: alex.home, WALKIE_SOCKET: alex.socket,
+  }, { tty: true });
+  expect(run.code).toBe(0);
+  expect((await alex.client().project(web.channel)).project.status_report).toBe("hourly");
+  await walkie(alex, ["projects", "report", web.prefix, "off"]);
+}, 60_000);
+
+test("a member's agent may switch their own project, but not another member's", async () => {
+  const own = (await bob.client().createProject({ name: "Bob's work" })).project;
+  const agent = new WalkieClient({ socket: bob.socket, agent: "cc-bob" });
+  expect((await agent.updateProject(own.channel, { status_report: "hourly" })).project.status_report).toBe("hourly");
+  const denied = await agent.updateProject(web.channel, { status_report: "hourly" }).then(() => null, (e: WalkieError) => e);
+  expect(denied?.status).toBe(403);
+  expect(denied?.message).toContain("creator or an owner");
+}, 60_000);
 
 test("the dashboard's route answers over the daemon's own API: the setting, and no report yet", async () => {
   await alex.client().request("POST", `/v1/projects/${web.channel}`, { status_report: "hourly" });

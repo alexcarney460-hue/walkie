@@ -5,7 +5,7 @@
 //
 // The relay is untrusted, so it can cost the daemon only a bounded amount of work:
 // - version: the daemon connects to /v1/daemon?v=<RELAY_PROTOCOL> and waits for the relay's `hello {v}`; an older
-//   relay is reported ("the relay is older than this Walkie") and retried only slowly, never in a loop;
+//   relay is reported ("the relay is older than this Sqwakie") and retried only slowly, never in a loop;
 // - establishment: connect + TLS + upgrade within 15 s (the transport), then hello within 5 s; a stuck attempt ends
 //   and the next one is scheduled as usual, so nothing waits on it;
 // - liveness: a link that heard nothing for 30 s is pinged; no answer within 20 s ends it (a dead path is noticed);
@@ -579,7 +579,7 @@ export class RelayLink {
       open: () => {
         if (this.sock !== sock) return;
         // The relay must say which protocol it speaks before anything else.
-        this.helloTimer = setTimeout(() => this.incompatible("the relay didn't say which protocol it speaks: it is older than this Walkie"), this.opts.helloMs ?? HELLO_MS);
+        this.helloTimer = setTimeout(() => this.incompatible("the relay didn't say which protocol it speaks: it is older than this Sqwakie"), this.opts.helloMs ?? HELLO_MS);
         (this.helloTimer as { unref?: () => void }).unref?.();
       },
       text: (s) => { if (this.sock === sock) this.onCtl(s); },
@@ -589,7 +589,7 @@ export class RelayLink {
         this.sock = null;
         const wasOpen = this.open;
         this.drop();
-        if (code === 4426) { this.incompatible("the relay refused this Walkie's protocol version: it is newer or older than this Walkie"); return; }
+        if (code === 4426) { this.incompatible("the relay refused this Sqwakie's protocol version: it is newer or older than this Sqwakie"); return; }
         // The transport ended it for the relay's misbehaviour (framing, sizes, the frame budget): same penalty as ours.
         if (violation) { this.penalize(`transport: ${reason}`); return; }
         if (this.wanted) {
@@ -695,8 +695,8 @@ export class RelayLink {
       if (m.t !== "hello") { this.violation("control before hello"); return; }
       if (m.v !== RELAY_PROTOCOL) {
         this.incompatible(typeof m.v === "number" && m.v < RELAY_PROTOCOL
-          ? "the relay is older than this Walkie: update the relay"
-          : "the relay is newer than this Walkie: update Walkie (walkie update)");
+          ? "the relay is older than this Sqwakie: update the relay"
+          : "the relay is newer than this Sqwakie: update Sqwakie (walkie update)");
         return;
       }
       if (this.helloTimer) clearTimeout(this.helloTimer);

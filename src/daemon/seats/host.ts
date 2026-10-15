@@ -1,3 +1,6 @@
+import { ossArgs, ossEnvironment, ossPolicy, ossSnapshot, OSS_NATIVE_HELD } from "./oss.ts";
+import { binaryIdentity, fixtureReadiness, OssProbeFailure, probeOssRuntime, requireOssFixture, type OssFixtureRuntime } from "./oss-runtime.ts";
+import { peerCapabilities } from "../peer-capabilities.ts";
 import { superviseReserve } from "./reserve.ts";
 // The seats host (PROTOCOL §11): on a machine whose person opted in, runs the seats allowed launchers ask for in
 // `seats-<this node>` (rules.ts), one `claude -p` / `codex exec` child each, in its own process group and a fresh
@@ -6,6 +9,7 @@ import { superviseReserve } from "./reserve.ts";
 // While the host's person uses the machine (`walkie seats busy`), at most their limit of seats run: the newest are
 // paused (SIGSTOP of the group) and new launches queue until they resume (busy.ts).
 import { codexAccessOnly } from "../../accounts/vault/codex-access.ts";
+import { readCodexAuthFromHome } from "../../accounts/vault/vault-path.ts";
 import { CLAUDE_ACCESS_MIN_LEFT_MS, claudeSeatAccess } from "../../accounts/vault/claude-access.ts";
 import { claudeTokenFrom, guardedClaudeKeychain, identifyClaude, readClaudeToken, systemKeychain, type KeychainReader } from "../../accounts/adapters/claude.ts";
 import { KEYCHAIN_BLOCK_MS } from "../../accounts/poll.ts";
@@ -16,10 +20,11 @@ import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { homeRelative } from "../../agent/identity.ts";
 import { redactSecrets } from "../../protocol/safety.ts";
+import { walkieArgv } from "../../hooks/install.ts";
 import type { BodyOf, Event } from "../../protocol/schemas.ts";
 import { HttpError } from "../http.ts";
 import {
-  DEFAULT_HOST_MAX, DEFAULT_SEAT_MODE, DEFAULT_SEAT_TIMEOUT_S, MAX_SEAT_BRIEF, SEATS_AGENT, SEATS_POOL_CODE, SEATS_POOL_CONFLICT, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SEAT_TASK_PROMPT, TERMINAL_STATES, TURN_SEATS_OFF, hostText, isSeatAgent, isV2, seatAgentName, seatOf, seatsChannel, stateText,
+  DEFAULT_HOST_MAX, DEFAULT_SEAT_MODE, DEFAULT_SEAT_TIMEOUT_S, MAX_SEAT_BRIEF, SEATS_AGENT, SEATS_POOL_CODE, SEATS_POOL_CONFLICT, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SEAT_TASK_PROMPT, TERMINAL_STATES, TURN_SEATS_OFF, hostText, isSeatAgent, isV2, isLocalOss, SEATS_CODEX_OSS_CAP, seatAgentName, seatOf, seatsChannel, stateText,
   type AnySeatRun, type HostAvailability, type SeatHost, type SeatMode, type SeatRun, type SeatRunV2, type SeatRuntime, type SeatState, type SeatsLocalView,
 } from "../../protocol/seats.ts";
 import type { AccountView } from "../../protocol/accounts.ts";
@@ -38,13 +43,13 @@ import { rootMarkerPresent } from "../provision/root-marker.ts";
 import { bindWorkerAccount, requiredWorkerAccount, superviseWorkerAccount } from "./enrollment-account.ts";
 import { MAX_BLOB_BYTES, readBlob, sha256Hex, writeBlob } from "../blobs.ts";
 import { blobServable } from "../blob-auth.ts";
-import { saveFleetConfig, saveSeatsConfig, type FleetConfig, type SeatsConfig } from "../config.ts";
+import { loadConfig, saveFleetConfig, saveSeatsConfig, type FleetConfig, type SeatsConfig } from "../config.ts";
 import type { Core } from "../core.ts";
 import type { Logger } from "../logger.ts";
 import type { PeerAddr, PeerClient } from "../peer-client.ts";
-import { submitRequest, type CatchUp } from "../requests.ts";
+import { signRequest, submitRequest, type CatchUp } from "../requests.ts";
 import { activeNodes, type NodeRec } from "../roster.ts";
-import { ClaudeChild, supportsPermissionPrompts } from "../orchestrator/process.ts";
+import { ClaudeChild, supportsPermissionPrompts, walkieMcpConfig } from "../orchestrator/process.ts";
 import { userMessage } from "../orchestrator/claude-stream.ts";
 import { SeatLimit, planPauses, planStarts } from "./busy.ts";
 import { MAX_N, SEATS_GROUP, seatUserName, type AdminResult, type AdminVerb } from "./admin.ts";
@@ -62,8 +67,14 @@ import { VERSION } from "../version.ts";
 import { cloneBundle, readFile, readHead, seatOutcome } from "./git.ts";
 import { writeDurably } from "./fsat.ts";
 import { SEATS_PHRASES } from "../../protocol/status-projection.ts";
+import { MemoryStore, MEMORY_FILE } from "../memory/store.ts";
+import { seatBriefWithPrimer } from "../memory/primer.ts";
 import type { StatusProvenance } from "../../protocol/status-projection.ts";
 import { SeatApi } from "./seat-api.ts";
+import { browserActionForSeat } from "../browser/routes.ts";
+import { seatMayBrowse } from "../browser/policy.ts";
+import type { BrowserAction } from "../browser/schema.ts";
+import type { BrowserResult } from "../browser/service.ts";
 import { createWorkerRoot, markWorkerStarting, readWorkerProcess, recordWorkerProcess, removeWorkerRoot, sweepWorkerRoots, workerRootIds, workerRootOccupied, WORKER_ROOT_KEY, type WorkerRoot } from "./worker-root.ts";
 import { SeatStatusThrottle } from "./status-throttle.ts";
 import { CleanupQueue } from "./cleanup-queue.ts";
@@ -75,6 +86,8 @@ import {
 import { grokLaunchVersionRefusal, readGrokVersion, seatToolPolicyActive, seatToolPolicyRefusal, toolPolicyKey } from "./tool-policy.ts";
 
 export interface SeatsOptions {
+  /** Source fixture seam only. No native OSS implementation is admitted. */
+  ossFixture?: OssFixtureRuntime;
   /** Tests: how long a paused seat's resume may wait on the seats channel or the roster before it is stopped (default 30 min). */
   holdMaxMs?: number;
   /** Startup enrollment migration failed: this daemon must refuse every seat until restarted after repair. */
@@ -105,7 +118,7 @@ export interface SeatsOptions {
    */
   admin?: (verb: AdminVerb, n: number, o?: { idle?: boolean }) => Promise<AdminResult>;
   /**
-   * WALK-103: the root-owned record of which Walkie owns this machine's seat users (instance.ts). Default: the real
+   * WALK-103: the root-owned record of which Sqwakie owns this machine's seat users (instance.ts). Default: the real
    * record, read each time; with a test's `admin` and no record given, the fake helper is this daemon's own.
    */
   seatRegistration?: () => RegistrationRead;
@@ -166,6 +179,8 @@ interface Seat {
   childStarted: string | null;
   env: Record<string, string> | null;
   workerRoot: WorkerRoot | null;
+  ossProbeUncertain?: boolean;
+  ossIdentity?: string;
   timer: ReturnType<typeof setTimeout> | null;
   /** The wall-clock limit, which doesn't run while the seat is paused. */
   limit: SeatLimit;
@@ -236,7 +251,7 @@ interface Persisted {
   recovered?: number[];
   /**
    * WALK-103 review: which daemon made each of `users` (its canonical socket path), so a copied seats.json (another
-   * Walkie's home copied, or one from before this record) never makes this daemon remove seat users it didn't make.
+   * Sqwakie's home copied, or one from before this record) never makes this daemon remove seat users it didn't make.
    */
   made_by?: Record<string, string>;
   user_high?: number;
@@ -275,7 +290,7 @@ interface V2Seat {
   cancelAccount?: () => void;
   /** The result file as read after the run. */
   result: ResultFile | null;
-  /** A lane worktree's HEAD as the seat ended (what Walkie's lane record may follow). */
+  /** A lane worktree's HEAD as the seat ended (what Sqwakie's lane record may follow). */
   resultHead?: string | null;
 }
 
@@ -302,9 +317,9 @@ export const QUEUE_CAP = 32;
 const PUBLISH_MS = 100;
 
 /** What to do when the helper's list of seat users can't be read (doctor, pool refusal: Opus r11 LOW). */
-/** An installed seat-user runner older than this Walkie (it starts the runtime without waiting for the go-ahead). */
-export const RUNNER_OUT_OF_DATE = "the seat users' runner on this machine is older than this Walkie and started without its go-ahead (it got no login): run walkie seats setup-user --apply";
-export const HELPER_WAY_OUT = "sudo can't reach the seat user helper: run walkie seats setup-user --apply (it reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed";
+/** An installed seat-user runner older than this Sqwakie (it starts the runtime without waiting for the go-ahead). */
+export const RUNNER_OUT_OF_DATE = "the seat users' runner on this machine is older than this Sqwakie and started without its go-ahead (it got no login): run walkie seats setup-user --apply";
+export const HELPER_WAY_OUT = "sudo can't reach the seat user helper: run walkie seats setup-user --apply (it reinstalls the helper and its sudo rule); Sqwakie retries by itself every 30 s, no restart needed";
 /** WALK-105: a seat left running across the first pre.12 upgrade, posted once its user is gone or idle. */
 const KEPT_SEAT_END_REASON = "ended after an upgrade; its machine restarted";
 
@@ -338,6 +353,7 @@ export class SeatsHost {
   /** Serialized user cleanup and retry. */
   private readonly cleanup: CleanupQueue<CleanResult>;
   private readonly pendingRoots = new Map<string, RootRecord>();
+  private workerRootInventoryUnknown = false;
   private codexReadiness: { login: "machine" | "unavailable"; reason?: string } | null = null;
   private rootRetry: ReturnType<typeof setTimeout> | null = null;
   private busyReapply: ReturnType<typeof setInterval> | null = null;
@@ -352,7 +368,7 @@ export class SeatsHost {
   private legacyNoted = false;
   /**
    * WALK-103 review: seat users this daemon knows of but didn't make (a copied seats.json, one from before this update,
-   * or, with no record of the registered Walkie, the helper's list): never removed, nothing of them stopped; name → why.
+   * or, with no record of the registered Sqwakie, the helper's list): never removed, nothing of them stopped; name → why.
    */
   private readonly foreignUsers = new Map<string, string>();
   /** Leftovers the helper won't remove while something of them still runs (`destroy <n> idle` answered `running`). */
@@ -411,6 +427,7 @@ export class SeatsHost {
    * Whether the environment seats get (the daemon's, with what the seat env file exports) carries a non-empty Claude token,
    * as last sourced (refreshLogin); null until then. Never guessed from the file's text (Codex r6 LOW 9).
    */
+  private dedicatedTokenKnown = false;
   private machineToken: { has: boolean; hasEnvToken?: boolean; at: number } | null = null;
   private cachedClaudeAccess: { credentials: string; expiresAt: number; readAt: number; identityId: string | null } | null = null;
   private knownClaudeExpiry: number | null = null;
@@ -447,7 +464,7 @@ export class SeatsHost {
   private publishTimer: ReturnType<typeof setTimeout> | null = null;
   /** The availability last posted in the channel (JSON), so an unchanged one isn't posted again. */
   private published: string | null = null;
-  /** The seats' own socket: what a seat's Walkie calls reach instead of this daemon's local API (seat-api.ts). */
+  /** The seats' own socket: what a seat's Sqwakie calls reach instead of this daemon's local API (seat-api.ts). */
   private readonly api: SeatApi;
   /** The installed runner/helper copies' versions, read again only when a copy changes (helper-version.ts). */
   private readonly helperVersions: HelperVersionCache;
@@ -470,7 +487,7 @@ export class SeatsHost {
   }
 
   /**
-   * The installed runner and user helper against this Walkie (SeatsLocalView.helper_version): release builds only (a
+   * The installed runner and user helper against this Sqwakie (SeatsLocalView.helper_version): release builds only (a
    * source build runs its own), once seat users are set up (configured, or the helper is installed); absent until the
    * first background check of the copies as they are ends.
    */
@@ -549,7 +566,7 @@ export class SeatsHost {
 
   /**
    * WALK-103: whose seat users the helper holds, from the root-owned record (instance.ts): this daemon's (`own`),
-   * another Walkie's (`other`: the helper is never asked), or unrecorded (`legacy`: an earlier setup).
+   * another Sqwakie's (`other`: the helper is never asked), or unrecorded (`legacy`: an earlier setup).
    */
   private seatScope(): SeatScope {
     if (!this.opts.seatRegistration && this.opts.admin) return { state: "own" };
@@ -569,7 +586,7 @@ export class SeatsHost {
 
   /**
    * WALK-105: a seat-user seat left running with no stamp of another daemon. Kept (not killed, not reported) unless
-   * this start is already the registered Walkie and the entry was not kept before — that case is the ordinary crash
+   * this start is already the registered Sqwakie and the entry was not kept before — that case is the ordinary crash
    * leftover and is still reported failed once its user is destroyed. A `kept: "foreign"` entry stays kept even after
    * registration, until its user is gone or idle.
    */
@@ -867,10 +884,10 @@ export class SeatsHost {
       if (!Number.isInteger(n) || n < 1) continue;
       if (n > this.userHigh) this.userHigh = n;
       if (this.liveUsers.has(n)) continue;
-      // WALK-103: an earlier setup doesn't record which Walkie owns these: never removed as this daemon's leftovers.
+      // WALK-103: an earlier setup doesn't record which Sqwakie owns these: never removed as this daemon's leftovers.
       if (scope.state !== "own") {
         unknown.push(n);
-        this.keepForeign(n, "in the seat user helper's list, not made by this Walkie, and the setup doesn't record which Walkie owns it");
+        this.keepForeign(n, "in the seat user helper's list, not made by this Sqwakie, and the setup doesn't record which Sqwakie owns it");
         continue;
       }
       this.log.warn("seats_pending_recovered", { user: seatUserName(n) });
@@ -900,7 +917,7 @@ export class SeatsHost {
     if (!this.reconcileError) this.startReconcile();
     await this.helperReconciled;
     if (!this.reconciled) {
-      throw new Error(`no seat user can be made yet: Walkie couldn't list the seat users its helper still holds (${this.reconcileError ?? "not listed yet"}); it retries every 30 s`);
+      throw new Error(`no seat user can be made yet: Sqwakie couldn't list the seat users its helper still holds (${this.reconcileError ?? "not listed yet"}); it retries every 30 s`);
     }
     for (let attempt = 0; attempt < 3; attempt++) {
       const n = ++this.userHigh;
@@ -912,7 +929,7 @@ export class SeatsHost {
       this.liveUsers.add(n);
       if (!this.save(true)) {
         this.liveUsers.delete(n);
-        throw new Error("no seat user could be made: seats.json could not be written (check the Walkie home's disk and permissions)");
+        throw new Error("no seat user could be made: seats.json could not be written (check the Sqwakie home's disk and permissions)");
       }
       const r = await this.adminOp("create", n);
       if (!r?.ok) {
@@ -1030,14 +1047,19 @@ export class SeatsHost {
   /**
    * Why the pool (split runs) must stay off on this machine now, or null (Opus seats r9 HIGH, Codex r10 HIGH): seats
    * are allowed, or anything of one may still run — a seat or a queued launch, a deny still stopping them, a seat user
-   * not verified removed (quarantined, or being destroyed), or the helper's list of the ones it holds not read yet.
+   * not verified removed (quarantined, or being destroyed), unresolved worker roots/inventory, or the helper's list not read yet.
    */
   poolBlock(): string | null {
     // Before init() has read seats.json, the seat users a crash left behind aren't known yet: nothing of the pool.
-    if (!this.initialized) return `${SEATS_POOL_CONFLICT}. Walkie is still starting and hasn't checked this machine's seats yet: try again in a moment`;
+    if (!this.initialized) return `${SEATS_POOL_CONFLICT}. Sqwakie is still starting and hasn't checked this machine's seats yet: try again in a moment`;
     if (this.current.allow === true) return TURN_SEATS_OFF;
     if (this.denying || this.seats.size || this.queue.length) {
       return `${SEATS_POOL_CONFLICT}. Seats are still stopping here: wait until they have (walkie seats)`;
+    }
+    // A settled probe/ended seat is not proof that its descendants are absent. Recovery reconstructs
+    // these roots from their own markers even when seats.json could not persist pending custody.
+    if (this.workerRootInventoryUnknown || this.pendingRoots.size) {
+      return `${SEATS_POOL_CONFLICT}. Seat worker root cleanup or inventory is unverified; processes may still run (walkie seats)`;
     }
     const left = [...new Set([...this.quarantine, ...[...this.liveUsers].map(seatUserName), ...this.foreignUsers.keys()])].sort();
     if (left.length) {
@@ -1046,7 +1068,7 @@ export class SeatsHost {
     // While the list is being read it may name users seats.json lost (fail closed); unreadable, it blocks only while
     // it matters (seat users on, or one held).
     if (this.listingHelper || (this.reconcileError && this.helperListMatters())) {
-      return `${SEATS_POOL_CONFLICT}. Walkie hasn't yet listed the seat users its helper may still hold${this.reconcileError ? ` (${this.reconcileError})` : ""}: ${HELPER_WAY_OUT}`;
+      return `${SEATS_POOL_CONFLICT}. Sqwakie hasn't yet listed the seat users its helper may still hold${this.reconcileError ? ` (${this.reconcileError})` : ""}: ${HELPER_WAY_OUT}`;
     }
     return null;
   }
@@ -1141,7 +1163,10 @@ export class SeatsHost {
         this.log.warn("seats_worker_root_sweep", { id, err: scrub((err as Error).message) });
       });
     }
-    catch (err) { this.log.warn("seats_worker_root_sweep", { err: scrub((err as Error).message) }); }
+    catch (err) {
+      this.workerRootInventoryUnknown = true; // an unreadable inventory cannot establish absence for the pool
+      this.log.warn("seats_worker_root_sweep", { err: scrub((err as Error).message) });
+    }
     const now = Date.now();
     this.handled = new Map(Object.entries(saved.handled).filter(([, until]) => until >= now));
     for (const [k, v] of Object.entries(saved.launches ?? {})) this.launchesDay.set(k, v);
@@ -1170,14 +1195,14 @@ export class SeatsHost {
     const leftUsers = new Set([...(saved.users ?? []), ...saved.running.map((r) => r.user).filter((u): u is number => u !== undefined)]);
     for (const n of saved.recovered ?? []) if ((saved.users ?? []).includes(n)) this.recoveredIdle.add(n);
     // WALK-103 review: only the seat users this daemon made (stamped with its socket) are destroyed as its own. Any other
-    // (a copied seats.json, or one from before the stamps) is the registered Walkie's to clean up: as a leftover found
+    // (a copied seats.json, or one from before the stamps) is the registered Sqwakie's to clean up: as a leftover found
     // in the helper's list (idle only) when that is this daemon, never otherwise.
     const scope = leftUsers.size ? this.seatScope() : null;
     for (const n of leftUsers) {
       const stamp = saved.made_by?.[String(n)];
       if (stamp === this.instanceId) { this.liveUsers.add(n); void this.destroyUser(n, true); continue; }
       if (scope?.state === "own") { this.liveUsers.add(n); this.recoveredIdle.add(n); void this.destroyUser(n, true); continue; }
-      this.keepForeign(n, stamp ? "made by another Walkie on this machine (named in a copy of its seats.json)" : "made before this Walkie recorded which seat users it made");
+      this.keepForeign(n, stamp ? "made by another Sqwakie on this machine (named in a copy of its seats.json)" : "made before this Sqwakie recorded which seat users it made");
     }
     if (this.ephemeral || this.helperInstalled()) this.startReconcile();
     this.initialized = true;
@@ -1207,12 +1232,12 @@ export class SeatsHost {
           this.log.warn("seats_leftover", { id: r.id, user: r.user, destroyed: d.ok });
           this.postState(r.id, {
             state: "failed", dir: homeRelative(r.dir),
-            reason: `the host's Walkie daemon restarted while it ran${d.ok ? " (its processes were stopped)" : " (its seat user could not be verified removed: its processes may still be running; it is quarantined)"}`,
+            reason: `the host's Sqwakie daemon restarted while it ran${d.ok ? " (its processes were stopped)" : " (its seat user could not be verified removed: its processes may still be running; it is quarantined)"}`,
           });
           this.endSavedSeatCard(r.id);
         }).catch((err) => {
           this.log.warn("seats_leftover_cleanup_failed", { id: r.id, err: scrub((err as Error).message) });
-          this.postState(r.id, { state: "failed", dir: homeRelative(r.dir), reason: "the host's Walkie daemon restarted; seat user cleanup failed and its processes may still be running" });
+          this.postState(r.id, { state: "failed", dir: homeRelative(r.dir), reason: "the host's Sqwakie daemon restarted; seat user cleanup failed and its processes may still be running" });
           this.endSavedSeatCard(r.id);
         });
         continue;
@@ -1227,10 +1252,10 @@ export class SeatsHost {
       }
       this.log.warn("seats_leftover", { id: r.id, pid: r.pid ?? null, killed });
       if (killed) void Bun.sleep(200).then(() => this.retryPendingRoots());
-      this.postState(r.id, { state: "failed", reason: `the host's Walkie daemon restarted while it ran${killed ? " (its processes were stopped)" : ""}`, dir: homeRelative(r.dir) });
+      this.postState(r.id, { state: "failed", reason: `the host's Sqwakie daemon restarted while it ran${killed ? " (its processes were stopped)" : ""}`, dir: homeRelative(r.dir) });
       this.endSavedSeatCard(r.id);
     }
-    for (const id of saved.queued ?? []) this.postState(id, { state: "failed", reason: "the host's Walkie daemon restarted while the seat was queued" });
+    for (const id of saved.queued ?? []) this.postState(id, { state: "failed", reason: "the host's Sqwakie daemon restarted while the seat was queued" });
     // The person's busy setting outlives a restart (they are still at the machine), unless its timer ran out.
     if (saved.busy && this.allowed && !(saved.busy.until !== undefined && saved.busy.until <= now)) {
       this.busy = saved.busy;
@@ -1356,7 +1381,35 @@ export class SeatsHost {
     if (this.socketDir) removeSeatSocketDir(this.socketDir);
   }
 
-  /** `walkie seats allow|deny` (people only, local). Deny stops every running seat. */
+  private ossGeneration = 0;
+
+  /** Independent person-only route calls this; no login refresh, setup or other config changes. */
+  async configureOss(enabled: boolean): Promise<SeatsLocalView> {
+    const next = { ...this.current, codex_oss_ollama: enabled };
+    // On requires durable consent. Off is an emergency revocation even if the write fails.
+    if (enabled) {
+      saveSeatsConfig(this.core.paths.config, next);
+      this.current = next;
+    } else {
+      this.current = next;
+      this.ossGeneration++;
+      let configError: unknown;
+      try { saveSeatsConfig(this.core.paths.config, next); } catch (err) { configError = err; }
+      for (const q of [...this.queue]) if (isLocalOss(q.run)) this.dequeue(q.ev.id, { reason: "stopped", by: this.core.myHandle() ?? "host" });
+      await Promise.all([...this.seats.values()].filter((s) => isLocalOss(s.run)).map((s) => this.stopSeat(s, { reason: "stopped" })));
+      this.save();
+      this.status();
+      if (configError) {
+        this.log.warn("seats_oss_config_write_failed", { enabled: false });
+        throw new HttpError(500, "state_write_failed", "Local OSS consent was revoked in this process and local work was told to stop, but config.json could not be written."
+          + " Durable consent is uncertain: it may be enabled again after a daemon restart. Fix the Sqwakie home's disk/permissions and run walkie seats codex-oss off again."
+          + " Pending worker roots still require cleanup review.");
+      }
+    }
+    return this.view(true);
+  }
+
+  /** `walkie seats allow|deny`: the existing authenticated-seat configuration path. */
   async configure(next: SeatsConfig, migrationApproved = false): Promise<SeatsLocalView> {
     // Deny first, whatever else changed (Codex r4 MEDIUM 3): every seat stops, by the identities it runs as.
     if (!next.allow) return this.deny(next);
@@ -1395,7 +1448,7 @@ export class SeatsHost {
     // Nothing already in the channel is acted on because seats were (re)allowed: recorded before they are on.
     if (next.allow && !this.allowed) {
       for (const ev of this.storedRequests()) this.remember(ev, true);
-      if (!this.save()) throw new HttpError(500, "internal", "seats.json could not be written, so seats stay off (check the Walkie home's disk and permissions)");
+      if (!this.save()) throw new HttpError(500, "internal", "seats.json could not be written, so seats stay off (check the Sqwakie home's disk and permissions)");
     }
     saveSeatsConfig(this.core.paths.config, next); // turning on (or changing): only once it is on disk
     this.current = next;
@@ -1436,7 +1489,7 @@ export class SeatsHost {
         ? `seats are off and every seat was told to stop, but these seat users could not be verified removed (their processes or files may remain; cleanup retries with backoff): ${q.join(", ")}.`
         : "every seat was stopped and seats are off";
       throw new HttpError(500, "internal", `${stopped}${q.length ? " And" : ", but"} config.json could not be written`
-        + ` (${scrub(configError.message).slice(0, 200)}): they would be on again after a daemon restart. Free disk space or fix the Walkie home's permissions, then run: walkie seats deny`);
+        + ` (${scrub(configError.message).slice(0, 200)}): they would be on again after a daemon restart. Free disk space or fix the Sqwakie home's permissions, then run: walkie seats deny`);
     }
     this.log.info("seats_configured", { allow: false });
     // Seat users set up while seats are off (walkie seats setup-user --apply) change where the seats' socket lives:
@@ -1449,7 +1502,7 @@ export class SeatsHost {
     return this.view();
   }
 
-  view(): SeatsLocalView {
+  view(snapshotOnly = this.current.codex_oss_ollama === true): SeatsLocalView {
     // As it is now (a cron deny file edited, a home opened), not as at the last launch.
     const fresh = this.current.allow ? this.evaluate(this.current) : this.iso;
     const me = this.core.myHandle();
@@ -1458,7 +1511,7 @@ export class SeatsHost {
     const pool = this.core.pool?.seatsConflict() ?? null;
     const off = this.current.allow ? this.opts.enrollmentBlock ?? fresh.problem ?? this.socketProblem() ?? pool : null;
     const helperVersion = this.helperVersionView();
-    const codexLogin = this.codexLogin();
+    const codexLogin = snapshotOnly ? this.codexReadiness?.login ?? "unavailable" : this.codexLogin();
     let enrolled = false;
     try { enrolled = rootMarkerPresent(this.core.paths.home); } catch { /* disabled_reason reports startup marker failures */ }
     return {
@@ -1471,16 +1524,17 @@ export class SeatsHost {
         ...(this.current.tools.allow !== undefined ? { allow: [...this.current.tools.allow] } : {}),
         ...(this.current.tools.deny?.length ? { deny: [...this.current.tools.deny] } : {}),
       } } : {}),
+      codex_oss: ossSnapshot(this.current),
       ephemeral: this.current.ephemeral === true, same_user: this.iso.mode === "same_user", readable_home: this.current.accept_readable_home === true,
       enrolled,
-      claude_login: this.claudeLogin(), codex_login: codexLogin, ...(codexLogin === "unavailable" && this.codexReadiness?.reason ? { codex_login_reason: this.codexReadiness.reason } : {}),
+      claude_login: snapshotOnly ? (this.dedicatedTokenKnown ? "dedicated" : this.machineToken?.has ? "machine" : "unavailable") : this.claudeLogin(), codex_login: codexLogin, ...(codexLogin === "unavailable" && this.codexReadiness?.reason ? { codex_login_reason: this.codexReadiness.reason } : {}),
       ...(this.reconcileError ? { reconcile_error: this.reconcileError } : {}), ...(this.quarantine.size ? { quarantined: [...this.quarantine].sort((a, b) => Number(a.slice(8)) - Number(b.slice(8))) } : {}),
       ...(this.residueSummary.homes || this.residueSummary.vaults ? { retired_residue: { ...this.residueSummary } } : {}),
       ...(this.quarantineWhy.size ? { quarantine_why: Object.fromEntries([...this.quarantineWhy].filter(([u]) => this.quarantine.has(u))) } : {}),
       ...(this.cleanup.active ? { cleanup_in_flight: this.cleanup.active } : {}),
       ...(this.cleanupUnfinishedSince ? { cleanup_helper_unfinished_since: this.cleanupUnfinishedSince } : {}),
       ...(this.cleanupBusySince ? { cleanup_helper_busy_since: this.cleanupBusySince } : {}),
-      ...(this.claudeProjectionNearExpiry() ? { claude_projection_near_expiry: true } : {}),
+      ...(this.claudeProjectionNearExpiry(snapshotOnly) ? { claude_projection_near_expiry: true } : {}),
       ...(this.pendingRoots.size ? { pending_worker_roots: this.pendingWorkerRoots() } : {}),
       ...(off ? { disabled_reason: off } : {}),
       dir: homeRelative(this.seatsDir()),
@@ -1519,7 +1573,7 @@ export class SeatsHost {
     const user = seat.user ?? "its seat user";
     return {
       stopped: true, verified: false,
-      why: `Walkie could not verify that ${user} was removed: its processes or files may remain (quarantined, cleanup retries with backoff${this.quarantineWhy.get(user) ? `: ${this.quarantineWhy.get(user)}` : ""})`,
+      why: `Sqwakie could not verify that ${user} was removed: its processes or files may remain (quarantined, cleanup retries with backoff${this.quarantineWhy.get(user) ? `: ${this.quarantineWhy.get(user)}` : ""})`,
     };
   }
 
@@ -1768,7 +1822,7 @@ export class SeatsHost {
           return;
         }
         this.log.warn("seats_resume_unverified", { id: seat.id, user, why: r?.why ?? "no answer" });
-        this.postState(seat.id, { state: "running", reason: "Walkie could not verify that it resumed (some of its processes may still be stopped)", dir: this.shownDir(seat) });
+        this.postState(seat.id, { state: "running", reason: "Sqwakie could not verify that it resumed (some of its processes may still be stopped)", dir: this.shownDir(seat) });
       });
       return;
     }
@@ -1911,7 +1965,7 @@ export class SeatsHost {
         this.unmarked = { next: now + RECONCILE_RETRY_MS, wait: RECONCILE_RETRY_MS };
         this.log.warn("seats_channel_unmarked", { channel: this.channel });
       }
-      this.channelError = "the roster authority didn't record this machine's seats channel as one (an older Walkie there?): no seat runs until it is updated";
+      this.channelError = "the roster authority didn't record this machine's seats channel as one (an older Sqwakie there?): no seat runs until it is updated";
       if (now < this.unmarked.next) return;
       const wait = Math.min(this.unmarked.wait * 2, UNMARKED_MAX_MS);
       this.unmarked = { next: now + wait, wait };
@@ -1920,11 +1974,40 @@ export class SeatsHost {
     const body = { name: this.channel, topic: `Seats on ${this.core.hostname}`, members: want, seats: true as const, ...(ch?.archived ? { archived: false } : {}) };
     if (this.core.isAuthority()) {
       this.core.emit("channel.upsert", body);
+    } else if (this.channelRequestPending()) {
+      // A row this host queued is still waiting on the authority (offline, or its version not yet confirmed): the
+      // flush retries it every sync round, so a paced interactive submit would only race it onto the chain twice.
+      this.channelError = "the roster authority is offline; the seats channel is queued";
+      return;
     } else {
-      const res = await submitRequest(this.core, this.deps.client, this.deps.catchUp, "channel.upsert", body);
-      if ("queued" in res) { this.channelError = "the roster authority is offline; the seats channel is queued"; return; }
+      try {
+        const res = await submitRequest(this.core, this.deps.client, this.deps.catchUp, "channel.upsert", body);
+        if ("queued" in res) { this.channelError = "the roster authority is offline; the seats channel is queued"; return; }
+      } catch (err) {
+        // The version gate refused before anything was queued: the authority's build is unconfirmed or too old for
+        // grants (transient states, unlike a stale refusal, which must not be retried). Keep the request in the
+        // roster queue so the flush retries it, exactly as when the authority is unreachable.
+        if (!(err instanceof HttpError && err.code === "authority_update_required")) throw err;
+        const req = signRequest(this.core, "channel.upsert", body);
+        this.core.store.queueRequest(req.id, JSON.stringify(req));
+        this.channelError = "the roster authority is offline; the seats channel is queued";
+        return;
+      }
     }
     this.channelError = undefined;
+  }
+
+  /** True while this host has a queued `channel.upsert` row for its own channel (the flush is retrying it). */
+  private channelRequestPending(): boolean {
+    for (const q of this.core.store.queuedRequests()) {
+      try {
+        const req = JSON.parse(q.json) as { kind?: unknown; body?: { name?: unknown } };
+        if (req.kind === "channel.upsert" && req.body?.name === this.channel) return true;
+      } catch {
+        // A row that does not parse is dropped by the flush; it is not one of ours.
+      }
+    }
+    return false;
   }
 
   // ---- requests ----------------------------------------------------------------------------------
@@ -1985,16 +2068,16 @@ export class SeatsHost {
       return;
     }
     if (ev.author.agent === "orchestrator" && d.run.shell_user && !this.ephemeral) {
-      this.postState(ev.id, { state: "refused", reason: "switch WalkieTalkie back to Walkie platform access to use same-user machines" });
+      this.postState(ev.id, { state: "refused", reason: "switch Talkie back to Sqwakie platform access to use same-user machines" });
       return;
     }
     let prepared: AnySeatRun = d.run;
-    let enrollmentProblem: string | null = this.opts.enrollmentBlock ?? null;
+    let enrollmentProblem: string | null = this.ossRefusal(d.run) ?? this.opts.enrollmentBlock ?? null;
     try {
       if (!enrollmentProblem) {
         const grant = readGrant(this.core.paths.home);
         enrollmentProblem = requiredWorkerAccount(grant, prepared, Date.now(), enrollmentMode(this.core.paths.home));
-        if (!enrollmentProblem) prepared = bindWorkerAccount(grant, prepared);
+        if (!enrollmentProblem && !isLocalOss(prepared)) prepared = bindWorkerAccount(grant, prepared);
       }
     } catch { enrollmentProblem = "the private enrollment grant is unreadable: seats refuse to start"; }
     const v2why = enrollmentProblem ?? (isV2(prepared) ? this.v2Refusal(prepared, d.launcher) : null);
@@ -2015,9 +2098,13 @@ export class SeatsHost {
    * counts the first.
    */
   private finishRun(ev: Event, prepared: AnySeatRun, launcher: string): void {
+    const ossGeneration = this.ossGeneration;
     this.deciding.set(ev.id, launcher);
     // The request is already recorded as judged, so a run that ends here must say so or its row stays "requested".
     const endedBeforeLaunch = (): boolean => {
+      if (isLocalOss(prepared) && ossGeneration !== this.ossGeneration) {
+        this.postState(ev.id, { state: "refused", reason: "local OSS consent was revoked while deciding" }); return true;
+      }
       const by = this.stoppedWhileDeciding.get(ev.id);
       if (by !== undefined) {
         this.postState(ev.id, { state: "stopped", reason: `stopped by @${by}` });
@@ -2077,7 +2164,7 @@ export class SeatsHost {
    */
   /**
    * Why this launch cannot enforce the host tool policy, or null. A Grok policy is also refused when `grok --version`
-   * is missing or not one Walkie has checked. `grokBin` is the binary about to run; omitted, the lookup matches a
+   * is missing or not one Sqwakie has checked. `grokBin` is the binary about to run; omitted, the lookup matches a
    * same-user seat. A seat with no policy does not run `grok --version`.
    */
   private async toolRefusal(runtime: SeatRuntime, mode: SeatMode, grokBin?: string | null): Promise<string | null> {
@@ -2095,6 +2182,8 @@ export class SeatsHost {
    * handed over), a workspace in a repo this machine has no clone of, an account this machine may not use.
    */
   private v2Refusal(run: SeatRunV2, launcher: string): string | null {
+    const localWhy = this.ossRefusal(run);
+    if (localWhy) return localWhy;
     if (run.runtime === "grok") {
       if (this.ephemeral || run.shell_user) return "Grok seats run only as this machine's person (walkie seats allow --same-user)";
       if (run.account) return "Grok seats use only this machine's subscription login, not a vault account";
@@ -2249,6 +2338,8 @@ export class SeatsHost {
   }
 
   private admit(launcher: string, run: AnySeatRun): string | null {
+    const localWhy = this.ossRefusal(run);
+    if (localWhy) return localWhy;
     const now = Date.now();
     const recent = (this.launches.get(launcher) ?? []).filter((t) => now - t < 60_000);
     if (recent.length >= this.perMinute) return `rate limited: at most ${this.perMinute} launches per minute per launcher: wait a minute, then run walkie seat run again`;
@@ -2303,8 +2394,8 @@ export class SeatsHost {
     const dir = join(this.seatsDir(), `${stamp}-${seatAgentName(req.id).slice(5)}`);
     // Isolation is judged again right before a launch (Codex r3 HIGH 2): config.json or the OS may have changed.
     this.iso = this.evaluate(this.current);
-    const unsafe = this.enrollmentRefusal(run) ?? (req.author.agent === "orchestrator" && run.shell_user && !this.ephemeral
-      ? "switch WalkieTalkie back to Walkie platform access to use same-user machines"
+    const unsafe = this.ossRefusal(run) ?? this.enrollmentRefusal(run) ?? (req.author.agent === "orchestrator" && run.shell_user && !this.ephemeral
+      ? "switch Talkie back to Sqwakie platform access to use same-user machines"
       : this.current.allow ? this.iso.problem ?? this.socketProblem() ?? this.core.pool?.seatsConflict() ?? null : "seats are turned off on this machine");
     const seat: Seat = {
       id: req.id, order: ++this.launchOrder, launcher, run, request: req, v2: isV2(run) ? newV2(run, req.id) : null, dir, cwd: dir, base: null, startedAt: Date.now(), child: null, runner: null, user: null, userN: null, lost: false, uncontrolled: false, waitedForCleanup: false, cleanupFailure: null, pauseVerified: false, childStarted: null, env: null, workerRoot: null,
@@ -2338,6 +2429,7 @@ export class SeatsHost {
     }
     const ephemeral = this.ephemeral;
     try {
+      if (isLocalOss(run)) { await this.prepareOss(seat); return; }
       if (!ephemeral) mkdirSync(dir, { recursive: true, mode: 0o700 });
       const { env, error } = await loginEnv(this.env, this.home, this.envFile, this.current.env ?? [], seat.abort.signal);
       if (error) this.log.warn("seats_env", { err: error });
@@ -2392,15 +2484,93 @@ export class SeatsHost {
     }
   }
 
+  private ossRefusal(run: AnySeatRun): string | null {
+    if (!isLocalOss(run)) return null;
+    return ossPolicy(run, this.current, this.evaluate(this.current)) ?? this.enrollmentRefusal(run)
+      ?? (this.opts.ossFixture ? null : OSS_NATIVE_HELD);
+  }
+
+  /** Rechecked before/after every awaited local preparation boundary and synchronously before child creation. */
+  private ossGate(seat: Seat): void {
+    if (!isLocalOss(seat.run)) return;
+    if (seat.stop || seat.abort.signal.aborted || this.closing) throw new Error("local OSS cancelled");
+    const why = this.ossRefusal(seat.run) ?? this.core.pool?.seatsConflict() ?? this.socketProblem();
+    if (why) throw new SeatRefusal(why);
+    const standing = this.recheckLaunch(seat, "started");
+    if (standing) throw new SeatRefusal(standing.why);
+    if (seat.request.origin !== this.core.nodeId && !peerCapabilities(this.core.store, seat.request.origin)?.caps.includes(SEATS_CODEX_OSS_CAP))
+      throw new SeatRefusal("launcher local OSS protocol capability is unknown or unsupported");
+    const runtime = requireOssFixture(this.opts.ossFixture);
+    if (seat.ossIdentity && binaryIdentity(runtime.binary) !== seat.ossIdentity) throw new SeatRefusal("OSS binary replaced during preparation");
+  }
+
+  private async prepareOss(seat: Seat): Promise<void> {
+    this.ossGate(seat);
+    const runtime = requireOssFixture(this.opts.ossFixture);
+    const v = seat.v2;
+    if (!v || !isLocalOss(v.run)) throw new SeatRefusal("local OSS requires v2");
+    seat.ossIdentity = binaryIdentity(runtime.binary);
+    // No provider home/env/login/account code has executed. Roots are exclusive, empty and run-owned.
+    seat.workerRoot = createWorkerRoot(this.home, seat.id, "oss");
+    const env = ossEnvironment(seat.workerRoot, runtime.path);
+    seat.env = env;
+    mkdirSync(seat.dir, { mode: 0o700 });
+    this.save();
+    const gate = () => this.ossGate(seat);
+    markWorkerStarting(this.home, seat.workerRoot.key); // crash during a probe retains an uncertain root
+    try { await probeOssRuntime(runtime.binary, env, seat.abort.signal, gate, runtime.probeReaders); }
+    catch (err) { if (err instanceof OssProbeFailure) seat.ossProbeUncertain = true; throw err; }
+    gate();
+    if (v.run.workspace) this.inspectOssConfig(runtime, this.repos[v.run.workspace.repo] ?? "");
+    let ready: boolean;
+    try {
+      const result = await fixtureReadiness(runtime, v.run.model!, seat.abort.signal);
+      ready = result.service === true && result.model === true && result.resources === true;
+    }
+    catch { throw new Error("local OSS readiness check failed"); }
+    gate();
+    if (!ready) throw new SeatRefusal("local OSS service/model/resource readiness is unavailable or unknown");
+    await this.prepareV2(seat, v, env, false); gate();
+    await this.v2Workspace(seat, v, env); gate();
+    this.inspectOssConfig(runtime, seat.cwd);
+    await this.spawn(seat, env, null);
+  }
+
   /**
    * A v2 seat before its directory is used (FO-2): the brief (a blob this channel's request references) and, for a
    * seat user, the workspace staged as a bundle of the exact commit (its runner clones it; it can't read the person's
    * clone). The account login is not requested here: that waits until the launcher is checked again (`bindAccount`).
    */
   private async prepareV2(seat: Seat, v: V2Seat, env: Record<string, string>, ephemeral: boolean): Promise<void> {
+    this.ossGate(seat);
     const bytes = await this.fetchBundle(v.run.brief, seat.abort.signal, "brief");
+    this.ossGate(seat);
     v.brief = briefText(bytes, MAX_SEAT_BRIEF);
     if (v.brief === null) throw new SeatRefusal(`the brief isn't UTF-8 text of at most ${MAX_SEAT_BRIEF / 1000} KB`);
+    // The request's blob is visible to the seats channel. Personal context is appended
+    // only here, on the owner's machine, after that blob has been fetched.
+    if (seat.launcher === this.core.myHandle()) {
+      const path = join(this.core.paths.home, MEMORY_FILE);
+      const unavailable = () => {
+        const note = `${v.brief}\n\nPersonal Sqwakie primer unavailable on this machine.`;
+        if (Buffer.byteLength(note) > MAX_SEAT_BRIEF) throw new SeatRefusal("seat brief has no room for personal primer status");
+        v.brief = note;
+      };
+      if (!existsSync(path)) unavailable();
+      else {
+        let memory: MemoryStore | undefined;
+        try {
+          memory = MemoryStore.open(this.core.paths.home);
+          const named = /\bp-[0-9a-f]{8}\b/.exec(v.brief)?.[0];
+          const project = named && this.core.visible({ channel: named }) ? named : "global";
+          v.brief = seatBriefWithPrimer(v.brief, memory.primer(seat.launcher, project) ?? memory.primer(seat.launcher, "global"), MAX_SEAT_BRIEF);
+        } catch (err) {
+          if (err instanceof Error && err.message.includes("no room for personal primer")) throw new SeatRefusal(err.message);
+          unavailable();
+        }
+        finally { memory?.close(); }
+      }
+    }
     this.seatStatus(seat);
     const refusal = this.v2Refusal(v.run, seat.launcher); // the vault, the policy and the repos as they are now
     const enrollment = this.enrollmentRefusal(v.run);
@@ -2420,12 +2590,15 @@ export class SeatsHost {
     let tmp: string | null = null;
     try {
       if (ws.bundle) {
+        this.ossGate(seat);
         const bytes = await this.fetchBundle(ws.bundle, seat.abort.signal, "workspace delta bundle");
+        this.ossGate(seat);
         tmp = mkdtempSync(join(tmpdir(), "walkie-seat-delta-"));
         delta = join(tmp, "delta.bundle");
         writeFileSync(delta, bytes, { mode: 0o600 });
       }
       const got = await resolveRepo(this.repos, ws, delta, v.tag, env, seat.abort.signal, join(this.core.paths.home, "seats-mirror"));
+      this.ossGate(seat);
       v.clone = got.clone;
       return got;
     } finally {
@@ -2446,7 +2619,9 @@ export class SeatsHost {
         throw new SeatRefusal(`lane ${v.run.label} already runs in this machine's clone`);
       }
       v.clone = claimed;
+      this.ossGate(seat);
       const got = await this.resolveWorkspace(seat, v, ws, env);
+      this.ossGate(seat);
       if (seat.stop) return;
       if (ws.mode === "fresh") {
         seat.cwd = (await freshClone(got.clone, got.sha, seat.dir, v.tag, env, seat.abort.signal)).cwd;
@@ -2456,17 +2631,22 @@ export class SeatsHost {
         v.dirs = wt.dirs;
         v.branch = wt.branch ?? null;
       }
+      this.ossGate(seat);
       seat.base = got.sha;
       await dropInRefs(got.clone, v.tag, env).catch(() => undefined);
+      this.ossGate(seat);
     }
     // The cleanup intent is on disk (durably) before the brief is (FO-2 r2 MED 2): a crash at any point leaves a record
     // the next start acts on; removal is by the brief's hash, so nothing else of that name is ever touched.
+    this.ossGate(seat);
     v.task = await planTask(seat.cwd, v.brief as string, env, seat.abort.signal);
+    this.ossGate(seat);
     if (!this.save(true)) {
       v.task = null;
-      throw new SeatRefusal("seats.json could not be written, so the brief isn't written either (check the Walkie home's disk and permissions)");
+      throw new SeatRefusal("seats.json could not be written, so the brief isn't written either (check the Sqwakie home's disk and permissions)");
     }
     v.task = await placeTask(seat.cwd, v.brief as string, v.task, env, seat.abort.signal); // on failure: v.task stays the plan; endV2 cleans
+    this.ossGate(seat);
   }
 
   /** Another live seat here works in the same clone's `.worktrees/<label>`. */
@@ -2595,8 +2775,15 @@ export class SeatsHost {
    * the seat. A hold (the seats channel being narrowed) does not refuse a launch already accepted, as before pre.12.
    */
   private finalGate(seat: Seat): void {
+    this.ossGate(seat);
+    if (isLocalOss(seat.run)) this.inspectOssConfig(requireOssFixture(this.opts.ossFixture), seat.cwd);
     const why = this.finalRefusal(seat);
     if (why) throw new SeatRefusal(why);
+  }
+
+  private inspectOssConfig(runtime: OssFixtureRuntime, cwd: string): void {
+    try { runtime.inspectConfig(cwd); }
+    catch { throw new Error("local OSS configuration check failed"); }
   }
 
   /** What finalGate refuses with, or null. Synchronous: nothing is awaited between it and the start it allows. */
@@ -2648,7 +2835,7 @@ export class SeatsHost {
   private async goAhead(seat: Seat, runner: RunnerChild<SeatSignal[]>, login: RunnerLogin): Promise<boolean> {
     if (!(await runner.prepared)) {
       if (runner.ungated) {
-        // An installed runner older than this Walkie started the runtime without waiting for the go-ahead. It got no
+        // An installed runner older than this Sqwakie started the runtime without waiting for the go-ahead. It got no
         // login (the spec carries none), so the run can't use an account; it is stopped now.
         seat.final = { ok: false, text: RUNNER_OUT_OF_DATE };
         runner.control("kill");
@@ -2656,6 +2843,8 @@ export class SeatsHost {
       return false;
     }
     if (seat.stop || this.closing || seat.abort.signal.aborted) { runner.control("abort"); return false; }
+    this.ossGate(seat);
+    if (isLocalOss(seat.run)) this.inspectOssConfig(requireOssFixture(this.opts.ossFixture), seat.cwd);
     const why = this.finalRefusal(seat);
     if (why) {
       seat.refusal = scrub(why).slice(0, 280);
@@ -2728,7 +2917,7 @@ export class SeatsHost {
       if (signal.aborted) res(null);
       signal.addEventListener("abort", () => res(null), { once: true });
     });
-    // Where each peer is reached: the client's own choice of transport when it has one (Walkie Direct: the node's key,
+    // Where each peer is reached: the client's own choice of transport when it has one (Sqwakie Direct: the node's key,
     // not an ip:port, for a Direct-only host), else its tailnet address. Never a transport-specific guess here.
     const client = this.deps.client as SeatsDeps["client"] & { addrOf?: (n: NodeRec) => PeerAddr | null };
     for (const n of activeNodes(r)) {
@@ -2750,8 +2939,9 @@ export class SeatsHost {
   private async spawn(seat: Seat, base: Record<string, string>, bundle: Uint8Array | null | undefined): Promise<void> {
     const run = seat.run;
     // Seat users run the root-owned copies setup-user installed (a closed home hides the person's own installs).
-    const bin = this.runtimeFor(seat, run.runtime, base);
-    // Never this daemon's own socket or home: a seat's Walkie calls go to the seats' socket with a credential for
+    this.ossGate(seat);
+    const bin = isLocalOss(run) ? requireOssFixture(this.opts.ossFixture).binary : this.runtimeFor(seat, run.runtime, base);
+    // Never this daemon's own socket or home: a seat's Sqwakie calls go to the seats' socket with a credential for
     // this seat only, which speaks as `seat-<id>` whatever the caller sends and can only post in its own thread. The
     // credential is a 0600 file in the seat's directory, named by WALKIE_SEAT_TOKEN_FILE: never in an environment,
     // where `ps -E` would show it to the machine's other processes (Opus r2 LOW 2).
@@ -2763,6 +2953,7 @@ export class SeatsHost {
     // The launcher (WALK-74), before any login is handed out. Lost standing refuses and requests nothing. A channel
     // that is only being narrowed waits, and a seat with an account is not leased while it waits.
     await this.allowLaunch(seat);
+    this.ossGate(seat);
     if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
     if (seat.v2) {
       const accountProblem = this.enrollmentRefusal(seat.v2.run) ?? this.v2Refusal(seat.v2.run, seat.launcher);
@@ -2772,6 +2963,7 @@ export class SeatsHost {
     // Last moment: the policy may have changed while the brief or the seat user was prepared.
     const toolWhy = await this.toolRefusal(run.runtime, mode, bin);
     if (toolWhy) throw new SeatRefusal(toolWhy);
+    this.ossGate(seat);
     const tools = this.current.tools;
     seat.toolsAtLaunch = toolPolicyKey(tools);
     // v2: the brief is TASK.md in the work tree; the prompt is only the fixed pointer to it (never the brief).
@@ -2791,13 +2983,15 @@ export class SeatsHost {
         throw new SeatRefusal("the owner's account lease expired before launch");
       }
       if (seat.stop || this.closing) { await this.conclude(seat, null, ""); return; }
-      if (!(await this.recheckBeforeStart(seat))) break;
+      const retry = await this.recheckBeforeStart(seat);
+      this.ossGate(seat);
+      if (!retry) break;
       if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
     }
     // A v2 seat's account (FO-2): the credentials just bound replace the machine's default login for this run only.
     const credentials = seat.v2?.creds;
-    const runEnv = { ...ownLoginOnly(base, run.runtime), ...(credentials?.env ?? {}), WALKIE_AGENT: seatAgentName(seat.id) };
-    const env = withBinDir(seat.workerRoot ? await this.sameUserEnv(seat, runEnv) : runEnv, bin);
+    const runEnv = { ...(isLocalOss(run) ? base : ownLoginOnly(base, run.runtime)), ...(credentials?.env ?? {}), WALKIE_AGENT: seatAgentName(seat.id) };
+    const env = isLocalOss(run) ? runEnv : withBinDir(seat.workerRoot ? await this.sameUserEnv(seat, runEnv) : runEnv, bin);
     if (seat.stop || this.closing || seat.abort.signal.aborted) { await this.conclude(seat, null, ""); return; }
     let args: string[];
     let parse: (line: string) => SeatSignal[] | null;
@@ -2817,13 +3011,17 @@ export class SeatsHost {
     } else if (run.runtime === "claude") {
       // A seat user's seat asks its runtime itself, as that user (the runner's probe): the daemon never runs a
       // binary a seat user could have written (Codex r4 MEDIUM 5). The same-user probe already ran, without a login.
+      const browserConfig = loadConfig(this.core.paths.config, false);
+      const browserMcp = seatMayBrowse(browserConfig.browser_enabled, browserConfig.browser_allowed_agents, seatAgentName(seat.id))
+        ? walkieMcpConfig(walkieArgv(), this.home, this.api.socket) : undefined;
       args = claudeSeatArgs({
         session: randomUUID(), mode, ...(run.model ? { model: run.model } : {}), permissionPrompts: !seat.user && this.permissionPrompts === true,
         systemPrompt: seatSystemPrompt(seat.launcher, this.core.hostname), ...(tools ? { tools } : {}),
+        ...(browserMcp ? { mcpConfig: browserMcp } : {}),
       });
       parse = (line) => claudeSeatParser(seat.cwd)(line); // the seat user's directory is known once it runs
     } else {
-      args = codexSeatArgs({ cwd: seat.user ? "{cwd}" : seat.cwd, mode, ...(run.model ? { model: run.model } : {}) });
+      args = isLocalOss(run) ? ossArgs(seat.cwd, mode, run.model!) : codexSeatArgs({ cwd: seat.user ? "{cwd}" : seat.cwd, mode, ...(run.model ? { model: run.model } : {}) });
       parse = codexSeatLine;
     }
     if (seat.v2?.creds?.expiresAt && seat.v2.creds.expiresAt <= Date.now()) {
@@ -2837,10 +3035,12 @@ export class SeatsHost {
     const prompt = run.runtime === "claude" ? userMessage(text) : run.runtime === "kimi" || run.runtime === "grok" ? "" : text;
     const runtimeEnv = grokHome ? { ...env, GROK_HOME: grokHome } : env;
     if (seat.user) { await this.spawnAsUser(seat, seat.user, bin, args, runtimeEnv, parse, bundle ?? null, prompt); return; }
-    const tokenFile = join(seat.dir, SEAT_TOKEN_FILE);
-    writeFileSync(tokenFile, this.api.issue(seat.id), { mode: 0o600 });
+    const tokenFile = join(isLocalOss(run) ? seat.workerRoot!.root : seat.dir, SEAT_TOKEN_FILE);
+    writeFileSync(tokenFile, this.api.issue(seat.id), { mode: 0o600, ...(isLocalOss(run) ? { flag: "wx" } : {}) });
     const childEnv = { ...runtimeEnv, WALKIE_SOCKET: this.api.socket, WALKIE_SEAT_TOKEN_FILE: tokenFile };
-    if (seat.workerRoot) markWorkerStarting(this.home, seat.workerRoot.key);
+    // OSS already marked the uncertain spawn window before its first probe; retain that marker until recording the child.
+    if (seat.workerRoot && !isLocalOss(run)) markWorkerStarting(this.home, seat.workerRoot.key);
+    this.ossGate(seat);
     const child = new ClaudeChild<SeatSignal[]>(bin, args, seat.cwd, childEnv, {
       onSignal: (sigs) => { for (const s of sigs) this.onSignal(seat, s); },
       onExit: (code, stderr) => { void this.conclude(seat, code, stderr); },
@@ -3002,7 +3202,7 @@ export class SeatsHost {
   private get seatTokenPath(): string { return join(this.core.paths.home, "seats-claude-token"); }
 
   private dedicatedToken(): string | null {
-    try { return readFileSync(this.seatTokenPath, "utf8").trim() || null; } catch { return null; }
+    try { const token = readFileSync(this.seatTokenPath, "utf8").trim() || null; this.dedicatedTokenKnown = !!token; return token; } catch { this.dedicatedTokenKnown = false; return null; }
   }
 
   /** The Claude token a seat's environment carries: the dedicated one, else the machine's own (env or the seat env file). */
@@ -3048,11 +3248,11 @@ export class SeatsHost {
   }
 
   /** The ordinary one-hour seat needs an access-only login that lasts through its run and a refresh margin. */
-  private claudeProjectionNearExpiry(): boolean {
-    if (this.current.ephemeral || this.current.inherit_person_config || this.dedicatedToken() || this.machineToken?.hasEnvToken) return false;
+  private claudeProjectionNearExpiry(snapshotOnly = false): boolean {
+    if (this.current.ephemeral || this.current.inherit_person_config || (snapshotOnly ? this.dedicatedTokenKnown : this.dedicatedToken()) || this.machineToken?.hasEnvToken) return false;
     const dir = this.env.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude");
     let expiry: number | null = this.cachedClaudeAccess?.expiresAt ?? this.knownClaudeExpiry;
-    if (expiry === null) {
+    if (expiry === null && !snapshotOnly) {
       try { expiry = claudeTokenFrom(readFileSync(join(dir, ".credentials.json"), "utf8"))?.expiresAt ?? null; } catch { /* Keychain or no file */ }
     }
     return expiry !== null && expiry < Date.now() + DEFAULT_SEAT_TIMEOUT_S * 1000 + CLAUDE_ACCESS_MIN_LEFT_MS;
@@ -3063,11 +3263,10 @@ export class SeatsHost {
    * only, like the Claude credentials file; absent when Codex keeps it elsewhere (a keyring) or isn't signed in.
    */
   private codexAuthFile(): { codex_auth?: string } {
-    const file = join(this.env.CODEX_HOME ?? join(this.home, ".codex"), "auth.json");
+    const home = this.env.CODEX_HOME ?? join(this.home, ".codex");
     try {
-      const st = statSync(file);
-      if (!st.isFile() || st.size > 64 * 1024) return {};
-      const copy = accessOnlyCodex(readFileSync(file, "utf8"));
+      const text = readCodexAuthFromHome(this.core.paths.home, home);
+      const copy = text === null ? null : accessOnlyCodex(text);
       return copy ? { codex_auth: copy } : {};
     } catch {
       return {};
@@ -3087,9 +3286,8 @@ export class SeatsHost {
     }
     let copy: string | null = null;
     try {
-      const file = join(source, "auth.json");
-      const st = statSync(file);
-      if (st.isFile() && st.size <= 64 * 1024) copy = accessOnlyCodex(readFileSync(file, "utf8"));
+      const text = readCodexAuthFromHome(this.core.paths.home, source);
+      if (text !== null) copy = accessOnlyCodex(text);
     } catch { /* missing or unreadable file */ }
     if (copy) return { copy: this.current.inherit_person_config ? null : copy, source };
     if (this.current.inherit_person_config && await codexLoginStatus({ ...env, CODEX_HOME: source }, this.home)) return { copy: null, source };
@@ -3153,6 +3351,7 @@ export class SeatsHost {
           this.codexCheckedAt = Date.now();
         }
         if (only === "codex") return;
+        this.dedicatedToken?.(); // explicit refresh updates the status snapshot, never a status read
         const hasEnvToken = !!sourced.CLAUDE_CODE_OAUTH_TOKEN?.trim();
         const source = sourced.CLAUDE_CONFIG_DIR ?? join(this.home, ".claude");
         const custom = resolve(source) !== resolve(join(this.home, ".claude"));
@@ -3197,6 +3396,7 @@ export class SeatsHost {
 
   /** Sets (or, with null, clears) the dedicated seat token. The machine's person only (route). */
   async setSeatToken(token: string | null): Promise<void> {
+    this.dedicatedTokenKnown = !!token;
     if (token === null) rmSync(this.seatTokenPath, { force: true });
     else writeFileSync(this.seatTokenPath, `${token}\n`, { mode: 0o600 });
     await this.refreshLogin();
@@ -3406,9 +3606,12 @@ export class SeatsHost {
     } finally {
       try { await this.endV2(seat); } catch (err) { this.log.warn("seats_end_v2_cleanup", { id: seat.id, err: scrub((err as Error).message) }); }
       if (seat.workerRoot) {
-        try { removeWorkerRoot(this.home, seat.workerRoot.key); }
+        try {
+          if (seat.ossProbeUncertain) throw new Error("OSS probe descendant cleanup is uncertain; root retained");
+          removeWorkerRoot(this.home, seat.workerRoot.key);
+        }
         catch (err) {
-          this.pendingRoots.set(seat.workerRoot.key, { id: seat.workerRoot.key, ...(seat.child ? { pid: seat.child.pid } : {}), ...(seat.childStarted ? { started: seat.childStarted } : {}) });
+          this.pendingRoots.set(seat.workerRoot.key, { id: seat.workerRoot.key, ...(seat.ossProbeUncertain ? { uncertain: true as const } : {}), ...(seat.child ? { pid: seat.child.pid } : {}), ...(seat.childStarted ? { started: seat.childStarted } : {}) });
           this.log.warn("seats_worker_root_cleanup", { id: seat.id, err: scrub((err as Error).message) });
           if (!this.closing && !this.rootRetry) this.rootRetry = setTimeout(() => this.retryPendingRoots(), 30_000);
         }
@@ -3439,7 +3642,7 @@ export class SeatsHost {
     // The brief never outlives its seat in the person's tree, however the seat ended (FO-2 r1 MEDIUM 4).
     if (v.task && !seat.user) removeTask(seat.cwd, v.task);
     if (v.clone && seat.env) await dropInRefs(v.clone, v.tag, seat.env).catch(() => undefined);
-    // A same-user lane: Walkie's ownership record follows the branch to where the seat left it.
+    // A same-user lane: Sqwakie's ownership record follows the branch to where the seat left it.
     // (Only the seat's own result, read from the worktree's git directory as the seat ended: FO-2 r3 LOW 3.)
     if (v.clone && v.dirs && v.branch && seat.env && seat.base) {
       const head = v.resultHead ?? null;
@@ -3481,11 +3684,11 @@ export class SeatsHost {
     if (seat.uncontrolled) {
       if (seat.waitedForCleanup && seat.cleanupFailure === "seat cleanup deferred until restart")
         return { state: "stopped", reason: "waiting for the cleanup of an earlier seat user; its seat user remains quarantined" };
-      if (seat.cleanupFailure) return { state: "stopped", reason: failureReason(`Walkie could not verify that its seat user was removed: ${seat.cleanupFailure} (seat user quarantined)`) };
-      return { state: "stopped", reason: "Walkie could not verify that its seat user was removed: its processes or files may remain (the seat user is quarantined)" };
+      if (seat.cleanupFailure) return { state: "stopped", reason: failureReason(`Sqwakie could not verify that its seat user was removed: ${seat.cleanupFailure} (seat user quarantined)`) };
+      return { state: "stopped", reason: "Sqwakie could not verify that its seat user was removed: its processes or files may remain (the seat user is quarantined)" };
     }
     if (seat.stop) return stopText(seat.stop, seat.run);
-    if (seat.lost) return { state: "stopped", reason: "Walkie lost control of the seat (its runner ended before it did); every process of its seat user was stopped" };
+    if (seat.lost) return { state: "stopped", reason: "Sqwakie lost control of the seat (its runner ended before it did); every process of its seat user was stopped" };
     if (seat.final?.ok && code === 0) return { state: "done" };
     const tail = scrubSeatOutput(stderr, seat.projectedClaudeToken).trim().split("\n").slice(-1)[0] ?? "";
     const why = !seat.final?.ok && seat.final?.text ? seat.final.text : tail || (code === null ? "did not start" : `exit code ${code}`);
@@ -3528,7 +3731,7 @@ export class SeatsHost {
    * share_activity is on — otherwise the status projection replaces it with the offline phrase. The seat's failed
    * state post is what carries a free-text reason. Returns false when the card was not signed.
    */
-  private endSavedSeatCard(id: string, activity = "the host's Walkie daemon restarted while the seat ran"): boolean {
+  private endSavedSeatCard(id: string, activity = "the host's Sqwakie daemon restarted while the seat ran"): boolean {
     if (!this.core.teamId || !this.core.me()) return false;
     const agent = seatAgentName(id);
     try {
@@ -3585,6 +3788,13 @@ export class SeatsHost {
     if (!this.core.limiter.take(`seat:${seatId}`, this.core.limits.agentWrite)) throw new HttpError(429, "rate_limited", "too many writes; slow down");
     const text = scrubSeatOutput(body.text, seat.projectedClaudeToken).trim() || "…";
     return this.core.emit("msg.post", { text, thread: seatId } as BodyOf<"msg.post">, { channel: this.channel, agent: seatAgentName(seatId) });
+  }
+
+  /** The seat socket authenticates the token; this host also checks that the seat still runs. */
+  browserAsSeat(seatId: string, body: BrowserAction): Promise<BrowserResult> {
+    const seat = this.seats.get(seatId);
+    if (!seat || seat.concluding) throw new HttpError(401, "unauthorized", "this seat is over");
+    return browserActionForSeat(this.core, seatAgentName(seatId), body);
   }
 
   private fit(me: string): boolean {
@@ -3863,7 +4073,7 @@ function stopText(stop: NonNullable<Seat["stop"]>, run: AnySeatRun): Pick<SeatSt
     case "timeout": return { state: "timeout", reason: `stopped after the ${Math.round(run.timeout_s / 60)} min limit` };
     case "stopped": return { state: "stopped", reason: stop.by ? `stopped by @${stop.by}` : "stopped" };
     case "revoked": return { state: "stopped", reason: "seats were turned off on this machine" };
-    case "shutdown": return { state: "stopped", reason: "the host's Walkie daemon stopped" };
+    case "shutdown": return { state: "stopped", reason: "the host's Sqwakie daemon stopped" };
     case "unadmitted": return { state: "stopped", reason: "the host machine is no longer an admitted member of the team" };
     case "launcher": return { state: "stopped", reason: stop.why ?? "its launcher may no longer start seats here" };
     case "held": return { state: "stopped", reason: stop.why ?? "it waited too long to continue" };

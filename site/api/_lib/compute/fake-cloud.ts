@@ -62,6 +62,11 @@ export class FakeCloud implements CloudDriver {
       .map((i) => ({ instance_id: i.id, state: i.state, tags: i.req.tags }));
   }
 
+  async instanceGone(instanceId: string): Promise<boolean> {
+    const i = this.instances.get(instanceId);
+    return !i || i.state === "terminated";
+  }
+
   /** Tests: an instance the provider holds that no rental knows about (an orphan). */
   plantOrphan(tags: Record<string, string>): string {
     const id = `fake-${(++this.seq).toString(16).padStart(8, "0")}`;

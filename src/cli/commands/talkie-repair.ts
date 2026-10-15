@@ -22,9 +22,9 @@ const Status = z.object({
 export async function inspectTalkieStatus(call: (argv: string[]) => Promise<AdminResult | null> = (argv) => adminCall(argv, 10_000)):
   Promise<RepairSnapshot> {
   const result = await call(["sudo", "-n", DEFAULT_ADMIN, "seat-admin", "talkie-status"]);
-  if (!result?.ok) throw new Error(`WalkieTalkie cleanup status could not be checked: ${result?.why ?? "the seat helper did not answer"}`);
+  if (!result?.ok) throw new Error(`Talkie cleanup status could not be checked: ${result?.why ?? "the seat helper did not answer"}`);
   const parsed = Status.safeParse(result.status);
-  if (!parsed.success) throw new Error("WalkieTalkie cleanup status response was incomplete");
+  if (!parsed.success) throw new Error("Talkie cleanup status response was incomplete");
   return parsed.data;
 }
 
@@ -75,6 +75,6 @@ export async function talkieRepair(ctx: Ctx, client: WalkieClient): Promise<numb
   }
   try { await client.orchestratorCleanupRepaired(); }
   catch { /* The monitor also observes the completed generation after its next retry. */ }
-  ctx.out("WalkieTalkie empty uid and owner row verified; cleanup state repaired");
+  ctx.out("Talkie empty uid and owner row verified; cleanup state repaired");
   return EXIT.ok;
 }

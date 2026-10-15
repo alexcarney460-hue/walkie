@@ -1,5 +1,5 @@
 // "Serve on one machine" (POOL-REAL-1): a model that fits one machine's GPU runs there whole, at that GPU's speed,
-// and every member machine can use it through Walkie. Shows what the team serves now (Connect / Disconnect, the
+// and every member machine can use it through Sqwakie. Shows what the team serves now (Connect / Disconnect, the
 // endpoint and key file on this machine), what this machine serves (clients, Stop), and the best model to serve
 // (Serve it). Used by LocalModels.tsx above the split-run block.
 import { useMemo, useState } from "react";
@@ -117,7 +117,7 @@ export function ServeBlock({ nodes }: { nodes: readonly NodeView[] }) {
             <Play size={12} strokeWidth={2} aria-hidden="true" /> Serve {pick.model.name} · {pick.quant === "q8" ? "8-bit" : "4-bit"} on {pick.host.node.self ? "this machine" : pick.host.node.hostname}
           </button>
           <span className="lm-run-est tnum" title={SPEED_HINT[pick.speed]}>{tpsText(pick.tokensPerSec)} (estimate) · {gbText(pick.need)} of {gbText(pick.host.usable)} GPU memory free</span>
-          {!pick.host.node.self && <p className="lm-run-note">It runs on {pick.host.node.hostname} (its owner shares it); this machine gets an endpoint through Walkie.</p>}
+          {!pick.host.node.self && <p className="lm-run-note">It runs on {pick.host.node.hostname} (its owner shares it); this machine gets an endpoint through Sqwakie.</p>}
         </div>
       )}
       {!serving && !pick && remote.length === 0 && (

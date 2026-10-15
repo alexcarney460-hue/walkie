@@ -4,19 +4,22 @@ import { enqueueCleanup, drainCleanup } from './cleanup.js';
 // The minute tick lives in tick.ts. Pattern for anything that touches a provider: decide and record inside a store
 // transaction (account lock, capacity lock), commit, THEN call the driver, then record the outcome in a second
 // transaction. A crash in between leaves a rental the tick repairs; it never leaves an unrecorded charge.
-import { MIN_HOURS_COVERED, tierSpec } from "./catalog.js";
-import { checkOwnership, licenseOwnership, enroll, bindInvite } from "./ownership.js";
+import { MIN_HOURS_COVERED, tierOffered, tierSpec } from "./catalog.js";
+import { checkOwnership, licenseOwnership, enroll, bindInvite, firstEnrollmentGate, firstEnrollmentPrecheck, firstEnrollmentRefusal,
+  forkOpen, recordedHead } from "./ownership.js";
 import { teamAuthority, chainRelation, type StoredChain } from './team-proof.js';
 import { LATEST_MIGRATION } from './migrations.js';
 import { handoverKey, heldAccounts, holdHandover, rejectedHandover, seedLegacyEnrollment, type PendingHandover } from './handover.js';
 import { noteFirstFunded, observeOwners } from './roster-history.js';
-import { bill, refundBoot, capacity, creditNeeded } from "./billing.js";
-import { available, assertFresh, launchEligible, launchFrozen, realRental } from "./safety.js";
+import { bill, capLapsedLease, refundBoot, capacity, creditNeeded, noteOperatorFunded } from "./billing.js";
+import { assertFresh, firstHourFunds, launchEligible, launchFrozen, realRental, type FirstHourFunds } from "./safety.js";
 import { isRealProvider } from "./paid.js";
+import { watchCpu } from './cpu-watch.js';
 import type { ComputeDeps } from "./deps.js";
 import { newAccountId, newRentalId, newToken, shortSuffix, tokenHash, tokenMatches } from "./tokens.js";
-import type { Account, Rental, Tx } from "./store.js";
+import { isBusy, type Account, type Rental, type Tx, type TxOptions } from "./store.js";
 import { queuePositions, rentalView, stateView } from "./views.js";
+import { readCredit, usableCredit } from "./lots.js";
 import {
   ACTIVE_STATES, IDLE_MINUTES_DEFAULT, type ComputeStateView, type RentalView, type RentReq, type RentResult, type StopReason,
 } from "./types.js";
@@ -28,6 +31,9 @@ export class ComputeError extends Error {
 
 // ---- accounts ------------------------------------------------------------------------------------------------
 
+/** A refused first enrollment pages the operator at most once a day for the same presenter and chain. */
+const REFUSAL_PAGE_MS = 24 * 60 * 60_000;
+
 /** A new compute account for a team; the token is returned once and only its hash is kept. */
 export async function createAccount(d: ComputeDeps, teamId: string, proof?: unknown, allowHandover = true): Promise<{ account_id: string; token: string; adopted_accounts?: { account_id: string; token: string }[]; handover_pending?: { completes_at: number; accounts: readonly string[] } }> {
   try {
@@ -38,13 +44,49 @@ export async function createAccount(d: ComputeDeps, teamId: string, proof?: unkn
     throw new ComputeError(503, 'compute_state_unavailable');
   }
   const owner = checkOwnership(d, teamId, proof);
+  // What the store alone refuses is answered before any Stripe read, the credential check included (lane C round 12).
+  const early = await firstEnrollmentPrecheck(d, teamId);
+  if (early === 'backfill_pending') {
+    d.log('licence_backfill_pending', { team: teamId });
+    throw new ComputeError(503, 'licence_backfill_pending');
+  }
+  if (early === 'bindings_overflow') {
+    d.log('alert_licence_bindings_overflow', { team: teamId });
+    throw new ComputeError(503, 'licence_bindings_overflow');
+  }
   const licensed = await licenseOwnership(d, teamId, owner);
+  const gate = await firstEnrollmentGate(d, teamId, licensed);
   const token = newToken();
   const id = newAccountId();
   const result = await d.store.tx(async (t) => {
     const previous = await t.enrollment(teamId);
     await t.lockControl(`enrollment-chain:${teamId}`);
     const chain = teamAuthority(teamId, owner)!;
+    // First enrollment of a team with a bound licence: only that licence's authority, decided from the site's record
+    // under this lock (lane C rounds 7 and 10).
+    if (!previous && gate.kind !== 'unchecked') {
+      if (gate.kind === 'enrolled') return 'unverified';
+      const refusal = await firstEnrollmentRefusal(t, teamId, gate, owner, licensed);
+      if (refusal === 'backfill_pending') {
+        d.log('licence_backfill_pending', { team: teamId });
+        return 'backfill';
+      }
+      if (refusal === 'bindings_overflow') {
+        d.log('alert_licence_bindings_overflow', { team: teamId });
+        return 'overflow';
+      }
+      if (refusal) {
+        // Paged once per presenter and chain per day; every refusal updates the record for the operator.
+        const refusedKey = `enrollment-licence-refused:${teamId}`;
+        const prior = await t.control(refusedKey) as { key?: string; chain?: string; alerted_at?: number } | undefined;
+        const page = prior?.key !== owner.key || prior?.chain !== chain.chainId ||
+          d.now() - (prior?.alerted_at ?? 0) >= REFUSAL_PAGE_MS;
+        await t.setControl(refusedKey, { key: owner.key, chain: chain.chainId, at: d.now(),
+          alerted_at: page ? d.now() : prior?.alerted_at ?? d.now() });
+        if (page) d.log('alert_enrollment_licence_refused', { team: teamId });
+        return 'conflict';
+      }
+    }
     const oldChain = await t.control(`enrollment-chain:${teamId}`) as StoredChain | undefined;
     const affected = await heldAccounts(t, teamId, d.now());
     if (affected.length) await noteFirstFunded(t, teamId, d.now());
@@ -61,6 +103,12 @@ export async function createAccount(d: ComputeDeps, teamId: string, proof?: unkn
       return 'conflict';
     }
     const relation = oldChain ? chainRelation(oldChain, chain) : 'extends';
+    // An open fork stops every successor (a deeper chain or a new key) until the operator resolves it (lane C round 6).
+    // A conflicting branch still reaches enroll(), which records it as the fork candidate.
+    if (relation !== 'conflict' && (relation === 'extends' || previous?.key !== owner.key) && await forkOpen(t, teamId)) {
+      d.log('compute_enrollment_refused_open_fork', { team: teamId, chain: chain.chainId });
+      return 'conflict';
+    }
     if (!previous && affected.length) {
       const legacy = await seedLegacyEnrollment(t, teamId, owner, oldChain, affected, d.now());
       if (!legacy || chainRelation(legacy, chain) === 'conflict' || chainRelation(legacy, chain) === 'older') {
@@ -86,7 +134,8 @@ export async function createAccount(d: ComputeDeps, teamId: string, proof?: unkn
     }
     // A pin admits a legacy proposal; it is never approval to move funded tokens.
     if (previous && previous.key !== owner.key && affected.length && (!oldChain || relation === 'equal')) {
-      if (d.config.team_authorities[teamId] === owner.key && allowHandover) {
+      const pin = d.config.team_authorities[teamId];
+      if ((pin === owner.key || (!pin && await recordedHead(t, teamId, previous.key, oldChain, chain, owner))) && allowHandover) {
         const root = teamAuthority(teamId, { genesis: owner.genesis });
         if (!oldChain && !root) return 'conflict';
         const held = await holdHandover(d, t, teamId, oldChain ?? root!, chain, owner.key,
@@ -117,6 +166,9 @@ export async function createAccount(d: ComputeDeps, teamId: string, proof?: unkn
     return [{ account_id: id, token }];
   });
   if (result === 'conflict') throw new ComputeError(403, 'team_ownership_required');
+  if (result === 'unverified') throw new ComputeError(503, 'license_verification_unavailable');
+  if (result === 'backfill') throw new ComputeError(503, 'licence_backfill_pending');
+  if (result === 'overflow') throw new ComputeError(503, 'licence_bindings_overflow');
   if (result === 'upgrade') throw new ComputeError(426, 'compute_upgrade_required');
   if (!Array.isArray(result)) {
     d.log('compute_handover_pending', { team: teamId, accounts: result.pending.accounts.length,
@@ -134,9 +186,13 @@ export async function accountForToken(d: ComputeDeps, token: string): Promise<Ac
   return a && tokenMatches(token, a.token_hash) ? a : null;
 }
 
+/**
+ * The account's state: a read on one snapshot that takes no row lock (pre.17 review P2-1: status requests holding the
+ * account row could make the tick skip the account as busy).
+ */
 export async function state(d: ComputeDeps, accountId: string): Promise<ComputeStateView> {
   return d.store.tx(async (t) => {
-    const a = await t.lockAccount(accountId);
+    const a = await t.account(accountId);
     if (!a) throw new ComputeError(401, "invalid_token");
     const rentals = await t.rentals(a.id);
     const last = await t.control('last_tick');
@@ -146,11 +202,40 @@ export async function state(d: ComputeDeps, accountId: string): Promise<ComputeS
       d.log('alert_tick_stale', { last_tick_at: typeof last === 'number' ? last : null });
     }
     if (rentals.some(r => r.safety?.alert === 'termination_delayed')) alerts.push('termination_delayed');
-    return { ...stateView(a, await t.balance(a.id), rentals, queuePositions(await t.activeRentals())), alerts };
-  });
+    // Expired credit never shows as usable, written off yet or not (lots.ts).
+    return { ...stateView(a, await readCredit(t, a.id), d.now(), rentals, queuePositions(await t.activeRentals())), alerts };
+  }, { readOnly: true });
 }
 
 // ---- launching -----------------------------------------------------------------------------------------------
+
+/**
+ * A rent waits at most this long for each lock (its account row, then the shared capacity lock), so it holds the
+ * account row for less than the tick's own bound (tick-pass.ts TICK_LOCK_MS) and cannot make the account busy alone.
+ */
+export const RENT_LOCK_MS = 1_500;
+
+/** A transaction past its lock bound (nothing was written) answers 429 compute_busy: the caller sends it again later. */
+async function busyIsRetryable<T>(run: () => Promise<T>): Promise<T> {
+  try { return await run(); }
+  catch (err) {
+    // A 429, not a 503: refused before anything was recorded, so a client drops the request rather than resend it
+    // later (pre.17 review P2-1: a kept 503 and the person's retry made two machines).
+    if (isBusy(err)) throw new ComputeError(429, "compute_busy", { retry_after_s: 5 });
+    throw err;
+  }
+}
+
+/**
+ * 402 insufficient_credit unless `funds` cover `needed` in total and `paidNeeded` from paid credit. The answer names
+ * the need, what covers a first hour, and (expiring_micros) the credit left out because it expires within that hour.
+ */
+function refuseShort(funds: FirstHourFunds, needed: number, paidNeeded: number): void {
+  const short = (need: number, have: number, expiring: number) => new ComputeError(402, "insufficient_credit",
+    { needed_micros: need, balance_micros: have, ...(expiring > 0 ? { expiring_micros: expiring } : {}) });
+  if (needed > 0 && funds.total < needed) throw short(needed, funds.total, funds.expiring.total);
+  if (paidNeeded > 0 && funds.paid < paidNeeded) throw short(paidNeeded, Math.max(0, funds.paid), funds.expiring.paid);
+}
 
 interface Launch { readonly rental: Rental; readonly code: string; readonly heartbeatToken: string }
 
@@ -193,13 +278,15 @@ async function viewsFor(t: Tx, ids: readonly string[]): Promise<RentalView[]> {
 }
 
 /**
- * Rent any number of machines, any mix of tiers. Credit must cover the first hour of every machine asked for. Each
- * machine is reserved for the tick if our quota has room (and nothing older waits for that quota), else it is queued and started
- * by the tick as capacity frees. Idempotent on the request's key.
+ * Rent any number of machines, any mix of tiers on sale (a tier whose quota is 0 is refused: 409 tier_unavailable).
+ * Credit that stays unexpired through it must cover the first hour of every machine asked for (checked again after
+ * the locks with a fresh clock). Each machine is reserved for the tick if our quota has
+ * room (and nothing older waits for that quota), else it is queued and started by the tick as capacity frees.
+ * Idempotent on the request's key.
  */
 export async function rent(d: ComputeDeps, accountId: string, req: RentReq): Promise<RentResult> {
   const now = d.now();
-  const decided = await d.store.tx(async (t) => {
+  const decided = await busyIsRetryable(() => d.store.tx(async (t) => {
     const a = await t.lockAccount(accountId);
     if (!a) throw new ComputeError(401, "invalid_token");
     const prior = await t.rentRequest(a.id, req.idempotency_key);
@@ -207,19 +294,23 @@ export async function rent(d: ComputeDeps, accountId: string, req: RentReq): Pro
     refuseUnlessActive(a);
     if (await launchFrozen(t, a.team_id)) throw new ComputeError(403, 'team_ownership_required');
     if (d.enabled === false) throw new ComputeError(503, "compute_not_configured");
+    // Off sale (quota 0): refused before anything is inserted, so no reservation holds credit for it.
+    const offSale = req.machines.find((m) => !tierOffered(d.config, m.tier));
+    if (offSale) throw new ComputeError(409, "tier_unavailable");
     await assertFresh(d, t);
-    const funds = await available(t, a.id);
-    const balance = funds.total;
+    // The first hour of every machine asked for, from credit that stays unexpired through it (firstHourFunds).
     const needed = creditNeeded(req.machines, MIN_HOURS_COVERED);
-    if (balance < needed) throw new ComputeError(402, "insufficient_credit", { needed_micros: needed, balance_micros: balance });
     const real = req.machines.filter((m) => isRealProvider(d.config, m.tier));
+    const paidNeeded = creditNeeded(real, MIN_HOURS_COVERED);
+    const funds = await firstHourFunds(t, a.id, d.now());
+    refuseShort(funds, needed, 0);
     if (real.length) {
       if (a.classification !== "customer" || !(await launchEligible(d, t, a))) throw new ComputeError(403, "team_ineligible");
-      const paid = funds.paid;
-      const paidNeeded = creditNeeded(real, MIN_HOURS_COVERED);
-      if (paid < paidNeeded) throw new ComputeError(402, "insufficient_credit", { needed_micros: paidNeeded, balance_micros: Math.max(0, paid) });
+      refuseShort(funds, 0, paidNeeded);
     }
     await t.lockCapacity();
+    // A wait for either lock can cross an expiry: checked again with a fresh clock, before anything is inserted.
+    refuseShort(await firstHourFunds(t, a.id, d.now()), needed, paidNeeded);
     const active = await t.activeRentals();
     const cap = capacity(active, d.config);
     const waiting = new Set(active.filter((r) => r.state === "queued").map((r) => d.config.tiers[r.tier].quota_group));
@@ -249,34 +340,45 @@ export async function rent(d: ComputeDeps, accountId: string, req: RentReq): Pro
     await t.insertRentRequest({ account_id: a.id, idem_key: req.idempotency_key, rental_ids: ids, code_index: codeIndex, created_at: now });
     d.log("rent", { account: a.id, machines: ids.length, starting: launches.length });
     return { replay: null, launches, ids, codeIndex };
-  });
+  }, { lockTimeoutMs: RENT_LOCK_MS }));
 
   return d.store.tx(async (t) => {
     const rentals = await viewsFor(t, decided.ids);
     return {
       rentals, started: Object.keys(decided.codeIndex).length, queued: rentals.filter((r) => r.state === "queued").length,
-      code_index: { ...decided.codeIndex }, balance_micros: await t.balance(accountId), replay: decided.replay !== null,
+      code_index: { ...decided.codeIndex }, balance_micros: (await usableCredit(t, accountId, d.now())).total, replay: decided.replay !== null,
     };
   });
 }
 
 /** The owner's daemon supplies a fresh join code for a rental waiting in `needs_code`. */
 export async function start(d: ComputeDeps, accountId: string, rentalId: string, code: string, walkieVersion?: string): Promise<RentalView> {
-  await d.store.tx(async (t) => {
+  const offSale = await d.store.tx(async (t) => {
     const a = refuseUnlessActive(await t.lockAccount(accountId));
     if (await launchFrozen(t, a.team_id)) throw new ComputeError(403, 'handover_pending');
     await assertFresh(d, t);
     const r = await t.rental(rentalId);
     if (!r || r.account_id !== accountId) throw new ComputeError(404, "not_found");
     if (r.state !== "needs_code") throw new ComputeError(409, "not_waiting_for_code", { state: r.state });
+    // Its tier went off sale (quota 0) after the rent was accepted: end it unbilled, releasing its first hour. Committed
+    // here, refused below (a throw inside the transaction would roll the end back).
+    if (!tierOffered(d.config, r.tier)) {
+      await t.updateRental(r.id, { state: "failed", ended_at: d.now(), end_reason: "launch_failed", heartbeat_hash: null, needs_code_at: null });
+      return true;
+    }
     if (realRental(r) && (a.classification !== "customer" || !(await launchEligible(d, t, a)))) throw new ComputeError(403, 'team_ineligible');
-    const funds = await available(t, accountId, r.id);
-    const balance = realRental(r) ? funds.paid : funds.total;
-    if (balance < r.price_per_hour_micros) throw new ComputeError(402, "insufficient_credit", { needed_micros: r.price_per_hour_micros, balance_micros: Math.max(0, balance) });
+    const funds = await firstHourFunds(t, accountId, d.now(), r.id);
+    if (realRental(r)) refuseShort(funds, 0, r.price_per_hour_micros);
+    else refuseShort(funds, r.price_per_hour_micros, 0);
     await bindInvite(t, a, code, r.id, d.now());
     if (walkieVersion) await t.updateRental(r.id, { walkie_version: walkieVersion });
     await markStarting(t, r, code, d.now());
+    return false;
   });
+  if (offSale) {
+    d.log("launch_off_sale", { rental: rentalId });
+    throw new ComputeError(409, "tier_unavailable");
+  }
 
   return d.store.tx(async (t) => (await viewsFor(t, [rentalId]))[0] as RentalView);
 }
@@ -284,14 +386,15 @@ export async function start(d: ComputeDeps, accountId: string, rentalId: string,
 // ---- stopping ------------------------------------------------------------------------------------------------
 
 /**
- * Inside an account-locked transaction: bills to now and moves each rental to `stopping` (a machine exists or may) or
- * straight to `ended` (queued, never launched). v1 stop = terminate + wipe: no kept disks. Returns what to terminate.
+ * Inside an account-locked transaction: bills to now (a lapsed lease only to its end: capLapsedLease) and moves each
+ * rental to `stopping` (a machine exists or may) or straight to `ended` (queued, never launched). v1 stop = terminate +
+ * wipe: no kept disks. Returns what to terminate.
  */
 export async function markStopped(t: Tx, rentals: readonly Rental[], reason: StopReason, now: number): Promise<Rental[]> {
   const toTerminate: Rental[] = [];
   for (const r0 of rentals) {
     if (!ACTIVE_STATES.has(r0.state) || r0.state === "stopping") continue;
-    const r = await bill(t, r0, now);
+    const r = await bill(t, capLapsedLease(r0, now), now);
     const hasMachine = r.state === "starting" || r.state === "running";
     const patch = { state: hasMachine ? "stopping" as const : "ended" as const, ended_at: hasMachine ? null : now, end_reason: reason, heartbeat_hash: null,
       ...(r.safety ? { safety: { ...r.safety, claim: "cancelled" as const, code: undefined, heartbeat_token: undefined } } : {}) };
@@ -305,7 +408,11 @@ export async function markStopped(t: Tx, rentals: readonly Rental[], reason: Sto
 }
 
 /** Terminates (idempotently) and records `ended`; a failure leaves it `stopping` for the tick to retry. */
-export async function terminate(d: ComputeDeps, r: Rental, timeoutMs = CALL_MS): Promise<boolean> {
+/**
+ * `bounds` (the tick's cleanup pass): its account-row waits are bounded, and a busy refusal is thrown after the provider
+ * call, so the deletion still happens and only its record waits for the next pass (the delete is idempotent).
+ */
+export async function terminate(d: ComputeDeps, r: Rental, timeoutMs = CALL_MS, bounds?: TxOptions): Promise<boolean> {
   if (r.safety?.retry_at && d.now() < r.safety.retry_at) return false;
   if (!r.instance_id && r.safety?.claimed_at) return false; // uncertain create: reconcile owns confirmation
   if (r.instance_id) {
@@ -324,7 +431,7 @@ export async function terminate(d: ComputeDeps, r: Rental, timeoutMs = CALL_MS):
           retry_at: d.now() + Math.min(60_000 * 2 ** (attempts - 1), 900_000),
           ...(attempts >= 3 ? { alert: 'termination_delayed' } : {}) } });
         if (attempts >= 3) d.log('alert_termination_delayed', { rental: r.id, attempts });
-      });
+      }, bounds);
       return false;
     }
   }
@@ -333,10 +440,12 @@ export async function terminate(d: ComputeDeps, r: Rental, timeoutMs = CALL_MS):
     const cur = await t.rental(r.id);
     if (cur?.state === "stopping") {
       const billed = await bill(t, cur, d.now());
-      if (cur.end_reason === "boot_timeout") await refundBoot(t, billed, d.now());
+      if (cur.end_reason === "boot_timeout" && await refundBoot(t, billed, d.now()) === 'capped')
+        d.log('alert_boot_refund_capped', { team: billed.team_id, account: billed.account_id, rental: billed.id });
       await t.updateRental(r.id, { state: "ended", ended_at: d.now() });
+      noteOperatorFunded(d.log, billed, d.config.tiers[billed.tier]?.cost_per_hour_micros);
     }
-  });
+  }, bounds);
   d.log("ended", { rental: r.id, reason: r.end_reason ?? "user" });
   return true;
 }
@@ -386,13 +495,18 @@ export async function heartbeat(d: ComputeDeps, hb: Heartbeat): Promise<{ state:
     if (!r.instance_id) return { state: r.state };
     const busy = hb.busy_seats > 0 || hb.pool_jobs > 0;
     const hot = !busy && (hb.gpu_pct ?? 0) >= GPU_HOT_PCT;
+    // Written under the account lock taken above (the safety record also holds money fields).
+    const cpu = r.safety ? watchCpu(r.safety, hb.cpu_pct, busy, now) : { alert: false, longAlert: false };
     await t.updateRental(r.id, {
       state: "running", last_heartbeat_at: now,
       last_busy_at: busy || r.last_busy_at === null ? now : r.last_busy_at,
       gpu_hot_since: hot ? (r.gpu_hot_since ?? now) : null,
       egress_bytes: Math.max(r.egress_bytes, hb.egress_bytes),
       ...(hb.node_id && !r.node_id ? { node_id: hb.node_id } : {}),
+      ...(cpu.safety ? { safety: cpu.safety } : {}),
     });
+    if (cpu.alert) d.log('alert_cpu_pegged', { rental: r.id, team: r.team_id, account: r.account_id });
+    if (cpu.longAlert) d.log('alert_cpu_pegged_long', { rental: r.id, team: r.team_id, account: r.account_id });
     return { state: "running" };
   });
 }

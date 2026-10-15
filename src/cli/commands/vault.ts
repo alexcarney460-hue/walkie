@@ -2,15 +2,18 @@
 // sessions between. Adding, removing and changing who may use a login are for a person at a terminal (agents are
 // refused); picking and running a command on the picked account (`exec`) are for scripts and agents too.
 import { remoteRunToken } from "../../client/remote-run.ts";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { accessSync, constants, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { z } from "zod";
 import { identifyCodex } from "../../accounts/adapters/codex.ts";
+import { kimiCredentialsPath } from "../../accounts/adapters/kimi.ts";
 import { activeLeases, releaseLease, writeLease, writeMark } from "../../accounts/leases.ts";
 import { accountId, maskEmail } from "../../accounts/mask.ts";
 import { selectOwnFirst, type Candidate } from "../../accounts/select.ts";
 import { codexBaseHome, finalCodexHome, pendingCodexHome, removeCodexHome } from "../../accounts/vault/codex-home.ts";
+import { finalKimiHome, kimiBaseHome, pendingKimiHome, removeKimiHome } from "../../accounts/vault/kimi-home.ts";
+import { discardFailedVaultHome, secureVaultHomeAfterLogin } from "../../accounts/vault/vault-path.ts";
 import { POLICIES, Vault, walkieHomeDir, type Policy, type VaultEntry, type VaultProvider } from "../../accounts/vault/vault.ts";
 import { PLAN_RE } from "../../protocol/accounts.ts";
 import { unswitchedSessions, type UnswitchedSession } from "../../protocol/accounts-format.ts";
@@ -27,14 +30,22 @@ import { agentSignals, type ProcRow } from "../agent-detect.ts";
 import { agentAdminOn, auditLocal } from "../admin-gate.ts";
 import { AGENT_ADMIN_OFF } from "../../daemon/admin/gate.ts";
 import { importClaudeLogin, type ClaudeImport } from "../../accounts/vault/import.ts";
+import { importTracked, type RemoteFingerprint } from "../../accounts/vault/import.ts";
+import { readAccountsFile } from "../../accounts/store.ts";
+import { saveConfigField } from "../../daemon/config.ts";
 import { bool, need, str, UsageError } from "../args.ts";
 import { EXIT, readStdin, type Ctx } from "../context.ts";
 import { c, pad, safeTerm } from "../format.ts";
 import { openTty, type Tty } from "../tty.ts";
 
-function provider(s: string | undefined): VaultProvider {
+function provider(s: string | undefined): "claude" | "codex" {
   if (s === "claude" || s === "codex") return s;
   throw new UsageError("provider must be claude or codex");
+}
+
+function addProvider(s: string | undefined): VaultProvider {
+  if (s === "kimi") return s;
+  return provider(s);
 }
 
 /**
@@ -171,6 +182,7 @@ async function addCodex(ctx: Ctx, vault: Vault, tty: Tty, walkieHome: string): P
   const trust = trustedRecipient(walkieHome, "codex", real, { cwd: process.cwd(), shimDir: join(walkieHome, "bin") });
   if (!trust.ok) throw new UsageError(`not running ${real} for the login: ${safeTerm(trust.why)}`);
   const home = pendingCodexHome(walkieHome, codexBaseHome(walkieHome));
+  let currentHome = home;
   let done = false;
   try {
     ctx.err(`Log in to the ChatGPT account to add (codex login, into its own CODEX_HOME):`);
@@ -182,33 +194,91 @@ async function addCodex(ctx: Ctx, vault: Vault, tty: Tty, walkieHome: string): P
     // Round 5: the login's own endpoints are pinned too (the pending home's config is already a cleaned copy).
     const p = Bun.spawn([...trust.argv, ...plan.argv], { stdio: ["inherit", "inherit", "inherit"], env: codexLoginEnv(process.env, walkieHome, home) });
     if ((await p.exited) !== 0) throw new UsageError("codex login did not finish; nothing was added");
-    const ident = identifyCodex({ provider: "codex", dir: home, isDefault: false });
-    if (!ident) throw new UsageError("that login is not a ChatGPT plan login (an API-key login has no usage to switch on); nothing was added");
+    secureVaultHomeAfterLogin(walkieHome, "codex", home);
+    let credentialIssue: string | null = null;
+    const ident = identifyCodex({ provider: "codex", dir: home, isDefault: false, vault: true }, (reason) => { credentialIssue = reason; });
+    if (!ident) throw new UsageError(credentialIssue ?? "that login is not a ChatGPT plan login (an API-key login has no usage to switch on); nothing was added");
     if (vault.get(ident.id)) throw new UsageError(`${ident.label} is already in the vault`);
     if (!(await confirm(tty, `Add ${ident.label}${ident.plan ? ` (${ident.plan})` : ""} to the vault?`))) throw new UsageError("not added");
     const final = finalCodexHome(home, walkieHome, ident.id);
+    currentHome = final;
+    const entry = vault.addCodex({ id: ident.id, label: ident.label, plan: ident.plan, home: final });
     done = true;
-    return vault.addCodex({ id: ident.id, label: ident.label, plan: ident.plan, home: final });
+    return entry;
   } finally {
-    if (!done && existsSync(home)) {
-      try { removeCodexHome(home, walkieHome); } catch (err) { ctx.err(c.yellow(`left ${home} in place: ${(err as Error).message}`)); }
+    if (!done) {
+      try { discardFailedVaultHome(walkieHome, "codex", currentHome); } catch (err) { ctx.err(c.yellow(`left ${currentHome} in place: ${(err as Error).message}`)); }
+    }
+  }
+}
+
+function kimiCli(env: NodeJS.ProcessEnv = process.env): string | null {
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const path = join(dir, "kimi");
+    try { if (statSync(path).isFile()) { accessSync(path, constants.X_OK); return path; } } catch { /* next PATH entry */ }
+  }
+  return null;
+}
+
+export async function addKimi(ctx: Ctx, vault: Vault, tty: Tty, walkieHome: string, binary = kimiCli()): Promise<VaultEntry> {
+  if (tty === AGENT_TTY || remoteRunToken()) throw new UsageError("Kimi login requires this machine's person at a terminal");
+  if (!binary) throw new UsageError("kimi is not on PATH");
+  if (ctx.args.pos.length !== 2) throw new UsageError("use: walkie accounts add kimi [--account id] [--email e] [--plan name] [--region global|mainland-cn]");
+  const region = str(ctx.args, "region");
+  if (region && region !== "global" && region !== "mainland-cn") throw new UsageError("--region must be global or mainland-cn");
+  const wanted = str(ctx.args, "account");
+  if (wanted && !/^[0-9a-f]{24}$/.test(wanted)) throw new UsageError("--account needs a 24-hex account id");
+  const plan = str(ctx.args, "plan");
+  if (plan && !PLAN_RE.test(plan)) throw new UsageError("invalid plan name");
+  const id = wanted ?? randomBytes(12).toString("hex");
+  if (vault.get(id)) throw new UsageError("that account is already in the vault");
+  const home = pendingKimiHome(walkieHome);
+  let currentHome = home;
+  let done = false;
+  try {
+    ctx.err("Sign in to the Kimi account to add (device-code login in its own KIMI_CODE_HOME):");
+    const raw: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) if (value !== undefined) raw[key] = value;
+    const env = credentialEnv(raw, proxyAllowed(walkieHome));
+    for (const key of ["KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_CODE_HOME"]) delete env[key];
+    const child = Bun.spawn([binary, "login", ...(region ? ["--region", region] : [])], {
+      stdio: ["inherit", "inherit", "inherit"], env: { ...env, KIMI_CODE_HOME: home, WALKIE_NO_SWITCH: "1" },
+    });
+    if ((await child.exited) !== 0) throw new UsageError("kimi login did not finish; nothing was added");
+    secureVaultHomeAfterLogin(walkieHome, "kimi", home);
+    let credentialIssue: string | null = null;
+    const credential = kimiCredentialsPath({ provider: "kimi", dir: home, isDefault: false, vault: true }, (reason) => { credentialIssue = reason; });
+    if (!credential) throw new UsageError(credentialIssue ?? "kimi login wrote no regular credential; nothing was added");
+    const label = maskEmail(str(ctx.args, "email")) ?? "Kimi account";
+    if (!(await confirm(tty, `Add ${label} to this machine's vault?`))) throw new UsageError("not added");
+    const final = finalKimiHome(home, walkieHome, id);
+    currentHome = final;
+    const entry = vault.addKimi({ id, label, plan: plan ?? null, home: final });
+    done = true;
+    return entry;
+  } finally {
+    if (!done) {
+      try { discardFailedVaultHome(walkieHome, "kimi", currentHome); } catch (err) { ctx.err(c.yellow(`left ${currentHome} in place after the incomplete login: ${(err as Error).message}`)); }
     }
   }
 }
 
 async function add(ctx: Ctx, walkieHome: string): Promise<number> {
-  const prov = provider(need(ctx.args, 1, "provider (claude|codex)"));
-  const tty = await admitted(ctx, "walkie accounts add");
+  const prov = addProvider(need(ctx.args, 1, "provider (claude|codex|kimi)"));
+  const tty = prov === "kimi" ? person(ctx, "walkie accounts add kimi") : await admitted(ctx, "walkie accounts add");
+  if (prov === "kimi" && tty === AGENT_TTY) throw new UsageError("Kimi login requires this machine's person at a terminal");
   const vault = Vault.open(walkieHome);
   try {
-    const e = prov === "claude" ? await addClaude(ctx, vault, tty, walkieHome) : await addCodex(ctx, vault, tty, walkieHome);
+    const e = prov === "claude" ? await addClaude(ctx, vault, tty, walkieHome) : prov === "codex" ? await addCodex(ctx, vault, tty, walkieHome) : await addKimi(ctx, vault, tty, walkieHome);
     writeMark(walkieHome, e.id, null); // a new credential: what sessions learned about the old one no longer applies
-    const ks = await vault.keyStore();
-    ctx.out(`${c.green("added")} ${PROVIDER[e.provider]} ${safeTerm(e.label)} ${c.dim(`(${e.id.slice(0, 8)}, policy ${e.policy}${e.provider === "claude" ? `, key in ${ks.kind}` : ""})`)}`);
-    ctx.out(c.dim("While the team's company account pool is on (walkie accounts pool), every member's machines can lease it; keep it out with: walkie accounts personal <account>"));
-    if (ks.warning && e.provider === "claude") ctx.err(c.yellow(`note: ${ks.warning}`));
-    if (e.provider === "codex") ctx.out(c.dim("Codex logins are protected like Codex protects them (a 0600 auth.json in the account's own 0700 directory, not encrypted by Walkie); Claude tokens are encrypted."));
-    if (!shimsFirst(walkieHome)) ctx.out(c.dim("Sessions switch when started with `walkie claude` / `walkie codex`, or everywhere after: walkie accounts shims install"));
+    const ks = e.provider === "claude" ? await vault.keyStore() : null;
+    ctx.out(`${c.green("added")} ${PROVIDER[e.provider]} ${safeTerm(e.label)} ${c.dim(`(${e.id.slice(0, 8)}, policy ${e.policy}${ks ? `, key in ${ks.kind}` : ""})`)}`);
+    if (e.provider !== "kimi") ctx.out(c.dim("While the team's company account pool is on (walkie accounts pool), every member's machines can lease it; keep it out with: walkie accounts personal <account>"));
+    if (ks?.warning) ctx.err(c.yellow(`note: ${ks.warning}`));
+    if (e.provider === "codex") ctx.out(c.dim("Codex logins are protected like Codex protects them (a 0600 auth.json in the account's own 0700 directory, not encrypted by Sqwakie); Claude tokens are encrypted."));
+    if (e.provider === "kimi") ctx.out(c.dim("Kimi's rotating credential stays in this machine's private vault home; same-machine seats can use it, but no other machine can lease it."));
+    if (e.provider !== "kimi" && !shimsFirst(walkieHome)) ctx.out(c.dim("Sessions switch when started with `walkie claude` / `walkie codex`, or everywhere after: walkie accounts shims install"));
     return EXIT.ok;
   } finally {
     tty.close();
@@ -216,7 +286,49 @@ async function add(ctx: Ctx, walkieHome: string): Promise<number> {
   }
 }
 
-const PROVIDER: Record<VaultProvider, string> = { claude: "Claude", codex: "Codex" };
+async function importAccounts(ctx: Ctx, walkieHome: string): Promise<number> {
+  const only = str(ctx.args, "provider");
+  if (only && only !== "claude" && only !== "codex") throw new UsageError("--provider must be claude or codex");
+  const tty = await admitted(ctx, "walkie accounts import");
+  const file = readAccountsFile(join(walkieHome, "accounts.json"), Date.now());
+  if (!file) { tty.close(); throw new UsageError("no tracked logins on this machine"); }
+  const vault = Vault.open(walkieHome);
+  try {
+    let remote: RemoteFingerprint[] = [];
+    try {
+      const view = await ctx.client().accounts();
+      remote = view.accounts.flatMap((a) => a.machines.filter((m) => !m.self && m.fingerprint).map((m) => ({ id: a.id, fingerprint: m.fingerprint as string })));
+    } catch { /* no daemon: there is no cross-machine tracker view to compare */ }
+    const result = await importTracked({ rows: file.records, vault, walkieHome, home: process.env.HOME ?? "",
+      remote, provider: only as "claude" | "codex" | undefined,
+      checkCodexCli: () => {
+        const real = realCli("codex", walkieHome);
+        if (!real) throw new UsageError("codex is not on PATH");
+        const trust = trustedRecipient(walkieHome, "codex", real, { cwd: process.cwd(), shimDir: join(walkieHome, "bin") });
+        if (!trust.ok || !sameObjects(trust.ids)) throw new UsageError("the native codex CLI is not trusted for import");
+      },
+      approve: async (label, prov) => bool(ctx.args, "yes") || await confirm(tty, `Import ${PROVIDER[prov]} ${safeTerm(label)} into this machine's vault?`),
+    });
+    for (const e of result.imported) { writeMark(walkieHome, e.id, null); ctx.out(`imported ${PROVIDER[e.provider]} ${safeTerm(e.label)}`); }
+    for (const s of result.skipped) if (s.reason === "copied session") ctx.err(`${safeTerm(s.label)}: copied Codex session refused; shared refresh tokens can die when the source signs in again`);
+    ctx.out(`${result.imported.length} login${result.imported.length === 1 ? "" : "s"} imported`);
+    return EXIT.ok;
+  } finally { vault.close(); tty.close(); }
+}
+
+async function autoImport(ctx: Ctx, walkieHome: string): Promise<number> {
+  const choice = ctx.args.pos[1];
+  if (choice !== "on" && choice !== "off") throw new UsageError("use: walkie accounts auto-import on|off");
+  const tty = person(ctx, "walkie accounts auto-import");
+  if (tty === AGENT_TTY) throw new UsageError("only this machine's person may switch automatic account import");
+  try {
+    saveConfigField(join(walkieHome, "config.json"), "accounts_auto_import", choice === "on");
+    ctx.out(`accounts auto-import ${choice}`);
+    return EXIT.ok;
+  } finally { tty.close(); }
+}
+
+const PROVIDER: Record<VaultProvider, string> = { claude: "Claude", codex: "Codex", kimi: "Kimi" };
 
 
 // ---- remove / policy / vault ------------------------------------------------------------------
@@ -229,8 +341,10 @@ async function remove(ctx: Ctx, walkieHome: string): Promise<number> {
     const e = findEntry(vault, ref);
     if (!(await confirm(tty, `Remove ${PROVIDER[e.provider]} ${e.label} from the vault?`))) return EXIT.error;
     // The account home first: it refuses (and nothing is removed) when Codex wrote real entries there.
-    const moved = e.provider === "codex" && e.home ? removeCodexHome(e.home, walkieHome, { move: bool(ctx.args, "move"), baseHome: codexBaseHome(walkieHome) }).moved : [];
-    if (moved.length) ctx.out(c.dim(`moved ${moved.join(", ")} into ${codexBaseHome(walkieHome)}`));
+    const base = e.provider === "kimi" ? kimiBaseHome(walkieHome) : codexBaseHome(walkieHome);
+    const moved = e.provider === "codex" && e.home ? removeCodexHome(e.home, walkieHome, { move: bool(ctx.args, "move"), baseHome: base }).moved
+      : e.provider === "kimi" && e.home ? removeKimiHome(e.home, walkieHome, { move: bool(ctx.args, "move"), baseHome: base }).moved : [];
+    if (moved.length) ctx.out(c.dim(`moved ${moved.join(", ")} into ${base}`));
     vault.remove(e.id);
     writeMark(walkieHome, e.id, null);
     ctx.out(`${c.green("removed")} ${safeTerm(e.label)}`);
@@ -268,7 +382,7 @@ async function policy(ctx: Ctx, walkieHome: string): Promise<number> {
 async function list(ctx: Ctx, walkieHome: string): Promise<number> {
   if (!Vault.exists(walkieHome)) {
     if (ctx.json) ctx.out(JSON.stringify({ accounts: [], shims: shimsFirst(walkieHome) }));
-    else ctx.out(`No vault on this machine yet. Add a login with ${c.bold("walkie accounts add claude")} or ${c.bold("walkie accounts add codex")}.`);
+    else ctx.out(`No vault on this machine yet. Add a login with ${c.bold("walkie accounts add claude")}, ${c.bold("walkie accounts add codex")}, or ${c.bold("walkie accounts add kimi")}.`);
     return EXIT.ok;
   }
   const vault = Vault.open(walkieHome);
@@ -310,7 +424,7 @@ async function unswitchedHere(): Promise<UnswitchedSession[]> {
 
 // ---- pick / exec -----------------------------------------------------------------------------
 
-async function pickFor(prov: VaultProvider, model: string | null, walkieHome: string) {
+async function pickFor(prov: "claude" | "codex", model: string | null, walkieHome: string) {
   const src = defaultSource(walkieHome);
   const now = Date.now();
   const sel = selectOwnFirst(await src.gather(prov, now), { provider: prov, model, now, thresholdPct: thresholdPct(walkieHome) });
@@ -424,7 +538,7 @@ async function exec(ctx: Ctx, walkieHome: string): Promise<number> {
 // ---- shims -----------------------------------------------------------------------------------
 
 /**
- * Records the real claude / codex found on PATH as the binaries Walkie may hand credentials to (round 1, Codex 1), after
+ * Records the real claude / codex found on PATH as the binaries Sqwakie may hand credentials to (round 1, Codex 1), after
  * checking they sit where only this person (or root) can change them. Returns the lines to print.
  */
 export function recordClis(walkieHome: string): string[] {
@@ -436,7 +550,7 @@ export function recordClis(walkieHome: string): string[] {
       const e = recordTrusted(walkieHome, name, found, { cwd: process.cwd() });
       lines.push(`${c.green("trusted")} ${name}: ${e.path}${e.realpath !== e.path ? c.dim(` → ${e.realpath}`) : ""}`);
     } catch (err) {
-      lines.push(c.yellow(`${(err as Error).message} — sessions of ${name} will run without Walkie accounts`));
+      lines.push(c.yellow(`${(err as Error).message} — sessions of ${name} will run without Sqwakie accounts`));
     }
   }
   return lines;
@@ -537,6 +651,8 @@ export async function vaultCommand(ctx: Ctx, sub: string): Promise<number | null
   const home = walkieHomeDir();
   switch (sub) {
     case "add": return add(ctx, home);
+    case "import": return importAccounts(ctx, home);
+    case "auto-import": return autoImport(ctx, home);
     case "remove": return remove(ctx, home);
     case "policy": return policy(ctx, home);
     case "vault": return list(ctx, home);

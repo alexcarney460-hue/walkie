@@ -1,4 +1,4 @@
-// walkie mobile — Walkie on your phone (WALKIE-PWA-1): the phone app (a page on the Walkie site) reaches this daemon
+// walkie mobile — Sqwakie on your phone (WALKIE-PWA-1): the phone app (a page on the Sqwakie site) reaches this daemon
 // through an end-to-end encrypted relay link, paired by a one-time QR code. A person runs these, never an agent.
 import { adminCtx } from "../admin-gate.ts";
 import type { MobileStatus, PairView } from "../../daemon/mobile/manager.ts";
@@ -41,7 +41,7 @@ function statusText(s: MobileStatus): string {
   const head = s.devices.length === 0 && s.pairing === 0
     ? `${c.dim("no phone paired")} — pair one with: walkie mobile pair`
     : `${s.linked ? c.green("linked") : c.yellow("connecting")} through ${safeTerm(s.relay)}${s.connected ? c.dim(` · ${s.connected} connected now`) : ""}${s.pairing ? c.dim(` · ${s.pairing} pairing link${s.pairing === 1 ? "" : "s"} open`) : ""}`;
-  return `Walkie on your phone: ${head}${s.notice ? `\n${c.yellow(safeTerm(s.notice))}` : ""}\n${devicesText(s.devices)}`;
+  return `Sqwakie on your phone: ${head}${s.notice ? `\n${c.yellow(safeTerm(s.notice))}` : ""}\n${devicesText(s.devices)}`;
 }
 
 function pairText(p: PairView): string {

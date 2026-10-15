@@ -5,13 +5,13 @@ set -euo pipefail
 fail() { echo "enroll-ssh-linux: $*" >&2; return 1; }
 unit_present() { systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -q "^$1[[:space:]]"; }
 # A directory the machine ought to have already (/usr/sbin, /etc/systemd/system). One that exists is never touched: `install -d -m`
-# re-chmods an existing directory, which once made /etc/systemd/system root-only and hid Walkie's own unit from the person.
+# re-chmods an existing directory, which once made /etc/systemd/system root-only and hid Sqwakie's own unit from the person.
 ensure_dir() { [[ -d $2 ]] || install -d -m "$1" "$2"; }
 
 check_existing() {
   local root=$1 unit listeners
   [[ ! -e "$root/etc/ssh/sshd_config" ]] || { fail 'an SSH server is already configured; inspect it manually'; return 1; }
-  [[ ! -e "$root/etc/systemd/system/walkie-sshd.service" ]] || { fail 'a Walkie SSH service is already configured; inspect it manually'; return 1; }
+  [[ ! -e "$root/etc/systemd/system/walkie-sshd.service" ]] || { fail 'a Sqwakie SSH service is already configured; inspect it manually'; return 1; }
   for unit in ssh.service sshd.service ssh.socket sshd.socket; do
     if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
       fail "$unit is already active or enabled; inspect it manually"
@@ -42,7 +42,7 @@ verify_loopback() {
   ' <<< "$listeners" || { fail 'SSH is not listening only on loopback'; return 1; }
   for unit in ssh.socket sshd.socket; do
     if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
-      fail "$unit activates SSH outside the Walkie service"
+      fail "$unit activates SSH outside the Sqwakie service"
       return 1
     fi
   done
@@ -98,11 +98,11 @@ EOF
   chmod 0600 "$root/etc/walkie/sshd_config"
   ssh-keygen -A
   "$root/usr/sbin/sshd" -t -f "$root/etc/walkie/sshd_config"
-  # The unit is staged in Walkie's own private directory and installed as an ordinary 0644 file into the machine's own systemd
-  # directory, which keeps the owner and mode it has (a person's `systemctl` reads units, and Walkie's CLI asks systemd about this one).
+  # The unit is staged in Sqwakie's own private directory and installed as an ordinary 0644 file into the machine's own systemd
+  # directory, which keeps the owner and mode it has (a person's `systemctl` reads units, and Sqwakie's CLI asks systemd about this one).
   cat > "$root/etc/walkie/walkie-sshd.service.new" <<'EOF'
 [Unit]
-Description=Walkie loopback SSH server
+Description=Sqwakie loopback SSH server
 After=network.target
 [Service]
 ExecStart=/usr/sbin/sshd -D -e -f /etc/walkie/sshd_config
@@ -115,7 +115,7 @@ EOF
   rm -f "$root/etc/walkie/walkie-sshd.service.new"
   systemctl daemon-reload
   systemctl enable --now walkie-sshd.service
-  systemctl is-active --quiet walkie-sshd.service || fail 'Walkie SSH service did not start'
+  systemctl is-active --quiet walkie-sshd.service || fail 'Sqwakie SSH service did not start'
   verify_loopback
 }
 
@@ -153,13 +153,13 @@ cleanup() {
   done
   if (( ${#failures[@]} > 0 )) && { systemctl is-active --quiet walkie-sshd.service || systemctl is-enabled --quiet walkie-sshd.service; }; then
     if ! systemctl disable --now walkie-sshd.service; then
-      failures+=("cannot stop Walkie SSH after failed cleanup")
+      failures+=("cannot stop Sqwakie SSH after failed cleanup")
     fi
   fi
   if ! listeners=$(ss -ltnH); then
     failures+=("cannot verify SSH listeners after cleanup")
   elif systemctl is-active --quiet walkie-sshd.service && (( ${#failures[@]} == 0 )); then
-    if ! verify_loopback; then failures+=("Walkie SSH listener is not loopback-only"); fi
+    if ! verify_loopback; then failures+=("Sqwakie SSH listener is not loopback-only"); fi
   elif awk '$4 ~ /:22$/ { found=1 } END { exit !found }' <<< "$listeners"; then
     failures+=("unsafe port 22 listener remains after cleanup")
   fi

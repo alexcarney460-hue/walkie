@@ -429,7 +429,7 @@ describe("remote seats over a 2-machine team", () => {
     await waitFor(() => !alive(grandchild), { what: "grandchild gone", timeoutMs: 5_000 });
     const s = await ended(alex, res.seat);
     expect(s.state).toBe("stopped");
-    expect(s.reason).toBe("the host's Walkie daemon stopped");
+    expect(s.reason).toBe("the host's Sqwakie daemon stopped");
     const again = await person(alex).seatRun({ machine: "arvid-mac", runtime: "claude", prompt: "after the restart" });
     expect((await ended(alex, again.seat)).state).toBe("done");
     // The old request is not run again by the restarted host.
@@ -454,7 +454,7 @@ describe("remote seats over a 2-machine team", () => {
     await waitFor(() => !alive(grandchild), { what: "leftover group ended", timeoutMs: 5_000 });
     const s = await ended(alex, res.seat);
     expect(s.state).toBe("failed");
-    expect(s.reason).toBe("the host's Walkie daemon restarted while it ran (its processes were stopped)");
+    expect(s.reason).toBe("the host's Sqwakie daemon restarted while it ran (its processes were stopped)");
     await waitFor(() => arvid.d.core.store.agent(arvid.d.nodeId, seatAgentName(res.seat))?.body.includes('"state":"offline"'), { what: "restarted seat card offline" });
   }, 60_000);
 

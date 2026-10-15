@@ -111,12 +111,12 @@ describe("rent", () => {
     expect(await rent(w.d, other, rentReq([{ tier: "agent", count: 1 }])).catch((e) => e.code)).toBe("account_frozen");
   });
 
-  test("provider failures remain uncertain until reconciliation (no blind retry)", async () => {
+  test("a capacity refusal waits to retry; other provider failures remain uncertain until reconciliation (no blind retry)", async () => {
     const w = world();
     const id = await funded(w, 50 * USD);
     w.cloud.failNext = "capacity";
     const a = await rent(w.d, id, rentReq([{ tier: "agent", count: 1 }]));
-    expect(a.rentals[0]!.state).toBe("starting");
+    expect(a.rentals[0]!.state).toBe("starting"); // backing off to retry, unbilled
     w.cloud.failNext = "error";
     const b = await rent(w.d, id, rentReq([{ tier: "gpu-48", count: 1 }])); // another quota group: not behind the queue
     expect(b.rentals[0]!.state).toBe("starting");

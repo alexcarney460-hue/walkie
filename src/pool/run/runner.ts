@@ -1,7 +1,7 @@
 // The head of a split run (WALKIE-POOL-2): the machine whose person started it. One run at a time.
 //
 //   plan -> download the GGUF (catalog: pinned revision + sha256) -> ask each worker for a stage -> one 127.0.0.1
-//   listener per worker, each connection tunnelled to that worker over Walkie's peer transport -> llama-server
+//   listener per worker, each connection tunnelled to that worker over Sqwakie's peer transport -> llama-server
 //   --rpc <listeners> bound to 127.0.0.1 with an API key file -> serving (OpenAI-compatible, localhost only).
 //
 // While it serves: leases renewed every RENEW_MS (two failures in a row = that machine is lost), tokens/s read from
@@ -56,7 +56,7 @@ export interface RunnerDeps {
   log: Logger;
   runtime: () => Runtime;
   stage: (nodeId: string, body: StageReq) => Promise<StageRes>;
-  /** Opens one tunnel connection to a worker's stage (Walkie Direct stream or Tailscale WebSocket). */
+  /** Opens one tunnel connection to a worker's stage (Sqwakie Direct stream or Tailscale WebSocket). */
   tunnel: (nodeId: string, run: string) => Promise<End>;
   changed: () => void;
   registry?: ChildRegistry;
@@ -140,7 +140,7 @@ export class PoolRunner {
       const m = CATALOG.models.find((x) => x.id === req.model);
       if (!m) throw new RunError(400, "unknown_model", `no model "${req.model ?? ""}" in the catalog (walkie pool lists them)`);
       const quant = req.quant ?? "q4";
-      if (!filesFor(m.id, quant)) throw new RunError(400, "no_such_format", `${m.name} has no ${quant === "q8" ? "8-bit" : "4-bit"} GGUF in Walkie's list`);
+      if (!filesFor(m.id, quant)) throw new RunError(400, "no_such_format", `${m.name} has no ${quant === "q8" ? "8-bit" : "4-bit"} GGUF in Sqwakie's list`);
       try { need = catalogNeed(m, quant); } catch (err) { throw new RunError(400, (err as PlanError).code, (err as Error).message); }
       model = { id: m.id, name: m.name, quant };
     }

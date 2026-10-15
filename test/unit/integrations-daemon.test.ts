@@ -280,6 +280,7 @@ describe("linear", () => {
     const input = (dry.variables as { input: { teamId: string; description: string } }).input;
     expect(input.teamId).toBe("team-kst");
     expect(input.description).toContain("invoice totals drift by a cent on refunds");
+    expect(input.description).toContain("Sqwakie backlink:");
     expect(input.description).toContain(`walkie://event/${reply.id}`);
     const res = await alex.client().linearCreate({ title: "Refund rounding drift", from: reply.id, team: "KST" });
     expect(apis.created.length).toBe(1);

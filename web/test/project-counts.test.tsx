@@ -20,12 +20,14 @@ let MissionControl: () => ReactNode;
 let StaticStore: (p: { state: State; children: ReactNode }) => ReactNode;
 let initialState: State;
 let projectsStore: typeof import("../src/state/projects.ts").projectsStore;
+let api: typeof import("../src/api/client.ts").api;
 beforeAll(async () => {
   count = (await import("../src/lib/project-counts.ts")).projectCounts;
   MissionControl = (await import("../src/views/mission/MissionControl.tsx")).MissionControl;
   StaticStore = (await import("../src/state/store.tsx")).StaticStore;
   initialState = (await import("../src/state/reducer.ts")).initialState;
   projectsStore = (await import("../src/state/projects.ts")).projectsStore;
+  api = (await import("../src/api/client.ts")).api;
 });
 afterEach(() => projectsStore.set({ status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} }));
 
@@ -80,9 +82,9 @@ test("sorts project counts descending, then names; No project remains last even 
   expect(count([agent("a", { repo: "ops" }), agent("b", { repo: "walkie" })], [WALKIE, OPS]).map((x) => x.name)).toEqual(["Fleet ops", "Walkie"]);
 });
 
-test("empty shown list or missing projects yields no row", () => {
+test("empty shown list hides the row, but a loaded empty project list counts unmatched agents", () => {
   expect(count([], [WALKIE])).toEqual([]);
-  expect(count([agent("a")], [])).toEqual([]);
+  expect(count([agent("a")], [])).toEqual([{ channel: null, name: "No project", prefix: null, count: 1 }]);
   expect(count([agent("a", { repo: "walkie" })], [WALKIE]).some((x) => x.channel === null)).toBe(false);
 });
 
@@ -108,6 +110,33 @@ test("Mission Control renders counts from the shown roster, excluding idle, offl
   expect(html).not.toContain('Walkie (WALK): 4 agents');
 });
 
+test("revoked project access replaces its name and moves its agent to No project without a reload", async () => {
+  go("#/mission");
+  const privateWalkie = { ...WALKIE, private: true };
+  projectsStore.set({ ...projectsStore.get(), status: "ready", projects: [privateWalkie, SEQUENCE],
+    cards: { [privateWalkie.channel]: [] }, rooms: { [privateWalkie.channel]: [] } });
+  const state: State = {
+    ...initialState, phase: "ready", agents: [agent("private", { cwd: "~/work/walkie" })], nodes: [NODE],
+    team: { id: "t", name: "team", members: [{ login: "maren", handle: "maren", role: "owner" }], nodes: [NODE], channels: [], authority: null, plan: undefined as never },
+  };
+  const render = () => renderToStaticMarkup(<StaticStore state={state}><MissionControl /></StaticStore>);
+  expect(render()).toContain("Walkie (WALK): 1 agent");
+  const original = api.projects;
+  (api as { projects: typeof original }).projects = async () => ({ projects: [SEQUENCE], stubs: [] });
+  try {
+    const refresh = projectsStore.accessChanged();
+    expect(render()).toContain("Walkie (WALK): 1 agent");
+    await refresh;
+    expect(projectsStore.get().projects).toEqual([SEQUENCE]);
+    expect(projectsStore.get().cards).toEqual({});
+    expect(projectsStore.get().rooms).toEqual({});
+    expect(render()).not.toContain("Walkie (WALK): 1 agent");
+    expect(render()).toContain("No project: 1 agent");
+  } finally {
+    (api as { projects: typeof original }).projects = original;
+  }
+});
+
 test("the strip counts only agents drawn under a member and node", () => {
   go("#/mission");
   projectsStore.set({ ...projectsStore.get(), status: "ready", projects: [WALKIE] });
@@ -119,4 +148,58 @@ test("the strip counts only agents drawn under a member and node", () => {
   expect(html).not.toContain("Walkie (WALK): 2 agents");
   expect(html).toContain("drawn on mbp");
   expect(html).not.toContain("no-node on mbp");
+});
+
+test("last visible project removed leaves a No project count for drawn agents", async () => {
+  go("#/mission");
+  projectsStore.set({ ...projectsStore.get(), status: "ready", projects: [WALKIE] });
+  const state: State = { ...initialState, phase: "ready", agents: [agent("builder", { repo: "walkie" })], nodes: [NODE],
+    team: { id: "t", name: "team", members: [{ login: "maren", handle: "maren", role: "owner" }], nodes: [NODE], channels: [], authority: null, plan: undefined as never } };
+  const original = api.projects;
+  (api as { projects: typeof original }).projects = async () => ({ projects: [], stubs: [] });
+  try {
+    await projectsStore.accessChanged();
+    const html = renderToStaticMarkup(<StaticStore state={state}><MissionControl /></StaticStore>);
+    expect(html).toContain("No project: 1 agent");
+    expect(html).not.toContain("Walkie (WALK): 1 agent");
+  } finally {
+    (api as { projects: typeof original }).projects = original;
+  }
+});
+
+test("a failed access refresh does not expose cached project names in Mission Control", async () => {
+  go("#/mission");
+  projectsStore.set({ ...projectsStore.get(), status: "ready", projects: [WALKIE] });
+  const state: State = { ...initialState, phase: "ready", agents: [agent("builder", { repo: "walkie" })], nodes: [NODE],
+    team: { id: "t", name: "team", members: [{ login: "maren", handle: "maren", role: "owner" }], nodes: [NODE], channels: [], authority: null, plan: undefined as never } };
+  const original = api.projects;
+  const { ApiError } = await import("../src/api/client.ts");
+  (api as { projects: typeof original }).projects = async () => { throw new ApiError("server_error", "list unavailable", 503); };
+  try {
+    await projectsStore.accessChanged();
+    const html = renderToStaticMarkup(<StaticStore state={state}><MissionControl /></StaticStore>);
+    expect(html).not.toContain("Walkie (WALK): 1 agent");
+    expect(html).not.toContain('data-testid="project-counts"');
+    expect(html).not.toContain("project-chip");
+  } finally {
+    (api as { projects: typeof original }).projects = original;
+  }
+});
+
+test("an older projects response cannot restore a revoked private project", async () => {
+  let answerOld: ((value: Awaited<ReturnType<typeof api.projects>>) => void) | undefined;
+  const original = api.projects;
+  (api as { projects: typeof original }).projects = () => new Promise((resolve) => { answerOld = resolve; });
+  projectsStore.set({ ...projectsStore.get(), status: "ready", projects: [WALKIE, SEQUENCE] });
+  try {
+    const old = projectsStore.refresh();
+    (api as { projects: typeof original }).projects = async () => ({ projects: [SEQUENCE], stubs: [] });
+    const latest = projectsStore.accessChanged();
+    answerOld?.({ projects: [WALKIE, SEQUENCE], stubs: [] });
+    await old;
+    await latest;
+    expect(projectsStore.get().projects).toEqual([SEQUENCE]);
+  } finally {
+    (api as { projects: typeof original }).projects = original;
+  }
 });

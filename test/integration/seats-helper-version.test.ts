@@ -38,7 +38,7 @@ describe("seats view: helper_version", () => {
     expect(stale?.state).toBe("stale");
     expect(stale?.want).toBe(VERSION);
     expect(stale?.copies.map((x) => [x.path, x.version])).toEqual([[RUNNER, "0.1.0"], [ADMIN, "0.1.0"]]);
-    expect(stale?.problem).toStartWith("the seat helper is from an older Walkie");
+    expect(stale?.problem).toStartWith("the seat helper is from an older Sqwakie");
 
     installed[RUNNER] = VERSION;
     installed[ADMIN] = VERSION;

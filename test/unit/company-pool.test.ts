@@ -4,7 +4,7 @@
 // refresher and renews it); the 10 % personal reserve enforced by the router at any reading age, by the lender and
 // during a session; lender alternatives; the fleet listing and a split that only uses reachable holders.
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { select, selectOwnFirst, type Candidate } from "../../src/accounts/select.ts";
@@ -164,6 +164,7 @@ describe("lease, never copy: one refresher per login", () => {
     const v = Vault.open(w, { keystore: fileKeyStore(w) });
     const home = join(w, "vault", "codex", B);
     mkdirSync(home, { recursive: true });
+    chmodSync(home, 0o700);
     writeFileSync(join(home, "auth.json"), codexAuth(Date.now() + 5 * 86_400_000), { mode: 0o600 });
     v.addCodex({ id: B, label: "ChatGPT account", plan: "Pro", home });
     const a = v.codexAccess(B);

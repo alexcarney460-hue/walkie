@@ -20,9 +20,13 @@ import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
 import { FAKE_CODEX_AUTH, fakeSeatWorld, signInCodex, type FakeSeatWorld } from "../helpers/fake-seat-users.ts";
 import { noKeychainSeats } from "../helpers/no-keychain.ts";
+import { noSeatUsers } from "../helpers/no-seat-users.ts";
 
 const CLI = join(import.meta.dir, "../../src/cli/main.ts");
+const REGISTRATION_PRELOAD = join(import.meta.dir, "../helpers/absent-seat-registration.ts");
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
+const SEATS_PATH = `${join(FIXTURES, "fake-codex")}:${join(FIXTURES, "fake-claude")}:${dirname(process.execPath)}:/usr/bin:/bin`;
+const originalPath = process.env.PATH;
 let c: Cluster;
 let alex: TestNode;
 let arvid: TestNode;
@@ -33,7 +37,7 @@ let personHome: string;
 async function walkie(node: TestNode, args: string[], env: Record<string, string> = {}) {
   // As a person would (test/helpers/person-cli.ts): detached from this test's own process ancestry, which may include
   // an agent runtime that agent-detect.ts would rightly count.
-  return runAsPerson([process.execPath, CLI, ...args], { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: node.home, WALKIE_SOCKET: node.socket, ...env });
+  return runAsPerson([process.execPath, "--preload", REGISTRATION_PRELOAD, CLI, ...args], { PATH: SEATS_PATH, NO_COLOR: "1", WALKIE_HOME: node.home, WALKIE_SOCKET: node.socket, ...env });
 }
 const seatOn = async (id: string): Promise<SeatView | undefined> => (await alex.client().seats(id)).seats[0];
 const ended = (id: string) =>
@@ -42,6 +46,8 @@ const lines = (): Array<Record<string, unknown>> =>
   existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : [];
 
 beforeAll(async () => {
+  // Remote admin commands inherit the daemon's process PATH, not the seat runner's env.
+  process.env.PATH = SEATS_PATH;
   c = new Cluster();
   personHome = join(c.root, "arvid-home");
   mkdirSync(join(personHome, ".claude"), { recursive: true });
@@ -51,13 +57,13 @@ beforeAll(async () => {
   log = join(c.root, "codex.jsonl");
   const walkieHome = join(c.root, "arvid");
   world = fakeSeatWorld(c.root, walkieHome);
-  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
+  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", seats: { ...noSeatUsers } });
   mkdirSync(walkieHome, { recursive: true });
   arvid = await c.add({
     name: "arvid", login: "arvid@example.com", hostname: "arvid-mac",
     seats: {
       flushMs: 100, launchesPerMinute: 100, userSwitch: world.userSwitch, admin: world.admin, lookupUser: world.lookup, schedulerFiles: world.schedulerFiles,
-      env: { PATH: `${join(FIXTURES, "fake-codex")}:${join(FIXTURES, "fake-claude")}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: personHome, FAKE_CODEX_LOG: log },
+      env: { PATH: SEATS_PATH, HOME: personHome, FAKE_CODEX_LOG: log },
     },
   });
   await alex.client().init("aka", "alex");
@@ -65,7 +71,10 @@ beforeAll(async () => {
   expect((await arvid.client().join(alex.peerAddr)).admitted).toBe(true);
 }, 60_000);
 
-afterAll(async () => { await c.close(); });
+afterAll(async () => {
+  try { await c.close(); }
+  finally { if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath; }
+});
 
 describe("seats from the sign-up link", () => {
   test("doctor before: seats off, with the one command that fixes it", async () => {
@@ -201,7 +210,6 @@ describe("seats from the sign-up link", () => {
     await arvid.client("").seatsConfig({ allow: true, mode: "seat_users" });
   }, 30_000);
 
-  const SEATS_PATH = `${join(FIXTURES, "fake-codex")}:${join(FIXTURES, "fake-claude")}:${dirname(process.execPath)}:/usr/bin:/bin`;
   /** A person's home signed in to Claude and Codex, which is what the doctor asks of a machine that takes seats. */
   function signedInHome(name: string): string {
     const home = join(c.root, `${name}-home`);
@@ -215,7 +223,7 @@ describe("seats from the sign-up link", () => {
   /** A new machine of its own on alex's team (joined, seats off), so a test controls every switch. */
   async function freshMember(name: string): Promise<TestNode> {
     // Seats get turned on here: its Keychain and home are the test's own (never this machine's login Keychain or logins).
-    const node = await c.add({ name, login: `${name}@example.com`, hostname: `${name}-mac`, seats: noKeychainSeats(signedInHome(name), { env: { PATH: SEATS_PATH } }) });
+    const node = await c.add({ name, login: `${name}@example.com`, hostname: `${name}-mac`, seats: noKeychainSeats(signedInHome(name), { ...noSeatUsers, env: { PATH: SEATS_PATH } }) });
     await alex.client().invite(`${name}@example.com`, name, "member");
     expect((await node.client().join(alex.peerAddr)).admitted).toBe(true);
     return node;

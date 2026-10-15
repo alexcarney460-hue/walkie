@@ -1,19 +1,19 @@
 // Which machines could realistically share one model. Splitting a model across machines (exo, llama.cpp RPC) sends
-// data between them for every generated token, so they need to be on the same local network. Walkie already measures
+// data between them for every generated token, so they need to be on the same local network. Sqwakie already measures
 // the round trip from this machine to each peer (the sync `vv` call); a peer that answers within LAN_RTT_MS is on
-// this machine's network. Walkie measures nothing between two other machines, so every machine farther away is its
+// this machine's network. Sqwakie measures nothing between two other machines, so every machine farther away is its
 // own group: from its owner's dashboard it may well have neighbours.
 import type { PoolShare } from "../protocol/pool.ts";
 import { machineCapacity, type CapacityInput, type MachineCapacity } from "./capacity.ts";
 
-/** A peer answering Walkie's sync call within this many ms is on the same local network. */
+/** A peer answering Sqwakie's sync call within this many ms is on the same local network. */
 export const LAN_RTT_MS = 5;
 
 export interface GroupInput extends CapacityInput {
   online: boolean;
   self: boolean;
   rtt_ms: number | null;
-  /** WALKIE-POOL-2: whether its owner shares it for split runs (absent: an older Walkie, or not reported yet). */
+  /** WALKIE-POOL-2: whether its owner shares it for split runs (absent: an older Sqwakie, or not reported yet). */
   pool?: PoolShare;
 }
 
@@ -41,7 +41,7 @@ export function groupMachines(nodes: readonly GroupInput[], lanRttMs = LAN_RTT_M
     if (!n.online) { excluded.push({ hostname: n.hostname, handle: n.handle, reason: "offline" }); continue; }
     const cap = machineCapacity(n);
     if (!cap) {
-      excluded.push({ hostname: n.hostname, handle: n.handle, reason: "no memory reported (machine stats turned off, or an older Walkie)" });
+      excluded.push({ hostname: n.hostname, handle: n.handle, reason: "no memory reported (machine stats turned off, or an older Sqwakie)" });
       continue;
     }
     if (n.self) local.unshift({ cap, rtt: 0 });
@@ -66,7 +66,7 @@ export function groupMachines(nodes: readonly GroupInput[], lanRttMs = LAN_RTT_M
       kind: "single", machines: [s.cap], maxRttMs: 0,
       why: s.rtt === null
         ? "Latency not measured yet: on its own"
-        : `${s.rtt} ms from this machine: too far to split a model with it. Walkie only measures latency from this machine, so it can't tell which other machines share a network with it`,
+        : `${s.rtt} ms from this machine: too far to split a model with it. Sqwakie only measures latency from this machine, so it can't tell which other machines share a network with it`,
     });
   }
   return { groups, excluded };

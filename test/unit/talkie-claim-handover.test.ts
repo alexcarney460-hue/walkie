@@ -258,7 +258,7 @@ test("a successful reset records exactly one team audit post", () => {
   const wall = { value: DUE };
   const current = fixture(A, 0, rows, [{ authority: A, after: null, floor: 0, ceiling: null }], wall, { [A]: 1 }, null);
   reset(current.core, DUE);
-  expect(current.audit.posts).toEqual([expect.stringContaining(`reset WalkieTalkie schedule ${ID}`)]);
+  expect(current.audit.posts).toEqual([expect.stringContaining(`reset Talkie schedule ${ID}`)]);
 });
 
 test("reset within a minute of a due slot refuses that slot and schedules strictly after reset", () => {

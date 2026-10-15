@@ -6,6 +6,8 @@
 // An owner's SSH authorization rides in the same fragment ("&ssh=<packet>"): it is held in memory only, goes only into
 // that same local deep link (when seats are allowed) and the fallback command's `--owner-ssh`, and leaves with the fragment.
 // States: ready, expired, invalid (not a code), missing (no fragment: opened without one, or reloaded after reading).
+// FLEET-LINK-1: a fleet link (`wl1…`, one link for many machines) shows the "fleet" state instead of "ready": whose
+// machines they become, how many, until when, and the commands for macOS/Linux and for Windows through WSL2.
 (function (root) {
   "use strict";
 
@@ -19,6 +21,13 @@
   var EXPIRY_AT = 65;
   var ROLE_AT = 73;
   var HANDLE_LEN_AT = 74;
+  // Fleet links: v(1) team(8) authority(32) issuer(8) secret(16) expiry(4) uses(2) flags(1) handle-length(1) handle …
+  var FLEET_PREFIX = "wl1";
+  var FLEET_RE = /^wl1[A-Za-z0-9_-]{38,297}$/;
+  var FLEET_EXPIRY_AT = 65;
+  var FLEET_USES_AT = 69;
+  var FLEET_FLAGS_AT = 71;
+  var FLEET_HANDLE_LEN_AT = 72;
 
   /**
    * "#<code>", "#<code>&v=<tag>", "…&a=1", "…&ssh=<packet>" → { code, tag, agents[, ssh | sshDamaged] } or
@@ -46,7 +55,7 @@
         else ssh = kv[1];
       }
     }
-    if (!CODE_RE.test(code)) return { error: "invalid" };
+    if (!CODE_RE.test(code) && !FLEET_RE.test(code)) return { error: "invalid" };
     var parsed = { code: code, tag: tag, agents: agents };
     if (ssh !== null) parsed.ssh = ssh;
     if (sshDamaged) parsed.sshDamaged = true;
@@ -62,8 +71,25 @@
     return out;
   }
 
+  /** What a fleet link says about itself (unverified: only the roster authority's record counts). Null if malformed. */
+  function describeFleet(code) {
+    var b;
+    try { b = bytesOf(code.slice(FLEET_PREFIX.length)); } catch (e) { return null; }
+    if (b.length < FLEET_HANDLE_LEN_AT + 1 + 1 + 64 || b[0] !== 1) return null;
+    var expiry = ((b[FLEET_EXPIRY_AT] << 24) >>> 0) + (b[FLEET_EXPIRY_AT + 1] << 16) + (b[FLEET_EXPIRY_AT + 2] << 8) + b[FLEET_EXPIRY_AT + 3];
+    var uses = (b[FLEET_USES_AT] << 8) + b[FLEET_USES_AT + 1];
+    var flags = b[FLEET_FLAGS_AT];
+    var len = b[FLEET_HANDLE_LEN_AT];
+    if (flags > 1 || uses > 1000 || b.length < FLEET_HANDLE_LEN_AT + 1 + len + 1 + 64) return null;
+    var handle = "";
+    for (var i = 0; i < len; i++) handle += String.fromCharCode(b[FLEET_HANDLE_LEN_AT + 1 + i]);
+    if (!HANDLE_RE.test(handle)) return null;
+    return { fleet: true, handle: handle, uses: uses, approve: flags === 1, expiresAt: expiry * 1000 };
+  }
+
   /** What the code says about itself (unverified: only the team's roster authority can check it). Null if malformed. */
   function describe(code) {
+    if (code.slice(0, FLEET_PREFIX.length) === FLEET_PREFIX) return describeFleet(code);
     var b;
     try { b = bytesOf(code.slice(PREFIX.length)); } catch (e) { return null; }
     if (b.length < HANDLE_LEN_AT + 1 + 64 || b[0] !== 1) return null;
@@ -78,8 +104,16 @@
   }
 
   function command(installUrl, code, tag, ssh) {
-    return "curl -fsSL " + installUrl + " | " + (tag ? "WALKIE_MIN_VERSION=" + tag + " " : "") + "sh -s -- --invite " + code + " --company-machine"
-      + (ssh && SSH_RE.test(ssh) ? " --owner-ssh " + ssh : "");
+    var fleet = code.slice(0, FLEET_PREFIX.length) === FLEET_PREFIX;
+    var flag = fleet ? "--join-link " : "--invite ";
+    return "curl -fsSL " + installUrl + " | " + (tag ? (fleet ? "WALKIE_VERSION=" : "WALKIE_MIN_VERSION=") + tag + " " : "")
+      + "sh -s -- " + flag + code + (fleet ? "" : " --company-machine")
+      + (!fleet && ssh && SSH_RE.test(ssh) ? " --owner-ssh " + ssh : "");
+  }
+
+  /** The same install from Windows PowerShell, inside the default WSL2 distribution. */
+  function windowsCommand(installUrl, code, tag) {
+    return 'wsl -- sh -c "' + command(installUrl, code, tag) + '"';
   }
 
   // ---- local seat consent ---------------------------------------------------------------------
@@ -143,7 +177,7 @@
       + (yes && ssh && SSH_RE.test(ssh) ? "&ssh=" + ssh : "");
   }
 
-  var FIELDS = ["handle", "expires", "command", "version", "seat-cap"];
+  var FIELDS = ["handle", "expires", "command", "version", "seat-cap", "fleet-handle", "fleet-uses", "fleet-expires", "fleet-command", "fleet-command-win", "fleet-version"];
   var pendingCode = null;
   var pendingTag = null;
   var pendingSsh = null; // memory only: never in a URL query, storage, a log or history
@@ -200,7 +234,7 @@
     }
     var parsed = parseFragment(hash);
     var info = parsed.code ? describe(parsed.code) : null;
-    var state = parsed.error || (!info ? "invalid" : info.expiresAt <= env.now ? "expired" : "ready");
+    var state = parsed.error || (!info ? "invalid" : info.expiresAt <= env.now ? "expired" : info.fleet ? "fleet" : "ready");
     pendingCode = state === "ready" ? parsed.code : null;
     pendingTag = state === "ready" ? parsed.tag : null;
     pendingSsh = state === "ready" && parsed.ssh ? parsed.ssh : null;
@@ -232,10 +266,22 @@
       field("handle", "@" + info.handle);
       field("expires", formatDate(info.expiresAt));
     }
+    var approve = page.querySelectorAll("[data-fleet-approve]");
+    for (var a = 0; a < approve.length; a++) approve[a].hidden = !(state === "fleet" && info && info.approve);
+    var install = page.getAttribute("data-install") || "";
+    var versionText = parsed.tag ? "Installs " + parsed.tag + ", the release your team runs." : "Installs the latest release.";
     if (state === "ready") {
       field("command", command(page.getAttribute("data-install") || "", parsed.code, parsed.tag, pendingSsh));
       field("seat-cap", "0");
       field("version", parsed.tag ? "Installs the newest compatible release, at least " + parsed.tag + "." : "Installs the default release.");
+    }
+    if (state === "fleet") {
+      field("fleet-handle", "@" + info.handle);
+      field("fleet-uses", info.uses === 0 ? "any number of machines" : "up to " + info.uses + (info.uses === 1 ? " machine" : " machines"));
+      field("fleet-expires", formatDate(info.expiresAt));
+      field("fleet-command", command(install, parsed.code, parsed.tag));
+      field("fleet-command-win", windowsCommand(install, parsed.code, parsed.tag));
+      field("fleet-version", versionText);
     }
     var states = page.querySelectorAll("[data-state]");
     for (var i = 0; i < states.length; i++) states[i].classList.toggle("is-on", states[i].getAttribute("data-state") === state);
@@ -265,13 +311,13 @@
     var page = doc.querySelector("[data-join]");
     if (page) { bindConsent(page); bindInstall(page, win); }
     var again = function () { run({ window: win, document: doc, now: clock() }); };
-    win.addEventListener("hashchange", function () { if (win.location.hash) again(); });
-    win.addEventListener("popstate", again);
+    win.addEventListener("hashchange", function () { if (win.location.hash && win.location.hash !== "#main") again(); });
+    win.addEventListener("popstate", function () { if (win.location.hash !== "#main") again(); });
     again();
   }
 
   var api = {
-    parseFragment: parseFragment, describe: describe, command: command, handoff: handoff, run: run, start: start,
+    parseFragment: parseFragment, describe: describe, command: command, windowsCommand: windowsCommand, handoff: handoff, run: run, start: start,
     clampSeatMax: clampSeatMax, bindConsent: bindConsent, SEAT_MAX_DEFAULT: SEAT_MAX_DEFAULT, SEAT_MAX_MIN: SEAT_MAX_MIN, SEAT_MAX_MAX: SEAT_MAX_MAX,
   };
   if (typeof module === "object" && module && module.exports) module.exports = api;

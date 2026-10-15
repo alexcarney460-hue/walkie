@@ -20,7 +20,7 @@ export function useCombined(nodes: readonly NodeView[], cat: Catalog = CATALOG):
 }
 
 /**
- * What can really be started now: only the models in Walkie's pinned list can (each file is checked against a sha256),
+ * What can really be started now: only the models in Sqwakie's pinned list can (each file is checked against a sha256),
  * so the Run button comes from the built-in list even when the suggestions are ranked from the Hugging Face one.
  */
 export function useStartable(nodes: readonly NodeView[], cat: Catalog, cs: CombinedSuggestion): CombinedSuggestion {

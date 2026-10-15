@@ -1,7 +1,7 @@
 // PROJECT-PAGES-1 dashboard: the status page a project's non-technical teammates read. The route, the plain words for what the
 // daemon sends, the whole page and each of its empty states, what a screen's image goes through before it is shown, the link
 // from the Projects list and the tab on the project, and an audit of the stylesheet (theme tokens only; the phone's rules).
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ReactNode } from "react";
@@ -10,6 +10,7 @@ import type { ProjectView, ScreenView, StatusPagePayload } from "../src/api/type
 import type { State } from "../src/state/reducer.ts";
 import { png } from "../../test/helpers/images.ts";
 import { installWindow } from "./window-stub.ts";
+import { resetProjectsStore } from "./projects-store-fixture.ts";
 
 const hadWindow = "window" in globalThis;
 const hadDocument = "document" in globalThis;
@@ -49,6 +50,8 @@ beforeAll(async () => {
   StaticStore = s.StaticStore;
   initialState = (await import("../src/state/reducer.ts")).initialState;
 });
+beforeEach(() => resetProjectsStore());
+afterEach(() => resetProjectsStore());
 
 const AT = Date.UTC(2026, 9, 1, 14, 0);
 const CH = "p-00000001";
@@ -103,7 +106,7 @@ test("the page has its own address, with the group of screens it scrolls to; not
 
 // ---- the plain words ------------------------------------------------------------------------------------------------
 
-test("the facts strip: what the team set first, in the order it was set, then what Walkie counts", () => {
+test("the facts strip: what the team set first, in the order it was set, then what Sqwakie counts", () => {
   const tiles = lib.factTiles(PAYLOAD.facts);
   expect(tiles.map((t) => t.label)).toEqual(["Live build", "Next release", "Done in 24 hours", "Done in 7 days", "In progress", "In review", "Blocked or waiting", "Agents working", "Last change"]);
   expect(tiles.find((t) => t.label === "Agents working")?.value).toBe("5 on 2 machines");
@@ -188,7 +191,7 @@ test("the whole page: eyebrow, headline, lede, facts, what is live and what land
   expect(html).toContain("@maren");
   expect(html).toContain('<footer class="spage-foot">');
   expect(html).toContain("Updated <time");
-  expect(html).toContain("written by WalkieTalkie");
+  expect(html).toContain("written by Talkie");
   expect(html).toContain("cards marked confidential are never counted");
 });
 
@@ -312,7 +315,7 @@ test("a page with no story is overdue only when reports were switched on over tw
 test("the story's own time is beside the headline, apart from the page's own 'updated' time", () => {
   const html = view(aged(21 * DAY + HOUR, SAME));
   const when = /<p class="spage-when">(.*?)<\/p>/.exec(html)?.[1] ?? "";
-  expect(text(when)).toBe("Page updated 1 minute ago · Summary written by WalkieTalkie 3 weeks ago");
+  expect(text(when)).toBe("Page updated 1 minute ago · Summary written by Talkie 3 weeks ago");
   expect(html.indexOf("spage-headline")).toBeLessThan(html.indexOf("spage-when"));
   expect(html.indexOf("spage-when")).toBeLessThan(html.indexOf("spage-lede"));
   const eyebrow = /<p class="spage-eyebrow">(.*?)<\/p>/.exec(html)?.[1] ?? "";
@@ -329,7 +332,7 @@ test("a summary beside numbers that have moved says so, without promising a new 
   expect(view(aged(21 * DAY + HOUR, SAME))).not.toContain("may be out of date");
   expect(view(aged(21 * DAY + HOUR, undefined))).not.toContain("may be out of date");
   expect(view(aged(10 * 60_000, { ...SAME, blocked: 3 }))).not.toContain("may be out of date"); // still inside the grace
-  expect(text(view(aged(21 * DAY + HOUR, SAME)))).toContain("Summary written by WalkieTalkie 3 weeks ago");
+  expect(text(view(aged(21 * DAY + HOUR, SAME)))).toContain("Summary written by Talkie 3 weeks ago");
 });
 
 test("a page still waiting for its first story says it has waited, and what to do, once reports have been on for over two periods", () => {
@@ -340,10 +343,10 @@ test("a page still waiting for its first story says it has waited, and what to d
   const late = view(aged(0, undefined, { story: null, reports_since: now - 5 * HOUR }));
   expect(late).toContain("No summary has arrived yet.");
   expect(late).toContain("the team&#x27;s main machine (the one that keeps the member list)");
-  expect(late).toContain("running the latest Walkie");
+  expect(late).toContain("running the latest Sqwakie");
   expect(late).not.toContain("roster authority"); // plain words
   expect(late).not.toContain("so the first ones appear within the hour");
-  expect(late).not.toContain("Summary written by WalkieTalkie"); // there is no story to date
+  expect(late).not.toContain("Summary written by Talkie"); // there is no story to date
   expect(view(aged(0, undefined, { story: null, reports_since: undefined }))).toContain("so the first ones appear within the hour"); // an older daemon: no warning
 });
 
@@ -567,14 +570,16 @@ test("the project has a Status page tab beside its boards and its Data Room, onl
 });
 
 test("the stream says when a page or its screens changed, and an open page looks again; another project's change is not its business", () => {
-  st.projectsStore.set({ status: "ready", error: null, projects: [project()], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  st.projectsStore.set({ status: "ready", error: null, projects: [project(), { ...project(), channel: "p-00000009" }], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
   const before = st.projectsStore.get().pageTicks?.[CH] ?? 0;
   st.projectsStore.delta({ channel: CH, page: true });
   st.projectsStore.delta({ channel: CH, room: true });
   st.projectsStore.delta({ channel: "p-00000009", page: true });
   st.projectsStore.delta({ channel: CH, cards: [] });
+  st.projectsStore.delta({ channel: "p-unadmitted", page: true });
   const ticks = st.projectsStore.get().pageTicks ?? {};
   expect([ticks[CH], ticks["p-00000009"]]).toEqual([before + 2, 1]);
+  expect(ticks["p-unadmitted"]).toBeUndefined();
 });
 
 // ---- the stylesheet --------------------------------------------------------------------------------------------------

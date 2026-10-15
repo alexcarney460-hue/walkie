@@ -6,6 +6,8 @@ import { isBoardOp } from "../protocol/projects/schema.ts";
 import { AgentTable } from "./agent-table.ts";
 import { indexedClaim } from "./orchestrator/schedule-claims.ts";
 
+import { FleetLinkRegistry, ensureFleetLinkSchema } from "./fleet-link-registry.ts";
+
 const ROSTER_KIND_SQL = "('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')";
 
 export const MIGRATIONS: readonly string[] = [
@@ -190,6 +192,10 @@ export const MIGRATIONS: readonly string[] = [
   `ALTER TABLE hermes_sessions ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0;`,
   // 18: a hook-supplied process id lets the census retire one session without affecting its profile peers.
   `ALTER TABLE hermes_sessions ADD COLUMN pid INTEGER;`,
+  // 19: project-root and origin-rowid reads.
+  `CREATE INDEX IF NOT EXISTS events_project_roots ON events(channel)
+     WHERE channel >= 'p-' AND channel < 'p.' AND kind = 'msg.post' AND redacted = 0 AND status = 'ok' AND thread IS NULL;
+   CREATE INDEX IF NOT EXISTS events_origin_rowid ON events(origin);`,
 ];
 
 /** Independently replayable migration 13, also used by the startup ledger. */
@@ -243,7 +249,13 @@ export interface AgentRow {
   /** When this node received the event `recv_id` (migration 13); trusted only while it names `event_id`. */
   recv_id?: string | null; recv_at?: number | null;
 }
-export interface JoinRequest { node_id: string; login: string; pubkey: string; hostname: string; ip: string; port: number; requested_at: number }
+export interface JoinRequest {
+  node_id: string; login: string; pubkey: string; hostname: string; ip: string; port: number; requested_at: number;
+  /** FLEET-LINK-1: the fleet link this machine presented (a Sqwakie Direct machine waiting for approval); null otherwise. */
+  link?: string | null;
+  /** Fresh random identity for one fleet approval attempt, never renewed on a pending retry. */
+  generation?: string | null;
+}
 export interface BlobRow { hash: string; size: number; mime: string | null; name: string | null; created_at: number }
 export interface QueuedRequest { id: string; json: string; created_at: number; attempts: number; last_error: string | null }
 
@@ -258,6 +270,7 @@ export const MAX_JOIN_REQUESTS_PER_LOGIN = 16;
 export const MAX_JOIN_REQUESTS_PER_TEAM = 256;
 export const JOIN_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 export class JoinLimitError extends Error {}
+export class JoinRequestConflictError extends Error {}
 
 export interface EventFilter {
   channel?: string; thread?: string; kinds?: string[]; before_ts?: number; since_ts?: number; limit: number;
@@ -304,7 +317,12 @@ export class Store {
     // to change the safety level inside a transaction, so the mode is chosen before one starts.
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     this.migrate();
+    ensureFleetLinkSchema(this.db);
+    this.links = new FleetLinkRegistry(this.db);
   }
+
+  /** The roster authority's fleet links (FLEET-LINK-1): local, never replicated. */
+  readonly links: FleetLinkRegistry;
 
   private setSync(mode: "NORMAL" | "FULL"): void {
     if (mode === this.syncMode) return;
@@ -517,6 +535,12 @@ export class Store {
     return this.db.query<EventRow, [string]>(
       `SELECT ${ROW_COLS} FROM events WHERE id = ?`).get(id);
   }
+  /** Accepted catalog-channel posts only. Projection uses signed prev links, never this query's order. */
+  catalogEvents(): Event[] {
+    return this.db.query<{ json: string }, []>(
+      "SELECT json FROM events WHERE kind = 'msg.post' AND channel = 'skills' AND status = 'ok' AND redacted = 0 AND json_type(body, '$.skill') = 'object' ORDER BY origin, seq"
+    ).all().map((row) => JSON.parse(row.json) as Event);
+  }
   /** A signed notice replicated from a different node, available to acknowledge on receipt. */
   peerNotice(text: string, self: string): Event | null {
     const row = this.db.query<{ json: string }, [string, string]>(
@@ -619,13 +643,17 @@ export class Store {
   classifyBoardOps(isBoardOp: (ev: Event) => boolean, page = 1_000): { examined: number; marked: number } {
     const from = Number(this.getMeta("board_ops_rowid") ?? "0");
     let after = Number.isSafeInteger(from) && from > 0 ? from : 0;
-    const next = this.db.query<{ rid: number; id: string; json: string }, [number, number]>(
-      `SELECT rowid AS rid, id, json FROM events WHERE rowid > ? AND kind = 'msg.post' AND channel LIKE 'p-%' AND redacted = 0 AND bop = 0
+    const maxRowid = this.db.query<{ m: number | null }, []>("SELECT MAX(rowid) AS m FROM events").get()?.m ?? 0;
+    const byRowid = this.db.query<{ rid: number; id: string; json: string }, [number, number]>(
+      `SELECT rowid AS rid, id, json FROM events NOT INDEXED WHERE rowid > ? AND kind = 'msg.post' AND channel LIKE 'p-%' AND redacted = 0 AND bop = 0
+       ORDER BY rowid LIMIT ?`);
+    const byKind = this.db.query<{ rid: number; id: string; json: string }, [number, number]>(
+      `SELECT rowid AS rid, id, json FROM events INDEXED BY events_kind_ts WHERE rowid > ? AND kind = 'msg.post' AND channel LIKE 'p-%' AND redacted = 0 AND bop = 0
        ORDER BY rowid LIMIT ?`);
     const set = this.db.query("UPDATE events SET bop = 1 WHERE id = ?");
     let examined = 0, marked = 0;
     for (;;) {
-      const rows = next.all(after, page);
+      const rows = (maxRowid - after > 20_000 ? byKind : byRowid).all(after, page);
       if (!rows.length) break;
       this.db.transaction(() => { for (const r of rows) if (isBoardOp(JSON.parse(r.json) as Event)) { set.run(r.id); marked++; } })();
       examined += rows.length;
@@ -691,7 +719,7 @@ export class Store {
   /** Hidden non-roster rows of an origin (the hidden cap's count; roster rows have their own cap). */
   hiddenCount(origin: string): number {
     return this.db.query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM events WHERE status = 'rejected' AND origin = ? AND redacted = 0
+      `SELECT COUNT(*) AS n FROM events INDEXED BY events_rejected WHERE status = 'rejected' AND origin = ? AND redacted = 0
        AND bop = 0 AND kind NOT IN ${ROSTER_KIND_SQL}`).get(origin)?.n ?? 0;
   }
   /** Hidden roster-kind rows of an origin (never stubbed; capped separately, F2). */
@@ -736,7 +764,8 @@ export class Store {
 
   /** One page (by rowid) of full non-roster rows, accepted or hidden, that a re-validation job covers. */
   revalPage(job: RevalJob, afterRowid: number, limit: number): (EventRow & { rowid: number })[] {
-    const base = `SELECT rowid, ${ROW_COLS} FROM events e WHERE rowid > ? AND redacted = 0 AND kind NOT IN ${ROSTER_KIND_SQL}
+    const source = job.kind === "origin" && this.claimIndexReady ? "events e INDEXED BY events_origin_rowid" : "events e";
+    const base = `SELECT rowid, ${ROW_COLS} FROM ${source} WHERE rowid > ? AND redacted = 0 AND kind NOT IN ${ROSTER_KIND_SQL}
       AND status IN ('ok','rejected')`;
     type R = EventRow & { rowid: number };
     if (job.kind === "origin") {
@@ -882,8 +911,11 @@ export class Store {
     if (f.agents?.length) { where.push(`${col("author_agent")} IN (${f.agents.map(() => "?").join(",")})`); args.push(...f.agents); }
     if (f.roots) where.push("+thread IS NULL"); // never the thread index's NULL entries: every root, statuses included
     args.push(f.limit);
+    // With no channel, thread, kind or agent, SQLite prefers a full table scan and top-N sort. On a status-heavy
+    // log that fetches every row even for LIMIT 100. An agent filter must retain the author_agent index instead.
+    const source = !scoped && !f.kinds?.length && !f.agents?.length ? "events INDEXED BY events_ts" : "events";
     return this.db.query<EventRow, SQLQueryBindings[]>(
-      `SELECT id, origin, seq, ts, kind, channel, thread, sig, redacted, status, json FROM events
+      `SELECT id, origin, seq, ts, kind, channel, thread, sig, redacted, status, json FROM ${source}
        WHERE ${where.join(" AND ")} ORDER BY ts DESC, id DESC LIMIT ?`).all(...args);
   }
 
@@ -893,10 +925,25 @@ export class Store {
        WHERE thread = ? AND redacted = 0 AND status = 'ok' ORDER BY ts ASC, id ASC`).all(id);
   }
 
-  asks(): EventRow[] {
-    return this.db.query<EventRow, []>(
-      `SELECT id, origin, seq, ts, kind, channel, thread, sig, redacted, status, json FROM events
+  asks(): (EventRow & { received_at: number })[] {
+    return this.db.query<EventRow & { received_at: number }, []>(
+      `SELECT id, origin, seq, ts, kind, channel, thread, sig, redacted, status, json, received_at FROM events
        WHERE kind = 'ask' AND redacted = 0 AND status = 'ok' ORDER BY ts DESC LIMIT 500`).all();
+  }
+
+  /** All replies to one ask page in one indexed read; each ask's replies retain their original (ts, id) order. */
+  askReplies(ids: readonly string[]): Map<string, EventRow[]> {
+    const grouped = new Map<string, EventRow[]>();
+    if (!ids.length) return grouped;
+    const rows = this.db.query<EventRow, string[]>(
+      `SELECT id, origin, seq, ts, kind, channel, thread, sig, redacted, status, json FROM events
+       WHERE thread IN (${ids.map(() => "?").join(",")}) AND redacted = 0 AND status = 'ok'
+       ORDER BY thread, ts ASC, id ASC`).all(...ids);
+    for (const row of rows) {
+      const group = grouped.get(row.thread!);
+      if (group) group.push(row); else grouped.set(row.thread!, [row]);
+    }
+    return grouped;
   }
 
   channelStats(): Map<string, { count: number; last_ts: number | null }> {
@@ -1101,15 +1148,19 @@ export class Store {
   addJoinRequest(j: JoinRequest): void {
     this.db.transaction(() => {
       this.expireJoinRequests(j.requested_at);
-      if (!this.joinRequest(j.node_id)) {
+      const existing = this.joinRequest(j.node_id, j.requested_at);
+      if (existing?.link && (existing.link !== (j.link ?? null) || existing.login !== j.login)) {
+        throw new JoinRequestConflictError("this machine already awaits approval through another invitation");
+      }
+      if (!existing) {
         const byLogin = this.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM join_requests WHERE login = ?").get(j.login)?.n ?? 0;
         const total = this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM join_requests").get()?.n ?? 0;
         if (byLogin >= MAX_JOIN_REQUESTS_PER_LOGIN) throw new JoinLimitError(`${MAX_JOIN_REQUESTS_PER_LOGIN} join requests are already waiting for this login`);
         if (total >= MAX_JOIN_REQUESTS_PER_TEAM) throw new JoinLimitError(`${MAX_JOIN_REQUESTS_PER_TEAM} join requests are already waiting for this team`);
       }
-      this.db.query(`INSERT INTO join_requests(node_id, login, pubkey, hostname, ip, port, requested_at) VALUES (?,?,?,?,?,?,?)
+      this.db.query(`INSERT INTO join_requests(node_id, login, pubkey, hostname, ip, port, requested_at, link, generation) VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT(node_id) DO UPDATE SET hostname = excluded.hostname, ip = excluded.ip, port = excluded.port,
-        requested_at = excluded.requested_at`).run(j.node_id, j.login, j.pubkey, j.hostname, j.ip, j.port, j.requested_at);
+        requested_at = excluded.requested_at, link = excluded.link, generation = excluded.generation`).run(j.node_id, j.login, j.pubkey, j.hostname, j.ip, j.port, j.requested_at, j.link ?? null, j.generation ?? null);
     })();
   }
   joinRequests(now = Date.now()): JoinRequest[] {
@@ -1122,7 +1173,7 @@ export class Store {
 
   // ---- roster requests (PROTOCOL §2 "Roster requests") ----
   queueRequest(id: string, json: string): void {
-    this.db.query("INSERT OR IGNORE INTO roster_requests(id, json, created_at) VALUES (?, ?, ?)").run(id, json, Date.now());
+    this.db.query("INSERT OR IGNORE INTO roster_requests(id, json, created_at) VALUES (?, ?, MAX(?, COALESCE((SELECT MAX(created_at) + 1 FROM roster_requests), 0)))").run(id, json, Date.now());
   }
   queuedRequests(limit = 100): QueuedRequest[] {
     return this.db.query<QueuedRequest, [number]>("SELECT * FROM roster_requests ORDER BY created_at, id LIMIT ?").all(limit);
@@ -1133,6 +1184,20 @@ export class Store {
   }
   requestFailed(id: string, error: string): void {
     this.db.query("UPDATE roster_requests SET attempts = attempts + 1, last_error = ? WHERE id = ?").run(error.slice(0, 300), id);
+  }
+  updateQueuedRequest(id: string, json: string): void {
+    this.db.query("UPDATE roster_requests SET json = ? WHERE id = ?").run(json, id);
+  }
+  recordQueuedApplied(requestId: string, eventId: string): void {
+    this.db.query("INSERT OR REPLACE INTO roster_request_log(id, event_id, applied_at) VALUES (?, ?, ?)").run(requestId, eventId, Date.now());
+  }
+  wasQueuedApplied(requestId: string, eventId: string): boolean {
+    return !!this.db.query("SELECT 1 FROM roster_request_log WHERE id = ? AND event_id = ?").get(requestId, eventId);
+  }
+  hasLaterQueuedSubject(row: QueuedRequest, kind: "team.member" | "channel.upsert", subject: string): boolean {
+    const field = kind === "team.member" ? "login" : "name";
+    return !!this.db.query(`SELECT 1 FROM roster_requests WHERE (created_at > ? OR (created_at = ? AND id > ?)) AND json_valid(json) AND json_extract(json, '$.kind') = ? AND json_extract(json, '$.body.${field}') = ? LIMIT 1`)
+      .get(row.created_at, row.created_at, row.id, kind, subject);
   }
   dequeueRequest(id: string): void { this.db.query("DELETE FROM roster_requests WHERE id = ?").run(id); }
 

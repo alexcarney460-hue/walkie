@@ -1,7 +1,8 @@
 // Test fixtures for the billing functions: a throwaway ed25519 keypair, a complete env, subscription
 // objects, and an in-memory StripeLike that records every call. Nothing here touches the network or
 // ~/keys.
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { renewHash } from "../api/_lib/metadata.ts";
 import type { Env } from "../api/_lib/env.ts";
 import type { Deps } from "../api/_lib/issue.ts";
 import type {
@@ -88,6 +89,17 @@ export class MockStripe implements StripeLike {
     this.guard();
     return [...this.subs.values()].filter(sub => sub.metadata.walkie_team === team).map(sub => structuredClone(sub));
   }
+  /** The list API, in id order, `pageSize` per page. */
+  pageSize = 100;
+  pages = 0;
+  async listSubscriptionsPage(startingAfter: string | undefined): Promise<{ data: SubscriptionLite[]; hasMore: boolean }> {
+    this.guard();
+    this.pages++;
+    const all = [...this.subs.values()].sort((a, b) => a.id.localeCompare(b.id));
+    const from = startingAfter ? all.findIndex(sub => sub.id === startingAfter) + 1 : 0;
+    const data = all.slice(from, from + this.pageSize).map(sub => structuredClone(sub));
+    return { data, hasMore: from + this.pageSize < all.length };
+  }
   async setSubscriptionMetadata(id: string, metadata: Record<string, string>,
     _options?: Parameters<StripeLike['setSubscriptionMetadata']>[2]): Promise<void> {
     this.guard();
@@ -106,6 +118,20 @@ export class MockStripe implements StripeLike {
 export function deps(stripe: MockStripe, env: Env): Deps & { previewCompute: true } {
   // Exercise the future compute path in existing site tests; deployed POST handlers never set this.
   return { env, stripe: () => stripe, now: () => NOW, previewCompute: true };
+}
+
+/**
+ * What the released, compute-locked site (pre.10 to pre.16: no store, roster proof ignored) leaves on a licence it binds:
+ * walkie_team and walkie_renew_hash only. Returns the renewal token it gave the daemon. The lock-ON site refuses to bind
+ * without its store (lane C round 11), so tests of licences bound before the flip set that shape directly; the locked
+ * test in license-legacy-renew.test.ts checks the real locked bind writes exactly this.
+ */
+export function releasedBind(stripe: MockStripe, id: string, team: string): { status: 200; body: { renewal_token: string } } {
+  const sub = stripe.subs.get(id);
+  if (!sub) throw Error(`releasedBind: no subscription ${id}`);
+  const token = randomBytes(32).toString("base64url");
+  stripe.subs.set(id, { ...sub, metadata: { ...sub.metadata, walkie_team: team, walkie_renew_hash: renewHash(token) } });
+  return { status: 200, body: { renewal_token: token } };
 }
 
 export async function body(res: Response): Promise<Record<string, unknown>> {

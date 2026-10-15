@@ -127,7 +127,7 @@ async function runOn(c: RouteCtx, n: NodeRec, argv: string[], timeoutS: number |
       ? await servePeerAdmin(c.core, c.core.nodeId, me, body)
       : await callPeer(c, n, body, timeoutS);
     if (argv[0] === "provision" && res.exit !== 0 && /unknown command ["']?provision|unknown: walkie provision/i.test(res.stderr)) {
-      return fail("target_outdated", `${n.hostname}: this Walkie has remote admin but no provisioning profile; update it first`);
+      return fail("target_outdated", `${n.hostname}: this Sqwakie has remote admin but no provisioning profile; update it first`);
     }
     noteResult(c, n.node_id, "ok");
     return { ...base, ok: res.exit === 0, exit: res.exit, stdout: res.stdout, stderr: res.stderr, truncated: res.truncated, timed_out: res.timed_out };
@@ -136,7 +136,7 @@ async function runOn(c: RouteCtx, n: NodeRec, argv: string[], timeoutS: number |
     if (err instanceof PeerCallError) {
       if (err.status === 404) return fail("target_outdated", `${n.hostname}: ${REMOTE_ERRORS.target_outdated} (then retry)`);
       if (argv[0] === "provision" && err.code === "not_allowed_remotely" && /walkie provision.*can't run remotely/i.test(err.message)) {
-        return fail("target_outdated", `${n.hostname}: this Walkie has remote admin but no provisioning profile; update it first`);
+        return fail("target_outdated", `${n.hostname}: this Sqwakie has remote admin but no provisioning profile; update it first`);
       }
       if (err.status === 0) return fail("unreachable", `${n.hostname}: ${REMOTE_ERRORS.unreachable} (${err.message})`);
       return fail(err.code, `${n.hostname}: ${err.message}`);

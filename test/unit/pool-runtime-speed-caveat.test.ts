@@ -53,7 +53,7 @@ const report = (nodes: GroupInput[]) => {
   const info: PoolInfo = { view, startable: suggestCombined(nodes, { cat }) };
   return { t, cs, info };
 };
-const CAVEAT = /assumes a GPU build of llama\.cpp: Walkie's own runtime is counted as CPU only on/;
+const CAVEAT = /assumes a GPU build of llama\.cpp: Sqwakie's own runtime is counted as CPU only on/;
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 describe("the pick's placement says when its speed is a GPU's that Walkie's runtime does not use", () => {

@@ -6,6 +6,7 @@ import { useMdOpts } from "../../state/useMdOpts.ts";
 import { hrefFor, navigate, useRoute } from "../../lib/route.ts";
 import { duration, useNow } from "../../lib/time.ts";
 import { useActions, useStore } from "../../state/store.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { Composer, type ComposerHandle } from "./Composer.tsx";
 import { Message, MessageBoundary, Pending } from "./Messages.tsx";
 import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
@@ -62,7 +63,7 @@ function NotRunning() {
   return (
     <div className="orch-card" role="region" aria-labelledby="orch-off-title">
       <div className="orch-card-icon" aria-hidden="true"><Sparkles size={18} strokeWidth={1.75} /></div>
-      <h2 id="orch-off-title" className="orch-card-title">WalkieTalkie is stopped on this machine</h2>
+      <h2 id="orch-off-title" className="orch-card-title">Talkie is stopped on this machine</h2>
       <p className="orch-card-body">
         Start it here. It runs your own Claude Code sign-in on this machine, and the conversation stays on this machine:
         talk to it in this tab or with <code className="md-code">walkie talkie say</code>.
@@ -94,6 +95,16 @@ export function Orchestrator() {
   const status = localOrchestrator(agents, me?.node.id);
   // ORCH-2: a machine standing by (or without a model login) publishes a status too; its host isn't running here.
   const talkie = useTalkieView(`${status?.effective_state ?? ""}|${status?.updated_at ?? ""}`);
+  const [channelNotice, setChannelNotice] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => api.channelHealth().then((result) => {
+      if (!cancelled) setChannelNotice(result.quota_damaged ? result.notice : null);
+    }).catch(() => undefined);
+    void load();
+    const timer = setInterval(load, 10_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
   // The host's running flag is authoritative; the replicated agent card can be stale or swept by older peers.
   const hostRunning = talkie?.running === true && !standingDown(talkie);
   const host = hostRunning ? status : null;
@@ -125,7 +136,7 @@ export function Orchestrator() {
   const waiting = awaitingReply(messages, now);
   const liveTurn = waiting ? live[waiting.id] : undefined;
   const busy = !!waiting && hostRunning;
-  const activity = host?.effective_state === "working" && host.status.activity ? host.status.activity : "Thinking…";
+  const activity = host?.effective_state === "working" && host.status.activity ? displayStoredText(host.status.activity) : "Thinking…";
 
   // Stick to the bottom while the reader is there; a new conversation starts at the bottom.
   useLayoutEffect(() => { stick.current = true; }, [thread]);
@@ -198,54 +209,54 @@ export function Orchestrator() {
       {error && <ErrorState message={error} compact />}
       {hostRunning && talkie?.state === "cleanup_pending" && (
         <div className="orch-offline" role="status"><TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>WalkieTalkie cleanup pending: {cleanupDiagnostic(talkie)}</span></div>
+          <span>Talkie cleanup pending: {cleanupDiagnostic(talkie)}</span></div>
       )}
       {reconnecting && hostRunning && (
         <div className="orch-offline" role="status">
           <CloudOff size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>Reconnecting to Walkie on this machine… Sending is paused until it's back.</span>
+          <span>Reconnecting to Sqwakie on this machine… Sending is paused until it's back.</span>
         </div>
       )}
       {host?.effective_state === "blocked" && (
         <div className="orch-offline" role="alert">
           <TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>{host.status.activity || "WalkieTalkie is stuck."} It retries on its own; check <span className="mono">walkie talkie status</span>.</span>
+          <span>{host.status.activity ? displayStoredText(host.status.activity) : "Talkie is stuck."} It retries on its own; check <span className="mono">walkie talkie status</span>.</span>
         </div>
       )}
       {hostRunning ? (
         <Composer
           ref={composer} busy={busy} disabled={reconnecting} onSend={send} onStop={stop}
-          placeholder={empty ? "Ask WalkieTalkie anything" : "Message WalkieTalkie"}
+          placeholder={empty ? "Ask Talkie anything" : "Message Talkie"}
         />
       ) : !empty && talkie?.state === "cleanup_pending" ? (
         <div className="orch-offline" role="status"><TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>WalkieTalkie cleanup pending: {cleanupDiagnostic(talkie)}</span></div>
+          <span>Talkie cleanup pending: {cleanupDiagnostic(talkie)}</span></div>
       ) : !empty && talkie && standingDown(talkie) ? (
         <div className="orch-offline" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>{talkie.state === "standby" ? `WalkieTalkie is on standby here${talkie.lead ? `; it runs on ${talkie.lead}` : ""}.` : talkie.needs ?? "WalkieTalkie needs a model login."}</span>
+          <span>{talkie.state === "standby" ? `Talkie is on standby here${talkie.lead ? `; it runs on ${talkie.lead}` : ""}.` : talkie.needs ?? "Talkie needs a model login."}</span>
         </div>
       ) : !empty && notRunningKind(talkie) === "stopped_by_you" ? (
         <div className="orch-offline orch-offline-start" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>WalkieTalkie is stopped (by you). Resume to continue: it runs on its own again.</span>
+          <span>Talkie is stopped (by you). Resume to continue: it runs on its own again.</span>
           <ResumeButton size="sm" />
         </div>
       ) : !empty && notRunningKind(talkie) === "failed" ? (
         <div className="orch-offline orch-offline-start" role="alert">
           <TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>{talkie?.last_error ?? "WalkieTalkie keeps failing."}</span>
+          <span>{talkie?.last_error ?? "Talkie keeps failing."}</span>
           <StartOrchestrator size="sm" />
         </div>
       ) : !empty && notRunningKind(talkie) === "starting" ? (
         <div className="orch-offline" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>{talkie?.last_error ?? "WalkieTalkie is starting on its own…"}</span>
+          <span>{talkie?.last_error ?? "Talkie is starting on its own…"}</span>
         </div>
       ) : !empty ? (
         <div className="orch-offline orch-offline-start" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>WalkieTalkie isn't running here. Start it to continue (or <code className="md-code">{START}</code> in a terminal).</span>
+          <span>Talkie isn't running here. Start it to continue (or <code className="md-code">{START}</code> in a terminal).</span>
           <StartOrchestrator size="sm" />
         </div>
       ) : null}
@@ -255,7 +266,7 @@ export function Orchestrator() {
 
   return (
     <div className={`orch${sideOpen ? " side-open" : ""}`}>
-      <aside className="orch-side" aria-label="WalkieTalkie conversations">
+      <aside className="orch-side" aria-label="Talkie conversations">
         <div className="orch-side-head">
           <button type="button" className="orch-new" onClick={newChat}>
             <SquarePen size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -276,7 +287,7 @@ export function Orchestrator() {
             <Menu size={18} strokeWidth={1.75} />
           </button>
           <div className="orch-title">
-            <h1>WalkieTalkie</h1>
+            <h1>Talkie</h1>
             <p className="orch-where">{where}</p>
           </div>
           {host && <HeaderModel refresh={`${host.status.model ?? ""}|${host.status.started_at ?? ""}`} />}
@@ -286,6 +297,8 @@ export function Orchestrator() {
             <span className="orch-head-new-label">New chat</span>
           </button>
         </header>
+
+        {channelNotice && <div className="orch-offline" role="alert"><TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />{channelNotice}</div>}
 
         <div className="orch-scroll" ref={scroller} onScroll={onScroll}>
           <div className="orch-col">

@@ -12,6 +12,7 @@ import type {
 } from "./types.ts";
 import type { ActivationResult } from "../lib/plan.ts";
 import type { AddMachine } from "../../../src/protocol/add-machine.ts";
+import type { FleetLinkMinted, FleetLinkView, FleetLinksView } from "../../../src/protocol/fleet-link.ts";
 
 export class ApiError extends Error {
   /** A 409 secret_detected's detector kinds (DATA-ROOM-1). */
@@ -45,7 +46,7 @@ const FRIENDLY: Record<string, string> = {
   forbidden: "You don't have permission to do that.",
   unauthorized: "Your dashboard session has ended. Run `walkie dashboard` in a terminal to sign in again.",
   no_team: "This machine isn't on a team yet.",
-  network: "Can't reach the Walkie daemon on this machine.",
+  network: "Can't reach the Sqwakie daemon on this machine.",
   timeout: "The daemon took too long to answer.",
 };
 
@@ -219,8 +220,11 @@ export const api = {
   post: (b: { channel: string; text: string; thread?: string }) => request<{ event: Event }>("POST", "/v1/post", b),
   answer: (b: { ask: string; text: string; declined?: boolean }) => request<{ event: Event }>("POST", "/v1/answer", b),
   pending: () => request<{ requests: PendingJoin[] }>("GET", "/v1/team/pending"),
-  admit: (b: { node_id: string; approve: boolean }) => request<{ event?: Event }>("POST", "/v1/team/admit", b),
+  admit: (b: { node_id: string; approve: boolean; link?: string | null; generation?: string | null }) => b.link
+    ? request<{ event?: Event }>("POST", "/v1/team/admit-link", b)
+    : request<{ event?: Event }>("POST", "/v1/team/admit", b),
   orchestrator: () => request<OrchestratorView>("GET", "/v1/orchestrator"),
+  channelHealth: () => request<{ quota_damaged: boolean; notice: string | null }>("GET", "/v1/channels/health"),
   recommendations: () => request<RecommendationsPayload>("GET", "/v1/talkie/recs?status=all"),
   // An approval echoes the `outgoing` text the person was shown; the daemon refuses it if what it would do now differs.
   answerRecommendation: (id: string, decision: RecommendationDecision, seen?: string) =>
@@ -245,15 +249,21 @@ export const api = {
   /** pre.8: Resume = back to automatic (runs here when this machine leads, else stands by). */
   orchestratorAuto: () => request<OrchestratorView>("POST", "/v1/orchestrator/auto", {}, 30_000),
   orchestratorModel: (model: string) => request<OrchestratorView>("POST", "/v1/orchestrator/model", { model }, 60_000),
-  /** ORCH-2: platform (Walkie tools only) or full access; the conversation continues (after the reply in progress). */
+  /** ORCH-2: platform (Sqwakie tools only) or full access; the conversation continues (after the reply in progress). */
   orchestratorAccess: (access: OrchestratorAccess) => request<OrchestratorView>("POST", "/v1/orchestrator/access", { access }, 60_000),
   /** Stops this machine's orchestrator (its conversations stay). */
   orchestratorStop: () => request<OrchestratorView & { stopped: "local" | "none" }>("POST", "/v1/orchestrator/stop", {}, 30_000),
   invite: (b: { login: string; handle: string; role: Role; display_name?: string }) => request<{ event: Event }>("POST", "/v1/team/invite", b),
-  /** Walkie Direct: a single-use invite code (7 days) for `handle`. */
+  /** Sqwakie Direct: a single-use invite code (7 days) for `handle`. */
   inviteCode: (b: { handle: string; role: Role }) => request<InviteCode>("POST", "/v1/team/invite-code", b, 15_000),
   /** Owner: a one-time link + install command for another machine of a current member. */
   addMachine: (b: { handle: string }) => request<AddMachine>("POST", "/v1/team/add-machine", b, 15_000),
+  /** Owner (FLEET-LINK-1): one link that adds up to `uses` machines (0 = no limit) as `for`'s. */
+  mintLink: (b: { for?: string; uses?: number; expires_days?: number; approve?: boolean; observer?: boolean; owner_machines?: boolean }) =>
+    request<FleetLinkMinted>("POST", "/v1/team/links", b, 30_000),
+  /** Owner: the team's fleet links, kept on the roster authority, and the machines that used them. */
+  links: () => request<FleetLinksView>("GET", "/v1/team/links", undefined, 20_000),
+  revokeLink: (id: string) => request<{ link: FleetLinkView }>("POST", "/v1/team/links/revoke", { id }, 20_000),
   channel: (b: { name: string; topic?: string; members?: string[] }) => request<{ event: Event }>("POST", "/v1/channels", b),
   license: () => request<PlanView>("GET", "/v1/license"),
   activateLicense: (key: string) => request<ActivationResult>("POST", "/v1/license", { key }, 30_000),
@@ -278,6 +288,8 @@ export const api = {
   // ---- AGENT-ADMIN-1: this machine's admin switches and audit log ----
   admin: () => request<AdminView>("GET", "/v1/admin?limit=5"),
   adminSwitches: (b: { agent_admin?: boolean; remote_admin?: boolean }) => request<{ agent_admin: boolean; remote_admin: boolean }>("POST", "/v1/admin/switches", b),
+  deleteLegacyMemory: (confirm: "delete legacy memory") =>
+    request<{ deleted: number }>("POST", "/v1/memory/delete-legacy", { confirm }),
   logout: async () => {
     try {
       const res = await send("/auth/logout", { method: "POST", signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -286,7 +298,7 @@ export const api = {
       forgetSession();
     }
   },
-  /** Walkie on your phone (WALKIE-PWA-1): Team → Devices. */
+  /** Sqwakie on your phone (WALKIE-PWA-1): Team → Devices. */
   mobile: () => request<MobileStatus>("GET", "/v1/mobile"),
   mobilePair: () => request<PairView>("POST", "/v1/mobile/pair", {}, 15_000),
   mobileRevoke: (id: string) => request<{ revoked: true }>("DELETE", `/v1/mobile/devices/${encodeURIComponent(id)}`),

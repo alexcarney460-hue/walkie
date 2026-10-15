@@ -28,7 +28,7 @@ function remainingItems(snapshot: RepairSnapshot): string[] {
 /** The caller must be the local person; a failed or incomplete probe never clears the obligation. */
 export async function repairTalkieCleanup(path: string, inspect: () => Promise<RepairSnapshot>, ctx: Ctx,
   resweep?: () => Promise<string | null>): Promise<RepairResult> {
-  await requirePerson(ctx, "repair WalkieTalkie cleanup", "yes");
+  await requirePerson(ctx, "repair Talkie cleanup", "yes");
   const obligation = new CleanupObligation(path);
   const pending = obligation.read();
   if (!pending) return { repaired: false, remaining: ["no uid cleanup obligation is pending"] };

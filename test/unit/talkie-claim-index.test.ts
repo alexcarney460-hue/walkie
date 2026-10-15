@@ -89,7 +89,7 @@ test("migration 14 records bounded progress and resumes after a store closes mid
     expect(store.db.query("SELECT version FROM migrations WHERE version = 14").get()).toEqual({ version: 14 });
     // Its last batch ran 15 and the migrations after it, in order, in the same transaction.
     expect(store.db.query<{ version: number }, []>("SELECT version FROM migrations WHERE version >= 14 ORDER BY version").all().map((r) => r.version))
-      .toEqual([14, 15, 16, 17, 18]);
+      .toEqual([14, 15, 16, 17, 18, 19]);
     expect(store.db.query("SELECT name FROM sqlite_master WHERE name = 'hermes_sessions'").get()).toEqual({ name: "hermes_sessions" });
     expect(store.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE claim_schedule IS NOT NULL").get()?.n)
       .toBe(1_600);

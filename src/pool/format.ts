@@ -26,13 +26,13 @@ export function speedText(p: Pick): string {
 }
 
 /**
- * Beside a speed estimate: when some part of the pick is timed at a GPU that Walkie's own runtime does not use there
- * (see `Placement.gpuSpeedOnly`), the speed needs a GPU build of llama.cpp that Walkie does not install. No host names:
+ * Beside a speed estimate: when some part of the pick is timed at a GPU that Sqwakie's own runtime does not use there
+ * (see `Placement.gpuSpeedOnly`), the speed needs a GPU build of llama.cpp that Sqwakie does not install. No host names:
  * the pick's own line names where it runs, so this stays safe in model-facing output.
  */
 export function runtimeCaveat(p: { placement: readonly Placement[] }): string | null {
   if (!p.placement.some((x) => x.gpuSpeedOnly)) return null;
-  return `assumes a GPU build of llama.cpp: Walkie's own runtime is counted as CPU only on ${p.placement.length === 1 ? "the machine it runs on" : "some of the machines it runs on"}`;
+  return `assumes a GPU build of llama.cpp: Sqwakie's own runtime is counted as CPU only on ${p.placement.length === 1 ? "the machine it runs on" : "some of the machines it runs on"}`;
 }
 
 /** "me + lab", "rig (CPU)": a part that runs from system memory on the CPU says so. */
@@ -40,7 +40,7 @@ export function whereText(p: Pick): string {
   return p.placement.map((x) => (x.memory === CPU_MEMORY ? `${x.hostname} (CPU)` : x.hostname)).join(" + ");
 }
 
-/** What "if idle" means, for every surface that shows it (Walkie doesn't attribute memory to agents). */
+/** What "if idle" means, for every surface that shows it (Sqwakie doesn't attribute memory to agents). */
 export const IDLE_HINT = `if the machine were otherwise idle: only the OS and about ${IDLE_OS_BYTES / 1024 ** 3} GB of apps running`;
 
 export function groupTitle(g: PoolGroup): string {
@@ -163,12 +163,12 @@ export const modelFacts = (m: CatalogModel, cat: Catalog): string => `${m.maker}
 export const hfUrl = (m: CatalogModel): string => m.source;
 
 /**
- * Only models in Walkie's pinned list (gguf.json, one entry per built-in model) can be started by `walkie pool run`. A model
+ * Only models in Sqwakie's pinned list (gguf.json, one entry per built-in model) can be started by `walkie pool run`. A model
  * of a live list counts only when it is that built-in model: the same id from another Hugging Face repository is not.
  */
 export const isStartable = (m: { id: string; source: string }): boolean => CATALOG.models.some((b) => b.id === m.id && b.source === m.source);
 
-export const PINNED_NOTE = `walkie pool run starts only the models in Walkie's pinned list (${CATALOG.models.length} models, each checked against a sha256); for any other pick, download its GGUF file from Hugging Face and start it with: walkie pool run --file <path>.gguf`;
+export const PINNED_NOTE = `walkie pool run starts only the models in Sqwakie's pinned list (${CATALOG.models.length} models, each checked against a sha256); for any other pick, download its GGUF file from Hugging Face and start it with: walkie pool run --file <path>.gguf`;
 
 /** What the model list is and where it came from, for the header of `walkie pool` and the dashboard. */
 export function listText(v: { source: "huggingface" | "built-in"; checkedAt: number | null; catalog: Catalog }): string {

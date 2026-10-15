@@ -1,4 +1,4 @@
-// ORCH-STATUS-1: the WalkieTalkie page and Mission Control both show this host's real state — running/stopped, the
+// ORCH-STATUS-1: the Talkie page and Mission Control both show this host's real state — running/stopped, the
 // lead machine, model, uptime and access — with the Start/Stop/Resume control that matches it.
 import { afterAll, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -20,10 +20,10 @@ const HOUR = 3_600_000;
 const v = (extra: Partial<TalkieView>): TalkieView => ({ running: false, state: "stopped", restarts: 0, ...extra });
 
 describe("accessLabel", () => {
-  test("full access and Walkie tools (default, and an older daemon that sends nothing)", () => {
+  test("full access and Sqwakie tools (default, and an older daemon that sends nothing)", () => {
     expect(accessLabel("full")).toBe("Full access");
-    expect(accessLabel("platform")).toBe("Walkie tools");
-    expect(accessLabel(undefined)).toBe("Walkie tools");
+    expect(accessLabel("platform")).toBe("Sqwakie tools");
+    expect(accessLabel(undefined)).toBe("Sqwakie tools");
   });
 });
 
@@ -33,8 +33,8 @@ describe("talkieSummaryText", () => {
     expect(text).toBe("Claude · Sonnet · Full access · up 2h 5m");
   });
 
-  test("running with no model reported yet falls back to the setting, and Walkie tools by default", () => {
-    expect(talkieSummaryText(v({ running: true, state: "starting", model_setting: "opus" }), NOW)).toBe("Claude · Opus · Walkie tools");
+  test("running with no model reported yet falls back to the setting, and Sqwakie tools by default", () => {
+    expect(talkieSummaryText(v({ running: true, state: "starting", model_setting: "opus" }), NOW)).toBe("Claude · Opus · Sqwakie tools");
   });
 
   test("standby names the lead; with none yet, says no machine can lead", () => {
@@ -57,13 +57,13 @@ describe("talkieSummaryText", () => {
   });
 });
 
-describe("WalkieTalkieStatus (Mission Control's card, and the same view the WalkieTalkie page reads)", () => {
+describe("WalkieTalkieStatus (Mission Control's card, and the same view the Talkie page reads)", () => {
   test("running: the dot is on, the summary line, and Stop (not Start or Resume)", () => {
     const out = renderToStaticMarkup(<WalkieTalkieStatus view={v({ running: true, state: "working", model: "opus", access: "platform", started_at: NOW - 45_000 })} now={NOW} />);
     expect(out).toMatch(/class="wt-dot is-on"[^>]*data-testid="walkietalkie-dot"/);
-    expect(out).toMatch(/data-testid="walkietalkie-summary"[^>]*>Claude · Opus · Walkie tools · up 45s</);
-    expect(out).toContain("Stop WalkieTalkie");
-    expect(out).not.toContain("Start WalkieTalkie");
+    expect(out).toMatch(/data-testid="walkietalkie-summary"[^>]*>Claude · Opus · Sqwakie tools · up 45s</);
+    expect(out).toContain("Stop Talkie");
+    expect(out).not.toContain("Start Talkie");
     expect(out).not.toContain(">Resume</button>");
   });
 
@@ -85,7 +85,7 @@ describe("WalkieTalkieStatus (Mission Control's card, and the same view the Walk
     const out = renderToStaticMarkup(<WalkieTalkieStatus view={v({ stopped_by_hand: true })} now={NOW} />);
     expect(out).toContain("Stopped by you");
     expect(out).toContain(">Resume</button>");
-    expect(out).not.toContain("Start WalkieTalkie");
+    expect(out).not.toContain("Start Talkie");
   });
 
   test("starting on its own: no button (it starts by itself)", () => {
@@ -97,22 +97,22 @@ describe("WalkieTalkieStatus (Mission Control's card, and the same view the Walk
   test("stopped, no auto-start (an older daemon): the manual Start", () => {
     const out = renderToStaticMarkup(<WalkieTalkieStatus view={v({})} now={NOW} />);
     expect(out).toContain("Stopped");
-    expect(out).toContain("Start WalkieTalkie");
+    expect(out).toContain("Start Talkie");
   });
 
   test("not reporting yet (no view): still renders, with a Start button and no crash on null fields", () => {
     const out = renderToStaticMarkup(<WalkieTalkieStatus view={null} now={NOW} />);
     expect(out).toContain("Not reporting");
-    expect(out).toContain("Start WalkieTalkie");
+    expect(out).toContain("Start Talkie");
   });
 
-  test("links to the WalkieTalkie page", () => {
+  test("links to the Talkie page", () => {
     const out = renderToStaticMarkup(<WalkieTalkieStatus view={v({})} now={NOW} />);
     expect(out).toContain('href="#/orchestrator"');
   });
 });
 
-describe("Mission Control renders the WalkieTalkie card", () => {
+describe("Mission Control renders the Talkie card", () => {
   test("MissionControl.tsx wires WalkieTalkieCard into its extras panel", async () => {
     const src = await Bun.file(new URL("../src/views/mission/MissionControl.tsx", import.meta.url)).text();
     expect(src).toContain('import { WalkieTalkieCard } from "../orchestrator/TalkieState.tsx";');
@@ -120,7 +120,7 @@ describe("Mission Control renders the WalkieTalkie card", () => {
   });
 });
 
-describe("the WalkieTalkie page's header shows access and uptime too", () => {
+describe("the Talkie page's header shows access and uptime too", () => {
   test("Orchestrator.tsx composes access and uptime into the running 'where' line, and names why it's stopped otherwise", async () => {
     const src = await Bun.file(new URL("../src/views/orchestrator/Orchestrator.tsx", import.meta.url)).text();
     expect(src).toContain("accessLabel(talkie?.access)");

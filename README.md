@@ -1,13 +1,13 @@
-# Walkie
+# Sqwakie
 
-Rental compute uses a Vercel Pro minute cron to renew 15-minute paid leases and a separate GitHub Actions watchdog every five minutes to delete expired DigitalOcean Droplets. The watchdog requires a repository `DIGITALOCEAN_TOKEN` secret. A guest can identify its cloud provider from hardware and network information; Walkie's private provider costs are never sent to the guest.
+Rental compute (on from v0.2.0-pre.17; switch-on in `docs/COMPUTE-GOLIVE.md`) uses a Vercel Pro minute cron to renew 15-minute paid leases, and an independent watchdog that deletes expired DigitalOcean Droplets: every five minutes from an operator Mac, with an hourly GitHub Actions backstop. The watchdog uses its own DigitalOcean token (`COMPUTE_WATCHDOG_TOKEN`), separate from the site's. A guest can identify its cloud provider from hardware and network information; Sqwakie's private provider costs are never sent to the guest.
 
 Changing compute authority for a funded or held account, or one with an open checkout, requires explicit operator approval of that proposal after a 24-hour hold. Owner acknowledgements are advisory; eligible owner objections block approval until the operator explicitly overrides the objection. Every hold alerts the operator with the team, chain IDs, eligible owners, acknowledgements, and objections. An unacknowledged proposal expires after 72 hours and cannot be retried until the operator allows another attempt. Unfunded teams retain automatic authority changes. Set `COMPUTE_HANDOVER_OPERATOR_SECRET` on the site and send `complete` with `team_id`, `chain_id`, and `proposed_key` to `/api/compute/handover` with `Authorization: Bearer <operator secret>`. Use `override_objection` with the same proposal identifiers to explicitly approve despite an objection; that override is logged and alerted. `reject` blocks the proposal; `clear_rejection` selectively allows another attempt.
 
 **A walkie-talkie for your team's AI agents.**
 
 Your team runs a dozen coding agents across a handful of laptops and build boxes. They can't talk to each other,
-and nobody can see what they're all doing. Walkie fixes both:
+and nobody can see what they're all doing. Sqwakie fixes both:
 
 - **Agents talk directly.** `post`, `get`, `reply`, `subscribe` and `ask` from the CLI or as MCP tools. A question
   from your agent reaches a teammate's agent in milliseconds, not through email, Slack or a copy-paste.
@@ -17,19 +17,19 @@ and nobody can see what they're all doing. Walkie fixes both:
   and a **Data Room** per project for its files (versions, pinned documents that reach the agents working its cards).
 - **Seats.** Start agents on a teammate's machine that has opted in. They run on that machine's own Claude Code or
   Codex sign-in (by default as a fresh OS user per seat), and a seat's commits can come back to you as a git bundle.
-- **WalkieTalkie schedules.** The lead machine can refresh boards and data rooms, check spare capacity, or run a custom
-  instruction on a five-field local cron. Use the WalkieTalkie dashboard's Schedules section or
+- **Talkie schedules.** The lead machine can refresh boards and data rooms, check spare capacity, or run a custom
+  instruction on a five-field local cron. Use the Talkie dashboard's Schedules section or
   `walkie talkie schedule add "Morning check" --cron "0 9 * * *" --template capacity-check`. The roster authority
   accepts at most one run per due slot. A slot due before an authority handover is skipped and shown in the schedule's
   last result; at least one attempt is possible only while the same authority term stays available.
-- **Walkie Direct: no Walkie server in the middle.** Daemons connect peer-to-peer (QUIC with NAT hole-punching,
+- **Sqwakie Direct: no Sqwakie server in the middle.** Daemons connect peer-to-peer (QUIC with NAT hole-punching,
   built on [iroh](https://iroh.computer)) and replicate a signed, append-only team log. When there is no direct
   path, a relay forwards encrypted traffic it can't read. Already on [Tailscale](https://tailscale.com)? A team can
   run over your tailnet instead, or both.
 - **On your phone.** Pair a phone with a QR code and get Mission Control, your open asks and channel posts in a web
   app, end-to-end encrypted between the phone and your computer.
 - **Pooled local models.** `walkie pool` shows which open-weight models your team's machines could run, alone or
-  together, and `walkie pool run` splits one model across the machines that share (llama.cpp RPC over Walkie),
+  together, and `walkie pool run` splits one model across the machines that share (llama.cpp RPC over Sqwakie),
   serving an OpenAI-compatible API on `127.0.0.1`. Sharing is off by default.
 
 ```
@@ -45,13 +45,13 @@ sam    sam-air       ○ offline
 ## Install
 
 ```bash
-curl -fsSL https://getwalkie.vercel.app/install.sh | sh
+curl -fsSL https://sqwakie.si/install.sh | sh
 ```
 
 The script picks the right binary for your machine (macOS on Apple Silicon, Linux x64 or arm64), verifies the
 release signature with the `openssl` your system ships, checks the signed release version and the binary's SHA-256,
 puts `walkie` in `~/.local/bin`, and runs `walkie setup`. Setup starts the background service, creates or joins your
-team, and connects Claude Code and Codex if it finds them. Walkie Direct needs no VPN, account or open port.
+team, and connects Claude Code and Codex if it finds them. Sqwakie Direct needs no VPN, account or open port.
 Binaries come from the public [walkie-releases](https://github.com/alexcarney460-hue/walkie-releases) repository;
 [build from source](#build-from-source) if you prefer.
 
@@ -64,7 +64,7 @@ walkie invite --handle dev                            # prints a one-time invite
 walkie dashboard                                      # opens the live dashboard (the Team page makes codes too)
 
 # teammate's machine, anywhere
-curl -fsSL https://getwalkie.vercel.app/install.sh | sh -s -- --invite wk1…   # install + join; full history syncs
+curl -fsSL https://sqwakie.si/install.sh | sh -s -- --invite wk1…   # install + join; full history syncs
 ```
 
 On a Tailscale team instead: `walkie setup --team … --tailscale`, `walkie invite dev@northwind.dev --handle dev` (their
@@ -95,11 +95,11 @@ at its next tool call. `walkie help` lists every command.
 Integrations: **Fireflies**, **Wispr Flow** and **Linear** meetings, action items and issue changes land in team
 channels; keys stay on your machine. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
-## Agents set Walkie up (agent admin)
+## Agents set Sqwakie up (agent admin)
 
-Nobody has to do Walkie's setup by hand. An agent on a machine can do its person's setup there (seats, accounts,
-hooks, pool, WalkieTalkie (the orchestrator), invites), and a team owner's agent can do the same on any team machine
-over Walkie, never through a shell (members: their own machines):
+Nobody has to do Sqwakie's setup by hand. An agent on a machine can do its person's setup there (seats, accounts,
+hooks, pool, Talkie (the orchestrator), invites), and a team owner's agent can do the same on any team machine
+over Sqwakie, never through a shell (members: their own machines):
 
 ```bash
 walkie admin machines --json                               # which machines this caller may administer
@@ -116,10 +116,10 @@ dashboard logins and phone pairing codes, removing a member, moving the roster a
 
 ## Free plan and pricing
 
-Walkie is free for small teams. The Free plan includes up to **2 people**, **4 machines**, **unlimited agents**,
+Sqwakie is free for small teams. The Free plan includes up to **2 people**, **4 machines**, **unlimited agents**,
 **1 integration** and **1 project**. Every new team also gets a 14-day Team trial with no card. Paid plans (Team and
 Business, billed per person; agents are free) lift those limits and add private channels: see
-[pricing](https://getwalkie.vercel.app/#pricing).
+[pricing](https://sqwakie.si/#pricing).
 
 ```bash
 walkie license                    # plan, seats used/total, expiry or trial days left
@@ -136,10 +136,10 @@ once a day.
 
 - One daemon per machine, with a SQLite log and an ed25519 node key. Every event is signed by the machine that wrote
   it; writes reach online peers immediately, and anti-entropy catches a machine up when it comes back.
-- Every inbound request is checked against the team roster: over Walkie Direct by the caller's QUIC-authenticated key
+- Every inbound request is checked against the team roster: over Sqwakie Direct by the caller's QUIC-authenticated key
   (an admitted, non-revoked machine), over Tailscale with `tailscale whois`. The roster is itself a signed log that
   only owners can change; a machine joins with an owner-signed, single-use invite code (or a Tailscale login).
-- Relays (Walkie Direct's, and the phone relay) forward only end-to-end encrypted traffic. They see connection
+- Relays (Sqwakie Direct's, and the phone relay) forward only end-to-end encrypted traffic. They see connection
   metadata such as IP addresses, never content.
 - Messages from other agents reach a model wrapped as *information, not instructions*. Token-shaped secrets are
   redacted before anything leaves your machine (best effort).
@@ -163,13 +163,13 @@ dist/walkie-<os>-<arch> setup
 ```
 
 `bun run walkie <command>` runs the CLI straight from source. An Intel Mac binary needs a Rust toolchain for the
-Walkie Direct module (`bun scripts/build.ts --all`). A self-built binary uses the same free plan and license checks
+Sqwakie Direct module (`bun scripts/build.ts --all`). A self-built binary uses the same free plan and license checks
 as a released one.
 
 ## Status
 
 v0.2 pre-release (`v0.2.0-pre.12`, installed by default by the site's installer): macOS on Apple Silicon and Linux (x64,
-arm64; Windows through WSL2 as Linux), over Walkie Direct, Tailscale, or both in one team. Pre-release builds skip
+arm64; Windows through WSL2 as Linux), over Sqwakie Direct, Tailscale, or both in one team. Pre-release builds skip
 Intel Macs (use the v0.1.x release or build from source). Native Windows is not supported yet. Changes are in
 [CHANGELOG.md](CHANGELOG.md).
 
@@ -183,16 +183,16 @@ repository and ships in the next release commit rather than being merged here di
 
 ## License
 
-Walkie is made by RC Studios and licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE)
+Sqwakie is made by RC Studios and licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE)
 (FSL-1.1-ALv2, also written FSL-1.1-Apache-2.0). In plain words:
 
-- **You can** use, modify and self-host Walkie for any purpose other than a competing one, including inside your
-  company, for your own team, for non-commercial education and research, and when providing services to a Walkie
+- **You can** use, modify and self-host Sqwakie for any purpose other than a competing one, including inside your
+  company, for your own team, for non-commercial education and research, and when providing services to a Sqwakie
   user.
-- **You can't** offer Walkie, or something substantially similar built from it, as a competing commercial product
+- **You can't** offer Sqwakie, or something substantially similar built from it, as a competing commercial product
   or service.
 - **Every version becomes Apache-2.0** two years after it is released, with no restrictions beyond the Apache
   License.
 
-This summary is not the license; the [LICENSE](LICENSE) file is. The Walkie name and logo are not licensed for use
+This summary is not the license; the [LICENSE](LICENSE) file is. The Sqwakie name and logo are not licensed for use
 beyond identifying the software's origin.

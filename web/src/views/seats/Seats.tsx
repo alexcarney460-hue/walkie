@@ -1,3 +1,4 @@
+import { OssReadiness } from "./OssReadiness.tsx";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Armchair, Download, Play, ShieldAlert, Square } from "lucide-react";
 import { api, friendlyError } from "../../api/client.ts";
@@ -10,6 +11,7 @@ import { useStore } from "../../state/store.tsx";
 import { MessageBoundary } from "../orchestrator/Messages.tsx";
 import { BusyCard, busyCounts, clockTime } from "./BusyCard.tsx";
 import { AgentAdminCard } from "./AgentAdminCard.tsx";
+import { LegacyMemory } from "./LegacyMemory.tsx";
 import { SeatOwnership } from "./SeatOwnership.tsx";
 
 const STATE_LABEL: Record<SeatView["state"], string> = {
@@ -77,7 +79,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
       {backlog.length ? (
         // Shown whether seats are on or off (Codex r6 MEDIUM 8): turning seats off is exactly when this matters.
         <div className="int-error" role="alert">
-          <p>{backlog.length} seat user{backlog.length === 1 ? "" : "s"} awaiting cleanup. Walkie retries with backoff; live seat cleanup takes priority. <span className="mono">{backlog.slice(0, 5).join(", ")}{backlog.length > 5 ? " …" : ""}</span></p>
+          <p>{backlog.length} seat user{backlog.length === 1 ? "" : "s"} awaiting cleanup. Sqwakie retries with backoff; live seat cleanup takes priority. <span className="mono">{backlog.slice(0, 5).join(", ")}{backlog.length > 5 ? " …" : ""}</span></p>
           {[...reasons].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([why, count]) => (
             <p key={why} className="mono">{count} × {why}</p>
           ))}
@@ -103,7 +105,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
           )}
           {!local.disabled_reason && local.ephemeral && (
             <p className="field-hint">
-              Each seat runs as a fresh OS user, made for it and removed after it: it can't reach your Walkie{local.readable_home ? "" : ", your home"}, another seat or a later one, and stop, deny and busy act on every process of its user.
+              Each seat runs as a fresh OS user, made for it and removed after it: it can't reach your Sqwakie{local.readable_home ? "" : ", your home"}, another seat or a later one, and stop, deny and busy act on every process of its user.
               It can reach the network, its own home and what seats are handed (your Claude/Codex sign-in).
             </p>
           )}
@@ -115,6 +117,7 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
           {!local.disabled_reason && local.readable_home && (
             <p className="int-error" role="alert">Your home is open to other users and you accepted that: seat users can read what it shows them. <span className="mono">chmod 700 ~</span> closes it.</p>
           )}
+          {local.codex_oss && <OssReadiness snapshot={local.codex_oss} />}
           <p className="field-hint">
             {local.claude_login === "dedicated"
               ? "Claude seats use the token set for seats only; a running seat can read it."
@@ -124,12 +127,12 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
                 ? <>Claude seats use this machine's Claude subscription; a running seat can read this machine's short-lived Claude access token, never the refresh token. <span className="mono">walkie seats token set</span> is an optional override.</>
                 : "Claude seats run as your user and can read everything you can, including your full Claude login."}
             {local.codex_login === "unavailable"
-              ? <> Codex seats need this machine signed in to Codex where seat users can use it: <span className="mono">codex login</span>.</>
-              : local.codex_login === "machine" ? " Codex seats run on this machine's own Codex sign-in." : null}
+              ? <> Authenticated Codex seats need this machine signed in to Codex where seat users can use it: <span className="mono">codex login</span>.</>
+              : local.codex_login === "machine" ? " Authenticated Codex seats run on this machine's own Codex sign-in." : null}
             {" "}<span className="mono">walkie seats doctor</span> checks all of it.
           </p>
           {!local.disabled_reason && !local.ephemeral && (
-            <p className="field-hint">Seats run as your OS user, so a seat can reach your Walkie and your files. Give them users of their own: <span className="mono">walkie seats setup-user --apply</span></p>
+            <p className="field-hint">Seats run as your OS user, so a seat can reach your Sqwakie and your files. Give them users of their own: <span className="mono">walkie seats setup-user --apply</span></p>
           )}
           {!local.channel_ok && <p className="int-error" role="alert">The seats channel isn't ready: {local.channel_error ?? "waiting for the roster authority"}. Nothing runs until it is.</p>}
           <div className="form-actions">
@@ -151,9 +154,9 @@ function ThisMachine({ local, hostname, onChange }: { local: SeatsLocalView; hos
               <ShieldAlert size={16} strokeWidth={1.75} aria-hidden="true" />
               <div>
                 {local.ephemeral ? (
-                  <p><strong>This is remote code execution, on purpose.</strong> Each seat runs as a fresh OS user, made for it and removed after it, apart from your Walkie, your home and the other seats. Turn them off any time; that stops every running seat.</p>
+                  <p><strong>This is remote code execution, on purpose.</strong> Each seat runs as a fresh OS user, made for it and removed after it, apart from your Sqwakie, your home and the other seats. Turn them off any time; that stops every running seat.</p>
                 ) : (
-                  <p><strong>This is remote code execution, on purpose, as your own user.</strong> A seat can read and change anything your user can on this machine, including acting as you in Walkie. Only allow trusted launchers: Grok credential path denies and output checks cannot remove this access. Give seats users of their own first (<span className="mono">walkie seats setup-user --apply</span>). Turn them off any time; that stops every running seat.</p>
+                  <p><strong>This is remote code execution, on purpose, as your own user.</strong> A seat can read and change anything your user can on this machine, including acting as you in Sqwakie. Only allow trusted launchers: Grok credential path denies and output checks cannot remove this access. Give seats users of their own first (<span className="mono">walkie seats setup-user --apply</span>). Turn them off any time; that stops every running seat.</p>
                 )}
                 {local.claude_login === "dedicated" ? (
                   <p>Claude seats use the token set for seats only; a running seat can read it.</p>
@@ -299,7 +302,7 @@ function SeatCard({ seat, onChange }: { seat: SeatView; onChange: () => void }) 
     <article className={`seat-card state-${seat.state} rt-${seat.runtime}`} aria-labelledby={`seat-${seat.id}`}>
       <header className="seat-head">
         <h3 className="seat-title" id={`seat-${seat.id}`}>
-          {seat.runtime === "claude" ? "Claude Code" : seat.runtime === "codex" ? "Codex" : seat.runtime === "kimi" ? "Kimi" : "Grok"}{seat.model ? <span className="mono muted"> {seat.model}</span> : null}
+          {seat.runtime === "claude" ? "Claude Code" : seat.runtime === "codex" ? "Codex" : seat.runtime === "kimi" ? "Kimi" : "Grok"}{seat.local_provider ? <span className="muted"> · local Ollama (native held)</span> : null}{seat.model ? <span className="mono muted"> {seat.model}</span> : null}
           <span className="muted"> on </span><span className="mono">{seat.host.hostname}</span>
         </h3>
         <span className={`seat-state is-${seat.state}`}>{STATE_LABEL[seat.state]}</span>
@@ -406,6 +409,7 @@ export function Seats() {
             {data.local.allow && <BusyCard local={data.local} onChange={reload} />}
             <ThisMachine local={data.local} hostname={me?.node.hostname ?? "this machine"} onChange={reload} />
             <AgentAdminCard />
+            <LegacyMemory />
             <Section title="Machines" id="seat-hosts-h">
               {others.length ? (
                 <ul className="seat-hosts">

@@ -21,7 +21,7 @@ export interface SyncOptions {
   /** Injectable clocks keep local stalls and elapsed liveness deterministic in tests. */
   now?: () => number; stallTotal?: () => number;
   /**
-   * This daemon should run Walkie Direct but its endpoint is not up (DirectLink.pending; set once that exists, main.ts).
+   * This daemon should run Sqwakie Direct but its endpoint is not up (DirectLink.pending; set once that exists, main.ts).
    * While it holds, `unreached()` reports nothing: the machine reaches nobody over Direct, which is not a fact about the team.
    */
   directPending?: () => boolean;
@@ -150,7 +150,7 @@ export class SyncManager {
     this.tick();
   }
 
-  /** Whether anti-entropy is running (the peer link or Walkie Direct started it). */
+  /** Whether anti-entropy is running (the peer link or Sqwakie Direct started it). */
   get running(): boolean { return this.timer !== null; }
 
   stop(): void {
@@ -222,7 +222,7 @@ export class SyncManager {
    * "Mixed teams"; never itself), each with whether it shows online. Such a machine is online here only on the word of
    * a machine that reaches it (`isOnline`; or for a moment after this one last reached it itself). Without that it
    * shows offline and its agents are hidden on this machine. Not an observer's machine (an observer publishes no agent
-   * status, so nothing of theirs is hidden), and nothing at all while this daemon's own Walkie Direct endpoint is not up
+   * status, so nothing of theirs is hidden), and nothing at all while this daemon's own Sqwakie Direct endpoint is not up
    * but should be (`directPending`): it then reaches no machine over Direct, whoever they are. One pass over the roster,
    * no I/O.
    */

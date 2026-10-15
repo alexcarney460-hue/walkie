@@ -13,7 +13,7 @@ import sshLinuxScript from "../../../scripts/enroll-ssh-linux.sh" with { type: "
 
 export const SSH_LINUX_SCRIPT: string = sshLinuxScript;
 
-/** The systemd unit the script writes: Walkie's own loopback sshd. It exists only once the script has run. */
+/** The systemd unit the script writes: Sqwakie's own loopback sshd. It exists only once the script has run. */
 export const WALKIE_SSH_UNIT_PATH = "/etc/systemd/system/walkie-sshd.service";
 
 export interface SshLinuxIo {

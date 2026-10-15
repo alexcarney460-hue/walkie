@@ -1,4 +1,4 @@
-// ORCH-2 WalkieTalkie: model-login detection (presence only, no token read), the one-lead-per-team election, the
+// ORCH-2 Talkie: model-login detection (presence only, no token read), the one-lead-per-team election, the
 // auto-start decision, the needs-login text, the rename and the playbook's onboarding clauses.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -19,7 +19,10 @@ function claudeCli(h: string, creds: boolean): void {
   if (creds) writeFileSync(join(h, ".claude", ".credentials.json"), "{}");
 }
 function codex(h: string): void { mkdirSync(join(h, ".codex"), { recursive: true }); writeFileSync(join(h, ".codex", "auth.json"), "{}"); }
-function kimi(h: string): void { mkdirSync(join(h, ".kimi-code", "credentials"), { recursive: true }); writeFileSync(join(h, ".kimi-code", "credentials", "kimi-code.json"), "{}"); }
+function kimi(h: string, name = "kimi-code.json"): void {
+  mkdirSync(join(h, ".kimi-code", "credentials"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(h, ".kimi-code", "credentials", name), "{}", { mode: 0o600 });
+}
 const detect = (h: string, extra: { env?: NodeJS.ProcessEnv; keychain?: boolean; vault?: string[]; platform?: string } = {}) => detectLogins({
   home: h, env: extra.env ?? {}, keychainHas: async () => extra.keychain ?? false, vaultClaude: () => extra.vault ?? [], platform: extra.platform ?? "linux",
 });
@@ -43,6 +46,8 @@ describe("detection matrix (fake logins; names only)", () => {
     expect(await detect(c)).toEqual({ found: ["codex"], claude: null });
     const k = home(); kimi(k);
     expect(await detect(k)).toEqual({ found: ["kimi"], claude: null });
+    const ke = home(); kimi(ke, "kimi-code-env-0123456789abcdef.json");
+    expect(await detect(ke)).toEqual({ found: ["kimi"], claude: null });
     expect(await detect(home())).toEqual({ found: [], claude: null });
   });
   test("all three: Claude first", async () => {
@@ -93,38 +98,38 @@ describe("the auto-start decision", () => {
   });
   test("the needs-login text: the one step, and Codex/Kimi named as not supported yet", () => {
     expect(needsLoginText([])).toContain("run: claude");
-    expect(needsLoginText(["codex", "kimi"])).toBe("WalkieTalkie needs a Claude login for now (found codex and kimi; Codex/Kimi support is coming). Sign in with: claude");
+    expect(needsLoginText(["codex", "kimi"])).toBe("Talkie needs a Claude login for now (found codex and kimi; Codex/Kimi support is coming). Sign in with: claude");
   });
 });
 
 describe("the rename", () => {
-  test("people see WalkieTalkie; the agent name stays orchestrator", () => {
+  test("people see Talkie; the agent name stays orchestrator", () => {
     expect(ORCHESTRATOR_AGENT).toBe("orchestrator");
-    expect(ORCHESTRATOR_DISPLAY).toBe("WalkieTalkie");
-    expect(agentDisplayName("orchestrator")).toBe("WalkieTalkie");
+    expect(ORCHESTRATOR_DISPLAY).toBe("Talkie");
+    expect(agentDisplayName("orchestrator")).toBe("Talkie");
     expect(agentDisplayName("cc-1")).toBe("cc-1");
   });
 });
 
-describe("the playbook: WalkieTalkie, first-run onboarding, other computers", () => {
+describe("the playbook: Talkie, first-run onboarding, other computers", () => {
   const p = playbook({ owner: "alex", hostname: "alex-mac", access: "platform" });
-  test("opens as WalkieTalkie and stays tight", () => {
-    expect(p.startsWith("You are WalkieTalkie, the Walkie orchestrator for @alex")).toBe(true);
+  test("opens as Talkie and stays tight", () => {
+    expect(p.startsWith("You are Talkie, the Sqwakie orchestrator for @alex")).toBe(true);
     expect(p.split("\n").length).toBeLessThanOrEqual(60);
   });
   test("first-run onboarding: opens the conversation, detects sources without secrets, offers the import, asks for a credential once", () => {
     expect(p).toContain("## First-run onboarding (your first start, whenever the team has no projects, or when asked)");
     expect(p).toContain("Open the conversation yourself");
-    expect(p).toMatch(/Detect likely sources without secrets: Linear[^\n]*GitHub[^\n]*local git repos[^\n]*existing Walkie boards/);
+    expect(p).toMatch(/Detect likely sources without secrets: Linear[^\n]*GitHub[^\n]*local git repos[^\n]*existing Sqwakie boards/);
     expect(p).toMatch(/`walkie import linear` if `walkie help` lists it; otherwise create the projects and cards/);
-    expect(p).toMatch(/ask once, say where to get it, and have them paste it in the dashboard's Integrations page \(Walkie's integration settings\), never in chat, cards or files/);
+    expect(p).toMatch(/ask once, say where to get it, and have them paste it in the dashboard's Integrations page \(Sqwakie's integration settings\), never in chat, cards or files/);
     expect(FIRST_RUN_PROMPT).toContain("First-run onboarding");
   });
   test("other computers: ask, mint the right link, reply privately with expiry, who, 3 steps; watch and set up", () => {
     expect(p).toMatch(/Ask whether they, or their company, have other computers to add/);
     expect(p).toContain("`walkie team add-machine <handle> --json`");
     expect(p).toContain("`walkie invite --handle <h> --json`");
-    expect(p).toMatch(/daemon places the one-click link or one-time code directly in your person's local WalkieTalkie conversation/);
+    expect(p).toMatch(/daemon places the one-click link or one-time code directly in your person's local Talkie conversation/);
     expect(p).toMatch(/The new machine's person approves the consent question and then it appears in Mission Control/);
     expect(p).toMatch(/confirm each new machine when it joins[^\n]*Set up another person's machine only while its agent admin is on/);
     expect(p).toMatch(/When the team looks small for its work[^\n]*other computers to add/);

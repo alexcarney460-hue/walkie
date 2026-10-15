@@ -146,7 +146,7 @@ async function show(ctx: Ctx): Promise<number> {
     return EXIT.ok;
   }
   ctx.out(projectLine(project));
-  ctx.out(c.dim(`status report: ${reportMode(project)}${reportMode(project) === "hourly" ? " (WalkieTalkie writes it each hour something changed)" : ""}`));
+  ctx.out(c.dim(`status report: ${reportMode(project)}${reportMode(project) === "hourly" ? " (Talkie writes it each hour something changed)" : ""}`));
   ctx.out(c.dim(contactLine(project)));
   for (const b of project.boards) {
     ctx.out(`\n${c.bold(safeTerm(b.name))} ${bar(b.meter.done, b.meter.counted, 12)} ${b.meter.done}/${b.meter.counted}${b.state !== "active" ? c.dim(" (archived)") : ""}`);
@@ -188,12 +188,11 @@ async function set(ctx: Ctx, state?: "active" | "archived" | "deleted"): Promise
 }
 
 /**
- * `walkie projects report <project> [on|off]` (PROJECT-REPORTS-1): WalkieTalkie's hourly plain-English status report for a
- * project. With no verb it only says which. Switching is for people (the project's creator and the team's owners): the
- * daemon refuses an agent's request, and says why.
+ * `walkie projects report <project> [on|off]` (PROJECT-REPORTS-1): Talkie's hourly plain-English status report for a
+ * project. With no verb it only says which. The creator, an owner, or their agent may switch it.
  */
 async function reportCmd(ctx: Ctx): Promise<number> {
-  const cl = client(ctx);
+  const cl = ctx.args.pos[2] ? adminClient(ctx) : client(ctx);
   const channel = await channelOf(cl, need(ctx.args, 1, "project"));
   const verb = ctx.args.pos[2];
   if (verb !== undefined && verb !== "on" && verb !== "off") throw new UsageError("usage: walkie projects report <project> [on|off]");

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { BlobHash, EventId, type BodyOf, type Event } from "../../protocol/schemas.ts";
 import {
   DEFAULT_MAX_CONCURRENT, DEFAULT_SEAT_TIMEOUT_S, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, MAX_SEAT_PROMPT, MAX_SEAT_TIMEOUT_S, MIN_SEAT_TIMEOUT_S,
-  MAX_SEAT_BRIEF, SEATS_V2_CAP, SEAT_MODES, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SeatAccountKey, SeatLabel, SeatModel, SeatResultFile, SeatRunV2, SeatWorkspace, parseLauncher, runText, runTextV2,
+  MAX_SEAT_BRIEF, SEATS_V2_CAP, SEATS_CODEX_OSS_CAP, localRequestValid, SEAT_MODES, SEAT_RUNTIMES, SEAT_RUNTIMES_V1, SeatAccountKey, SeatLabel, SeatModel, SeatResultFile, SeatRunV2, SeatWorkspace, parseLauncher, runText, runTextV2,
   seatOf, seatsChannel, seatsChannelNode, type SeatHostView, type SeatRun, type SeatRuntime, type SeatsView,
 } from "../../protocol/seats.ts";
 import type { SeatsConfig } from "../config.ts";
@@ -33,7 +33,7 @@ function host(c: RouteCtx) {
 
 export function refuseScheduledSeatRun(core: Core, agent: string | undefined): void {
   if (agent === ORCHESTRATOR_AGENT && hostFor(core)?.scheduledTurnActive())
-    throw new HttpError(403, "scheduled_turn_cannot_launch", "scheduled WalkieTalkie turns recommend seats to project orchestrators; they cannot launch seats");
+    throw new HttpError(403, "scheduled_turn_cannot_launch", "scheduled Talkie turns recommend seats to project orchestrators; they cannot launch seats");
 }
 
 function view(c: RouteCtx, only?: string): SeatsView {
@@ -55,8 +55,9 @@ route("GET", "/v1/seats", (c) => {
  */
 route("POST", "/v1/seats/doctor", async (c) => {
   limitWrite(c);
-  await host(c).refreshLogin();
-  return json({ local: host(c).view() });
+  const b = parseWith(z.object({ local_provider: z.literal("ollama").optional() }).strict(), await readJson(c.req, LOCAL_BODY_MAX));
+  if (!b.local_provider) await host(c).refreshLogin();
+  return json({ local: host(c).view(!!b.local_provider) });
 });
 
 route("POST", "/v1/seats/cleanup-root", async (c) => {
@@ -66,6 +67,19 @@ route("POST", "/v1/seats/cleanup-root", async (c) => {
   limitWrite(c);
   host(c).cleanupPendingRoot(b.id);
   return json({ local: host(c).view() });
+});
+
+// Separate consent transaction: never changes any existing allow/isolation/runtime/network policy.
+export function requireOssPerson(c: Pick<RouteCtx, "agent" | "underAgent" | "via" | "req">): void {
+  personOnly(c, "change local Codex OSS consent", "at this machine's terminal");
+  if (c.via !== "cli" || c.req.headers.has("x-walkie-admin-token") || c.req.headers.get(TALKIE_SHELL_HEADER) === "1")
+    throw new HttpError(403, "person_only", "local OSS consent requires the person at this machine's terminal");
+}
+route("POST", "/v1/seats/codex-oss", async (c) => {
+  requireOssPerson(c);
+  const b = parseWith(z.object({ codex_oss_ollama: z.boolean() }).strict(), await readJson(c.req, LOCAL_BODY_MAX));
+  limitWrite(c);
+  return json({ local: await host(c).configureOss(b.codex_oss_ollama) });
 });
 
 const ConfigReq = z.object({
@@ -180,6 +194,7 @@ function checkSeatsConfig(c: RouteCtx, b: z.infer<typeof ConfigReq>): { h: Retur
     ...pick("ephemeral", b.ephemeral), ...pick("admin", b.admin), ...pick("runner", b.runner), ...pick("runtime_dir", b.runtime_dir), ...pick("same_user", b.same_user),
     ...pick("accept_readable_home", b.accept_readable_home), ...pick("inherit_person_config", b.inherit_person_config),
     ...pick("tools", b.tools),
+    ...pick("codex_oss_ollama", undefined),
     ...pick("env_file", undefined), // config.json only: never set through the API
   };
   const requestedMode = b.mode ?? (b.same_user === true || b.ephemeral === false ? "same_user" : b.ephemeral === true ? "seat_users" : undefined)
@@ -210,7 +225,7 @@ const TokenReq = z.object({ token: z.string().regex(/^[A-Za-z0-9._~+/=-]{20,4096
 
 /**
  * `walkie seats token set|clear`: a Claude token only this machine's seats use (optional; without one, seats run on
- * the machine's own Claude login). The machine's person only; the token never leaves this machine's Walkie home.
+ * the machine's own Claude login). The machine's person only; the token never leaves this machine's Sqwakie home.
  */
 route("POST", "/v1/seats/token", async (c) => {
   const b = parseWith(TokenReq, await readJson(c.req, LOCAL_BODY_MAX));
@@ -223,6 +238,7 @@ const RunReq = z.object({
   machine: z.string().min(1).max(100),
   runtime: z.enum(SEAT_RUNTIMES),
   model: SeatModel.optional(),
+  local_provider: z.literal("ollama").optional(),
   permission_mode: z.enum(SEAT_MODES).optional(),
   /** v1: the prompt (inline in the request). v2: the brief's text, when `brief` isn't given. */
   prompt: z.string().min(1).max(MAX_SEAT_PROMPT).optional(),
@@ -237,7 +253,7 @@ const RunReq = z.object({
   workspace: SeatWorkspace.optional(),
   account: SeatAccountKey.optional(),
   result_file: SeatResultFile.optional(),
-}).strict();
+}).strict().refine(localRequestValid, { message: "local OSS needs Codex, an explicit valid model and no account" });
 
 /** Stores a v2 brief as a blob on this machine (the request is its reference; the host fetches it from here). */
 function storeBrief(c: RouteCtx, text: string): string {
@@ -312,21 +328,41 @@ export function requireV2Replicas(c: Pick<RouteCtx, "core" | "sync">, channel: s
   }
 }
 
+/** Authenticated capability evidence only, before storing any brief/delta/repo bytes. */
+export function requireOssCapability(c: Pick<RouteCtx, "core" | "sync">, node: string): void {
+  if (node === c.core.nodeId) return;
+  const caps = c.sync.peerCapabilities(node);
+  if (!caps?.caps.includes(SEATS_CODEX_OSS_CAP) || !caps.caps.includes(SEATS_V2_CAP))
+    throw new HttpError(409, "seats_codex_oss_unsupported", "host local OSS protocol support is unknown or unsupported; no upload was admitted");
+}
+route("POST", "/v1/seats/oss-preflight", async (c) => {
+  requireTeam(c);
+  const b = parseWith(z.object({ machine: z.string().min(1).max(100), runtime: z.literal("codex"),
+    local_provider: z.literal("ollama"), model: SeatModel }).strict().refine(localRequestValid), await readJson(c.req, LOCAL_BODY_MAX));
+  const t = target(c, b.machine);
+  if (c.req.headers.get(TALKIE_SHELL_HEADER) === "1") throw new HttpError(403, "forbidden", "shell-user seats cannot use local OSS");
+  requireOssCapability(c, t.node);
+  requireV2Replicas(c, t.channel);
+  return json({ capability: SEATS_CODEX_OSS_CAP, native: "UNVERIFIED" });
+});
+
 route("POST", "/v1/seats/run", async (c) => {
   requireTeam(c);
   const b = parseWith(RunReq, await readJson(c.req, LOCAL_BODY_MAX));
   limitWrite(c);
   refuseScheduledSeatRun(c.core, c.agent);
   const t = target(c, b.machine);
+  if (b.local_provider) { requireOssCapability(c, t.node); requireV2Replicas(c, t.channel); }
   const talkieShell = c.agent === "orchestrator" && c.req.headers.get(TALKIE_SHELL_HEADER) === "1";
+  if (talkieShell && b.local_provider) throw new HttpError(400, "invalid", "shell-user seats cannot use local OSS");
   if (talkieShell) {
     const isolated = t.node === c.core.nodeId ? host(c).view().ephemeral : hostAvailability(c.core, t.node)?.ephemeral === true;
-    if (!isolated) throw new HttpError(409, "talkie_seat_isolation_required", "switch WalkieTalkie back to Walkie platform access to use same-user machines");
+    if (!isolated) throw new HttpError(409, "talkie_seat_isolation_required", "switch Talkie back to Sqwakie platform access to use same-user machines");
   }
   if (b.bundle && !readBlob(c.core.paths.blobs, b.bundle)) {
     throw new HttpError(400, "invalid", "that repo bundle isn't on this machine (send it with POST /v1/seats/bundle, or walkie seat run --repo)");
   }
-  const v2 = b.v === 2 || b.runtime === "kimi" || b.runtime === "grok" || b.brief !== undefined || b.label !== undefined || b.workspace !== undefined || b.account !== undefined || b.result_file !== undefined;
+  const v2 = b.local_provider !== undefined || b.v === 2 || b.runtime === "kimi" || b.runtime === "grok" || b.brief !== undefined || b.label !== undefined || b.workspace !== undefined || b.account !== undefined || b.result_file !== undefined;
   let seat: SeatRun | SeatRunV2;
   let text: string;
   // Never to a host whose daemon says it can't (a released pre.5 one ignores a v2 body): refused here instead.
@@ -334,10 +370,10 @@ route("POST", "/v1/seats/run", async (c) => {
   if (v2 && t.node !== c.core.nodeId) {
     const capabilities = c.sync.peerCapabilities(t.node);
     if (!capabilities) {
-      throw new HttpError(409, "seats_v2_unknown", `${t.hostname}'s Walkie hasn't said yet whether it takes v2 seat requests (no capabilities from it): retry in a minute`);
+      throw new HttpError(409, "seats_v2_unknown", `${t.hostname}'s Sqwakie hasn't said yet whether it takes v2 seat requests (no capabilities from it): retry in a minute`);
     }
     if (!capabilities.caps.includes(SEATS_V2_CAP)) {
-      throw new HttpError(409, "seats_v2_unsupported", `${t.hostname} runs a Walkie that doesn't take v2 seat requests (Kimi, a brief, a workspace, an account or a result file): update it first`);
+      throw new HttpError(409, "seats_v2_unsupported", `${t.hostname} runs a Sqwakie that doesn't take v2 seat requests (Kimi, a brief, a workspace, an account or a result file): update it first`);
     }
   }
   if (v2) {
@@ -351,7 +387,7 @@ route("POST", "/v1/seats/run", async (c) => {
     const briefSrc = b.brief ?? b.prompt;
     if (!briefSrc) throw new HttpError(400, "invalid", "a v2 request needs a brief (brief, or prompt)");
     const parsed = SeatRunV2.safeParse({
-      op: "run", v: 2, runtime: b.runtime, ...(talkieShell ? { shell_user: true as const } : {}), ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
+      op: "run", v: 2, runtime: b.runtime, ...(b.local_provider ? { local_provider: b.local_provider } : {}), ...(talkieShell ? { shell_user: true as const } : {}), ...(b.model ? { model: b.model } : {}), ...(b.permission_mode ? { permission_mode: b.permission_mode } : {}),
       brief: storeBrief(c, briefSrc), ...(b.label ? { label: b.label } : {}), ...(b.workspace ? { workspace: b.workspace } : {}),
       ...(b.account ? { account: b.account } : {}), ...(b.result_file ? { result_file: b.result_file } : {}),
       timeout_s: b.timeout_s ?? DEFAULT_SEAT_TIMEOUT_S, max_concurrent: b.max_concurrent ?? DEFAULT_MAX_CONCURRENT,

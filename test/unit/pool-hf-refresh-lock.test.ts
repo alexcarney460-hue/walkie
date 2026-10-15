@@ -41,7 +41,7 @@ describe("one refresh at a time across processes", () => {
     const v = await b.load();
     expect(second.calls.length).toBe(0);
     expect(v.source).toBe("built-in");
-    expect(v.note).toContain("Another Walkie process is reading Hugging Face");
+    expect(v.note).toContain("Another Sqwakie process is reading Hugging Face");
     g.release();
     const done = await running;
     expect(done.source).toBe("huggingface");
@@ -109,7 +109,7 @@ describe("one refresh at a time across processes", () => {
     const hub = fakeHub();
     const v = await new ModelSource({ home, fetch: hub.fetch, now: () => T0 }).load();
     expect(hub.calls.length).toBe(0);
-    expect(v.note).toContain("Another Walkie process");
+    expect(v.note).toContain("Another Sqwakie process");
   });
 
   test("a home that cannot be written still reads the list (no lock is possible)", async () => {

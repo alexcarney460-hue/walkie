@@ -95,7 +95,7 @@ try {
    // A story three weeks old, written when nothing was blocked, beside a board with four blocked.
    await open("Stale");
    const when = await text(".spage-when");
-   check(prefix + "story time is shown beside the headline", /Summary written by WalkieTalkie 3 weeks ago/.test(when), when);
+   check(prefix + "story time is shown beside the headline", /Summary written by Talkie 3 weeks ago/.test(when), when);
    check(prefix + "page time is in whole words", /Page updated 1 minute ago/.test(when), when);
    check(prefix + "no abbreviated times", !/\\b\\d+(m|h|d|w) ago\\b/.test(await page.locator(".spage").innerText()));
    check(prefix + "eyebrow carries no time", !/ago|updated/i.test(await text(".spage-eyebrow")), await text(".spage-eyebrow"));
@@ -114,7 +114,7 @@ try {
    // Numbers that moved, but the story is ten minutes old: the next report is still due.
    await open("Fresh");
    check(prefix + "a story still within its grace is not flagged", await page.locator(".spage-notice[role=note]").count() === 0);
-   check(prefix + "its time reads in minutes", /written by WalkieTalkie 10 minutes ago/.test(await text(".spage-when")), await text(".spage-when"));
+   check(prefix + "its time reads in minutes", /written by Talkie 10 minutes ago/.test(await text(".spage-when")), await text(".spage-when"));
 
    // No story, reports on for five hours.
    await open("Late");

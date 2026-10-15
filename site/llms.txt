@@ -1,0 +1,12 @@
+# Sqwakie
+
+> Sqwakie connects a team's people, machines and AI agents. Use the installed CLI or local API with the caller's existing identity and permissions.
+
+## Guides
+
+- [Agent install and operation guide](https://sqwakie.si/agents.md): installation, joining, readiness, CLI/API output and permission boundaries.
+- [Install and join (repository document on GitHub)](https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md): platform and enrollment details.
+- [Protocol and local API (repository document on GitHub)](https://github.com/alexcarney460-hue/walkie/blob/main/docs/PROTOCOL.md): request schemas, authentication, roles and event semantics.
+- [Security (repository document on GitHub)](https://github.com/alexcarney460-hue/walkie/blob/main/docs/SECURITY.md): trust, credentials and process isolation.
+
+Capabilities depend on the installed version. Start with `walkie version` and `walkie help`. Pass `--for-agent` when command output goes to a model; use `--json` where that command supports it. A queued request is not proof that the requested change was applied.

@@ -42,6 +42,7 @@ test("uninstalling with no claude CLI removes the hooks and names the command th
   const r = await installClaude({ dryRun: false, uninstall: true, settingsPath, claudeFound: false });
   expect(r.commands).toEqual([]);
   expect(r.note).toContain("claude mcp remove --scope user walkie");
+  expect(r.note).toContain("walkie MCP server (which belongs to Sqwakie)");
   expect(walkieEntries(read())).toEqual([]);
 });
 

@@ -28,10 +28,11 @@ export class MockSeats {
   }
 
   view(): SeatsView {
+    const capture = process.env.WALKIE_MOCK_CAPTURE === "1";
     const hosts: SeatHostView[] = this.nodes().map((n, i) => ({
       node: n.node_id, hostname: n.hostname, handle: n.handle, self: !!n.self,
-      allows: n.self ? this.allow : i % 2 === 1, member: true, channel: `seats-${n.node_id}`, online: n.online,
-      ...(n.self ? { availability: this.local().availability } : {}),
+      allows: capture || (n.self ? this.allow : i % 2 === 1), member: true, channel: `seats-${n.node_id}`, online: n.online,
+      ...(capture ? { availability: { state: "available" as const, max: 4 } } : n.self ? { availability: this.local().availability } : {}),
     }));
     return { local: this.local(), hosts, seats: [...this.seats].reverse() };
   }

@@ -103,9 +103,12 @@ describe("roster requests to the authority", () => {
     const invites = results.slice(0, 2);
     expect(invites.filter((r) => r.status === "fulfilled").length).toBe(1);
     const lost = invites.find((r) => r.status === "rejected") as PromiseRejectedResult;
-    expect(lost.reason).toMatchObject({ status: 403 });
+    // The winning invite changes this login after the losing request was signed (WALK-109).
+    expect(lost.reason).toMatchObject({ status: 409, code: "stale_request" });
     expect(results.slice(2).every((r) => r.status === "fulfilled")).toBe(true);
     const handle = alex.d.core.roster.members.get("carol@example.com")?.handle;
+    expect(alex.d.core.rosterEntries().filter((ev) => ev.kind === "team.member"
+      && (ev.body as { login?: string }).login === "carol@example.com")).toHaveLength(1);
     await waitFor(() => [kira, bob].every((n) => rosterOf(n) === rosterOf(alex) && n.d.core.roster.channels.has("b-room") && n.d.core.roster.channels.has("k-room")),
       { what: "replicas converge", timeoutMs: 8_000 });
     for (const n of [kira, bob]) expect(n.d.core.roster.members.get("carol@example.com")?.handle).toBe(handle as string);

@@ -1,4 +1,4 @@
-// The latest status report of a project, above its board (PROJECT-REPORTS-1): what WalkieTalkie last wrote for the
+// The latest status report of a project, above its board (PROJECT-REPORTS-1): what Talkie last wrote for the
 // project's members, as rendered Markdown, with the time its facts are as of; or a plain empty state. It reads the
 // report post from the channel (every machine has it), through GET /v1/projects/:channel/status-report.
 import { useCallback, useEffect, useState } from "react";
@@ -23,13 +23,13 @@ export function StatusReportView({ state, onRetry, paused = false }: { state: St
       <header className="status-report-head">
         <FileText size={14} strokeWidth={1.75} aria-hidden="true" />
         <h2 id="status-report-title" className="status-report-title">Status report</h2>
-        {report && <span className="status-report-meta muted">as of <RelTime ts={report.as_of} long /> · written by WalkieTalkie</span>}
+        {report && <span className="status-report-meta muted">as of <RelTime ts={report.as_of} long /> · written by Talkie</span>}
       </header>
       {report ? <div className="status-report-body"><RichMarkdown text={report.markdown} /></div> : (
         <p className="status-report-empty muted">
           {paused ? "Status reports pause while a project is archived."
             : mode === "hourly"
-              ? "No status report yet. WalkieTalkie writes one each hour something changes, so the first one appears within the hour."
+              ? "No status report yet. Talkie writes one each hour something changes, so the first one appears within the hour."
               : "Hourly status reports are off for this project. An owner or the project's creator turns them on from the Projects list."}
         </p>
       )}

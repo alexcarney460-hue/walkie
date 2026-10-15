@@ -1,7 +1,9 @@
 // In-memory ComputeStore (tests and the demo). Transactions run one at a time and roll back on a throw, so it
 // behaves like the Postgres store under SELECT … FOR UPDATE: tests of concurrency run against the same semantics.
 import { ACTIVE_STATES } from "./types.js";
-import type { Account, BindClaim, Enrollment, ComputeStore, LedgerEntry, Rental, RentalPatch, RentRequestRow, Tx } from "./store.js";
+import { ALERT_CLAIM_PREFIX, CREDIT_HOLD_PREFIX, FREEZE_HOLD_PREFIX } from "./store.js";
+import type { Account, BindClaim, CreditLotRow, Enrollment, ComputeStore, FreezeHoldRow, LedgerEntry, Rental, RentalLotCharge, RentalPatch,
+  RentRequestRow, Tx, TxOptions } from "./store.js";
 
 interface State {
   enrollments: Map<string, Enrollment>;
@@ -13,9 +15,54 @@ interface State {
   controls: Map<string, unknown>;
 }
 
-/** Credit nobody paid real money for: test-mode purchases and positive adjustments. */
+/** A credit lot row (lots.ts): a positive purchase or adjustment. */
+const isLot = (e: LedgerEntry): boolean => (e.kind === "purchase" || e.kind === "adjustment") && e.amount_micros > 0;
 
 const queueOrder = (a: Rental, b: Rental): number => a.created_at - b.created_at || a.ord - b.ord || a.id.localeCompare(b.id);
+
+/** A freeze hold the tick can retry: pending, and naming a charge (a hold keyed by event id has nothing to look up). */
+function retryableFreezeHold(key: string, value: unknown): boolean {
+  if (!key.startsWith(FREEZE_HOLD_PREFIX) || typeof value !== "object" || value === null) return false;
+  const v = value as { state?: unknown; charge?: unknown };
+  return v.state === "pending" && typeof v.charge === "string";
+}
+/** PgStore's order: numeric updated_at ascending with a missing one first, then the key by code unit (COLLATE "C"). */
+function freezeHoldOrder(a: FreezeHoldRow, b: FreezeHoldRow): number {
+  const at = (row: FreezeHoldRow): number => {
+    const u = (row.value as { updated_at?: unknown }).updated_at;
+    return typeof u === "number" ? u : -Infinity;
+  };
+  const ua = at(a), ub = at(b);
+  if (ua !== ub) return ua < ub ? -1 : 1;
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+/** PgStore's heldCreditHolds filter: a held checkout first held by `before`, not yet marked alerted. */
+function unalertedCreditHold(key: string, value: unknown, before: number): boolean {
+  if (!key.startsWith(CREDIT_HOLD_PREFIX) || typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const v = value as { state?: unknown; first_at?: unknown; alerted_at?: unknown };
+  return v.state === "held" && v.alerted_at === undefined && typeof v.first_at === "number" && v.first_at <= before;
+}
+const firstAt = (row: FreezeHoldRow): number => (row.value as { first_at: number }).first_at;
+/** PgStore's queuedAlerts filter: an alert claim row holding an object whose numeric next_at is due. */
+function dueQueuedAlert(key: string, value: unknown, now: number): boolean {
+  if (!key.startsWith(ALERT_CLAIM_PREFIX) || typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const next = (value as { next_at?: unknown }).next_at;
+  return typeof next === "number" && next <= now;
+}
+/** PgStore's queuedAlerts order key: a numeric field, or after every number when it is missing (NULLS LAST). */
+const numberOr = (row: FreezeHoldRow, field: "priority" | "first_at"): number => {
+  const v = (row.value as Record<string, unknown>)[field];
+  return typeof v === "number" ? v : Infinity;
+};
+/** PgStore's queuedAlerts minPriority band: a numeric priority at least the minimum, or none at all. */
+const inBand = (value: unknown, minPriority: number | undefined): boolean => {
+  const p = (value as Record<string, unknown>).priority;
+  return minPriority === undefined || typeof p !== "number" || p >= minPriority;
+};
+const queuedOrder = (a: FreezeHoldRow, b: FreezeHoldRow): number =>
+  numberOr(a, "priority") - numberOr(b, "priority") || numberOr(a, "first_at") - numberOr(b, "first_at") || byKey(a, b);
+const byKey = (a: FreezeHoldRow, b: FreezeHoldRow): number => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
 const clone = (s: State): State => ({
   enrollments: new Map(s.enrollments), accounts: new Map(s.accounts), ledger: [...s.ledger], rentals: new Map(s.rentals),
@@ -27,7 +74,8 @@ export class MemoryStore implements ComputeStore {
   private state: State = { enrollments: new Map(), accounts: new Map(), ledger: [], rentals: new Map(), requests: new Map(), rates: new Map(), controls: new Map() };
   private chain: Promise<unknown> = Promise.resolve();
 
-  async tx<T>(fn: (t: Tx) => Promise<T>): Promise<T> {
+  /** Transactions run one at a time here, so TxOptions' bounds have nothing to bound. */
+  async tx<T>(fn: (t: Tx) => Promise<T>, _opts?: TxOptions): Promise<T> {
     const run = this.chain.then(async () => {
       const work = clone(this.state);
       const original = new Map(this.bindClaims);
@@ -82,6 +130,7 @@ function makeTx(s: State, bindClaims: Map<string, BindClaim>): Tx {
       s.controls.set(key, value);
     },
     async lockAccount(id) { return s.accounts.get(id) ?? null; },
+    async account(id) { return s.accounts.get(id) ?? null; },
     async lockCapacity() { /* transactions are already serial */ },
     async accountByTokenHash(hash) { return [...s.accounts.values()].find((a) => a.token_hash === hash) ?? null; },
     async accountByTeam(team, ownerKey) { return [...s.accounts.values()].find(a => a.team_id === team && a.owner_key === ownerKey) ?? null; },
@@ -116,6 +165,33 @@ function makeTx(s: State, bindClaims: Map<string, BindClaim>): Tx {
       }
       return true;
     },
+    async creditLots(accountId) {
+      const rows = s.ledger.filter((e) => e.account_id === accountId);
+      return rows.filter(isLot).map((lot): CreditLotRow => {
+        const own = rows.filter((e) => e.lot === lot.idem_key);
+        return { id: lot.idem_key, live: lot.live === true, amount_micros: lot.amount_micros, created_at: lot.created_at,
+          attributed_micros: own.reduce((n, e) => n + e.amount_micros, 0), expire_rows: own.filter((e) => e.kind === "expire").length };
+      });
+    },
+    async rentalLotCharges(rentalId, upTo) {
+      const out = new Map<string, RentalLotCharge>();
+      for (const e of s.ledger) {
+        if (e.rental_id !== rentalId || e.created_at > upTo || (e.kind !== "burn" && e.kind !== "refund")) continue;
+        const lot = e.lot ?? null, live = e.live === true, key = `${live}/${lot ?? ""}`;
+        const prior = out.get(key);
+        out.set(key, { lot, live, charged: (prior?.charged ?? 0) - e.amount_micros });
+      }
+      return [...out.values()];
+    },
+    async dueLotAccounts(cutoff, limit) {
+      const expired = new Set(s.ledger.filter((e) => e.kind === "expire" && e.lot).map((e) => e.lot as string));
+      const first = new Map<string, number>();
+      for (const e of s.ledger) {
+        if (!isLot(e) || e.created_at > cutoff || expired.has(e.idem_key)) continue;
+        first.set(e.account_id, Math.min(first.get(e.account_id) ?? Infinity, e.created_at));
+      }
+      return [...first].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, limit).map(([id]) => id);
+    },
     async accountByPurchaseRef(ref) {
       return s.ledger.find((e) => e.kind === "purchase" && e.ref === ref)?.account_id ?? null;
     },
@@ -147,6 +223,19 @@ function makeTx(s: State, bindClaims: Map<string, BindClaim>): Tx {
       const n = (s.rates.get(k) ?? 0) + 1;
       s.rates.set(k, n);
       return n <= max;
+    },
+    async pendingFreezeHolds(limit) {
+      return [...s.controls].filter(([key, value]) => retryableFreezeHold(key, value))
+        .map(([key, value]) => ({ key, value })).sort(freezeHoldOrder).slice(0, limit);
+    },
+    async heldCreditHolds(before, limit) {
+      return [...s.controls].filter(([key, value]) => unalertedCreditHold(key, value, before))
+        .map(([key, value]) => ({ key, value }))
+        .sort((a, b) => firstAt(a) - firstAt(b) || byKey(a, b)).slice(0, limit);
+    },
+    async queuedAlerts(now, limit, minPriority) {
+      return [...s.controls].filter(([key, value]) => dueQueuedAlert(key, value, now) && inBand(value, minPriority))
+        .map(([key, value]) => ({ key, value })).sort(queuedOrder).slice(0, limit);
     },
   };
 }

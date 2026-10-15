@@ -1,4 +1,4 @@
-// ORCH-2: WalkieTalkie starts on its own. Pure decision for one check of the auto-start loop (host.ts autoTick): run
+// ORCH-2: Talkie starts on its own. Pure decision for one check of the auto-start loop (host.ts autoTick): run
 // here (this machine is the team's lead and has a Claude login), stand by for the lead, wait for a model login, or
 // leave it alone (a person or agent started it by hand, or stopped it: both stick until changed by hand).
 import type { NodeView } from "../../protocol/schemas.ts";
@@ -40,11 +40,11 @@ export function decide(i: AutoInput): AutoDecision {
 export function needsLoginText(found: readonly LoginProvider[]): string {
   const others = found.filter((p) => p !== "claude");
   return others.length
-    ? `WalkieTalkie needs a Claude login for now (found ${others.join(" and ")}; Codex/Kimi support is coming). Sign in with: claude`
-    : "WalkieTalkie needs a model login: sign in to Claude Code on this machine (run: claude), or add one with walkie accounts add claude";
+    ? `Talkie needs a Claude login for now (found ${others.join(" and ")}; Codex/Kimi support is coming). Sign in with: claude`
+    : "Talkie needs a model login: sign in to Claude Code on this machine (run: claude), or add one with walkie accounts add claude";
 }
 
-/** Whether a machine's latest WalkieTalkie status is there (not offline): it has a login and wasn't stopped by hand. */
+/** Whether a machine's latest Talkie status is there (not offline): it has a login and wasn't stopped by hand. */
 export function peerLive(core: Core, node: string): boolean {
   const row = core.store.agent(node, ORCHESTRATOR_AGENT);
   if (!row) return false;

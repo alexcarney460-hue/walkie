@@ -102,7 +102,7 @@ export const ProjectOp = z.object({
    */
   steward_node: z.string().regex(/^(?:[0-9a-f]{16})?$/).optional(),
   /**
-   * PROJECT-REPORTS-1: WalkieTalkie writes this project's plain-English status report every hour it changed while
+   * PROJECT-REPORTS-1: Talkie writes this project's plain-English status report every hour it changed while
    * "hourly" (default "off"). Not strict like the fields above: a peer from before it drops the field and applies the
    * op's others.
    */
@@ -304,7 +304,7 @@ export interface ProjectView {
   /** FO-6: the machine whose steward loop keeps this board ("" = none: no loop runs it; people can still run it). */
   steward_node: string;
   /**
-   * PROJECT-REPORTS-1: "hourly" = WalkieTalkie writes a status report here each hour something changed (a project admin's
+   * PROJECT-REPORTS-1: "hourly" = Talkie writes a status report here each hour something changed (a project admin's
    * setting). A view stored before the field existed reads as "off" (status-report.ts reportMode).
    */
   status_report: "hourly" | "off";

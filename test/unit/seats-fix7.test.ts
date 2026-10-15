@@ -264,6 +264,13 @@ describe("links, durability, texts", () => {
     expect(processStart(process.pid)).toBeTruthy();
     const gone = Bun.spawnSync(["/usr/bin/true"]).pid; // exited and reaped
     expect(processStart(gone)).toBeNull();
-    expect(() => processStart(999_999_9)).toThrow(/failed/); // ps can't tell (a pid out of range): never "gone"
+    // Whether a large absent PID is "out of range" depends on the host's ps implementation.
+    const original = Bun.spawnSync;
+    Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+      expect(args[0]).toEqual(["/bin/ps", "-o", "lstart=", "-p", "9999999"]);
+      return { exitCode: 2, stdout: Buffer.alloc(0), stderr: Buffer.from("fixture: ps failed") };
+    }) as typeof Bun.spawnSync;
+    try { expect(() => processStart(999_999_9)).toThrow(/failed/); }
+    finally { Bun.spawnSync = original; }
   });
 });

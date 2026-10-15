@@ -1,4 +1,4 @@
-// Grok hook handler: `walkie hook grok` (the native path) and, when Grok runs Walkie's Claude hook through its
+// Grok hook handler: `walkie hook grok` (the native path) and, when Grok runs Sqwakie's Claude hook through its
 // Claude-compatibility scan, `walkie hook claude` (claude.ts hands the event here). Grok's event names are PascalCase
 // but its payload fields are camelCase. Which path reports which event is grok-events.ts. Report state only; hook
 // output never controls Grok's permission or stop gates.

@@ -1,5 +1,7 @@
 // walkie daemon start|stop|status|run|install|uninstall
+// start and stop take --json: one result object on stdout (src/cli/json-result.ts), prose on stderr.
 import { spawn } from "node:child_process";
+import { noteChildProcess } from "../../daemon/adopted-zombies.ts";
 import { existsSync, openSync, readFileSync } from "node:fs";
 import { WalkieClient } from "../../client/index.ts";
 import { runForeground } from "../../daemon/main.ts";
@@ -8,6 +10,7 @@ import { daemonCommand, installService, uninstallService, type ServicePlan } fro
 import { bool, need, UsageError } from "../args.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { c } from "../format.ts";
+import { runJsonCommand, type JsonOutcome } from "../json-result.ts";
 
 async function up(): Promise<{ ok: boolean; version?: string }> {
   try {
@@ -28,21 +31,23 @@ function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-async function start(ctx: Ctx): Promise<number> {
-  if ((await up()).ok) { ctx.out("daemon already running"); return EXIT.ok; }
+async function start(ctx: Ctx): Promise<JsonOutcome> {
+  if ((await up()).ok) { ctx.out("daemon already running"); return { exit: EXIT.ok, facts: { state: "already_running" } }; }
   const paths = pathsFor(defaultHome());
   ensureHome(paths);
   const out = openSync(paths.out, "a", 0o600);
   const [cmd, ...args] = daemonCommand();
   const child = spawn(cmd as string, args, { detached: true, stdio: ["ignore", out, out], env: process.env });
+  noteChildProcess(child);
   child.unref();
   for (let i = 0; i < 100; i++) {
     await Bun.sleep(100);
-    if ((await up()).ok) { ctx.out(`${c.green("daemon started")} (pid ${child.pid}); logs: ${paths.log}`); return EXIT.ok; }
+    if ((await up()).ok) { ctx.out(`${c.green("daemon started")} (pid ${child.pid}); logs: ${paths.log}`); return { exit: EXIT.ok, facts: { state: "started", pid: child.pid ?? null, log: paths.log } }; }
     if (child.exitCode !== null) break;
   }
-  ctx.err(c.red(`daemon did not come up; see ${paths.out}`));
-  return EXIT.error;
+  const message = `daemon did not come up; see ${paths.out}`;
+  ctx.err(c.red(message));
+  return { exit: EXIT.error, error: { code: "daemon_start_failed", message }, facts: { output: paths.out } };
 }
 
 /**
@@ -97,6 +102,10 @@ async function runningSeats(): Promise<number | null> {
 
 /** SIGTERM once (never again: a second one would cut the daemon's own shutdown short), then wait for the pid to go. */
 export async function stop(ctx: Ctx, deps: StopDeps = {}): Promise<number> {
+  return (await stopRun(ctx, deps)).exit;
+}
+
+async function stopRun(ctx: Ctx, deps: StopDeps): Promise<JsonOutcome> {
   const sys: StopSys = { ...realSys, ...deps.sys };
   const waitMs = deps.waitMs ?? STOP_WAIT_MS;
   const noticeAfterMs = deps.noticeAfterMs ?? STOP_NOTICE_AFTER_MS;
@@ -104,15 +113,16 @@ export async function stop(ctx: Ctx, deps: StopDeps = {}): Promise<number> {
   const paths = pathsFor(defaultHome());
   const pid = readPid(paths.pid);
   if (!pid || !sys.alive(pid)) {
-    ctx.out((await up()).ok ? c.yellow("daemon is running but has no pid file (managed by launchd/systemd?)") : "daemon not running");
-    return EXIT.ok;
+    const running = (await up()).ok;
+    ctx.out(running ? c.yellow("daemon is running but has no pid file (managed by launchd/systemd?)") : "daemon not running");
+    return { exit: EXIT.ok, facts: { state: running ? "running_unmanaged" : "not_running" } };
   }
   sys.terminate(pid);
   const started = sys.now();
   let asked = false;
   for (;;) {
     await sys.sleep(100);
-    if (!sys.alive(pid)) { ctx.out(c.green("daemon stopped")); return EXIT.ok; }
+    if (!sys.alive(pid)) { ctx.out(c.green("daemon stopped")); return { exit: EXIT.ok, facts: { state: "stopped", pid } }; }
     const waited = sys.now() - started;
     if (waited >= waitMs) break;
     if (!asked && waited >= noticeAfterMs) {
@@ -121,8 +131,9 @@ export async function stop(ctx: Ctx, deps: StopDeps = {}): Promise<number> {
       if (seats !== null && seats > 0) ctx.out(`waiting for ${seats} running seat${seats === 1 ? "" : "s"} to finish before the daemon exits (up to ${waitMs / 1000} s)…`);
     }
   }
-  ctx.err(c.red(`daemon (pid ${pid}) did not exit within ${waitMs / 1000}s`));
-  return EXIT.error;
+  const message = `daemon (pid ${pid}) did not exit within ${waitMs / 1000}s`;
+  ctx.err(c.red(message));
+  return { exit: EXIT.error, error: { code: "daemon_stop_timeout", message }, facts: { pid } };
 }
 
 async function status(ctx: Ctx): Promise<number> {
@@ -150,8 +161,10 @@ export async function daemon(ctx: Ctx): Promise<number> {
   const sub = need(ctx.args, 0, "subcommand (start|stop|status|run|install|uninstall)");
   const dry = bool(ctx.args, "dry-run");
   switch (sub) {
-    case "start": return start(ctx);
-    case "stop": return stop(ctx);
+    case "start": return ctx.json ? runJsonCommand(ctx, "daemon start", start) : (await start(ctx)).exit;
+    case "stop": return ctx.json ? runJsonCommand(ctx, "daemon stop", (quiet) => stopRun(quiet, {})) : stop(ctx);
+    // No such verb: with --json the refusal is still the one parseable object (the exit code and prose are the usage error's).
+    case "restart": if (ctx.json) return runJsonCommand(ctx, "daemon restart", async () => { throw new UsageError(`unknown daemon subcommand: ${sub}`); }); throw new UsageError(`unknown daemon subcommand: ${sub}`);
     case "status": return status(ctx);
     case "run": await runForeground(); return EXIT.ok;
     case "install": ctx.out(describe(await installService(defaultHome(), dry), "install", dry)); return EXIT.ok;

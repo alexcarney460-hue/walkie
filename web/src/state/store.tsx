@@ -26,12 +26,21 @@ const ActionsCtx = createContext<Actions | null>(null);
 const NO_TEAM_POLL_MS = 3_000;
 const ROSTER_KINDS = new Set(["team.create", "team.member", "team.node", "channel.upsert", "team.license"]);
 
+/** Member roles and project-channel visibility decide which projects this viewer may list. */
+export function changesProjectAccess(e: Pick<Event, "kind" | "body">): boolean {
+  if (e.kind === "team.create" || e.kind === "team.member") return true;
+  if (e.kind !== "channel.upsert" || typeof e.body.name !== "string") return false;
+  if (e.body.project === true) return true;
+  const { projects, stubs } = projectsStore.get();
+  return projects.some((p) => p.channel === e.body.name) || stubs.some((p) => p.channel === e.body.name);
+}
+
 async function loadSnapshot(me: MeView, dispatch: (a: Action) => void): Promise<void> {
-  void projectsStore.refresh(); // agent cards show their project; an older daemon without /v1/projects just has none
   const [team, agents, peers, events, asks, accounts] = await Promise.all([
     api.team(), api.agents(), api.peers(), api.events({ limit: 500 }), api.asks(),
     // An older daemon has no /v1/accounts: the dashboard works without it.
     api.accounts().catch(() => ({ accounts: [], pool: undefined })),
+    projectsStore.accessChanged(undefined, me.handle), // finish replacing a prior viewer's list before the dashboard renders
   ]);
   const teamId = me.team?.id ?? "none";
   const baselineKey = `walkie.readBaseline.${teamId}`;
@@ -87,6 +96,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // After a reconnect, refetch what the stream doesn't resend. Not the roster or nodes: the new stream's first
     // frames carry them, and a slower GET landing after a newer stream frame would put an older roster back.
     const resync = async () => {
+      projectsStore.resync();
       const newest = stateRef.current.events[0]?.ts ?? 0;
       const [team, events, asks] = await Promise.all([
         api.team(), api.events({ since_ts: Math.max(0, newest - 5_000), limit: 500 }), api.asks(),
@@ -96,7 +106,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "events", events: events.events });
       void api.accounts().then((r) => dispatch({ type: "accounts", accounts: r.accounts, pool: r.pool ?? null })).catch(() => {});
       void resyncOrch();
-      projectsStore.resync();
     };
 
     // This machine's orchestrator conversation (ORCH-FIX-13, Codex r13 MEDIUM 5): what was stored, or changed state,
@@ -120,7 +129,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       checkSession: api.me,
       onSignedOut: (err) => dispatch({ type: "boot/error", error: friendlyError(err), signedOut: true }),
       onEvent: (e) => {
-        if (ROSTER_KINDS.has(e.kind)) void api.team().then((team) => dispatch({ type: "team", team })).catch(() => {});
+        if (changesProjectAccess(e)) void projectsStore.accessChanged(e, stateRef.current.me?.handle);
+        if (ROSTER_KINDS.has(e.kind)) {
+          void api.team().then((team) => dispatch({ type: "team", team })).catch(() => {});
+        }
       },
       onNoTeam: bumpBoot,
       onBoard: (d) => projectsStore.delta(d),
@@ -157,6 +169,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const applyEvents = useCallback((events: Event[]) => dispatch({ type: "events", events }), []);
   const applyOrch = useCallback((messages: OrchMessage[]) => dispatch({ type: "orch/messages", messages }), []);
   const refreshTeam = useCallback(() => {
+    void projectsStore.accessChanged();
     void api.team().then((team) => dispatch({ type: "team", team })).catch(() => {});
   }, []);
   const archiveLoaded = useCallback((agents: AgentView[], append?: boolean) => dispatch({ type: "archive/loaded", agents, ...(append ? { append } : {}) }), []);

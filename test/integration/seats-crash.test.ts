@@ -58,7 +58,7 @@ test("after a kill -9 of the host daemon, its next start kills every survivor of
   await waitFor(() => !alive(grandchild), { what: "the leftover group member killed", timeoutMs: 5_000 });
   const s = await waitFor(async () => (await node.client().seats(info.seat)).seats[0], { what: "the seat's state" });
   expect(s.state).toBe("failed");
-  expect(s.reason).toBe("the host's Walkie daemon restarted while it ran (its processes were stopped)");
+  expect(s.reason).toBe("the host's Sqwakie daemon restarted while it ran (its processes were stopped)");
 }, 120_000);
 
 /** `ps -o stat=`: "T…" while stopped; "" once the process is gone. */
@@ -96,7 +96,7 @@ test("a host daemon killed while a seat is paused (busy): the next start kills t
   await waitFor(() => !alive(leader) && !alive(grandchild), { what: "the stopped group killed", timeoutMs: 5_000 });
   const s = await waitFor(async () => (await node.client().seats(info.seat)).seats[0], { what: "the seat's state" });
   expect(s.state).toBe("failed");
-  expect(s.reason).toBe("the host's Walkie daemon restarted while it ran (its processes were stopped)");
+  expect(s.reason).toBe("the host's Sqwakie daemon restarted while it ran (its processes were stopped)");
   // The person is still at the machine after the restart.
   expect((await node.client("").seats()).local.availability).toMatchObject({ state: "busy", max: 0 });
 }, 120_000);

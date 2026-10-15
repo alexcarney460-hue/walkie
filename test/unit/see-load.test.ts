@@ -58,6 +58,11 @@ describe("cheap agent census", () => {
     const log = { debug: () => {}, info: () => {}, error: () => {}, warn: (message: string, data?: Record<string, unknown>) => { warnings.push({ message, data }); } };
     const d = new AgentDiscovery(w.core, log, { provider: w.fx, uid: ME, now: () => w.clock.t,
       home: w.home, claudeConfigDir: w.cfg, scanBudgetMs: 1, concurrency: 1 });
+    // The listing spends the 1 ms budget (it counts from the scan's start), so every scan leaves sessions unexamined. A warm
+    // process on a fast machine read all 12 inside the millisecond about once in 300 runs, with nothing left to warn about (the
+    // v0.2.0-pre.17 gate on a Spark, 2026-10-09).
+    const list = w.fx.list.bind(w.fx);
+    w.fx.list = async () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3); return list(); };
     await d.scan();
     await d.scan();
     w.clock.t += 10 * 60_000;

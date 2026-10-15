@@ -273,7 +273,7 @@ describe("install directory", () => {
 
 describe("a CPU-only head holds no layers (v1)", () => {
   const node = (id: string, over: Partial<GroupInput>, accel: MachineStats["accel"]): GroupInput => ({
-    node_id: id, hostname: id, handle: id, online: true, self: false, rtt_ms: 10,
+    node_id: id, hostname: id, handle: id, online: true, self: false, rtt_ms: 5,
     stats: { at: 1, temp_c: 40, mem: { total: 32 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, accel } as MachineStats, ...over,
   });
   const SHARE = { share: true, cap: null, runtime: true, busy: false };

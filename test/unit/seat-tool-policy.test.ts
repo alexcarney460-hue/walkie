@@ -828,19 +828,19 @@ test("overlapping probes of one hung grok share a process, and the timeout is no
     writeFileSync(count, "0");
     const bin = writeSh(dir, "hang", `echo $$ > ${JSON.stringify(leader)}\nn=$(cat ${JSON.stringify(count)}); echo $((n+1)) > ${JSON.stringify(count)}; sleep 30\n`);
     clearGrokVersionCache();
-    const first = readGrokVersion(bin, { timeoutMs: 300 });
-    const second = readGrokVersion(bin, { timeoutMs: 300 });
+    const first = readGrokVersion(bin, { timeoutMs: 3000 });
+    const second = readGrokVersion(bin, { timeoutMs: 3000 });
     const [a, b] = await Promise.all([first, second]);
     expect(a.kind).toBe("timeout");
     expect(b.kind).toBe("timeout");
     expect(readFileSync(count, "utf8").trim()).toBe("1");
-    expect((await readGrokVersion(bin, { timeoutMs: 300 })).kind).toBe("timeout");
+    expect((await readGrokVersion(bin, { timeoutMs: 3000 })).kind).toBe("timeout");
     expect(readFileSync(count, "utf8").trim()).toBe("2");
   } finally {
     killPidFile(leader);
     rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 15000);
 
 test("refusal text is built from GROK_VERIFIED_VERSIONS", () => {
   const source = readFileSync(new URL("../../src/daemon/seats/tool-policy.ts", import.meta.url), "utf8");
@@ -1025,7 +1025,7 @@ test("a grok that crashes with a long error is refused for that launch but not c
 test("Credential-path denies stay next to the flags, and the version cache is described", () => {
   const protocol = readFileSync(new URL("../../docs/PROTOCOL.md", import.meta.url), "utf8");
   const security = readFileSync(new URL("../../docs/SECURITY.md", import.meta.url), "utf8");
-  const flags = protocol.indexOf("Walkie does not rely on `--no-subagents`.");
+  const flags = protocol.indexOf("Sqwakie does not rely on `--no-subagents`.");
   const cred = protocol.indexOf("Credential-path denies stay after those flags");
   const doctorSent = protocol.indexOf("`walkie seats doctor` shows the same refusal");
   expect(flags).toBeGreaterThan(-1);

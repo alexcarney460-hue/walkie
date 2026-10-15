@@ -1,11 +1,11 @@
-// Linux and WSL: what systemd says about Walkie's own SSH service, asked as the unprivileged person.
+// Linux and WSL: what systemd says about Sqwakie's own SSH service, asked as the unprivileged person.
 //
-// Walkie's service is the `walkie-sshd` unit the enrollment's root step installs (scripts/enroll-ssh-linux.sh). Whether a server
-// that answers on 127.0.0.1:22 is Walkie's (src/cli/ssh-foreign.ts) is decided from systemd's own answer, never from looking for the
+// Sqwakie's service is the `walkie-sshd` unit the enrollment's root step installs (scripts/enroll-ssh-linux.sh). Whether a server
+// that answers on 127.0.0.1:22 is Sqwakie's (src/cli/ssh-foreign.ts) is decided from systemd's own answer, never from looking for the
 // unit FILE: that file lives under /etc/systemd/system, which a person may be unable to search, and a stat that fails there reads as
-// "no such unit". `systemctl show` answers for any user, over the system bus. The unit counts as Walkie's only when it is LOADED from
-// the one file Walkie's root step writes (a unit of the same name from /usr/lib or /run is someone else's) and, to be running,
-// ACTIVE. Whatever cannot be established (no systemctl, systemd not running, an answer that is not that) reads as not Walkie's.
+// "no such unit". `systemctl show` answers for any user, over the system bus. The unit counts as Sqwakie's only when it is LOADED from
+// the one file Sqwakie's root step writes (a unit of the same name from /usr/lib or /run is someone else's) and, to be running,
+// ACTIVE. Whatever cannot be established (no systemctl, systemd not running, an answer that is not that) reads as not Sqwakie's.
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { WALKIE_SSH_UNIT_PATH } from "../daemon/ssh/enroll-linux.ts";
@@ -15,7 +15,7 @@ import type { SshStepDeps } from "./ssh-enroll.ts";
 export type SystemctlRun = (args: readonly string[]) => string | null;
 
 export interface WalkieSshUnit {
-  /** systemd has Walkie's own unit loaded, from the file Walkie's root step wrote. */
+  /** systemd has Sqwakie's own unit loaded, from the file Sqwakie's root step wrote. */
   installed: boolean;
   /** ...and it is active. */
   running: boolean;
@@ -55,7 +55,7 @@ export function walkieSshUnitFrom(text: string): WalkieSshUnit {
   return { installed, running: installed && found.get("ActiveState") === "active" };
 }
 
-/** Asks systemd about Walkie's unit: installed and running, or neither when systemd cannot say. */
+/** Asks systemd about Sqwakie's unit: installed and running, or neither when systemd cannot say. */
 export function readWalkieSshUnit(run: SystemctlRun = realSystemctl): WalkieSshUnit {
   try {
     const answer = run(SHOW);
@@ -63,7 +63,7 @@ export function readWalkieSshUnit(run: SystemctlRun = realSystemctl): WalkieSshU
   } catch { return NOT_WALKIES; }
 }
 
-/** The two unit hints of a step's deps: Walkie's unit is installed, and it is running. Only Linux (and so WSL) has such a unit. */
+/** The two unit hints of a step's deps: Sqwakie's unit is installed, and it is running. Only Linux (and so WSL) has such a unit. */
 export function walkieUnitHints(platform: NodeJS.Platform, run: SystemctlRun = realSystemctl): Required<Pick<SshStepDeps, "walkieUnit" | "walkieActive">> {
   if (platform !== "linux") return { walkieUnit: () => false, walkieActive: () => false };
   return { walkieUnit: () => readWalkieSshUnit(run).installed, walkieActive: () => readWalkieSshUnit(run).running };

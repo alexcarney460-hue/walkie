@@ -1,5 +1,5 @@
 // walkie talkie start|stop|status|model|access|say|log (PROTOCOL §8; `walkie orchestrator …` is the same command, kept
-// for compatibility: ORCH-2 renamed it WalkieTalkie for people, the API and agent name stay "orchestrator"). The
+// for compatibility: ORCH-2 renamed it Talkie for people, the API and agent name stay "orchestrator"). The
 // conversation is local to this machine (ORCH-FIX-11): these talk to this machine's own host; no other device reaches it.
 import { adminCaller, adminCtx } from "../admin-gate.ts";
 import { resolve } from "node:path";
@@ -159,23 +159,23 @@ async function leadEligible(ctx: Ctx, client: WalkieClient): Promise<number> {
   const value = ctx.args.pos[1];
   if ((value !== "on" && value !== "off") || ctx.args.pos.length !== 2) throw new UsageError("talkie lead-eligible on|off");
   const result = await client.orchestratorLeadEligible(value === "on");
-  ctx.out(ctx.json ? JSON.stringify(result) : `WalkieTalkie VM leadership eligibility ${value}`);
+  ctx.out(ctx.json ? JSON.stringify(result) : `Talkie VM leadership eligibility ${value}`);
   return EXIT.ok;
 }
 
 function refused(ctx: Ctx, sub: string, marker: string | null): number {
-  ctx.err(`${c.red("walkie:")} talkie ${sub} is for people (agents may start, stop, configure and check it): WalkieTalkie takes instructions only from you, `
+  ctx.err(`${c.red("walkie:")} talkie ${sub} is for people (agents may start, stop, configure and check it): Talkie takes instructions only from you, `
     + "typed in this machine's dashboard or your own terminal, never from an agent."
-    + (marker ? ` This terminal looks like an agent's (${marker}); use the dashboard's WalkieTalkie tab or a plain terminal.` : ""));
+    + (marker ? ` This terminal looks like an agent's (${marker}); use the dashboard's Talkie tab or a plain terminal.` : ""));
   return EXIT.error;
 }
 
 function stateLine(v: OrchestratorView): string {
   const l = v.local;
   if (l.state === "cleanup_pending") return `${c.yellow("cleanup pending")} — ${safeTerm(l.last_error ?? "verifying the shell uid is clean")}`;
-  if (l.state === "standby") return `${c.cyan("standby")}${l.lead ? ` (lead: ${safeTerm(l.lead)})` : " (no lead machine yet)"} — the team's WalkieTalkie runs on its lead machine`;
+  if (l.state === "standby") return `${c.cyan("standby")}${l.lead ? ` (lead: ${safeTerm(l.lead)})` : " (no lead machine yet)"} — the team's Talkie runs on its lead machine`;
   if (l.state === "needs_login") return `${c.yellow("needs a model login")} — ${safeTerm(l.needs ?? "sign in to Claude Code on this machine (run: claude)")}`;
-  if (l.state === "failed") return `${c.red("failed")} — ${safeTerm(l.last_error ?? "WalkieTalkie keeps failing")} · restart: walkie talkie start`;
+  if (l.state === "failed") return `${c.red("failed")} — ${safeTerm(l.last_error ?? "Talkie keeps failing")} · restart: walkie talkie start`;
   if (!l.running && l.stopped_by_hand) return `${c.yellow("stopped by you")} — resume it (automatic again): walkie talkie auto`;
   if (!l.running && l.auto) return `${c.dim("starting")} — it starts on its own on this machine`;
   if (!l.running) return `${c.yellow("not running")} — ${START_HINT}`;
@@ -186,7 +186,7 @@ function stateLine(v: OrchestratorView): string {
 
 async function start(ctx: Ctx, client: WalkieClient, agent: boolean): Promise<number> {
   if (agent && (str(ctx.args, "claude") !== undefined || str(ctx.args, "cwd") !== undefined)) {
-    throw new UsageError("only a person can choose WalkieTalkie’s binary or folder");
+    throw new UsageError("only a person can choose Talkie’s binary or folder");
   }
   const mode = str(ctx.args, "permission-mode");
   if (mode !== undefined && !PERMISSION_MODES.includes(mode as PermissionMode)) {
@@ -198,10 +198,10 @@ async function start(ctx: Ctx, client: WalkieClient, agent: boolean): Promise<nu
   if (access !== undefined && !ORCHESTRATOR_ACCESS.includes(access as OrchestratorAccess)) {
     throw new UsageError(`--access must be one of ${ORCHESTRATOR_ACCESS.join(", ")}`);
   }
-  // ORCH-2: another machine leads the team's WalkieTalkie: starting here too means two running, so ask first.
+  // ORCH-2: another machine leads the team's Talkie: starting here too means two running, so ask first.
   const now = await client.orchestrator();
   if (!now.local.running && now.local.lead && !bool(ctx.args, "here")) {
-    const q = `WalkieTalkie is already running on ${safeTerm(now.local.lead)}; start here anyway? [y/N] `;
+    const q = `Talkie is already running on ${safeTerm(now.local.lead)}; start here anyway? [y/N] `;
     const io = ctx.person ?? TERMINAL;
     if (!io.interactive()) { ctx.err(`${c.red("walkie:")} ${q.replace(" [y/N] ", "")} Pass --here to start it here too.`); return EXIT.error; }
     const a = await io.ask(q).catch(() => "");
@@ -218,14 +218,14 @@ async function start(ctx: Ctx, client: WalkieClient, agent: boolean): Promise<nu
   });
   if (ctx.json) { ctx.out(JSON.stringify(view)); return EXIT.ok; }
   const l = view.local;
-  ctx.out(`${c.green("WalkieTalkie started")} on this machine · Claude${l.model ? ` (${l.model})` : ""} · ${accessLabel(l)} · cwd ${l.cwd ?? "~"}`);
-  ctx.out(c.dim(`talk to it: walkie talkie say "…"  or this machine's dashboard (WalkieTalkie tab); the conversation stays on this machine`));
+  ctx.out(`${c.green("Talkie started")} on this machine · Claude${l.model ? ` (${l.model})` : ""} · ${accessLabel(l)} · cwd ${l.cwd ?? "~"}`);
+  ctx.out(c.dim(`talk to it: walkie talkie say "…"  or this machine's dashboard (Talkie tab); the conversation stays on this machine`));
   return EXIT.ok;
 }
 
-/** "platform access (Walkie tools allowed) · default permissions", or "full access". */
+/** "platform access (Sqwakie tools allowed) · default permissions", or "full access". */
 function accessLabel(l: OrchestratorView["local"]): string {
-  return (l.access ?? "platform") === "full" ? "full access" : `platform access (Walkie tools allowed) · ${l.permission_mode ?? "default"} permissions`;
+  return (l.access ?? "platform") === "full" ? "full access" : `platform access (Sqwakie tools allowed) · ${l.permission_mode ?? "default"} permissions`;
 }
 
 const MODEL_USAGE = `the model is default, ${MODEL_ALIASES.join(", ")} or a full model id (letters, digits and . _ : - [ ])`;
@@ -234,7 +234,7 @@ const MODEL_USAGE = `the model is default, ${MODEL_ALIASES.join(", ")} or a full
 async function auto(ctx: Ctx, client: WalkieClient): Promise<number> {
   const v = await client.orchestratorAuto();
   if (ctx.json) { ctx.out(JSON.stringify(v)); return EXIT.ok; }
-  ctx.out(`${c.green("automatic")}: WalkieTalkie runs here when this machine leads the team, else it stands by`);
+  ctx.out(`${c.green("automatic")}: Talkie runs here when this machine leads the team, else it stands by`);
   return EXIT.ok;
 }
 
@@ -267,15 +267,15 @@ async function stop(ctx: Ctx, client: WalkieClient): Promise<number> {
   const res = await client.orchestratorStop();
   if (ctx.json) { ctx.out(JSON.stringify(res)); return EXIT.ok; }
   ctx.out(res.stopped === "local"
-    ? `${c.green("stopped")} WalkieTalkie on this machine (it stays stopped until you start it: walkie talkie start)`
-    : c.dim("WalkieTalkie isn't running here; it stays stopped until you start it: walkie talkie start"));
+    ? `${c.green("stopped")} Talkie on this machine (it stays stopped until you start it: walkie talkie start)`
+    : c.dim("Talkie isn't running here; it stays stopped until you start it: walkie talkie start"));
   return EXIT.ok;
 }
 
 async function status(ctx: Ctx, client: WalkieClient): Promise<number> {
   const v = await client.orchestrator();
   if (ctx.json) { ctx.out(JSON.stringify(v)); return EXIT.ok; }
-  ctx.out(`WalkieTalkie: ${stateLine(v)}`);
+  ctx.out(`Talkie: ${stateLine(v)}`);
   if (v.local.logins) ctx.out(c.dim(`model logins here: ${v.local.logins.length ? v.local.logins.join(", ") : "none"}`));
   const l = v.local;
   if (l.running) ctx.out(c.dim(`session ${l.session ?? "-"} · cwd ${l.cwd ?? "-"} · ${accessLabel(l)} · restarts ${l.restarts}`));
@@ -291,7 +291,7 @@ async function say(ctx: Ctx, client: WalkieClient): Promise<number> {
   const timeout = int(ctx.args, "timeout", 600) as number;
   if (timeout < 1) throw new UsageError("--timeout must be >= 1");
   const v = await client.orchestrator();
-  if (!v.local.running) { ctx.err(`${c.red("walkie:")} WalkieTalkie isn't running on this machine${v.local.state === "standby" && v.local.lead ? ` (it runs on ${safeTerm(v.local.lead)}, the team's lead)` : ""}; ${START_HINT}`); return EXIT.error; }
+  if (!v.local.running) { ctx.err(`${c.red("walkie:")} Talkie isn't running on this machine${v.local.state === "standby" && v.local.lead ? ` (it runs on ${safeTerm(v.local.lead)}, the team's lead)` : ""}; ${START_HINT}`); return EXIT.error; }
   // The conversation `say` continues: the newest one on this machine, unless --new or --thread says otherwise.
   const latest = bool(ctx.args, "new") ? undefined : str(ctx.args, "thread") ?? (await client.orchestratorMessages({ limit: 1 })).messages.at(-1)?.thread;
   const { message } = await client.orchestratorSay(text, latest);
@@ -331,7 +331,7 @@ async function log(ctx: Ctx, client: WalkieClient): Promise<number> {
   let thread: string | null = null;
   for (const m of messages) {
     if (m.thread !== thread) { thread = m.thread; ctx.out(c.dim(`── conversation ${m.thread} ──`)); }
-    const label = m.role === "person" ? c.cyan("you") : c.green("WalkieTalkie");
+    const label = m.role === "person" ? c.cyan("you") : c.green("Talkie");
     const note = m.role === "person" && m.state && m.state !== "sent" ? c.yellow(` (${m.state})`) : "";
     ctx.out(`${c.gray(hhmm(m.ts))} ${label}${note} ›${m.tools?.length ? c.dim(` ⚙ ${safeTerm(m.tools.join(" · "))}`) : ""}`);
     ctx.out(safeTerm(m.text));

@@ -1,5 +1,5 @@
 import { VERSION } from "./version.ts";
-import { SEATS_V2_CAP } from "../protocol/seats.ts";
+import { SEATS_V2_CAP, SEATS_CODEX_OSS_CAP } from "../protocol/seats.ts";
 import { hostFor } from "./orchestrator/host.ts";
 import { ScheduleClaim } from "./orchestrator/leadership.ts";
 import { ScheduleDefaultRequest, ScheduleProgress } from "../protocol/talkie-management.ts";
@@ -7,7 +7,7 @@ import { SignedScheduleManagement, SignedSchedulePeer, verifyScheduleManagement,
 import { z } from "zod";
 // Peer API (PROTOCOL §4). Two ways in, one set of handlers:
 //   tailscale  bound to the Tailscale IP; `tailscale whois` + roster gate on every request.
-//   direct     Walkie Direct (src/daemon/direct/net.ts): the caller's node key is authenticated by QUIC/TLS, and
+//   direct     Sqwakie Direct (src/daemon/direct/net.ts): the caller's node key is authenticated by QUIC/TLS, and
 //              the gate is that key ∈ the roster's admitted, non-revoked nodes of current members. Joining takes
 //              an owner-signed invite instead of a whois login (src/daemon/invite.ts).
 import { mayAdministerHere, servePeerAdmin } from "./admin/remote.ts";
@@ -27,6 +27,8 @@ import type { Core } from "./core.ts";
 import { HttpError, errorResponse, json, normalizeIp, parseWith, readBytes, readJson } from "./http.ts";
 import { shortNodeName, type WhoisResult } from "./identity.ts";
 import { checkInvite, decodeInvite, directLogin } from "./invite.ts";
+import { checkFleetLink } from "./fleet-link.ts";
+import { LINK_ATTEMPTS, LinksPeerReq, linkJoinStatus, redeemLink, servePeerLinks } from "./fleet-link-service.ts";
 import { isValidPubkey } from "./keys.ts";
 import { RateLimiter, type BucketSpec } from "./ratelimit.ts";
 import { applyRequest } from "./requests.ts";
@@ -36,7 +38,7 @@ import {
   DEFAULT_PEER_PORT, canSeeChannel, directMemberByKey, endpointHex, isRestricted, memberByHandle, nodeMember, pickTransport, servesDirect, transportFields,
   transportsOf, withTransport, type MemberRec,
 } from "./roster.ts";
-import { JoinLimitError, type EventRow } from "./store.ts";
+import { JoinLimitError, JoinRequestConflictError, type EventRow } from "./store.ts";
 import type { TunnelDecision } from "./direct/net.ts";
 import type { TunnelGrant } from "../pool/run/stage.ts";
 import { WsEnd } from "../pool/run/tunnel.ts";
@@ -73,7 +75,7 @@ function unadmittedDirectLimiter(core: Core): RateLimiter {
 
 interface Caller { ip: string; who: WhoisResult; member: MemberRec }
 
-/** Who is calling: a tailnet source IP (to `whois`), or a QUIC-authenticated node key (Walkie Direct). */
+/** Who is calling: a tailnet source IP (to `whois`), or a QUIC-authenticated node key (Sqwakie Direct). */
 export type PeerOrigin = { readonly kind: "tailscale"; readonly ip: string } | { readonly kind: "direct"; readonly pubkey: string };
 
 
@@ -85,6 +87,8 @@ export function authorityAddr(core: Core): PeerOwnerAddr | null {
 }
 
 export class PeerApi {
+  /** Per joining key, capped separately so unadmitted keys cannot evict admitted peers' buckets. */
+  private readonly linkAttempts = new RateLimiter();
   private readonly peerNonces = new PeerNonceBook(Date.now());
   private readonly unsignedWarned = new Map<string, number>();
   constructor(private readonly core: Core, private readonly sshOptions: { port?: number; keyHome?: string } = {}) {}
@@ -171,7 +175,7 @@ export class PeerApi {
   }
 
   /**
-   * WALKIE-POOL-2: a split-run tunnel over Walkie Direct (a CONNECT stream). The same gate as every Direct request
+   * WALKIE-POOL-2: a split-run tunnel over Sqwakie Direct (a CONNECT stream). The same gate as every Direct request
    * (the QUIC-authenticated key is an admitted node of a current member, rate limits, team header), then the stage
    * decides (only the run's head, only while it runs, within its tunnel caps).
    */
@@ -236,7 +240,7 @@ export class PeerApi {
 
     const who = await core.identity.whois(ip, req.headers);
     if (!who) throw new HttpError(403, "forbidden", "caller is not a known tailnet identity");
-    // Walkie Direct members have `direct:<handle>` logins and no tailnet identity: a whois answer can never be one.
+    // Sqwakie Direct members have `direct:<handle>` logins and no tailnet identity: a whois answer can never be one.
     if (who.login.startsWith("direct:")) {
       core.log.warn("peer_denied", { ip, path: url.pathname, reason: "direct_login_over_tailscale" });
       throw new HttpError(403, "not_member", "caller is not a member of this team");
@@ -294,7 +298,7 @@ export class PeerApi {
   }
 
   /**
-   * Walkie Direct gate: the QUIC-authenticated key names the node. Admitted nodes are limited per endpoint on the
+   * Sqwakie Direct gate: the QUIC-authenticated key names the node. Admitted nodes are limited per endpoint on the
    * main limiter. Every key that isn't an admitted node shares one pre-auth limiter (keys are free to mint) and
    * does not take a slot on the main one. A revoked node, a removed member's node and an outsider all get
    * `403 not_member`; only `/join` with a valid invite admits a new key.
@@ -356,9 +360,10 @@ export class PeerApi {
     core.onPeerContact?.(nodeId); // the gate has passed: this machine is up (presence rule, sync.ts)
     if (req.method === "GET" && path === "/peer/v1/vv") {
       const online = core.reachedPeers?.() ?? [];
+      const vv = core.store.vv();
       const body = {
-        node: core.nodeId, vv: core.store.vv(), ts: Date.now(),
-        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, PEER_SIG_CAP, SSH_REVOCATION_CAP, LEASE_LAUNCHER_CAP] },
+        node: core.nodeId, vv, ts: Date.now(),
+        capabilities: { version: VERSION, caps: [SEATS_V2_CAP, SEATS_CODEX_OSS_CAP, PEER_SIG_CAP, SSH_REVOCATION_CAP, LEASE_LAUNCHER_CAP] },
         ...(online.length ? { online } : {}),
         ...(core.publishedStats() ? { stats: core.publishedStats() } : {}),
         ...(core.accounts ? { accounts: core.accounts } : {}), // ACCOUNTS-1: this machine's accounts + usage (PROTOCOL §3)
@@ -455,6 +460,8 @@ export class PeerApi {
     if (req.method === "POST" && path === "/peer/v1/ssh/revocation") {
       return json({ event_id: retainSshRevocation(core, nodeId, await readJson(req, 1024)) });
     }
+    // FLEET-LINK-1: an owner's machine registers, revokes or lists fleet links on the roster authority.
+    if (req.method === "POST" && path === "/peer/v1/links") return json(await servePeerLinks(core, nodeId, parseWith(LinksPeerReq, await readJson(req, 64 * 1024))));
     if (req.method === "POST" && path === "/peer/v1/pool/stage") return json(await this.poolStage(req, nodeId, member));
     if (req.method === "POST" && path === "/peer/v1/pool/serve") return json(await this.poolServe(req, nodeId, member));
     // AGENT-ADMIN-1: an allow-listed walkie command, for an owner or this machine's own person (admin/remote.ts).
@@ -476,7 +483,7 @@ export class PeerApi {
   }
 
   /**
-   * `/join` over Walkie Direct. An admitted key is answered at once (idempotent, any node). Otherwise the caller
+   * `/join` over Sqwakie Direct. An admitted key is answered at once (idempotent, any node). Otherwise the caller
    * must present an invite, which only the roster authority redeems: signature by a current owner node, this
    * team, not expired, never used (the chain records its id on the `team.node`, so no replica or later authority
    * accepts it again). The invite's handle names the member: a new one gets `team.member` (the invite's role),
@@ -496,7 +503,12 @@ export class PeerApi {
       if (servesDirect(known)) return { admitted: true, team, node_id: nodeId };
       return this.addDirect(known.node_id, pubkey);
     }
-    if (!body.invite) throw new HttpError(403, "not_member", "joining over Walkie Direct needs an invite code (an owner runs: walkie invite --handle <name>)");
+    if (body.link !== undefined) return this.joinWithLink(body.link, body.hostname, pubkey, nodeId);
+    if (!body.invite) {
+      const status = linkJoinStatus(core, nodeId);
+      if (status) return status;
+    }
+    if (!body.invite) throw new HttpError(403, "not_member", "joining over Sqwakie Direct needs an invite code (an owner runs: walkie invite --handle <name>)");
     // Every node checks the code against its roster before saying anything about the team: a non-authority names
     // the authority (hostname, key) only to a caller holding a code this team's owner really signed.
     const check = checkInvite(body.invite, r, team, core.clock());
@@ -527,7 +539,27 @@ export class PeerApi {
   }
 
   /**
-   * Mixed teams (PROTOCOL §4): an admitted Tailscale machine that turned Walkie Direct on (`walkie direct enable`)
+   * `/join` over Sqwakie Direct with a fleet link (FLEET-LINK-1, PROTOCOL §4 "Fleet links"). Rate-limited per joining key
+   * before anything is looked at; every node checks the token's shape, team and owner signature before naming the
+   * authority; only the authority redeems it against its record (fleet-link-service.ts). The token is never logged.
+   */
+  private joinWithLink(token: string, hostname: string, pubkey: string, nodeId: string): PeerJoinRes {
+    const core = this.core;
+    if (!this.linkAttempts.take(nodeId, LINK_ATTEMPTS)) throw new HttpError(429, "rate_limited", "too many attempts with a fleet link from this machine; wait a minute");
+    const check = checkFleetLink(token, core.roster, core.teamId as string);
+    if (!check.ok) {
+      core.log.warn("fleet_link_refused", { node: nodeId, reason: check.reason });
+      throw new HttpError(403, check.reason, `fleet link refused: ${check.reason.replace(/^link_/, "").replace(/_/g, " ")}`);
+    }
+    if (!core.isAuthority()) {
+      const authority = authorityAddr(core);
+      return { admitted: false, reason: "not_authority", ...(authority ? { authority } : {}) };
+    }
+    return redeemLink(core, check.link, { nodeId, pubkey, hostname });
+  }
+
+  /**
+   * Mixed teams (PROTOCOL §4): an admitted Tailscale machine that turned Sqwakie Direct on (`walkie direct enable`)
    * dials the authority over Direct with its own node key, which QUIC has just authenticated: that proves it holds
    * the key a Tailscale join only named. The authority re-pins the record with "direct" added (same login, address
    * and key; an append, never a rewrite). Other nodes send it to the authority. No invite: the machine is already in.
@@ -566,15 +598,15 @@ export class PeerApi {
       await this.checkSignature(copy, new URL(req.url), nodeId, body.pubkey);
       rememberValidPeerSignature(core.store, nodeId);
     } else if (peerSigStrict(core.roster, core.store)) {
-      throw new HttpError(403, "update_required", "this team requires Walkie 0.2.0-pre.10 or newer: update, then join again");
+      throw new HttpError(403, "update_required", "this team requires Sqwakie 0.2.0-pre.10 or newer: update, then join again");
     }
     // Explicitly revoked: an owner must re-admit it. Revoked only by the member's removal: after a
     // re-invite the machine joins again like a new one (Fable F6), subject to auto_admit/approval.
     if (known?.revoked && !known.revoked_by_removal) throw new HttpError(403, "forbidden", "this node was revoked; an owner must re-admit it");
     if (known && known.login !== c.who.login) throw new HttpError(403, "forbidden", "node belongs to another member");
-    // A machine admitted over Walkie Direct can't be re-pinned to a tailnet address by a Tailscale join: nothing
+    // A machine admitted over Sqwakie Direct can't be re-pinned to a tailnet address by a Tailscale join: nothing
     // here proves the caller holds its key (PROTOCOL §4 "Mixed teams").
-    if (known && !transportsOf(known).includes("tailscale")) throw new HttpError(403, "forbidden", "this machine joined over Walkie Direct");
+    if (known && !transportsOf(known).includes("tailscale")) throw new HttpError(403, "forbidden", "this machine joined over Sqwakie Direct");
     const existing = known && !known.revoked ? known : undefined;
     const port = body.port ?? existing?.port ?? DEFAULT_PEER_PORT;
     if (existing && port !== existing.port && !hasPeerSig(req.headers)) {
@@ -585,6 +617,9 @@ export class PeerApi {
     if (!core.isAuthority()) {
       const authority = authorityAddr(core);
       return { admitted: false, reason: "not_authority", ...(authority ? { authority } : {}) };
+    }
+    if (core.store.joinRequest(nodeId, core.clock())?.link) {
+      throw new HttpError(409, "link_pending_elsewhere", "this machine already awaits approval through a fleet link; ask an owner to decide it first");
     }
     if (existing && moved) {
       // Same machine re-joining from a new address (Tailscale IP or port changed): re-pin it.
@@ -615,6 +650,7 @@ export class PeerApi {
         core.store.addJoinRequest({ node_id: nodeId, login: c.who.login, pubkey: body.pubkey, hostname, ip: c.ip, port, requested_at: core.clock() });
       } catch (err) {
         if (err instanceof JoinLimitError) throw new HttpError(429, "join_limit", `${err.message}; an owner must approve or wait for them to expire (24 h)`);
+        if (err instanceof JoinRequestConflictError) throw new HttpError(409, "link_pending_elsewhere", err.message);
         throw err;
       }
       core.hub.nodesChanged();

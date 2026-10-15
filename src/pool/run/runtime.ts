@@ -1,6 +1,6 @@
 // The llama.cpp runtime for split runs (WALKIE-POOL-2). Every machine in a run must run the SAME llama.cpp build: the
 // RPC wire protocol between llama-server and rpc-server is versioned. Homebrew's llama.cpp is built on a ggml without
-// GGML_RPC, so it has no RPC server; Walkie pins a GitHub release build and installs it with `walkie pool install`
+// GGML_RPC, so it has no RPC server; Sqwakie pins a GitHub release build and installs it with `walkie pool install`
 // into <walkie home>/pool/llama/, checking the tarball's sha256 (GitHub's asset digest, recorded here).
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -96,7 +96,7 @@ async function download(url: string, dest: string, sha256: string, maxBytes: num
 
 /** Downloads the pinned build for `t`, checks every tarball's sha256, extracts into `dir` (replacing it). */
 export async function installRuntime(t: RuntimeTarget, dir: string, onProgress?: (file: string, done: number, total: number) => void): Promise<Runtime> {
-  // The directory is replaced: only an empty one, or one Walkie installed before (its WALKIE_BUILD marker).
+  // The directory is replaced: only an empty one, or one Sqwakie installed before (its WALKIE_BUILD marker).
   if (existsSync(dir) && readdirSync(dir).length > 0 && !existsSync(join(dir, "WALKIE_BUILD"))) {
     throw new Error(`${dir} is not empty and wasn't installed by walkie pool install; choose an empty directory`);
   }
@@ -128,7 +128,7 @@ export async function installRuntime(t: RuntimeTarget, dir: string, onProgress?:
   }
 }
 
-/** The pinned build this directory holds, if Walkie installed it ("b11205 darwin-arm64"). */
+/** The pinned build this directory holds, if Sqwakie installed it ("b11205 darwin-arm64"). */
 export function installedBuild(dir: string): string | null {
   const p = join(dir, "WALKIE_BUILD");
   return existsSync(p) ? readFileSync(p, "utf8").trim() : null;
@@ -178,7 +178,7 @@ export function verifyPinnedRpc(rt: Runtime): string | null {
   try {
     const server = sha256File(rt.rpc);
     const hit = Object.entries(PINNED_RPC).find(([, p]) => p.server === server);
-    if (!hit) return `the rpc-server at ${rt.rpc} is not llama.cpp ${LLAMA_BUILD} as Walkie pins it (sha256 ${server.slice(0, 12)}…); run: ${INSTALL_HINT}`;
+    if (!hit) return `the rpc-server at ${rt.rpc} is not llama.cpp ${LLAMA_BUILD} as Sqwakie pins it (sha256 ${server.slice(0, 12)}…); run: ${INSTALL_HINT}`;
     const lib = rpcLib(dirname(realpathSync(rt.rpc))) ?? rpcLib(rt.dir);
     if (!lib || hit[1].lib !== sha256File(lib)) return `the RPC library next to ${rt.rpc} is missing or not the pinned ${LLAMA_BUILD} one; run: ${INSTALL_HINT}`;
     return null;

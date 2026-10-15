@@ -142,17 +142,17 @@ describe("the dashboard's Start / Stop (PRE5-INT c)", () => {
 
   test("an agent cannot grant shell or elevated permissions, but can lower access", async () => {
     const agent = alex.client("cc-agent1");
-    await expect(agent.orchestratorStart({ access: "full" })).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
-    await expect(agent.orchestratorStart({ permission_mode: "acceptEdits" })).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    await expect(agent.orchestratorStart({ access: "full" })).rejects.toThrow(/only a person can give Talkie shell access/);
+    await expect(agent.orchestratorStart({ permission_mode: "acceptEdits" })).rejects.toThrow(/only a person can give Talkie shell access/);
     for (const option of [{ claude: "/bin/sh" }, { path: "/tmp" }, { cwd: "/tmp" }]) {
       await expect(agent.orchestratorStart(option)).rejects.toMatchObject({ status: 403, code: "person_only" });
     }
-    await expect(agent.orchestratorAccess("full")).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    await expect(agent.orchestratorAccess("full")).rejects.toThrow(/only a person can give Talkie shell access/);
     await expect(agent.orchestratorLeadEligible(true)).rejects.toMatchObject({ status: 403 });
     const h = await session(alex);
     const res = await fetch(url(alex, "/v1/orchestrator/start"), { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ access: "full" }) });
     expect(res.status).toBe(200);
-    await expect(agent.orchestratorAuto()).rejects.toThrow(/only a person can give WalkieTalkie shell access/);
+    await expect(agent.orchestratorAuto()).rejects.toThrow(/only a person can give Talkie shell access/);
     expect((await agent.orchestratorAccess("platform")).local.access).toBe("platform");
     await alex.client("").orchestratorStop();
   }, 30_000);
@@ -168,7 +168,7 @@ describe("the dashboard's Start / Stop (PRE5-INT c)", () => {
   test("the dashboard's text: daemon refusals verbatim (capitalised), session/network ones friendly", () => {
     expect(lifecycleError(new ApiError("claude_not_found", "the claude CLI was not found (install Claude Code and sign in, or pass --claude <path>)", 409)))
       .toBe("The claude CLI was not found (install Claude Code and sign in, or pass --claude <path>)");
-    expect(lifecycleError(new ApiError("network", "daemon unreachable", 0))).toBe("Can't reach the Walkie daemon on this machine.");
+    expect(lifecycleError(new ApiError("network", "daemon unreachable", 0))).toBe("Can't reach the Sqwakie daemon on this machine.");
     expect(lifecycleError(new ApiError("unauthorized", "no session", 401))).toContain("Run `walkie dashboard`");
     expect(lifecycleError(new Error("boom"))).toBe("Something went wrong. Try again.");
   });

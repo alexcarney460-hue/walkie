@@ -8,8 +8,10 @@ import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
 import { signInCodex } from "../helpers/fake-seat-users.ts";
 import { noKeychainSeats } from "../helpers/no-keychain.ts";
+import { noSeatUsers } from "../helpers/no-seat-users.ts";
 
 const CLI = join(import.meta.dir, "../../src/cli/main.ts");
+const REGISTRATION_PRELOAD = join(import.meta.dir, "../helpers/absent-seat-registration.ts");
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 let c: Cluster;
 let alex: TestNode;
@@ -20,10 +22,10 @@ beforeAll(async () => {
   const home = join(c.root, "arvid-home");
   mkdirSync(home, { recursive: true });
   signInCodex(home);
-  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
+  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", seats: { ...noSeatUsers } });
   arvid = await c.add({
     name: "arvid", login: "arvid@example.com", hostname: "arvid-mac",
-    seats: { flushMs: 100, env: { PATH: `${join(FIXTURES, "fake-claude")}:${join(FIXTURES, "fake-codex")}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, FAKE_CLAUDE_STATE: join(c.root, "fake-state") } },
+    seats: { ...noSeatUsers, flushMs: 100, env: { PATH: `${join(FIXTURES, "fake-claude")}:${join(FIXTURES, "fake-codex")}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, FAKE_CLAUDE_STATE: join(c.root, "fake-state") } },
   });
   await alex.client().init("aka", "alex");
   await alex.client().invite("arvid@example.com", "arvid", "member");
@@ -34,7 +36,7 @@ afterAll(async () => { await c.close(); });
 async function walkie(node: TestNode, args: string[], env: Record<string, string> = {}) {
   // As a person would (test/helpers/person-cli.ts): detached from this test's own process ancestry, which may include
   // an agent runtime that agent-detect.ts would rightly count.
-  return runAsPerson([process.execPath, CLI, ...args], { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: node.home, WALKIE_SOCKET: node.socket, ...env });
+  return runAsPerson([process.execPath, "--preload", REGISTRATION_PRELOAD, CLI, ...args], { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: node.home, WALKIE_SOCKET: node.socket, ...env });
 }
 
 describe("walkie seats CLI", () => {
@@ -49,7 +51,7 @@ describe("walkie seats CLI", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("joined aka as @arvid");
     expect(r.out).toContain("seats allowed");
-    expect(r.out).toContain("Seats run as YOUR OS user: a seat can reach your Walkie");
+    expect(r.out).toContain("Seats run as YOUR OS user: a seat can reach your Sqwakie");
     expect(r.out).toContain("Private worker directories organize each run");
     const cfg = JSON.parse(readFileSync(join(arvid.home, "config.json"), "utf8")) as { seats?: { allow?: boolean; mode?: string } };
     expect(cfg.seats).toMatchObject({ allow: true, mode: "same_user" });
@@ -57,7 +59,7 @@ describe("walkie seats CLI", () => {
   }, 60_000);
 
   test("join --allow-seats under an agent with agent admin on joins and turns seats on, audited as the agent", async () => {
-    const kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kira-mac", seats: noKeychainSeats(join(c.root, "kira-home")) });
+    const kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kira-mac", seats: noKeychainSeats(join(c.root, "kira-home"), { ...noSeatUsers }) });
     await alex.client().invite("kira@example.com", "kira", "member");
     const r = await walkie(kira, ["join", alex.peerAddr, "--allow-seats"], { CLAUDECODE: "1" });
     expect(r.code).toBe(0);

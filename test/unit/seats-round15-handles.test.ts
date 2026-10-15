@@ -6,6 +6,9 @@ import { hasExtendedAcl } from "../../src/daemon/seats/admin-acl.ts";
 import type { HomeRetirement, HomeRetirementStore } from "../../src/daemon/seats/admin-ledger.ts";
 import { createHash } from "node:crypto";
 
+// The production retirement operation uses native macOS handle ACLs. Early Linux refusals
+// are not evidence that its tombstone and provenance checks ran.
+const nativeTest = test.skipIf(process.platform !== "darwin");
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function fixture() {
@@ -23,7 +26,7 @@ function proofStore(): HomeRetirementStore {
     prepare: (next) => { if (record && JSON.stringify(record) !== JSON.stringify(next)) throw new Error("provenance changed"); record = next; } };
 }
 
-test("a symlink or open retirement directory keeps the home in place", () => {
+nativeTest("a symlink or open retirement directory keeps the home in place", () => {
   for (const kind of ["symlink", "open"] as const) {
     const f = fixture();
     if (kind === "symlink") symlinkSync(f.root, f.retired);
@@ -33,21 +36,21 @@ test("a symlink or open retirement directory keeps the home in place", () => {
   }
 });
 
-test("a writable Users directory keeps the home in place", () => {
+nativeTest("a writable Users directory keeps the home in place", () => {
   const f = fixture();
   chmodSync(f.users, 0o777);
   expect(() => retireSeatHomeIn(f.users, f.owner, f.group, f.owner, "walkie-s1")).toThrow();
   expect(lstatSync(f.home).isDirectory()).toBe(true);
 });
 
-test("a retired parent with the wrong owner keeps the home in place", () => {
+nativeTest("a retired parent with the wrong owner keeps the home in place", () => {
   const f = fixture();
   mkdirSync(f.retired, { mode: 0o700 });
   expect(() => retireSeatHomeIn(f.users, f.owner + 1, f.group, f.owner, "walkie-s1")).toThrow();
   expect(lstatSync(f.home).isDirectory()).toBe(true);
 });
 
-test("a planted tombstone with the expected name is never accepted as a prior retirement", () => {
+nativeTest("a planted tombstone with the expected name is never accepted as a prior retirement", () => {
   const f = fixture();
   rmSync(f.home, { recursive: true });
   mkdirSync(f.retired, { mode: 0o700 });
@@ -55,7 +58,7 @@ test("a planted tombstone with the expected name is never accepted as a prior re
   expect(() => retireSeatHomeIn(f.users, f.owner, f.group, f.owner, "walkie-s1")).toThrow("provenance");
 });
 
-test("an exclusive rename refuses a planted operation-specific tombstone", () => {
+nativeTest("an exclusive rename refuses a planted operation-specific tombstone", () => {
   const f = fixture();
   const store = proofStore();
   const suffix = createHash("sha256").update(`${f.owner}\0${store.op.pid}\0${store.op.start}`).digest("hex").slice(0, 32);
@@ -66,7 +69,7 @@ test("an exclusive rename refuses a planted operation-specific tombstone", () =>
   expect(lstatSync(f.home).isDirectory()).toBe(true);
 });
 
-test("a same-name tombstone with another inode fails a recorded retry", () => {
+nativeTest("a same-name tombstone with another inode fails a recorded retry", () => {
   const f = fixture();
   const store = proofStore();
   const name = `walkie-s1-${f.owner}-${"a".repeat(32)}`;
@@ -77,7 +80,7 @@ test("a same-name tombstone with another inode fails a recorded retry", () => {
   expect(() => retireSeatHomeIn(f.users, f.owner, f.group, f.owner, "walkie-s1", store)).toThrow("provenance");
 });
 
-test.skipIf(process.platform !== "darwin")("retirement strips a home ACL and rejects an ACL on Users or retired parent", () => {
+nativeTest("retirement strips a home ACL and rejects an ACL on Users or retired parent", () => {
   const f = fixture();
   const acl = "everyone allow read,write,execute";
   const add = (path: string) => {
@@ -104,4 +107,12 @@ test.skipIf(process.platform !== "darwin")("retirement strips a home ACL and rej
   const ls = Bun.spawnSync(["ls", "-lde", moved!.path], { stdout: "pipe", stderr: "pipe" });
   expect(ls.stdout.toString()).not.toContain("everyone allow");
   expect(retireSeatHomeIn(f.users, f.owner, f.group, f.owner, "walkie-s1", store)?.path).toBe(moved?.path);
+});
+
+
+test.skipIf(process.platform === "darwin")("native macOS retirement refuses where handle ACL inspection is unavailable", () => {
+  const f = fixture();
+  expect(() => retireSeatHomeIn(f.users, f.owner, f.group, f.owner, "walkie-s1", proofStore()))
+    .toThrow("macOS ACL inspection is unavailable");
+  expect(lstatSync(f.home).isDirectory()).toBe(true);
 });

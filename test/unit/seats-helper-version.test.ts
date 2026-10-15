@@ -35,11 +35,11 @@ describe("helper version", () => {
 
     const old = helperVersion([RUNNER, ADMIN], "0.2.0-pre.5", { pathProblem: ok, run: at({ [RUNNER]: "0.2.0-pre.5", [ADMIN]: "0.2.0-pre.4" }) });
     expect(old.state).toBe("stale");
-    expect(helperVersionProblem(old)).toBe("the seat helper is from an older Walkie (walkie-seat-runner 0.2.0-pre.5, walkie-seat-admin 0.2.0-pre.4; this walkie is 0.2.0-pre.5)");
+    expect(helperVersionProblem(old)).toBe("the seat helper is from an older Sqwakie (walkie-seat-runner 0.2.0-pre.5, walkie-seat-admin 0.2.0-pre.4; this walkie is 0.2.0-pre.5)");
 
     const newer = helperVersion([RUNNER, ADMIN], "0.2.0-pre.4", { pathProblem: ok, run: at({ [RUNNER]: "0.2.0-pre.5", [ADMIN]: "0.2.0-pre.5" }) });
     expect(newer.state).toBe("stale");
-    expect(helperVersionProblem(newer)).toContain("from a newer Walkie");
+    expect(helperVersionProblem(newer)).toContain("from a newer Sqwakie");
 
     // A copy whose output isn't a version, or one that can't be trusted to run, is unknown: never current.
     const silent = helperVersion([RUNNER, ADMIN], "0.2.0-pre.5", { pathProblem: ok, run: at({ [RUNNER]: "0.2.0-pre.5", [ADMIN]: null }) });
@@ -163,17 +163,17 @@ describe("walkie seats doctor", () => {
 
   test("a stale helper is a failed check naming the fix; the machine isn't ready", () => {
     const checks = doctorChecks(local, { ...facts, helperVersion: hv("0.2.0-pre.4") });
-    const bad = checks.find((k) => k.what.startsWith("the seat helper is from an older Walkie"));
+    const bad = checks.find((k) => k.what.startsWith("the seat helper is from an older Sqwakie"));
     expect(bad).toEqual({ ok: false, what: expect.stringContaining("walkie-seat-admin 0.2.0-pre.4; this walkie is 0.2.0-pre.5"), fix: "walkie seats setup-user --apply" });
     const text = plain(doctorLines(checks));
-    expect(text).toContain("✗ the seat helper is from an older Walkie");
+    expect(text).toContain("✗ the seat helper is from an older Sqwakie");
     expect(text).toContain("→ walkie seats setup-user --apply");
     expect(text).toContain("Not ready: fix the item marked ✗.");
   });
 
   test("current: a passing check; unknown: a warning, never ok", () => {
     const cur = doctorChecks(local, { ...facts, helperVersion: hv("0.2.0-pre.5") });
-    expect(cur.find((k) => k.what === "the runner and user helper are this Walkie's (0.2.0-pre.5)")?.ok).toBe(true);
+    expect(cur.find((k) => k.what === "the runner and user helper are this Sqwakie's (0.2.0-pre.5)")?.ok).toBe(true);
     expect(plain(doctorLines(cur))).toContain("Ready: the team can start Claude and Codex seats on this machine.");
     const unknown = helperVersion([RUNNER, ADMIN], "0.2.0-pre.5", { pathProblem: ok, run: () => null });
     const checks = doctorChecks(local, { ...facts, helperVersion: unknown });
@@ -184,7 +184,7 @@ describe("walkie seats doctor", () => {
 
   test("not checked: a source build, seats as the person, or a runner path already failing", () => {
     const stale = hv("0.2.0-pre.4");
-    const has = (c: ReturnType<typeof doctorChecks>) => c.some((k) => /seat helper|this Walkie's/.test(k.what));
+    const has = (c: ReturnType<typeof doctorChecks>) => c.some((k) => /seat helper|this Sqwakie's/.test(k.what));
     expect(has(doctorChecks(local, { ...facts, release: false, helperVersion: stale }))).toBe(false);
     expect(has(doctorChecks({ ...local, ephemeral: false, same_user: true }, { ...facts, helperVersion: stale }))).toBe(false);
     expect(has(doctorChecks(local, { ...facts, runnerProblem: "/usr/local/libexec/walkie doesn't exist", helperVersion: stale }))).toBe(false);

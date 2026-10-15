@@ -13,10 +13,12 @@ import { askPolicy, detectRuntime, detectTask, otherRuntimeName, repoContext, re
 import { readSharePolicy } from "../agent/share-policy.ts";
 import { loadState, shareableTask, shareableTitle, stateProvenance } from "../hooks/state.ts";
 import { TOOLS, callTool } from "./tools.ts";
+import { callBrowserTool, isBrowserTool, mayListBrowser } from "./browser.ts";
+import { callSkillTool, isSkillTool, mayListSkills } from "./skills.ts";
 
 const VERSION = "0.1.0";
 
-const INSTRUCTIONS = `You are connected to Walkie, your team's private agent network.
+const INSTRUCTIONS = `You are connected to Sqwakie, your team's private agent network.
 Teammates (people and their agents on other machines) can post to channels, ask you questions and share files.
 - walkie_who shows every agent and what it's working on. walkie_post / walkie_read / walkie_reply use channels.
 - walkie_ask sends a direct question to @person, @person/machine or @person/machine/agent and waits for the answer.
@@ -30,9 +32,10 @@ Teammates (people and their agents on other machines) can post to channels, ask 
  * One tool call as the model sees it. Errors never pass through raw: secret-shaped tokens are redacted
  * and the text is defanged (tools that return external content wrap it themselves, see tools.ts).
  */
-export async function handleToolCall(client: WalkieClient, name: string, args: Record<string, unknown>): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
+export async function handleToolCall(client: WalkieClient, name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text: string; data?: string; mimeType?: string }>; isError?: boolean }> {
   try {
-    return await callTool(client, name, args);
+    return isBrowserTool(name) ? await callBrowserTool(client, name, args)
+      : isSkillTool(name) ? await callSkillTool(client, name, args, TOOLS) : await callTool(client, name, args);
   } catch (err) {
     const msg = err instanceof WalkieError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
     return { content: [{ type: "text", text: `walkie error — ${defang(redactSecrets(msg).text, 2000)}` }], isError: true };
@@ -149,7 +152,8 @@ export async function runMcpServer(): Promise<void> {
     { capabilities: { tools: {}, experimental: { "claude/channel": {} } }, instructions: INSTRUCTIONS },
   );
 
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS.filter((tool) =>
+    (mayListBrowser(agent) || !isBrowserTool(tool.name)) && (mayListSkills(agent) || !isSkillTool(tool.name))) }));
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => handleToolCall(client, req.params.name, (req.params.arguments ?? {}) as Record<string, unknown>));
 
   await mcp.connect(new StdioServerTransport());

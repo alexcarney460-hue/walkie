@@ -33,11 +33,11 @@ describe("the handoff's optional owner SSH packet", () => {
   test("the bootstrap drops a damaged one before the consent, says so plainly, and a carried one is described in the same consent", () => {
     const consent = at("Read-Host 'Type ALLOW to consent'");
     expect(at("This link can't turn on owner SSH: its SSH authorization is damaged. Ask the owner for a new link. Enrollment continues without SSH.")).toBeLessThan(consent);
-    const described = at("may also sign in to this Ubuntu over SSH as your user $user, through Walkie");
+    const described = at("may also sign in to this Ubuntu over SSH as your user $user, through Sqwakie");
     expect(described).toBeLessThan(consent);
     expect(bootstrap.slice(described, consent)).toContain("Revoke with walkie ssh revoke, walkie admin remote off, or by leaving the team.");
     // Item 8: the same words the other platforms' consent uses for the service, and no stale "loopback-only ... in Ubuntu" wording.
-    expect(bootstrap.slice(described, consent)).toContain("a Walkie SSH service that listens only on this machine and accepts only key logins");
+    expect(bootstrap.slice(described, consent)).toContain("a Sqwakie SSH service that listens only on this machine and accepts only key logins");
     expect(bootstrap.slice(described, consent)).not.toContain("loopback-only SSH service in Ubuntu");
     expect(bootstrap.slice(described - 200, described)).toContain("if ($ownerSsh) {");
     // One consent: the same single ALLOW prompt, no second Read-Host about SSH.
@@ -133,7 +133,7 @@ describe("inside the one elevation: no sudo, no second prompt", () => {
     const seats = at("$seatCommand =");
     expect(admitted).toBeLessThan(step);
     expect(step).toBeLessThan(seats);
-    expect(at("if ($sshSummary) { Write-Host $sshSummary }")).toBeGreaterThan(at("Write-Host 'Walkie joined."));
+    expect(at("if ($sshSummary) { Write-Host $sshSummary }")).toBeGreaterThan(at("Write-Host 'Sqwakie joined."));
     expect(bootstrap).toContain("if ($null -ne $journal.ownerSsh) {"); // a link without a packet runs none of it
   });
   test("the JSON handed to grant-bootstrap names exactly the fields its schema takes", () => {

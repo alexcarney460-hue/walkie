@@ -1,5 +1,5 @@
 // Final review B (docs, MUST): docs/PROTOCOL.md describes exactly what ships. The owner SSH tunnel dials 127.0.0.1:22022 on macOS
-// (Walkie's own launchd service) and 127.0.0.1:22 on Linux and WSL, and POST /v1/provision/check is in the local route table.
+// (Sqwakie's own launchd service) and 127.0.0.1:22 on Linux and WSL, and POST /v1/provision/check is in the local route table.
 // Each statement is checked against the code it describes, so a change to either one fails here until the other follows.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -18,7 +18,7 @@ const rowFor = (method: string, path: string): string => {
 };
 
 describe("the SSH tunnel's target port", () => {
-  test("the code: Walkie's own service on 22022 on macOS, the machine's loopback sshd on 22 on Linux and WSL", () => {
+  test("the code: Sqwakie's own service on 22022 on macOS, the machine's loopback sshd on 22 on Linux and WSL", () => {
     expect(MACOS_SSH_PORT).toBe(22022);
     expect(sshServicePort("darwin")).toBe(22022);
     expect(sshServicePort("linux")).toBe(22);
@@ -64,10 +64,10 @@ describe("POST /v1/provision/check in the local route table", () => {
   });
 });
 
-// Final review C, F6 + F4: the docs said a server that is not Walkie's "is never used" as if the daemon enforced it, and that the Windows
+// Final review C, F6 + F4: the docs said a server that is not Sqwakie's "is never used" as if the daemon enforced it, and that the Windows
 // step "says why in plain words" where the person never saw it. They now say what happens: the ENROLLMENT checks (before the consent and
 // again before the grant), the daemon's routes do not judge, and on Windows the closing summary carries the WSL step's sentence.
-describe("a server that is not Walkie's: the docs say exactly what happens", () => {
+describe("a server that is not Sqwakie's: the docs say exactly what happens", () => {
   const read = (file: string): string => readFileSync(join(ROOT, file), "utf8");
   const security = read("docs/SECURITY.md");
   const install = read("docs/INSTALL.md");
@@ -83,22 +83,22 @@ describe("a server that is not Walkie's: the docs say exactly what happens", () 
     expect(row).toContain("the Windows/WSL step checks right before it records the consent");
     expect(row).toContain("each leaves owner SSH off on that machine");
   });
-  test("SECURITY.md: the enrollment flows look twice, systemd decides what is Walkie's, and the daemon's routes do not judge", () => {
+  test("SECURITY.md: the enrollment flows look twice, systemd decides what is Sqwakie's, and the daemon's routes do not judge", () => {
     const owner = section(security, "Optional owner SSH consent", "The packet reaches the machine");
     expect(owner).not.toContain("is never used, below");
-    expect(owner).toContain("the enrollment flows never use a server that is not Walkie's");
+    expect(owner).toContain("the enrollment flows never use a server that is not Sqwakie's");
     expect(owner).toContain("look before the question and again after the typed yes");
     expect(owner).toContain("systemctl show walkie-sshd.service");
     expect(owner).toContain(WALKIE_SSH_UNIT_PATH);
     expect(owner).toContain("These checks are in the enrollment flows, not in the daemon");
     expect(owner).toContain("the grant route, `GET /v1/ssh/status`");
-    expect(owner).toContain("The administrator step skips an SSH install only for a server that is Walkie's");
+    expect(owner).toContain("The administrator step skips an SSH install only for a server that is Sqwakie's");
     expect(owner).toContain(FOREIGN_SSH_WHY.replace(/^T/, "t").replace(/\.$/, ""));
   });
   test("INSTALL.md: the same, and the WSL case as it is (the script refuses, the grant leaves SSH out, the summary carries the WSL step's sentence)", () => {
     const terminal = section(install, "- **Terminal, Linux and macOS**", "- **Browser join page**");
     expect(terminal).not.toContain("is never used: owner SSH stays off");
-    expect(terminal).toContain("the enrollment does not use an SSH server that is not Walkie's");
+    expect(terminal).toContain("the enrollment does not use an SSH server that is not Sqwakie's");
     expect(terminal).toContain("owner SSH stays off on that machine in this release");
     expect(install).toContain(FOREIGN_SSH_NOTE);
     expect(install).toContain(FOREIGN_SSH_AFTER_CONSENT.slice(FOREIGN_SSH_WHY.length + 1));

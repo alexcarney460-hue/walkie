@@ -7,19 +7,23 @@ import { PgStore } from '../api/_lib/compute/pg-store.ts';
 import { MIGRATIONS } from '../api/_lib/compute/migrations.ts';
 import { heldAccounts } from '../api/_lib/compute/handover.ts';
 import * as C from './rent6-fixtures.ts';
+import { postgresBinaries } from './postgres-binaries.ts';
 
 const PORT = 20_000 + Math.floor(Math.random() * 20_000);
 let dir = '';
 let sql: ReturnType<typeof postgres>;
 let bare: ReturnType<typeof postgres>;
+let pgctl: string;
 
 beforeAll(() => {
+  const binaries = postgresBinaries();
+  pgctl = binaries.pgctl;
   dir = mkdtempSync(join(import.meta.dir, '.rent16-pg-'));
   const data = join(dir, 'data');
-  const init = spawnSync('/opt/homebrew/bin/initdb', ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8'],
+  const init = spawnSync(binaries.initdb, ['-D', data, '-U', 'postgres', '--auth=trust', '-E', 'UTF8'],
     { encoding: 'utf8' });
   if (init.status !== 0) throw new Error(`local initdb failed: ${init.stderr}`);
-  const start = spawnSync('/opt/homebrew/bin/pg_ctl', ['-D', data, '-l', join(dir, 'log'), '-w',
+  const start = spawnSync(pgctl, ['-D', data, '-l', join(dir, 'log'), '-w',
     '-o', `-p ${PORT} -c unix_socket_directories='' -c listen_addresses='127.0.0.1'`, 'start'],
   { encoding: 'utf8' });
   if (start.status !== 0) throw new Error(`local pg_ctl failed: ${start.stderr}`);
@@ -30,7 +34,7 @@ afterAll(async () => {
   await sql?.end({ timeout: 5 });
   await bare?.end({ timeout: 5 });
   if (dir) {
-    spawnSync('/opt/homebrew/bin/pg_ctl', ['-D', join(dir, 'data'), '-m', 'immediate', 'stop']);
+    spawnSync(pgctl, ['-D', join(dir, 'data'), '-m', 'immediate', 'stop']);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -65,7 +69,7 @@ test('P15-PG migration backfills spent positive adjustments and keeps earliest c
   const response = await bind(new Request('https://site.test/api/license/bind', { method: 'POST',
     body: JSON.stringify({ code, team_id: owner.team }) }));
   expect(response.status).toBe(503);
-  expect(await store.migrate()).toEqual([5, 6]);
+  expect(await store.migrate()).toEqual([5, 6, 7]);
   const rows = await sql`SELECT id, first_funded_at FROM compute_accounts ORDER BY id`;
   expect(Number(rows[0]!.first_funded_at)).toBe(50);
   expect(Number(rows[1]!.first_funded_at)).toBe(70);
@@ -76,7 +80,7 @@ test('P15-PG migration backfills spent positive adjustments and keeps earliest c
   expect(Number((await sql`SELECT first_funded_at FROM compute_accounts WHERE id = ${accountB}`)[0]!.first_funded_at)).toBe(70);
 });
 
-test('P15-PG2 disabled compute permits empty schema but blocks partial data', async () => {
+test('P15-PG2 disabled compute refuses an empty schema (lane C round 12: it used to permit one) and partial data', async () => {
   await sql`CREATE DATABASE bare`;
   bare = postgres({ host: '127.0.0.1', port: PORT, user: 'postgres', database: 'bare', max: 2, onnotice: () => {} });
   const team = C.mkTeam('rent16-pg-bare'), signer = C.LH.testKeypair(), stripe = new C.LH.MockStripe();
@@ -98,7 +102,9 @@ test('P15-PG2 disabled compute permits empty schema but blocks partial data', as
   await bare`CREATE TABLE compute_control (key text PRIMARY KEY, value jsonb NOT NULL)`;
   await bare`INSERT INTO compute_control VALUES ('enrollment-chain:0123456789abcdef', 'null'::jsonb)`;
   expect(await new PgStore(bare).legacyEmpty()).toBe(true);
-  expect((await disabled(request())).status).toBe(200);
+  // Lane C round 12: the compute-capable bind no longer accepts an empty, unmigrated schema while drained.
+  const refused = await disabled(request());
+  expect([refused.status, await refused.json()]).toEqual([503, { error: 'licence_store_required' }]);
   expect((await bare`SELECT count(*)::int AS n FROM compute_control`)[0]!.n).toBe(1);
   const enabled = C.makeBind({ ...C.LH.deps(stripe, { ...C.LH.fullEnv(signer.pem), COMPUTE_ENABLED: '1' }),
     computeStore: () => new PgStore(bare) });

@@ -1,5 +1,5 @@
-// ORCH-2: the orchestrator is the person's platform operator. Its Claude always gets the Walkie tools and the walkie CLI
-// without a prompt (it runs with nobody to answer one, so without them every Walkie tool was denied); `full` access is
+// ORCH-2: the orchestrator is the person's platform operator. Its Claude always gets the Sqwakie tools and the walkie CLI
+// without a prompt (it runs with nobody to answer one, so without them every Sqwakie tool was denied); `full` access is
 // bypassPermissions; its system prompt is the operating playbook (mission, two modes, survey-and-refresh loop, workflow).
 import { describe, expect, test } from "bun:test";
 import { claudeArgs, walkieMcpConfig } from "../../src/daemon/orchestrator/process.ts";
@@ -14,7 +14,7 @@ function argvFor(access: OrchestratorAccess, mode: "default" | "acceptEdits" | "
 }
 const valueOf = (argv: string[], flag: string) => argv[argv.indexOf(flag) + 1];
 
-describe("argv: the Walkie tools are allowed in every access mode", () => {
+describe("argv: the Sqwakie tools are allowed in every access mode", () => {
   test("platform is the default access; the rules cover the walkie MCP server and the walkie CLI", () => {
     expect(DEFAULT_ACCESS).toBe("platform");
     expect(ORCHESTRATOR_ACCESS).toEqual(["platform", "full"]);
@@ -55,7 +55,7 @@ describe("the playbook", () => {
   const has = (re: RegExp) => expect(p).toMatch(re);
 
   test("names the person and the machine, runs walkie through walkie_cli (no shell), and stays tight", () => {
-    has(/Walkie orchestrator for @alex, running on alex-mac/);
+    has(/Sqwakie orchestrator for @alex, running on alex-mac/);
     has(/HOW TO RUN WALKIE: use the walkie_cli tool \(args array, no shell/);
     has(/dashboard's Integrations page/);
     expect(p).not.toContain("--key -");
@@ -65,21 +65,21 @@ describe("the playbook", () => {
   test("mission first: autonomous onboarding, project truth, and machine capacity", () => {
     const first = p.split("\n").slice(0, 3).join("\n");
     expect(first).toMatch(/MISSION: onboard existing members' new machines through one link/);
-    expect(first).toMatch(/keep every project current in Walkie as the source of truth/);
+    expect(first).toMatch(/keep every project current in Sqwakie as the source of truth/);
     expect(first).toMatch(/keep every machine at capacity within its caps/);
     expect(first).toMatch(/Carry out these duties on their schedules/);
   });
 
-  test("proactive, and Walkie is the source of truth", () => {
+  test("proactive, and Sqwakie is the source of truth", () => {
     has(/Be proactive about engaging with orchestrating agents/);
-    has(/Walkie is the team's source of truth for project state/);
+    has(/Sqwakie is the team's source of truth for project state/);
     has(/Reach out first; don't wait to be asked/);
   });
 
   test("onboarding distinguishes add-machine links from teammate invite codes", () => {
     has(/walkie team add-machine <handle> --json/);
     has(/walkie invite --handle <h> --json/);
-    has(/daemon places the one-click link or one-time code directly in your person's local WalkieTalkie conversation/);
+    has(/daemon places the one-click link or one-time code directly in your person's local Talkie conversation/);
     has(/you never see or repeat the credential/);
   });
 
@@ -98,10 +98,10 @@ describe("the playbook", () => {
     has(/walkie_ask: status, what's done, what's blocked, what's next/);
   });
 
-  test("reconcile into Walkie, bring outside work in, flag conflicts, staleness triggers an ask", () => {
+  test("reconcile into Sqwakie, bring outside work in, flag conflicts, staleness triggers an ask", () => {
     has(/move cards on evidence \(board steward\)/);
-    has(/Flag any conflict between what an orchestrator says and what Walkie shows/);
-    has(/exists only outside Walkie[^\n]*gets into Walkie: cards, comments or Data Room documents/);
+    has(/Flag any conflict between what an orchestrator says and what Sqwakie shows/);
+    has(/exists only outside Sqwakie[^\n]*gets into Sqwakie: cards, comments or Data Room documents/);
     has(/Staleness is a failure[^\n]*card in doing with no update[^\n]*orchestrator gone silent[^\n]*machine that looks busy/);
     has(/never do an orchestrator's lanes for it/);
   });
@@ -144,10 +144,10 @@ describe("the playbook", () => {
   });
 
   test("the access clause follows the access", () => {
-    expect(p).toContain("You have the Walkie tools (walkie_cli for any walkie command) without asking");
+    expect(p).toContain("You have the Sqwakie tools (walkie_cli for any walkie command) without asking");
     const full = playbook({ owner: "alex", hostname: "alex-mac", access: "full" });
     expect(full).toContain("You run with full access to this machine");
-    expect(full).not.toContain("You have the Walkie tools (walkie_cli for any walkie command) without asking");
+    expect(full).not.toContain("You have the Sqwakie tools (walkie_cli for any walkie command) without asking");
   });
 });
 

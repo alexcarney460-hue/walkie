@@ -26,6 +26,9 @@ describe("parseMachineAsks", () => {
     }
     expect(parseMachineAsks(["agent=25", "gpu-20=25"]).reduce((a, m) => a + m.count, 0)).toBe(50);
   });
+  test("an unknown tier points at the tiers on sale instead of naming GPU tiers that may be off sale", () => {
+    expect(() => parseMachineAsks(["gpu-24"])).toThrow('unknown tier "gpu-24" (the tiers on sale: walkie compute quotes; add =N for a count)');
+  });
 });
 
 describe("usd", () => {
@@ -126,8 +129,8 @@ describe("walkie compute (fake daemon)", () => {
     const ended = rental({ state: "ended", end_reason: "user", ended_at: 1 });
     const text = listText(state([ended], { alerts: ["revocation_pending", "revocation_refused", "revocation_waiting_for_authority_sync", "compute_records_unreadable"] }));
     expect(text).toContain("An ended rental can't be closed yet: this machine hasn't been able to sync with the team's roster authority");
-    expect(text).toContain("Walkie can't read its record of rented machines, so ended rentals aren't being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Walkie never overwrites it.");
-    expect(text).toContain("still on the team after its rental ended. Walkie removes it as soon as the team's roster authority is reachable.");
+    expect(text).toContain("Sqwakie can't read its record of rented machines, so ended rentals aren't being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Sqwakie never overwrites it.");
+    expect(text).toContain("still on the team after its rental ended. Sqwakie removes it as soon as the team's roster authority is reachable.");
     expect(text).toContain("couldn't be removed automatically. The reason is posted in #general.");
     expect(listText(state([ended]))).not.toContain("still on the team");
     noCost(text);

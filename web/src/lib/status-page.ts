@@ -34,7 +34,7 @@ export interface FactTile {
   by?: string; at?: number;
 }
 
-/** The facts strip: what the team and its agents set (in the order they were first set), then what Walkie counts itself. */
+/** The facts strip: what the team and its agents set (in the order they were first set), then what Sqwakie counts itself. */
 export function factTiles(facts: StatusPagePayload["facts"]): FactTile[] {
   const set = facts.set.map((f, i): FactTile => ({ key: `set-${i}`, label: f.label, value: f.value, by: whoLabel(f.by), at: f.at }));
   const c = facts.computed;
@@ -51,7 +51,7 @@ export function factTiles(facts: StatusPagePayload["facts"]): FactTile[] {
   ];
 }
 
-/** WalkieTalkie reports once an hour, and only when something changed (its own schedule). */
+/** Talkie reports once an hour, and only when something changed (its own schedule). */
 export const REPORT_PERIOD_MS = 3_600_000;
 /**
  * How long a story may sit beside numbers that disagree with it, and how long a project may be on reports with no story, before the

@@ -1,7 +1,7 @@
 // llama-server's device list and arguments for a split run (WALKIE-POOL-2). Pure.
 //
 // `llama-server --list-devices --rpc a,b` prints one line per device: "  MTL0: Apple M5 (12124 MiB, ...)",
-// "  RPC0: 127.0.0.1:50611 (16384 MiB, ...)". Walkie picks the first device each rpc-server endpoint exposes and
+// "  RPC0: 127.0.0.1:50611 (16384 MiB, ...)". Sqwakie picks the first device each rpc-server endpoint exposes and
 // the head's own first accelerator (not BLAS, not RPC); layers are split over them with --tensor-split in proportion
 // to the bytes each machine holds. A head without an accelerator holds no layers in v1.
 

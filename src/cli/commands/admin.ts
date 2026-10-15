@@ -1,5 +1,5 @@
 // walkie admin (AGENT-ADMIN-1): this machine's admin switches and audit log, the team's machines an admin command may
-// reach, and remote admin: an allow-listed walkie command run on team machines over Walkie (never a shell).
+// reach, and remote admin: an allow-listed walkie command run on team machines over Sqwakie (never a shell).
 //   walkie admin [status] · walkie admin log [--limit n] · walkie admin machines [--json]
 //   walkie admin agents on|off|status · walkie admin remote on|off|status   (also: walkie agents admin on|off|status)
 //   walkie admin --machine <m>|--machines a,b|all-mine|all [--timeout s] [--json] <walkie command…>
@@ -92,7 +92,7 @@ export async function switchCmd(ctx: Ctx, key: "agent_admin" | "remote_admin", a
 
 function switchHint(key: "agent_admin" | "remote_admin", on: boolean): string {
   if (key === "agent_admin") {
-    return c.dim(on ? " — agents on this machine may set Walkie up for you (audited in #general); off: walkie agents admin off"
+    return c.dim(on ? " — agents on this machine may set Sqwakie up for you (audited in #general); off: walkie agents admin off"
       : " — agents here are refused setup; turn it back on yourself: walkie agents admin on");
   }
   return c.dim(on ? " — team owners (and your own other machines) may run allow-listed walkie commands here; off: walkie admin remote off"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-// walkie — Walkie CLI. Exit codes: 0 ok, 1 error, 2 timeout/declined, 3 daemon unreachable.
+// walkie — Sqwakie CLI. Exit codes: 0 ok, 1 error, 2 timeout/declined, 3 daemon unreachable.
 import { adoptRemoteRun } from "../client/remote-run.ts";
 import { WalkieError } from "../client/index.ts";
 import { VERSION } from "../daemon/version.ts";
-import { parseArgs, UsageError } from "./args.ts";
+import { parseArgs, UsageError, AgentWrappedUsageError } from "./args.ts";
 import { answer, ask, inbox } from "./commands/asks.ts";
 import { get, post, reply, subscribe } from "./commands/board.ts";
 import { hook, hooks, mcp } from "./commands/agents.ts";
@@ -30,7 +30,12 @@ import { projectsCmd, taskCmd, tasksCmd } from "./commands/projects.ts";
 import { importCmd } from "./commands/import.ts";
 import { roomCmd } from "./commands/room.ts";
 import { memory } from "./commands/memory.ts";
+import { skills } from "./commands/skills.ts";
+import { learn } from "./commands/learn.ts";
+import { primer, recall } from "./commands/primer.ts";
 import { boardCmd } from "./commands/steward.ts";
+import { browserCmd } from "./commands/browser.ts";
+import { channelsCmd } from "./commands/channels.ts";
 import { wrap } from "./commands/wrap.ts";
 import { admin, runRemote, splitRemote } from "./commands/admin.ts";
 import { historyCommand } from "./commands/history.ts";
@@ -42,28 +47,32 @@ import { errorForModel, underAgent } from "./agent-output.ts";
 import { EXIT, makeCtx, type Command, type Ctx } from "./context.ts";
 import { c, safeTerm } from "./format.ts";
 import { defang } from "../protocol/safety.ts";
+import { memoryAgentText } from "../daemon/memory/agent-output.ts";
 import { writeErr, writeOut } from "./stdio.ts";
 
-export const USAGE = `walkie ${VERSION} — private line between your team's agents (Walkie Direct, or over Tailscale)
+export const USAGE = `Sqwakie ${VERSION} — private line between your team's agents (Sqwakie Direct, or over Tailscale)
 
 usage: walkie <command> [args] [--json]
 
 start here
   setup                                    install, start the service, create/join a team, connect agents
-           [--team <name> --handle <you> [--tailscale] | --invite <code> | --join <teammate-machine>]
+           [--team <name> --handle <you> [--tailscale] | --invite <code> | --join-link <link> | --join-link-stdin
+            | --join <teammate-machine>]   (--join-link: no questions at all; answers are the defaults)
            [--no-service] [--no-hooks] [--allow-team-agents | --no-team-agents (aliases --allow-seats / --no-seats)]
-           [--bin-dir <dir>] [--switching | --no-switching]
+           [--bin-dir <dir>] [--switching | --no-switching] [--json]
                                            (asks once whether your team may start agents here; no terminal: no;
                                            --bin-dir: install the binary elsewhere than ~/.local/bin; --switching /
-                                           --no-switching: answer the claude/codex shim prompt without asking)
+                                           --no-switching: answer the claude/codex shim prompt without asking;
+                                           --json: one result object on stdout, never asks: docs/INSTALL.md)
 team
   init <team-name> --handle <you> [--direct|--tailscale]   create a team on this machine (you become owner)
-  invite --handle <h> [--role member|owner|observer]       Walkie Direct: print a single-use invite code (7 days)
+  invite --handle <h> [--role member|owner|observer]       Sqwakie Direct: print a single-use invite code (7 days)
   invite <tailscale-login> --handle <h> [--role …] [--name "Display Name"]   a Tailscale team: add their tailnet login
-  join <invite-code> | <peer-host-or-100.x-ip> | --invite-stdin   join with a Walkie Direct invite code, or a Tailscale team through
+  join <invite-code | fleet-link> | <peer-host-or-100.x-ip> | --invite-stdin | --link-stdin   join with a Sqwakie Direct invite code, or a Tailscale team through
            [--allow-team-agents | --no-team-agents (aliases --allow-seats / --no-seats)] [--same-user]
-           [--accept-readable-home]        any teammate's machine (same seat opt-in flags as setup)
+           [--accept-readable-home] [--wait] any teammate's machine (same seat opt-in flags as setup; --wait: up to two minutes for approval)
   channel create <name> [--topic t] [--members a,b | --public]   (members = restricted; --public opens an existing one)
+  channel archive <name> [--json]         archive an existing channel; current owner/channel permissions apply
   who [--all]                              people → machines → agents that are working or need you (--all: idle and offline too)
   pool [--offline] [--refresh] [--nodes-file f.json]   the best open-weight model each machine, each local network and
                                            all of your machines together could run, ranked from Hugging Face (read when
@@ -72,7 +81,7 @@ team
   pool share on|off [--max-gb N]           let teammates' split runs use this machine (person only; off by default;
                                            only share with people you trust with your computer: see SECURITY.md)
   pool run <model> [--quant q4|q8] [--machines a,b] | pool run --file <x.gguf> [--machines a,b]   split one model
-                                           across the sharing machines (llama.cpp RPC over Walkie); serves an
+                                           across the sharing machines (llama.cpp RPC over Sqwakie); serves an
                                            OpenAI API on 127.0.0.1
   pool serve <model> [--quant q4|q8] [--on <machine>]   run a model whole on one machine's GPU (this one, the
                                            named one, or the fastest one it fits); every member machine can use it
@@ -82,19 +91,27 @@ team
                                            stop them; install llama.cpp (elsewhere with --dir; --dry-run: print, don't run)
   accounts                                 model-provider accounts in use and usage left (5-hour, weekly), team-wide
   team add-machine <handle> [--json]       owner: a one-time link + install command for another of a member's machines
+  team link [--for @h] [--uses N | --unlimited] [--expires 7d|30d] [--approve] [--observer] [--owner-machines]
+                                           owner: ONE link that adds many machines (default 25, 7 days) as @h's (default
+                                           yours); --owner-machines confirms owner-level access; --approve waits for an owner's OK
+  team link list | revoke <id>             owner: fleet links, uses left, the machines that used them; revoke one
+  team pending [--json]                    machines awaiting owner approval on this authority
+  team admit <node-id> [--decline] [--json] owner: approve or deny a pending machine
   ssh key                                  show or create this owner's SSH key under ~/.walkie
   ssh config <machine>                     print a Host block for ssh/scp/rsync/editors
-  ssh <machine> [-- ssh options]           sign in through Walkie Direct as the target's OS user
+  ssh <machine> [-- ssh options]           sign in through Sqwakie Direct as the target's OS user
   tunnel ssh <machine>                     stdio bridge for SSH ProxyCommand
   ssh revoke                               on the enrolled machine, remove the tagged owner key
-  ssh enable                               install or repair Walkie's SSH service here (macOS, Linux, WSL): one administrator step
+  ssh enable                               install or repair Sqwakie's SSH service here (macOS, Linux, WSL): one administrator step
   ssh status [--wait] [--json]             is owner SSH ready here: server on, owner key installed, tunnel open (--wait: up to a minute)
 switching accounts at usage limits (your own logins, in this machine's encrypted vault)
   claude [args…] · codex [args…]           the real CLI, same terminal, resumed on an account with room at a limit
-  accounts add claude|codex                store a login (claude: paste a \`claude setup-token\`; codex: runs codex login)
-           [--account <recorded id>] [--email you@x.com] [--plan <name>]
+  accounts add claude|codex|kimi           store a login (claude: setup-token; codex/kimi: device login)
+           [--account <id>] [--email you@x.com] [--plan <name>] [--region global|mainland-cn for kimi]
+  accounts import [--provider claude|codex] [--yes]   import tracked logins on this machine into the vault
+  accounts auto-import on|off             let the daemon import new local logins automatically (person-only; off by default)
   accounts vault [--json]                  the vault: accounts, policy, sessions on each
-  accounts remove <account> [--move]       forget a login (codex --move: move its credential files aside instead)
+  accounts remove <account> [--move]       forget a login (codex/kimi --move: move other CLI files aside)
   accounts borrow on|off                   run on teammates' shared accounts once your own are all out (off by default)
   accounts trust-cli                       re-check and record the claude / codex found on PATH as trusted
   accounts policy <account> local|own|shared [--with a,b]   who may use it (own = your other machines)
@@ -114,7 +131,7 @@ switching accounts at usage limits (your own logins, in this machine's encrypted
              [--reassign-to @handle]       (--apply, person-only; cards move with ordinary signed card ops)
   team revoke <machine>                    revoke one machine (owner); the member keeps their others
   team peer-sig-strict                      owner: require signed peer requests team-wide
-  direct enable                            a Tailscale machine also serves Walkie Direct (mixed teams: run it on
+  direct enable                            a Tailscale machine also serves Sqwakie Direct (mixed teams: run it on
                                            the roster authority, then invite codes work on a Tailscale team)
 plan
   license [show]                           plan, seats used/total, expiry, trial days left
@@ -137,8 +154,9 @@ projects (kanban boards; every change is a signed post in the project's channel)
                                            (people only; --contact names who resolves a dispute, none clears it)
   projects archive|restore|delete <project>          (the project's creator or an owner)
   projects board <project> add <name…>     another board (3 per project included; more are a paid add-on)
-  projects report <project> [on|off]       WalkieTalkie's hourly plain-English status report for it, posted in the project's
-                                           channel and its Data Room (on or off: the project's creator or an owner, people only)
+  projects report <project> [on|off]       Talkie's hourly plain-English status report for it, posted in the project's
+                                           channel and its Data Room (on or off: the creator, an owner, or their agent;
+                                           each changed hour uses a model turn on the team's account)
   projects fact <project> ["<label>" <value…> | "<label>" --remove]
                                            the facts on its status page (the page non-technical teammates read): list, set (six at
                                            most; a label up to 24 and a value up to 60 plain characters) or remove one
@@ -161,7 +179,7 @@ projects (kanban boards; every change is a signed post in the project's channel)
   dispute show <KEY>                       the card's open or resolved dispute (nothing escalates on its own)
   dispute resolve <KEY> <reason…|->        the escalation contact (or the project's creator, when there is no contact) or an owner closes it
                                            (people only; not the card's creator, and not the person who raised it unless they are an owner;
-                                           upgrade to this release — an older Walkie has no resolve command)
+                                           upgrade to this release — an older Sqwakie has no resolve command)
   board steward run [--project P | P] [--dry-run] [--repo dir,dir] [--stale-hours n]   the board steward: moves cards
                                            to the column their evidence says (live agents, branches, Linear, comments), each with a comment
   board steward on|off [--project P | P]   the project's steward switch (its admins, people only)
@@ -190,11 +208,31 @@ import (switch from Linear: projects, cards, history; one signed batch per 200 w
                                            key: the Linear integration's, else LINEAR_API_KEY, else --key-file <path>
                                            (--schedule takes --key-file only, not LINEAR_API_KEY)
 personal memory (this machine only; never sent to the team)
+  recall <query…> [--project P] [--json]      scoped lexical and semantic recall from notes and visible cards
+  primer [show] [--project P] [--json]       show the project's personal current state (global by default)
+  primer status [--json]                      report harness injection and recall capability
+  primer set --project P --in-progress text --next-step text [--blockers 'one|two'] [--json]
   memory add [--kind fact|preference|decision|procedure|contact|warning] [--source ref,ref] <text…|->
                                            remember a note (a secret is redacted; a join code is refused)
   memory list [--all] [--limit n]          notes on this machine (--all includes retracted)
   memory search <words…> [--limit n]       search them
   memory retract <id>                      mark one retracted (the text is cleared; the row stays and shows as (retracted); it leaves search and stops counting toward the cap)
+  skills list|propose <SKILL.md>|show <name>|approve <name> <sha256>|revoke <name>|rollback <name> <sha256>|on <name>|off <name>
+  memory status [--json]                    show this person's gbrain, semantic and claude-mem states
+  memory backup init                       create and show a recovery code once (person only)
+  memory backup export --to <absolute-path> [--replace]  encrypt a personal backup (person only)
+  memory backup restore <file> [--replace] restore with a hidden recovery-code prompt (person only)
+  memory gbrain enable [--path /path/to/gbrain]  person-only local setup
+  memory gbrain sync|disable|delete          sync approved pages, stop use, or explicitly delete (delete needs --confirm "delete my gbrain")
+  memory semantic rebuild                 recompute derived mentions from eligible records (person only)
+  memory entity add <slug> <name> --kind K --summary TEXT [--valid-as-of DATE] [--confidence 0..1]
+  memory entity alias <id> <alias> · link|unlink <source-id> <type> <target-id>
+  memory entity remove <id> · list · export · import <JSON-file|->  (person only)
+  memory claude-mem enable [--db absolute-path] · disable · projects · allow <project> · deny <project>
+  memory claude-mem freshness --days n      set the observation freshness window (default 90 days; people only)
+  learn add <rule…> --evidence text [--category name] [--confidence 0..1] [--request-id id] [--json]
+  learn correct <rule…> --supersedes ID --evidence text [--category name] [--confidence 0..1] [--json]
+  learn retract <id> [--json] · learn list [--all] [--json]
 asks
   ask <@handle[/machine[/agent]]> <text…|-> [--timeout 300] [--channel c]
                                            block until answered (exit 2 on timeout/decline)
@@ -204,11 +242,11 @@ history (this machine only; nothing is recorded)
   history [--since <ms|YYYY-MM-DD|ISO>] [--tool <name>] [--q <text>] [--limit n] [--json]
                                            admin audit and your guest audit, oldest first. A person sees both;
                                            an agent sees the admin audit only. Not other machines, not a phone.
-admin (agents set Walkie up: audited in #general; the machine's person keeps the switches)
+admin (agents set Sqwakie up: audited in #general; the machine's person keeps the switches)
   admin [status [--limit n]] · admin log [--limit n]   this machine's switches and recent agent / remote admin actions
   admin machines [--json]                  team machines and whether you may administer each (owners: any; others: own)
   admin --machine <host> [--timeout s] [--json] <walkie command…>
-  admin --machines a,b|all-mine|all …      run an allow-listed walkie command there over Walkie (never a shell):
+  admin --machines a,b|all-mine|all …      run an allow-listed walkie command there over Sqwakie (never a shell):
                                            seats, accounts, pool, hooks, orchestrator, invite, team add-machine, …
   agents admin on|off|status (alias: admin agents on|off|status)   may agents on this machine do its setup
                                            (default on; only you turn it on)
@@ -225,14 +263,20 @@ agents
   agents archive [--machine m] [--search q] [--limit n] [--offset n]
                                            idle and offline agents (the Agent archive), newest first, with last title and last seen
   status <title…> [--state working|idle|waiting|blocked] [--task ALE-1] [--agent name] [--runtime name]
-WalkieTalkie (your team's orchestrator: your own Claude Code session; walkie orchestrator … works too)
+Talkie (your team's orchestrator: your own Claude Code session; walkie orchestrator … works too)
+  browser install|status|on|off             person-only: install local Playwright/Chromium, then opt in on this machine
+  browser allow|deny <seat-agent-id>        person-only: grant or revoke one seat's browser use
+  browser block|unblock <domain>            person-only: extend or trim the built-in domain denylist
+  browser review <confirmation-id>         person-only: inspect the screenshot before answering Talkie's direct ask
+  channels status|link whatsapp|gvoice|register <your +number>|on|off|reset-quota
+                                           person-only; off by default. WhatsApp and Google limit automation and may block the number. Use a dedicated number.
   talkie status [--json]                   running, standby (lead: <machine>), needs a model login, or stopped;
                                            it starts on its own on the team's lead machine once a Claude login is there
   talkie say <text…|-> [--new] [--thread id] [--timeout 600]
                                            send a message and print the reply (continues the latest conversation)
   talkie model <default|opus|sonnet|haiku|fable|full-id>
                                            switch its model; the conversation continues (after the reply in progress)
-  talkie access platform|full              platform: Walkie tools + walkie CLI always allowed; full: every tool
+  talkie access platform|full              platform: Sqwakie tools + walkie CLI always allowed; full: every tool
   talkie lead-eligible on|off              permit this WSL machine to lead only when other owner machines are offline
   talkie stop                              stop it here; it stays stopped until you start it again (or talkie auto)
   talkie auto                              back to automatic: it runs here when this machine leads, else stands by
@@ -244,9 +288,9 @@ WalkieTalkie (your team's orchestrator: your own Claude Code session; walkie orc
   talkie recs [--all] [--json]             list grouped recommendations
   talkie approve <id> [--note <text>]      person-only: approve a recommendation
   talkie dismiss <id> [--note <text>]      person-only: dismiss a recommendation
-  talkie recommend '<JSON object>'        authenticated WalkieTalkie duties only: record a recommendation
-  talkie schedules                         list scheduled WalkieTalkie turns
-  talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset  scheduled WalkieTalkie turns
+  talkie recommend '<JSON object>'        authenticated Talkie duties only: record a recommendation
+  talkie schedules                         list scheduled Talkie turns
+  talkie schedule list|unresolved|add|edit|pause|resume|remove|run-now|reset  scheduled Talkie turns
 seats (agents a teammate starts on a machine whose person opted in; they run on that machine's own sign-in)
   seats enable [--yes] [--same-user | --seat-users] [--accept-readable-home] [--launchers …] [--max n] [--claude-token-stdin]
                                            one step: let your team start agents on THIS company machine (same-user
@@ -259,6 +303,8 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
   seats setup-user [--apply] [--accept-readable-home] [--codex-release]   explicit OS-user hardening step
   seats token set (Claude token on stdin) | seats token clear   give Claude seats a token of their own, or
                                            go back to this machine's login
+  seats codex-oss on --yes|off              separate person-only local OSS consent; native execution held
+  seats doctor --local-provider ollama      snapshot of local-mode readiness; no login or model probes
   seats doctor                             is this machine ready for seats (Claude/Codex signed in for them, …)?
   seats cleanup-root <root-key>            person-only cleanup of a pending worker root shown by doctor; process absence is best effort
   seats migration-preflight                read-only inventory before changing an existing seat-user machine
@@ -286,7 +332,7 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
   seats resume                             "I'm done": paused seats continue, queued ones start
   seats [list]                             this machine's setting, machines that take seats, recent seats
   seats repo [list] | add <id> <path> | rm <id>   this machine's clones that v2 seats work in (by repo id)
-  seat run --machine <host> [--runtime claude|codex|kimi] [--model m]
+  seat run --machine <host> [--runtime claude|codex|kimi] [--model m] [--local-provider ollama]
            [--permission-mode default|acceptEdits|bypassPermissions] [--repo <bundle|git dir|hash>]
            [--timeout 3600] [--max-concurrent 9] [--wait [--wait-timeout s]] -- <prompt…|->
                                            start a seat there (its commits come back as a git bundle)
@@ -294,13 +340,21 @@ seats (agents a teammate starts on a machine whose person opted in; they run on 
            [--repo-id id --ref <sha|branch> --mode branch|detached|fresh [--branch b] [--delta <bundle>]]
            [--result-file rel/path]        a v2 seat: the brief as TASK.md, the host's own clone, a named account
   seat show <id> [--follow] | stop <id> | fetch <id> [-o file.bundle] [--save (result file; --file=true deprecated)]
-compute                                    rental compute is not available in this version
+compute (rent machines for your team's agents: prepaid credit used per minute, stop at $0; owners)
+  compute quotes [--json]                  the machine tiers on sale and their prices per hour and month
+  compute rent <tier>[=count] … [--idle <min>] [--yes]
+                                           rent machines, any mix of the tiers on sale (compute quotes): each joins as
+                                           your machine with seats on; what doesn't fit yet is queued and starts on its own
+  compute list [--json]                    rented machines: state, price per hour, credit used
+  compute stop <id|all> [--yes]            stop and wipe (unused credit stays until it expires, 60 days after purchase)
+  compute credit [buy 50|200|1000]         balance, burn per hour and hours left · buy credit (Stripe Checkout)
+  compute handover object                  object to a pending handover of the team's compute account
 artifacts
   share <file> [#chan] [--note text] [--thread id]   share a file (≤25 MB, content-addressed)
   fetch <hash> [-o path]                   fetch an artifact (from peers if needed)
 agent integration
   discover --once [--json]                         read-only local process census (no daemon)
-  hooks install|uninstall claude|codex|kimi|grok|hermes|all [--dry-run]   status hooks + MCP tools for your agents (all = claude + codex; Hermes needs --profiles name[,name])
+  hooks install|uninstall claude|codex|kimi|grok|hermes|all [--dry-run] [--json]   status hooks + MCP tools for your agents (all = claude + codex; Hermes needs --profiles name[,name])
                                            Hermes: activity text is hidden for every Hermes profile unless listed with --activity name[,name] (--activity "" clears the list)
   mcp                                      run the MCP server (stdio; used by agent configs)
   hook claude|codex|kimi|grok|hermes|switch   hook entrypoint (called by Claude Code / Codex / Kimi / Grok / Hermes / the account switcher)
@@ -315,12 +369,12 @@ integrations (run in this machine's daemon; keys stay on this machine)
 ops
   dashboard [--no-open]                    open the live dashboard in your browser
   dashboard logout                         sign out every dashboard session on this machine
-  mobile pair                              Walkie on your phone: one-time QR code (10 min, end-to-end encrypted link)
+  mobile pair                              Sqwakie on your phone: one-time QR code (10 min, end-to-end encrypted link)
   mobile [status]                          linked/connecting, relay, and paired phones (mobile devices: just the phones)
   mobile revoke <id>|--all                 sign one (or every one) out
   token rotate                             replace ~/.walkie/local.token (the loopback API's bearer for scripts)
   doctor                                   diagnose Tailscale, daemon, peers, clock, db
-  daemon start|stop|status|run             manage the local daemon
+  daemon start|stop|status|run [--json]    manage the local daemon (--json: start, stop, status)
   daemon install|uninstall [--dry-run]     launchd (macOS) / systemd --user (Linux) service
   update [--check] [--allow-downgrade]     self-update (signed checksums + version): to the latest release, or on a
                                            pre-release to the version the site's installer offers
@@ -335,7 +389,7 @@ agents: pass --for-agent whenever the output goes to a model. Every read (get, s
         command's parent processes (claude, codex, kimi, aider, hermes, …); configuration variables never count.
 admin commands (invite, team add-machine|role|revoke, seats, accounts, pool, hooks, …): a person at a terminal
         confirms (or passes --yes); an agent, or a run with no terminal, goes ahead while agent admin is on, audited.
-person-only: team authority, team role … removed, team offboard --apply, revoking another member's machine, dashboard and mobile pair ask
+person-only: team link, team authority, team role … removed, team offboard --apply, revoking another member's machine, dashboard and mobile pair ask
         you to type the handle, machine or "yes" at a terminal; agents are refused.
 exit codes: 0 ok · 1 error · 2 timeout/declined · 3 daemon unreachable`;
 
@@ -345,9 +399,9 @@ const computeUnavailable: Command = async (ctx) => {
 };
 
 export const COMMANDS: Record<string, Command> = {
-  init, invite, join, channel, team: teamCmd, who: whoCmd, pool: poolCmd, direct: directCmd, post, get, reply, subscribe, ask, inbox, answer, status, memory,
+  init, invite, join, channel, team: teamCmd, who: whoCmd, pool: poolCmd, direct: directCmd, post, get, reply, subscribe, ask, inbox, answer, status, memory, skills, learn, primer, recall,
   share, fetch: fetchCmd, accounts, agents: agentsCmd, projects: projectsCmd, tasks: tasksCmd, task: taskCmd, import: importCmd, room: roomCmd, mobile, dashboard, token, doctor, daemon, mcp, hook, hooks, setup, update, integrations, linear, license, upgrade,
-  orchestrator, talkie: orchestrator, seats, seat, admin, history: historyCommand, provision, stale: staleCmd, discover, board: boardCmd, dispute: disputeCmd,
+  orchestrator, talkie: orchestrator, browser: browserCmd, channels: channelsCmd, seats, seat, admin, history: historyCommand, provision, stale: staleCmd, discover, board: boardCmd, dispute: disputeCmd,
   compute: RENTAL_COMPUTE_AVAILABLE_IN_THIS_VERSION ? compute : computeUnavailable,
 };
 
@@ -401,7 +455,7 @@ export async function main(argv: string[]): Promise<number> {
     try { return cmd === "ssh" ? await sshCommand(rest) : await sshTunnelCommand(rest); }
     catch (err) { writeErr(`walkie ${cmd}: ${(err as Error).message}\n`); return EXIT.error; }
   }
-  // ACCOUNTS-2: the CLI's own arguments go through untouched (Walkie's flag parser never sees them).
+  // ACCOUNTS-2: the CLI's own arguments go through untouched (Sqwakie's flag parser never sees them).
   if (cmd === "claude" || cmd === "codex") return wrap(cmd, rest);
   // The seat user helper (admin.ts): root only, through sudo, `seat-admin create <n>` / `destroy <n>` / `pending`.
   if (cmd === "seat-admin") {
@@ -473,10 +527,18 @@ export async function main(argv: string[]): Promise<number> {
     // runtime with no variable (Kimi, Hermes, Aider) is wrapped for the model like its output; before a context
     // exists (a usage error in the arguments), the flag and the environment.
     const forAgent = ctx ? ctx.forAgent : rest.some((a) => /^--for-agent(=(true|1|yes|on))?$/i.test(a)) || underAgent();
-    const msg = (s: string, code?: string) => (forAgent ? errorForModel(cmd, s, code) : safeTerm(s));
-    const plain = (s: string) => (forAgent ? defang(s, 600) : safeTerm(s)); // Walkie's own wording (usage, codes)
+    const memoryKind = ({ memory: "memory.error", recall: "recall.error", primer: "primer.error",
+      learn: "learning.error" } as Record<string, string>)[cmd];
+    const agentError = (s: string, code?: string) => memoryKind
+      ? memoryAgentText(`${cmd}:error`, memoryKind, s) : errorForModel(cmd, s, code);
+    const msg = (s: string, code?: string) => (forAgent ? agentError(s, code) : safeTerm(s));
+    const plain = (s: string) => (forAgent ? defang(s, 600) : safeTerm(s)); // Sqwakie's own wording (usage, codes)
     if (err instanceof UsageError) {
-      writeErr(`walkie ${cmd}: ${plain(err.message)} (see: walkie help)\n`);
+      // The memory command already wrapped lower-trust text with its citation; defanging it again
+      // would destroy the literal wrapper. Ordinary usage errors still take the normal path.
+      const detail = forAgent && err instanceof AgentWrappedUsageError ? err.message
+        : forAgent && memoryKind ? agentError(err.message) : plain(err.message);
+      writeErr(`walkie ${cmd}: ${detail} (see: walkie help)\n`);
       return EXIT.error;
     }
     if (err instanceof WalkieError && planLimitText(err)) {
@@ -503,7 +565,7 @@ if (import.meta.main) {
   if (process.argv[2] === "--internal-orchestrator-hook") {
     const { validChildLease } = await import("../daemon/orchestrator/supervisor.ts");
     const valid = validChildLease(process.argv[3] ?? "", process.env.WALKIE_TALKIE_RUN ?? "");
-    if (!valid) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "WalkieTalkie lease expired" } }));
+    if (!valid) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Talkie lease expired" } }));
     process.exit(0);
   }
   if (process.argv[2] === "--internal-orchestrator-supervisor") {

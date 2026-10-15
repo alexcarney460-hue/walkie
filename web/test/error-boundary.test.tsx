@@ -139,14 +139,14 @@ test("view: the view's place shows its name and the message while a sibling (the
 test("root: a plain screen with the message, a closed Details, Reload and Back to Mission Control", async () => {
   const reloads: number[] = [];
   (testWindow.location as { reload?: () => void }).reload = () => { reloads.push(1); };
-  const page = await env.mount(<eb.ErrorBoundary scope="root" name="Walkie dashboard"><Boom message="the store fell over" /></eb.ErrorBoundary>);
+  const page = await env.mount(<eb.ErrorBoundary scope="root" name="Sqwakie dashboard"><Boom message="the store fell over" /></eb.ErrorBoundary>);
   const root = page.one('[data-testid="boundary-root"]') as MiniElement;
   expect(root).not.toBeNull();
-  expect(page.one("h1")?.textContent).toBe("Walkie's dashboard hit an error");
+  expect(page.one("h1")?.textContent).toBe("Sqwakie's dashboard hit an error");
   expect(page.one("p.boundary-message")?.textContent).toContain("the store fell over");
   const details = page.one("details") as MiniElement;
   expect(details.hasAttribute("open")).toBe(false);
-  expect(details.textContent).toContain("Walkie dashboard"); // where
+  expect(details.textContent).toContain("Sqwakie dashboard"); // where
   expect(details.one("pre")?.textContent).toContain("Boom");
   expect(page.one("p.boundary-message")?.textContent).not.toContain("at Boom"); // no stack outside Details
   const back = page.all("a").find((a) => a.textContent === "Back to Mission Control") as MiniElement;
@@ -160,7 +160,7 @@ test("root: a plain screen with the message, a closed Details, Reload and Back t
 test("root: Back to Mission Control tries the page again without a reload", async () => {
   let failing = true;
   function Flaky() { if (failing) throw new Error("not yet"); return <span>recovered</span>; }
-  const page = await env.mount(<eb.ErrorBoundary scope="root" name="Walkie dashboard"><Flaky /></eb.ErrorBoundary>);
+  const page = await env.mount(<eb.ErrorBoundary scope="root" name="Sqwakie dashboard"><Flaky /></eb.ErrorBoundary>);
   expect(page.one('[data-testid="boundary-root"]')).not.toBeNull();
   failing = false;
   await page.click(page.all("a").find((a) => a.textContent === "Back to Mission Control") as MiniElement);
@@ -227,7 +227,7 @@ test("root and view boundaries try again when the route changes", async () => {
 
 test("a failure in an inner boundary's child does not reach the outer one", async () => {
   const page = await env.mount(
-    <eb.ErrorBoundary scope="root" name="Walkie dashboard">
+    <eb.ErrorBoundary scope="root" name="Sqwakie dashboard">
       <eb.ErrorBoundary scope="view" name="Asks">
         <span>view body</span>
         <eb.ErrorBoundary scope="item" name="ask 1"><Boom /></eb.ErrorBoundary>
@@ -242,7 +242,7 @@ test("a failure in an inner boundary's child does not reach the outer one", asyn
 
 test("a failure in a fallback's own parent view falls to the next boundary up", async () => {
   const page = await env.mount(
-    <eb.ErrorBoundary scope="root" name="Walkie dashboard"><eb.ErrorBoundary scope="view" name="Asks"><Boom message="view-level" /></eb.ErrorBoundary></eb.ErrorBoundary>,
+    <eb.ErrorBoundary scope="root" name="Sqwakie dashboard"><eb.ErrorBoundary scope="view" name="Asks"><Boom message="view-level" /></eb.ErrorBoundary></eb.ErrorBoundary>,
   );
   expect(page.one('[data-testid="boundary-view"]')).not.toBeNull();
   expect(page.one('[data-testid="boundary-root"]')).toBeNull();
@@ -562,7 +562,7 @@ test("root: an answer the store cannot fold (the team without its channels) show
   const page = await env.mount(<Root />);
   await until(() => page.one('[data-testid="boundary-root"]') !== null || env.uncaught.length > 0);
   expect(env.uncaught).toEqual([]);
-  expect(page.one("h1")?.textContent).toBe("Walkie's dashboard hit an error");
+  expect(page.one("h1")?.textContent).toBe("Sqwakie's dashboard hit an error");
   expect(page.all("button").some((b) => b.textContent === "Reload")).toBe(true);
   expect(page.text()).toContain("Back to Mission Control");
   expect(logged()).toHaveLength(1);

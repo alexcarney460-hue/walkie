@@ -1,4 +1,4 @@
-// The dry-run plan (pure): which Linear projects become which Walkie projects, where every issue lands, and what looks
+// The dry-run plan (pure): which Linear projects become which Sqwakie projects, where every issue lands, and what looks
 // irrelevant (closed projects, stale backlog, near-duplicate titles). The plan is a SELECTION the person edits and
 // hands back (`walkie import linear --plan plan.json`): the run re-reads Linear and re-validates everything.
 import { z } from "zod";
@@ -30,7 +30,7 @@ export interface PlanIssue {
   include: boolean; flags: string[];
   /** The member the Linear assignee maps to (null: unassigned or unmapped). */
   assignee: string | null;
-  /** Already in Walkie (imported before, or adopted from an earlier import): the run updates it. */
+  /** Already in Sqwakie (imported before, or adopted from an earlier import): the run updates it. */
   existing?: { card: string; key: string };
 }
 export interface PlanProject {
@@ -38,7 +38,7 @@ export interface PlanProject {
   key: string; linear_id: string | null; team_id: string; team_key: string;
   name: string; state: string; url: string | null; updated_at: string | null;
   include: boolean;
-  /** An existing Walkie project it goes into (imported before, or adopted). */
+  /** An existing Sqwakie project it goes into (imported before, or adopted). */
   target: { channel: string; prefix: string; name: string } | null;
   prefix: string; folder: string;
   counts: ColumnCounts; flags: string[];

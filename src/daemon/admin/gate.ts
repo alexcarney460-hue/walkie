@@ -62,7 +62,7 @@ export function adminGate(c: GateCtx, action: string, options: { post?: boolean 
 export function admit(c: GateCtx, action: string, options: { post?: boolean } = {}): Admission {
   const privateJoinMint = c.req.method === "POST" && ["/v1/team/invite-code", "/v1/team/add-machine"].includes(new URL(c.req.url).pathname);
   if (c.req.headers.get(TALKIE_SHELL_HEADER) === "1" && !privateJoinMint) {
-    throw new HttpError(403, "talkie_shell_forbidden", "WalkieTalkie shell access cannot make admin changes; switch WalkieTalkie back to Walkie platform access");
+    throw new HttpError(403, "talkie_shell_forbidden", "Talkie shell access cannot make admin changes; switch Talkie back to Sqwakie platform access");
   }
   if (!agentCaller(c)) return NOTHING_TO_RECORD;
   // The name "orchestrator" is this machine's orchestrator's alone (its per-run token proves it): nobody else is

@@ -15,7 +15,7 @@ const PRESSURE_LABEL: Record<Level, string> = { normal: "normal", warn: "elevate
 
 /** Tooltip: memory, swap, pressure, temperature and when the values were sampled. */
 export function statsTitle(hostname: string, stats: MachineStats | undefined, online: boolean, now: number): string {
-  if (!stats) return `${hostname}: no memory or temperature reported (turned off, or an older Walkie)`;
+  if (!stats) return `${hostname}: no memory or temperature reported (turned off, or an older Sqwakie)`;
   const m = stats.mem;
   const lines = [
     m ? `Memory ${gb(m.used)} of ${gb(m.total)} GB used, ${gb(m.free ?? Math.max(0, m.total - m.used))} GB free${m.pressure ? ` · pressure ${PRESSURE_LABEL[m.pressure]}` : ""}` : "Memory n/a",

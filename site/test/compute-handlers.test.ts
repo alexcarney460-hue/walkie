@@ -17,6 +17,10 @@ import { computeKeyAllowed, type CreditCheckoutReq, type CreditStripe } from "..
 import { computeFromEnv, type HandlerDeps } from "../api/_lib/compute/handler.ts";
 import { MemoryStore } from "../api/_lib/compute/memory-store.ts";
 import { fixtureTeam, proof, codes, configJson, idem, world, type World } from "./compute-helpers.ts";
+import { RENTED_MACHINE_RELEASES } from "../api/_lib/compute/releases.ts";
+
+// The newest rentable release (a rent through the handlers must name a listed tag).
+const RELEASE = RENTED_MACHINE_RELEASES[RENTED_MACHINE_RELEASES.length - 1]!;
 
 const WH = "whsec_" + "compute_test_secret";
 const CRON = "cron-" + "test-secret-value";
@@ -108,7 +112,9 @@ describe("account + auth", () => {
     }
     expect(await computeFromEnv({ COMPUTE_PRIVATE_CONFIG: configJson() })).toBeNull(); // no DATABASE_URL
     expect(await computeFromEnv({ DATABASE_URL: "postgres://x" })).toBeNull(); // no private config
-    expect(await computeFromEnv({ COMPUTE_PRIVATE_CONFIG: configJson(), DATABASE_URL: 'postgres://x' }, new MemoryStore())).toBeNull();
+    // COMPUTE_ENABLED unset with config and store: drain (compute-drain.test.ts), never null.
+    expect((await computeFromEnv({ COMPUTE_PRIVATE_CONFIG: configJson(), DATABASE_URL: 'postgres://x',
+      COMPUTE_HANDOVER_TOKEN_KEY: 'rent-fixture-handover-key-32-bytes' }, new MemoryStore()))?.enabled).toBe(false);
     expect(await computeFromEnv({ COMPUTE_PRIVATE_CONFIG: configJson(), COMPUTE_ENABLED: '1',
       COMPUTE_HANDOVER_TOKEN_KEY: 'rent-fixture-handover-key-32-bytes' }, new MemoryStore())).not.toBeNull();
     await expect(computeFromEnv({ COMPUTE_PRIVATE_CONFIG: configJson(), COMPUTE_ENABLED: '1' },
@@ -155,11 +161,11 @@ describe("credit", () => {
     const { w, deps } = setup();
     const a = await account(deps);
     await buy(w, deps, a.account_id, 200, "cs_test_disputed");
-    const rent = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { idempotency_key: idem(), machines: [{ tier: "agent", count: 1 }], codes: codes(1), walkie_version: "v0.2.0-pre.7" } }));
+    const rent = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { idempotency_key: idem(), machines: [{ tier: "agent", count: 1 }], codes: codes(1), walkie_version: RELEASE } }));
     expect(rent.status).toBe(200);
     const dispute = { id: "evt_d", type: "charge.dispute.created", data: { object: { id: "dp_1", payment_intent: "pi_cs_test_disputed" } } };
     expect(await (await makeComputeWebhook(deps)(await signed(dispute))).json()).toMatchObject({ outcome: "frozen" });
-    const again = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { idempotency_key: idem(), machines: [{ tier: "agent", count: 1 }], codes: codes(1), walkie_version: "v0.2.0-pre.7" } }));
+    const again = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { idempotency_key: idem(), machines: [{ tier: "agent", count: 1 }], codes: codes(1), walkie_version: RELEASE } }));
     expect(again.status).toBe(403);
     expect(await again.json()).toEqual({ error: "account_frozen" });
     const tick = await makeTick(deps)(req("/api/compute/tick", { headers: { authorization: `Bearer ${CRON}` } }));
@@ -172,7 +178,7 @@ describe("rent / start / stop", () => {
     const { w, deps } = setup({ COMPUTE_ENABLED: undefined });
     const a = await account(deps);
     await buy(w, deps, a.account_id, 50);
-    const res = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { idempotency_key: idem(), machines: [{ tier: "agent", count: 1 }], codes: codes(1), walkie_version: "v0.2.0-pre.7" } }));
+    const res = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { idempotency_key: idem(), machines: [{ tier: "agent", count: 1 }], codes: codes(1), walkie_version: RELEASE } }));
     expect(res.status).toBe(503);
     expect((await makeStop(deps)(req("/api/compute/stop", { token: a.token, body: { all: true } }))).status).toBe(200);
   });
@@ -180,14 +186,14 @@ describe("rent / start / stop", () => {
   test("402 with the numbers when credit is short; 400 for a bad body; start refuses a rental not waiting", async () => {
     const { w, deps } = setup();
     const a = await account(deps);
-    const body = { idempotency_key: idem(), machines: [{ tier: "gpu-80", count: 1 }], codes: codes(1), walkie_version: "v0.2.0-pre.7" };
+    const body = { idempotency_key: idem(), machines: [{ tier: "gpu-80", count: 1 }], codes: codes(1), walkie_version: RELEASE };
     const res = await makeRent(deps)(req("/api/compute/rent", { token: a.token, body }));
     expect(res.status).toBe(402);
     expect(await res.json()).toEqual({ error: "insufficient_credit", needed_micros: 8_820_000, balance_micros: 0 });
     expect((await makeRent(deps)(req("/api/compute/rent", { token: a.token, body: { ...body, codes: [] } }))).status).toBe(400);
     await buy(w, deps, a.account_id, 50);
     const ok = (await (await makeRent(deps)(req("/api/compute/rent", { token: a.token, body }))).json()) as { rentals: { id: string }[] };
-    const st = await makeStart(deps)(req("/api/compute/start", { token: a.token, body: { rental_id: ok.rentals[0]!.id, code: codes(1)[0], walkie_version: "v0.2.0-pre.7" } }));
+    const st = await makeStart(deps)(req("/api/compute/start", { token: a.token, body: { rental_id: ok.rentals[0]!.id, code: codes(1)[0], walkie_version: RELEASE } }));
     expect(st.status).toBe(409);
   });
 

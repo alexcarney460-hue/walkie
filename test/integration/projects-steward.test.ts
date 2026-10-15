@@ -72,7 +72,7 @@ describe("the board steward", () => {
         : state;
     };
     try {
-      const reason = `waiting for bobs-mbp to upgrade (it runs Walkie 0.2.0-pre.5; this needs ${STEWARD_MIN_VERSION})`;
+      const reason = `waiting for bobs-mbp to upgrade (it runs Sqwakie 0.2.0-pre.5; this needs ${STEWARD_MIN_VERSION})`;
       const r = await run(alex, {});
       expect(r.applied).toEqual([]);
       expect(r.plan.held.find((h) => h.card === mine.id)?.reason).toBe(`${reason} (a move of a person's card)`);

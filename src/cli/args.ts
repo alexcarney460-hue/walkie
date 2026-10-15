@@ -7,6 +7,9 @@ export interface Args {
 
 export class UsageError extends Error {}
 
+/** Internal marker: the memory command already rendered this message for a model. */
+export class AgentWrappedUsageError extends UsageError {}
+
 const SHORT: Record<string, string> = { o: "output", n: "limit", h: "help", j: "json", t: "timeout" };
 
 function booleanValue(v: string): boolean | null {

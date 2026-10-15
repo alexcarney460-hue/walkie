@@ -29,9 +29,9 @@ export const PREPARE_TIMEOUT_MS = 2 * 60_000;
 export const RUN_NOW_COOLDOWN_MS = 5 * 60_000;
 /**
  * The built-in duties seeded into a team with no schedules, in the order they were added. The status reports duty runs at
- * minute 7: WalkieTalkie answers one turn at a time and a run's timeout counts from its launch, so it must not queue behind
+ * minute 7: Talkie answers one turn at a time and a run's timeout counts from its launch, so it must not queue behind
  * the duties that are due on the hour. The poll (every 5 minutes) and the curation (a 7-minute step, gaps of at least 5
- * minutes) are daemon work with no model turn: their runs end in the prepare step and never wait for WalkieTalkie's turn.
+ * minutes) are daemon work with no model turn: their runs end in the prepare step and never wait for Talkie's turn.
  */
 const DEFAULT_SCHEDULES = [
   ["Board refresh", "0 * * * *", "board-refresh"],
@@ -53,7 +53,7 @@ export const TOP_UP_RETRY_MS = 10 * 60_000;
 
 export function scheduleResetAudit(core: Core, id: string): AuditEntry {
   return { actor: `@${core.myHandle() ?? "unknown"}/${core.hostname}`,
-    action: `reset WalkieTalkie schedule ${id}`, machine: core.hostname, via: "local" };
+    action: `reset Talkie schedule ${id}`, machine: core.hostname, via: "local" };
 }
 
 type ScheduleEvent = { body: { text: string }; author?: { handle: string; node?: string; agent?: string };
@@ -320,7 +320,7 @@ export function noteAuthorityCatchingUp(core: Core, schedule: ScheduleRecord, pr
   if (saved && !canAlert) return;
   core.store.transaction(() => {
     if (canAlert) {
-      core.emit("msg.post", { text: `WalkieTalkie schedule ${schedule.name}: ${detail}` }, { channel: "general" });
+      core.emit("msg.post", { text: `Talkie schedule ${schedule.name}: ${detail}` }, { channel: "general" });
     }
     core.store.setMeta(key, JSON.stringify({ since: state.since, alerted: state.alerted || canAlert }));
   }, { durable: true });
@@ -388,7 +388,7 @@ export function noteScheduleClockError(core: Core, schedule: ScheduleRecord, tri
       }
     }
     if (core.roster.channels.has("general")) {
-      core.emit("msg.post", { text: `WalkieTalkie schedule ${schedule.name}: ${CLOCK_ERROR_RESULT}; `
+      core.emit("msg.post", { text: `Talkie schedule ${schedule.name}: ${CLOCK_ERROR_RESULT}; `
         + `${clockTripDetail(core, trip, now)}; ${clockRecovery(trip.value)}.` }, { channel: "general" });
       core.store.setMeta(key, String(trip.value));
     }
@@ -512,7 +512,7 @@ function authorityLogCovers(core: Core, id: string): boolean {
 
 /** The #general note for superseded runs: counts and run ids only, never a result (every member reads #general). */
 function supersessionText(name: string, count: number, runs: readonly NoteRun[], detailed: boolean): string {
-  const head = `WalkieTalkie schedule ${name}: ${count} unresolved completion${count === 1 ? "" : "s"} superseded by later runs`;
+  const head = `Talkie schedule ${name}: ${count} unresolved completion${count === 1 ? "" : "s"} superseded by later runs`;
   if (!runs.length) return `${head}; review their results.`;
   const ids = `${runs.map((entry) => `run ${entry.run}`).join(", ")}${count > runs.length ? `, ${count - runs.length} more` : ""}`;
   return `${head} (${ids})${detailed ? `; owners can read their results in ${SCHEDULE_CHANNEL}` : ""}.`;
@@ -520,7 +520,7 @@ function supersessionText(name: string, count: number, runs: readonly NoteRun[],
 /** The same runs with their result excerpts, for the owner-only schedule channel. */
 function supersessionDetail(name: string, count: number, runs: readonly NoteRun[]): string {
   const shown = runs.map((entry) => `run ${entry.run}${entry.result ? ` "${redactSecrets(entry.result).text}"` : ""}`).join("; ");
-  return `WalkieTalkie schedule ${name}: results of ${count} superseded unresolved completion${count === 1 ? "" : "s"}: ${shown}${count > runs.length ? ` (${count - runs.length} more not shown)` : ""}.`;
+  return `Talkie schedule ${name}: results of ${count} superseded unresolved completion${count === 1 ? "" : "s"}: ${shown}${count > runs.length ? ` (${count - runs.length} more not shown)` : ""}.`;
 }
 
 function reconcileUnresolved(core: Core): z.infer<typeof Unresolved> {
@@ -609,10 +609,10 @@ function reconcileUnresolved(core: Core): z.infer<typeof Unresolved> {
   if (remaining.length === entries.length && !notesChanged) return entries;
   try { core.store.transaction(() => {
     for (const entry of pausePosts)
-      core.emit("msg.post", { text: `WalkieTalkie schedule ${redactSecrets(entry.name).text} paused after three failures: ${entry.pause}` }, { channel: "general" });
+      core.emit("msg.post", { text: `Talkie schedule ${redactSecrets(entry.name).text} paused after three failures: ${entry.pause}` }, { channel: "general" });
     const removalCount = removed + removedPending;
     if (removalCount)
-      core.emit("msg.post", { text: `WalkieTalkie: ${removalCount} unresolved completion${removalCount === 1 ? "" : "s"} superseded by later runs or removed schedules; review their results.` }, { channel: "general" });
+      core.emit("msg.post", { text: `Talkie: ${removalCount} unresolved completion${removalCount === 1 ? "" : "s"} superseded by later runs or removed schedules; review their results.` }, { channel: "general" });
     for (const post of posts) {
       const name = redactSecrets(post.name).text;
       // The results go where only owners read them; #general gets the count and the run ids. A machine that cannot post
@@ -750,8 +750,8 @@ export class Schedules {
     if (uncoveredAuthority(this.core)) throw new HttpError(409, "authority_catching_up", "schedule authority is catching up with predecessor events");
     if (!this.core.roster.channels.has(AUDIT_CHANNEL))
       throw new HttpError(409, "audit_unavailable", "schedule management requires #general");
-    const action = request.op === "add" ? `added WalkieTalkie schedule ${request.input.name}`
-      : `${request.op === "edit" ? "edited" : request.op === "remove" ? "removed" : "reset"} WalkieTalkie schedule ${request.id}`;
+    const action = request.op === "add" ? `added Talkie schedule ${request.input.name}`
+      : `${request.op === "edit" ? "edited" : request.op === "remove" ? "removed" : "reset"} Talkie schedule ${request.id}`;
     const audit: AuditEntry = { actor: `@${request.handle}/${request.machine}${request.agent ? `/${request.agent}` : ""}`,
       machine: request.machine, via: forwardedNode ? "remote" : request.machine === this.core.hostname ? "local" : "remote",
       action: `${action} [${request.audit_id}]` };
@@ -893,7 +893,7 @@ export class Schedules {
       if (err instanceof PeerCallError && err.status === 404 && err.code === "not_found" && err.message === "no such schedule")
         throw err;
       if (err instanceof PeerCallError && err.status === 404)
-        throw new HttpError(409, "authority_outdated", authority.hostname + " runs an older Walkie; update it");
+        throw new HttpError(409, "authority_outdated", authority.hostname + " runs an older Sqwakie; update it");
       throw err;
     }
     const ingested = this.core.ingest(event, "remote", this.core.authority);
@@ -912,11 +912,11 @@ export class Schedules {
     const alertKey = `schedule_channel_unsafe:${channel?.members ? [...channel.members].sort().join(",") : "public"}`;
     if (offenders.length && this.core.roster.channels.has("general") && this.core.store.getMeta(alertKey) !== "1") {
       this.core.store.transaction(() => {
-        this.core.emit("msg.post", { text: "WalkieTalkie refused an unsafe #talkie-schedules channel and requested owner-only membership." }, { channel: "general" });
+        this.core.emit("msg.post", { text: "Talkie refused an unsafe #talkie-schedules channel and requested owner-only membership." }, { channel: "general" });
         this.core.store.setMeta(alertKey, "1");
       }, { durable: true });
     }
-    const body = { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: owners };
+    const body = { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: owners };
     if (this.core.isAuthority()) this.core.emit("channel.upsert", body);
     else if ((this.channelRequestedAt === null || Date.now() - this.channelRequestedAt >= 30_000) && this.client && this.catchUp) {
       this.channelRequestedAt = Date.now();
@@ -1107,7 +1107,7 @@ export class Schedules {
   }
 
   async runNow(id: string, now = Date.now()): Promise<string> {
-    if (!this.runner.valid()) throw new HttpError(409, "leadership_unavailable", "run now needs the current WalkieTalkie lease holder");
+    if (!this.runner.valid()) throw new HttpError(409, "leadership_unavailable", "run now needs the current Talkie lease holder");
     const schedule = this.get(id);
     if (this.launching.has(id) || this.active.has(id)) throw new HttpError(409, "overlap", "this schedule already has a run");
     if (!schedule.enabled) throw new HttpError(409, "schedule_paused", "this schedule is paused");
@@ -1176,7 +1176,7 @@ export class Schedules {
 
   private async launch(schedule: ScheduleRecord, now: number, slot: number, runNow = false): Promise<string> {
     if (this.launching.has(schedule.id) || this.active.has(schedule.id)) throw new HttpError(409, "overlap", "this schedule already has a run");
-    if (!this.runner.valid()) throw new HttpError(409, "leadership_unavailable", "WalkieTalkie lease expired");
+    if (!this.runner.valid()) throw new HttpError(409, "leadership_unavailable", "Talkie lease expired");
     this.launching.add(schedule.id);
     const generation = this.generation;
     try {
@@ -1276,7 +1276,7 @@ export class Schedules {
       await this.write({ op: "put", schedule: { ...current, run_id: run, last_run: now,
         next_run: failures >= 3 ? null : current.next_run, enabled: failures >= 3 ? false : current.enabled,
         last_result: failures >= 3 ? `${result}\nPaused after three failures.` : result, failures } });
-      if (failures >= 3) this.core.emit("msg.post", { text: `WalkieTalkie schedule ${current.name} paused after three failures: ${result.slice(0, 300)}` }, { channel: "general" });
+      if (failures >= 3) this.core.emit("msg.post", { text: `Talkie schedule ${current.name} paused after three failures: ${result.slice(0, 300)}` }, { channel: "general" });
       throw err;
     }
     } finally { this.launching.delete(schedule.id); this.preparing.delete(schedule.id); }
@@ -1371,7 +1371,7 @@ export class Schedules {
     const pending = active.completion;
     if (!pending?.paused) return;
     if (this.core.roster.channels.has("general"))
-      this.core.emit("msg.post", { text: `WalkieTalkie schedule ${name} paused after three failures: ${pending.result.slice(0, 300)}` }, { channel: "general" });
+      this.core.emit("msg.post", { text: `Talkie schedule ${name} paused after three failures: ${pending.result.slice(0, 300)}` }, { channel: "general" });
     else if (active.claim) this.recordUnresolved({ id, name }, active, pending, null);
   }
 

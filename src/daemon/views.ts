@@ -1,7 +1,7 @@
 // Local API response views (schemas.ts MeView / TeamView / NodeView / AgentView / AskView).
 import { PROTOCOL_VERSION, type AgentState, type AgentsPayload, type AgentView, type AskView, type ChannelView, type Event, type MeView, type NodeView, type PlanView, type TeamView } from "../protocol/schemas.ts";
 import { FUTURE_SKEW_MS } from "../license/plans.ts";
-import { UNKNOWN_MS, usageUntil } from "../protocol/accounts-format.ts";
+import { STALE_MS, UNKNOWN_MS, usageUntil } from "../protocol/accounts-format.ts";
 import type { MachineStats } from "../protocol/machine-stats.ts";
 import { clockFromReading, mergeClock, shiftClock, validClock } from "../accounts/clock.ts";
 import { MAX_LEASES_PER_NODE, PROVIDERS, type AccountLeaseView, type AccountUsage, type AccountView, type ResetClock as ResetClockT } from "../protocol/accounts.ts";
@@ -207,15 +207,20 @@ export function shiftUsage(u: AccountUsage, skewMs: number, now = Date.now()): A
 }
 
 /**
- * Whether reading a should replace b as an account's shown reading: the newer one, except that an "unknown" reading
- * (a machine that cannot meter the account, e.g. a vault setup-token) never hides a known one under an hour old.
+ * Whether reading a should replace b as an account's shown reading: a fresh valid reading beats re-login on another
+ * machine; an "unknown" reading never hides re-login, and does not hide other known readings under an hour old.
  */
 /** Unverified lease claims shown per machine and account (they never count for scheduling). */
 export const MAX_UNVERIFIED_PER_NODE = 4;
 
-const fresher = (a: AccountUsage | null, b: AccountUsage | null): boolean => {
+const fresher = (a: AccountUsage | null, b: AccountUsage | null, now: number): boolean => {
   if (!a) return false;
   if (!b) return true;
+  const valid = (u: AccountUsage) => (u.state === "ok" || u.state === "exhausted") && now - u.at <= STALE_MS;
+  if (a.state === "relogin" && valid(b)) return false;
+  if (b.state === "relogin" && valid(a)) return true;
+  if (a.state === "unknown" && b.state === "relogin") return false;
+  if (b.state === "unknown" && a.state === "relogin") return true;
   if (a.state === "unknown" && b.state !== "unknown" && a.at - b.at < UNKNOWN_MS) return false;
   if (b.state === "unknown" && a.state !== "unknown" && b.at - a.at < UNKNOWN_MS) return true;
   return a.at > b.at;
@@ -247,7 +252,7 @@ export function accountsView(core: Core, sync: SyncManager, now = Date.now()): A
       const clock = shiftClock(a.clock !== undefined ? validClock(a.clock) : clockFromReading(a.usage), skew, now, FUTURE_SKEW_MS);
       const machine = {
         node_id: n.node_id, hostname: n.hostname, handle: member.handle, online, self, agents: online ? [...a.agents] : [], usage,
-        ...(a.vault ? { vault: a.vault } : {}), ...(clock.length ? { clock } : {}),
+        ...(a.vault ? { vault: a.vault } : {}), ...(a.fingerprint ? { fingerprint: a.fingerprint } : {}), ...(clock.length ? { clock } : {}),
       };
       const lastSeen = Math.max(0, Math.min(now, a.last_seen - skew));
       const key = `${member.handle}:${a.id}`;
@@ -260,7 +265,7 @@ export function accountsView(core: Core, sync: SyncManager, now = Date.now()): A
         });
         continue;
       }
-      const newer = fresher(usage, prev.usage);
+      const newer = fresher(usage, prev.usage, now);
       byKey.set(key, {
         ...prev,
         plan: prev.plan ?? a.plan,
@@ -353,11 +358,12 @@ export function cutAskView(v: AskView, max: number): AskView {
   return { ...v, ask: cutEvent(v.ask, max), answers: v.answers.map((a) => cutEvent(a, max)) };
 }
 
-export function askView(core: Core, askRow: EventRow): AskView {
+export function askView(core: Core, askRow: EventRow, replyRows = core.store.replies(askRow.id),
+  receivedAt = "received_at" in askRow ? askRow.received_at as number : core.store.receivedAt(askRow.id)): AskView {
   const ask = JSON.parse(askRow.json) as Event;
-  const answers = core.store.replies(ask.id)
+  const answers = replyRows
     .map((r) => JSON.parse(r.json) as Event)
     .filter((e) => e.kind === "answer" && core.visible(e));
-  const expires_at = askExpiry(ask, core.store.receivedAt(ask.id));
+  const expires_at = askExpiry(ask, receivedAt);
   return { ask, answers, state: askState(ask, answers, Date.now(), expires_at), expires_at };
 }

@@ -5,7 +5,7 @@ import { SyncManager } from "../../src/daemon/sync.ts";
 import type { PeerClient } from "../../src/daemon/peer-client.ts";
 import { makeCore, reopen } from "../helpers/core.ts";
 import { createTeam, ev, memberEv, nodeEv, tnode } from "../helpers/events.ts";
-import { seatsChannel } from "../../src/protocol/seats.ts";
+import { seatsChannel, SEATS_CODEX_OSS_CAP } from "../../src/protocol/seats.ts";
 import { VERSION } from "../../src/daemon/version.ts";
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()?.(); });
@@ -68,5 +68,5 @@ test("vv advertises protocol capabilities with machine_stats false", async () =>
   expect(res.status).toBe(200);
   const vv = PeerVvRes.parse(await res.json());
   expect(vv.stats).toBeUndefined();
-  expect(vv.capabilities).toEqual({ version: VERSION, caps: ["seats_v2", "peer_sig_v1", "ssh_revocation_v1", "lease_launcher_v1"] });
+  expect(vv.capabilities).toEqual({ version: VERSION, caps: ["seats_v2", SEATS_CODEX_OSS_CAP, "peer_sig_v1", "ssh_revocation_v1", "lease_launcher_v1"] });
 });

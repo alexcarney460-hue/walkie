@@ -90,7 +90,7 @@ test("walkie hooks uninstall claude with no claude CLI removes the hooks and exi
 }, 60_000);
 
 // ---- walkie hooks install|uninstall grok -------------------------------------------------------------------------
-// Grok reads Walkie's shared Claude hooks from ~/.claude/settings.json, so `install grok` writes them too, with the
+// Grok reads Sqwakie's shared Claude hooks from ~/.claude/settings.json, so `install grok` writes them too, with the
 // hooks writer only: no claude CLI is needed and none is ever run.
 
 const grokFile = () => join(home, ".grok", "hooks", "walkie.json");
@@ -132,10 +132,10 @@ test("the audit line for install grok names both files it touched; for uninstall
   await walkie(["hooks", "uninstall", "grok"]);
   const lines = audited();
   expect(lines).toHaveLength(2);
-  expect(lines[0]).toContain("installed the Walkie hooks for grok");
+  expect(lines[0]).toContain("installed the Sqwakie hooks for grok");
   expect(lines[0]).toContain("~/.grok/hooks/walkie.json");
   expect(lines[0]).toContain("~/.claude/settings.json");
-  expect(lines[1]).toContain("removed the Walkie hooks for grok");
+  expect(lines[1]).toContain("removed the Sqwakie hooks for grok");
   expect(lines[1]).toContain("~/.grok/hooks/walkie.json");
   expect(lines[1]).not.toContain("settings.json");
   expect(lines.join("\n")).not.toContain(home); // never an absolute home path
@@ -191,7 +191,7 @@ test("an install that succeeds is audited once, after it ran, as done (no refusa
   expect(r.code).toBe(0);
   const entries = auditEntries();
   expect(entries).toHaveLength(1);
-  expect(entries[0]!.action).toMatch(/^installed the Walkie hooks for grok \(/);
+  expect(entries[0]!.action).toMatch(/^installed the Sqwakie hooks for grok \(/);
   expect(entries[0]).not.toHaveProperty("refused");
   expect(existsSync(grokFile())).toBe(true); // by the time the line exists, the file does
 }, 60_000);
@@ -204,7 +204,7 @@ test("an install the settings file refuses is audited as failed, with the reason
   expect(r.out).toContain("no changes made");
   const entries = auditEntries();
   expect(entries).toHaveLength(1);
-  expect(entries[0]!.action).toMatch(/^tried to install the Walkie hooks for grok \(/);
+  expect(entries[0]!.action).toMatch(/^tried to install the Sqwakie hooks for grok \(/);
   expect(entries[0]!.refused).toMatch(/^failed: .*no changes made/);
   expect(entries.some((e) => e.action.startsWith("installed"))).toBe(false);
   expect(existsSync(grokFile())).toBe(false);
@@ -219,13 +219,13 @@ test("a removal that fails is audited as failed too, and a removal that succeeds
   expect(failed.code).toBe(1);
   const afterFail = auditEntries().slice(first);
   expect(afterFail).toHaveLength(1);
-  expect(afterFail[0]!.action).toMatch(/^tried to remove the Walkie hooks for grok \(/);
+  expect(afterFail[0]!.action).toMatch(/^tried to remove the Sqwakie hooks for grok \(/);
   expect(afterFail[0]!.refused).toMatch(/^failed: /);
   writeFileSync(grokFile(), "{}");
   expect((await walkie(["hooks", "uninstall", "grok"])).code).toBe(0);
   const afterOk = auditEntries().slice(first + 1);
   expect(afterOk).toHaveLength(1);
-  expect(afterOk[0]!.action).toMatch(/^removed the Walkie hooks for grok \(/);
+  expect(afterOk[0]!.action).toMatch(/^removed the Sqwakie hooks for grok \(/);
   expect(afterOk[0]).not.toHaveProperty("refused");
 }, 90_000);
 
@@ -242,7 +242,7 @@ test("with agent admin off the agent is refused before anything is written, and 
   expect(entries).toHaveLength(2);
   for (const entry of entries) {
     expect(entry.refused).toBe("agent_admin_off");
-    expect(entry.action).toMatch(/^tried to install the Walkie hooks for (claude|grok)/);
+    expect(entry.action).toMatch(/^tried to install the Sqwakie hooks for (claude|grok)/);
   }
 }, 60_000);
 
@@ -285,7 +285,7 @@ test("walkie hooks install hermes --profiles writes the named profile's hooks an
   expect(removed.code).toBe(0);
   expect(readFileSync(hermesConfig(), "utf8")).toBe("model: x\n");
   const entries = auditEntries();
-  expect(entries.map((e) => e.action)).toEqual(["installed the Walkie hooks for hermes", "removed the Walkie hooks for hermes"]);
+  expect(entries.map((e) => e.action)).toEqual(["installed the Sqwakie hooks for hermes", "removed the Sqwakie hooks for hermes"]);
   for (const entry of entries) expect(entry).not.toHaveProperty("refused");
 }, 90_000);
 
@@ -296,7 +296,7 @@ test("an install for a Hermes profile that has no config is audited as failed, w
   expect(existsSync(join(home, ".hermes"))).toBe(false);
   const entries = auditEntries();
   expect(entries).toHaveLength(1);
-  expect(entries[0]!.action).toBe("tried to install the Walkie hooks for hermes");
+  expect(entries[0]!.action).toBe("tried to install the Sqwakie hooks for hermes");
   expect(entries[0]!.refused).toMatch(/^failed: .*does not exist/);
 }, 30_000);
 
@@ -314,7 +314,7 @@ test("a Hermes dry run writes nothing and is not audited; with agent admin off a
   expect(readFileSync(hermesConfig(), "utf8")).toBe("model: x\n");
   const entries = auditEntries();
   expect(entries).toHaveLength(1);
-  expect(entries[0]!.action).toBe("tried to install the Walkie hooks for hermes");
+  expect(entries[0]!.action).toBe("tried to install the Sqwakie hooks for hermes");
   expect(entries[0]!.refused).toBe("agent_admin_off");
 }, 60_000);
 
@@ -336,7 +336,7 @@ test("--activity writes the list to config.json beside the hooks, keeps every ot
   expect(statSync(walkieConfig()).mode & 0o777).toBe(0o600);
   expect(r.out).toContain("Activity text is shown for: research, writer. Every other Hermes profile shows its state only.");
   expect(readFileSync(hermesConfig(), "utf8")).toContain("walkie-hermes:on_session_start"); // the hooks went in too
-  expect(auditEntries().map((e) => e.action)).toEqual(["installed the Walkie hooks for hermes, with activity text shown for 2 profiles"]);
+  expect(auditEntries().map((e) => e.action)).toEqual(["installed the Sqwakie hooks for hermes, with activity text shown for 2 profiles"]);
   expect(auditEntries()[0]).not.toHaveProperty("refused");
 }, 60_000);
 
@@ -356,12 +356,12 @@ test("the list is replaced, not added to; --activity \"\" clears it; no flag lea
   expect((await installHermes("--activity=")).code).toBe(0); // the --flag= form clears it too
   expect(activityList()).toEqual([]);
   expect(auditEntries().map((e) => e.action)).toEqual([
-    "installed the Walkie hooks for hermes, with activity text shown for 2 profiles",
-    "installed the Walkie hooks for hermes, with activity text shown for 1 profile",
-    "installed the Walkie hooks for hermes", // no --activity: the line says nothing about activity
-    "installed the Walkie hooks for hermes, with activity text hidden for every profile",
-    "installed the Walkie hooks for hermes, with activity text shown for 1 profile",
-    "installed the Walkie hooks for hermes, with activity text hidden for every profile",
+    "installed the Sqwakie hooks for hermes, with activity text shown for 2 profiles",
+    "installed the Sqwakie hooks for hermes, with activity text shown for 1 profile",
+    "installed the Sqwakie hooks for hermes", // no --activity: the line says nothing about activity
+    "installed the Sqwakie hooks for hermes, with activity text hidden for every profile",
+    "installed the Sqwakie hooks for hermes, with activity text shown for 1 profile",
+    "installed the Sqwakie hooks for hermes, with activity text hidden for every profile",
   ]);
 }, 120_000);
 
@@ -415,7 +415,7 @@ test("with agent admin off the list is refused with the hooks, before anything i
   expect(readFileSync(hermesConfig(), "utf8")).toBe("model: x\n");
   const entries = auditEntries();
   expect(entries).toHaveLength(1);
-  expect(entries[0]!.action).toBe("tried to install the Walkie hooks for hermes, with activity text shown for 1 profile");
+  expect(entries[0]!.action).toBe("tried to install the Sqwakie hooks for hermes, with activity text shown for 1 profile");
   expect(entries[0]!.refused).toBe("agent_admin_off");
 }, 60_000);
 
@@ -427,7 +427,7 @@ test("when the hooks cannot be installed the list is not written, and the failur
   expect(activityList()).toEqual(["old"]);
   const entries = auditEntries();
   expect(entries).toHaveLength(1);
-  expect(entries[0]!.action).toBe("tried to install the Walkie hooks for hermes, with activity text shown for 1 profile");
+  expect(entries[0]!.action).toBe("tried to install the Sqwakie hooks for hermes, with activity text shown for 1 profile");
   expect(entries[0]!.refused).toMatch(/^failed: .*does not exist/);
 }, 60_000);
 

@@ -10,7 +10,7 @@
 //                                      unsandboxed `codex exec` child, Codex 0.156.1).
 //      CODEX_SANDBOX, CODEX_SANDBOX_NETWORK_DISABLED
 //                                      Codex: its sandboxed commands (names in the 0.156.1 binary).
-//      WALKIE_AGENT                    Walkie's own agent identity (the MCP server's name, seats, scripts that say so).
+//      WALKIE_AGENT                    Sqwakie's own agent identity (the MCP server's name, seats, scripts that say so).
 //      GEMINI_CLI, CURSOR_AGENT, OPENCODE
 //                                      best-effort, not verified here (documented by those tools for their shells).
 //    Not markers: CODEX_HOME, OPENCODE_CONFIG, AIDER_*, KIMI_* and the like are configuration a person exports in

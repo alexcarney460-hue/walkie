@@ -122,7 +122,7 @@ export async function prepareOrchestrationPoll(d: PollDeps, canAct: () => boolea
   const { machines, facts } = fleetNow(d, projects, now);
   const waiting: WaitingWork[] = [];
   for (const p of projects) {
-    if (!canAct() || signal?.aborted) throw new Error("WalkieTalkie lease expired");
+    if (!canAct() || signal?.aborted) throw new Error("Talkie lease expired");
     await yieldLoop();
     waiting.push(...waitingIn(d, p, facts));
   }
@@ -133,7 +133,7 @@ export async function prepareOrchestrationPoll(d: PollDeps, canAct: () => boolea
     const channel = card ? channelOf.get(card) : undefined;
     return channel ? [{ rec, channel }] : [];
   });
-  if (!canAct()) throw new Error("WalkieTalkie lease expired");
+  if (!canAct()) throw new Error("Talkie lease expired");
   const done = reconcile(d, { source: "poll", scope: new Set(projects.map((p) => p.channel)), desired, canAct });
   const held = plan.machines.length ? ` Not taking work: ${plan.machines.slice(0, 3).map((m) => `${m.hostname} (${m.why})`).join("; ")}${plan.machines.length > 3 ? `; and ${plan.machines.length - 3} more` : ""}.` : "";
   const parts = [

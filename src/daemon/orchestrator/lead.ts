@@ -14,7 +14,7 @@ export interface LeadInput {
   nodes: readonly LeadNode[];
   /** Handles of the team's owners. */
   owners: ReadonlySet<string>;
-  /** Whether a machine may lead (self: its own login and switches; peers: their WalkieTalkie status). */
+  /** Whether a machine may lead (self: its own login and switches; peers: their Talkie status). */
   eligible: (nodeId: string) => boolean;
   now: number;
   offlineMs?: number;

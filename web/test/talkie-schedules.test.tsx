@@ -7,7 +7,7 @@ const schedule: Schedule = { id: "11111111-1111-4111-8111-111111111111", name: "
   task: { template: "board-refresh" }, enabled: true, created_by: "alex", last_run: null,
   next_run: Date.UTC(2026, 8, 28, 12), last_result: "Two cards moved", failures: 0, run_id: null };
 
-describe("WalkieTalkie schedule list", () => {
+describe("Talkie schedule list", () => {
   test("shows status, result, and controls", () => {
     const html = renderToStaticMarkup(<ScheduleItems schedules={[schedule]} onToggle={() => {}} onRun={() => {}} />);
     expect(html).toContain("Board refresh");

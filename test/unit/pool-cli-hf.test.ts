@@ -80,7 +80,7 @@ describe("the text", () => {
   });
 
   test("a list that could not be read says why, in the header, and the output still works", () => {
-    const note = `Couldn't reach Hugging Face (no network), so this is the list built into Walkie (updated ${CATALOG.updated}).`;
+    const note = `Couldn't reach Hugging Face (no network), so this is the list built into Sqwakie (updated ${CATALOG.updated}).`;
     const { t, cs, info } = report(CATALOG, view(CATALOG, { source: "built-in", state: "built-in", checkedAt: null, note }));
     const out = renderPool(t, false, cs, info);
     expect(out).toContain(`Built-in list (v${CATALOG.version}, updated ${CATALOG.updated})`);
@@ -95,12 +95,12 @@ describe("the text", () => {
     expect(out).toContain(note);
   });
 
-  test("a pick Walkie cannot start (not in its pinned list) says so once, in the footer; `Start it now` only offers pinned models", () => {
+  test("a pick Sqwakie cannot start (not in its pinned list) says so once, in the footer; `Start it now` only offers pinned models", () => {
     // A model the shipped pinned list has never heard of, the best of its list (so this does not depend on what ships).
     const novel = catalogOf([mk("zz-novel-30b", { params_b: 30, released: "2026-09-30", quality: rated(2, { GPQA: 95 }) }), ...live.models.slice(0, 6)]);
     const { t, cs, info } = report(novel);
     const out = renderPool(t, false, cs, info);
-    const note = "walkie pool run starts only the models in Walkie's pinned list";
+    const note = "walkie pool run starts only the models in Sqwakie's pinned list";
     expect(out).toContain("zz-novel-30b");
     expect(out.split(note)).toHaveLength(2); // once
     for (const m of out.matchAll(/walkie pool run (\S+) --quant/g)) expect(CATALOG.models.some((x) => x.id === m[1])).toBe(true);
@@ -109,7 +109,7 @@ describe("the text", () => {
   test("when every pick is in the pinned list there is no such footer", () => {
     const pinned = catalogOf(CATALOG.models);
     const { t, cs, info } = report(pinned);
-    expect(renderPool(t, false, cs, info)).not.toContain("walkie pool run starts only the models in Walkie's pinned list");
+    expect(renderPool(t, false, cs, info)).not.toContain("walkie pool run starts only the models in Sqwakie's pinned list");
   });
 
   test("without a list given (the old call) the output is the built-in list's, as before", () => {

@@ -7,9 +7,9 @@ import { fullTime } from "../lib/time.ts";
 
 type Load = { state: "loading" } | { state: "ready"; res: AddMachine } | { state: "error"; message: string; direct: boolean };
 
-/** What an owner sees when this team can't mint codes (a Tailscale team whose authority doesn't run Walkie Direct). */
+/** What an owner sees when this team can't mint codes (a Tailscale team whose authority doesn't run Sqwakie Direct). */
 const DIRECT_UNAVAILABLE =
-  "This team's roster authority doesn't run Walkie Direct, so there is no one-time link to send. On a Tailscale team, "
+  "This team's roster authority doesn't run Sqwakie Direct, so there is no one-time link to send. On a Tailscale team, "
   + "the person's new machine joins by itself: sign it in to Tailscale with their login, then run walkie setup --join <a teammate's machine>. "
   + "To send links instead, run walkie direct enable on the roster authority.";
 
@@ -76,7 +76,7 @@ export function AddMachineResult({ res }: { res: AddMachine }) {
   return (
     <div className="am-result" role="status">
       <p className="am-lead">
-        Send <span className="mono">@{res.handle}</span> this link. It opens a page with the one command that installs Walkie on
+        Send <span className="mono">@{res.handle}</span> this link. It opens a page with the one command that installs Sqwakie on
         their new machine and joins it to the team as one of their machines.
       </p>
       <div className="am-facts">
@@ -91,7 +91,7 @@ export function AddMachineResult({ res }: { res: AddMachine }) {
       <div className="am-block">
         <h3 className="drawer-h">Or the command, on the new machine (macOS or Linux)</h3>
         <CopyCommand command={res.command} />
-        <p className="field-hint">Walkie already installed there: <span className="mono">walkie join &lt;code&gt;</span> with the code at the end of the command.</p>
+        <p className="field-hint">Sqwakie already installed there: <span className="mono">walkie join &lt;code&gt;</span> with the code at the end of the command.</p>
       </div>
       {res.team_agents && (
         <p className="field-hint">

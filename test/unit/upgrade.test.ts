@@ -12,7 +12,7 @@ function plan(over: Partial<PlanView>): PlanView {
   return {
     plan: "team", status: "trial", entitlements: { people: 50, machines: null, restricted_channels: true, integrations: null, audit_export: false, join_approval: false },
     seats: { used: 3, limit: 50 }, machines: { used: 3, limit: null }, license: null, trial: { ends_at: 0, days_left: 9 },
-    upgrade_url: "https://getwalkie.vercel.app/api/checkout?plan=team&interval=month&seats=3", manage_url: MANAGE_URL, ...over,
+    upgrade_url: "https://sqwakie.si/api/checkout?plan=team&interval=month&seats=3", manage_url: MANAGE_URL, ...over,
   };
 }
 
@@ -54,7 +54,7 @@ describe("walkie upgrade fails closed", () => {
     expect(JSON.parse(active.lines[0] as string)).toMatchObject({ url: MANAGE_URL, portal: true });
     const trial = ctx(["--json"], async () => plan({}));
     expect(await upgrade(trial)).toBe(EXIT.ok);
-    expect(JSON.parse(trial.lines[0] as string).url).toBe("https://getwalkie.vercel.app/api/checkout?plan=team&interval=month&seats=3");
+    expect(JSON.parse(trial.lines[0] as string).url).toBe("https://sqwakie.si/api/checkout?plan=team&interval=month&seats=3");
     const grace = ctx(["--json"], async () => plan({ status: "grace", license: { lic_id: "sub_9", plan: "team", seats: 5, email: "a@b.c", interval: "month", issued_at: 0, expires_at: 0, grace_ends_at: 0 } }));
     expect(await upgrade(grace)).toBe(EXIT.ok);
     expect(JSON.parse(grace.lines[0] as string).url).toContain("lic_id=sub_9");

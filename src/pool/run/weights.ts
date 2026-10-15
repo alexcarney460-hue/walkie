@@ -1,6 +1,6 @@
 // Local weights for split-run stages (POOL-REAL-1). A stage's share of a model normally crosses the network: the
 // head sends every weight tensor into the worker's rpc-server. Between atlas-wsl and hestia-wsl (both behind WSL's
-// NAT) that ran at ~0.2 MB/s over Walkie, hours for a few GB. llama.cpp's RPC protocol has a way around it: before
+// NAT) that ran at ~0.2 MB/s over Sqwakie, hours for a few GB. llama.cpp's RPC protocol has a way around it: before
 // sending a weight tensor over 10 MiB the head asks SET_TENSOR_HASH with the tensor's FNV-1a 64 hash, and an
 // rpc-server started with `-c` loads it from `$LLAMA_CACHE/rpc/<hash>` instead (ggml-rpc.cpp:717-735, 1483-1530 at
 // b11205). So a machine that has the model's pinned GGUF (sha256-checked) can "prepare" it: every tensor over the

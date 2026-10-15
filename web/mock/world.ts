@@ -21,7 +21,7 @@ export interface MockNode {
   online: boolean; rtt_ms: number; last_seen: number; behind: number; last_sync: number;
   /** Memory + temperature the machine last published (absent = never reported). */
   stats?: MachineStats;
-  /** WALKIE-POOL-2: split-run sharing (absent = an older Walkie). */
+  /** WALKIE-POOL-2: split-run sharing (absent = an older Sqwakie). */
   pool?: PoolShare;
 }
 export interface MockAgent { handle: string; node: string; hostname: string; agent: string; status: StatusBody; updated_at: number }
@@ -29,7 +29,7 @@ export interface MockChannel { name: string; topic?: string; members?: string[];
 export interface PendingJoin { node_id: string; login: string; handle: string; hostname: string; ip: string; requested_at: number }
 
 export const TEAM_ID = "7c1e4a90b25fd318";
-export const VERSION = "0.1.0-mock";
+export const VERSION = process.env.WALKIE_MOCK_CAPTURE === "1" ? "0.2.0-pre.15" : "0.1.0-mock";
 
 /** Deterministic 16-hex node id from a hostname (the real one hashes the node pubkey). */
 export function nodeIdFor(hostname: string): string {
@@ -58,7 +58,7 @@ export class World {
   accounts: AccountView[] = [];
   /** Plan state behind /v1/me, /v1/team and /v1/license (mock/plan.ts). */
   planState: MockPlanState = seedPlan("trial");
-  /** WALKIE_MOCK_TRANSPORT: how this team connects (Walkie Direct: no tailnet IPs, invite codes). */
+  /** WALKIE_MOCK_TRANSPORT: how this team connects (Sqwakie Direct: no tailnet IPs, invite codes). */
   transport: "tailscale" | "direct" = "tailscale";
   private readonly seqs = new Map<string, number>();
   private readonly since = new AgentSince();

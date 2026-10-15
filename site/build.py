@@ -45,6 +45,7 @@ def load_brand() -> dict[str, str]:
     # A HEAD response only proves bytes exist. WALK-50 must supply a verified signing and
     # notarization receipt before this action can be enabled in a generated production page.
     package_available = False
+    package_href = f"https://github.com/{owner}/{cli}-releases/releases/download/v{installer_version()}/{name}.pkg" if package_available else ""
     return {
         "name": name,
         "cli": cli,
@@ -52,11 +53,13 @@ def load_brand() -> dict[str, str]:
         "version": installer_version(),
         "release_version": "v" + installer_version(),
         "package_available": "true" if package_available else "false",
+        "package_href": f'href="{package_href}"' if package_available else "",
         "package_hidden": "" if package_available else "hidden",
         "fallback_open": "" if package_available else "open",
         # "0.2.0-pre.3 (pre-release)" for a semver prerelease, else the bare version: footer and install note.
         "release": installer_version() + (" (pre-release)" if "-" in installer_version() else ""),
         "repo": repo,
+        "site_url": site_url,
         "github_owner": owner,
         # The public source repository (FSL-1.1-ALv2): nav and footer links.
         "source_url": f"https://github.com/{repo}",

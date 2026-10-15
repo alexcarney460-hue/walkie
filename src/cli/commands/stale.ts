@@ -5,6 +5,7 @@ import { int, str, UsageError } from "../args.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { c, safeTerm } from "../format.ts";
 import { DEFAULT_AGENT_MINUTES, DEFAULT_CARD_HOURS, staleReport, type StaleReport } from "../stale.ts";
+import { displayStoredText } from "../../protocol/display-text.ts";
 
 /** Newest cards first, at most this many per query (the daemon's own cap). */
 const TASK_LIMIT = 500;
@@ -40,7 +41,7 @@ function printReport(ctx: Ctx, r: StaleReport): void {
   if (r.cards.length) ctx.out(c.bold(`cards with no update for ${r.thresholds.card_hours} h+`));
   for (const x of r.cards) ctx.out(`  ${safeTerm(x.key)} ${c.dim(`[${x.role}] ${x.idle_hours} h`)} ${safeTerm(x.title)}${x.assignee ? c.dim(` · ${safeTerm(x.assignee)}`) : ""}`);
   if (r.agents.length) ctx.out(c.bold(`agents silent for ${r.thresholds.agent_minutes} min+`));
-  for (const a of r.agents) ctx.out(`  ${safeTerm(a.id)} ${c.dim(`[${a.state}] ${a.silent_minutes} min`)} ${safeTerm(a.title)}${a.task ? c.dim(` · ${safeTerm(a.task)}`) : ""}`);
+  for (const a of r.agents) ctx.out(`  ${safeTerm(a.id)} ${c.dim(`[${a.state}] ${a.silent_minutes} min`)} ${safeTerm(displayStoredText(a.title))}${a.task ? c.dim(` · ${safeTerm(a.task)}`) : ""}`);
   if (r.machines.length) ctx.out(c.bold("machines"));
   for (const m of r.machines) ctx.out(`  ${safeTerm(m.hostname)} ${c.dim(m.reason === "idle_while_cards_wait" ? `idle, ${r.todo_waiting} cards to do`
     : m.reason === "load_without_agents" ? "high load, no agent process seen" : `memory ${m.pressure}, no agent working`)}`);

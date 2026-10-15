@@ -42,7 +42,7 @@ export interface PeerLinkDeps {
   /** WALKIE_PEER_HOST / config peer_host / an explicit host: bind there, never follow Tailscale's address. */
   fixedHost?: string;
   port: number;
-  /** A dual node's Walkie Direct side is up: sync keeps running over it while the tailnet listener is down. */
+  /** A dual node's Sqwakie Direct side is up: sync keeps running over it while the tailnet listener is down. */
   directUp?: () => boolean;
 }
 

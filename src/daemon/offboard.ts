@@ -36,7 +36,7 @@ const APPLY_ORDER = ["suspend", "remove", "ssh_grant", "reassign_cards"] as cons
 export interface OffboardStep { step: string; status: "done" | "skipped"; detail: string }
 
 const WILL_NOT = {
-  synced_data: "Synced data stays on their machines. Walkie cannot recall it.",
+  synced_data: "Synced data stays on their machines. Sqwakie cannot recall it.",
   memory_and_threads: "No memory or thread policy is applied.",
   files: "Files they added stay in the Data Room.",
   vault: "Vault shares are not changed.",
@@ -276,7 +276,7 @@ export function offboardPlan(c: RouteCtx, handle: string): Record<string, unknow
       ...(blocked ? [`Apply will be refused: @${handle} owns the roster authority (${authorityHost}). No step below will happen. Move the roster authority first with \`walkie team authority <other-owner-machine>\`, then run this again.`] : []),
       "Removal revokes every node of their login. A later re-invite does not restore those machines; each one has to join again.",
       "Removal drops them from every restricted channel they are in, including archived ones. This plan names only the restricted channels this caller can see, and counts the rest.",
-      "Synced data stays on their machines. Walkie cannot recall it.",
+      "Synced data stays on their machines. Sqwakie cannot recall it.",
       "Seats on their own machines stop when that machine applies the change: becoming an observer, or having its node revoked, ends every seat there. A seat that is already running on someone else's machine is not stopped. A seat paused there is stopped if that machine tries to resume it after the launcher was removed, made an observer, or had their machine revoked. A seat only queued there is not started.",
       "Guest tokens issued on their own machines stop authenticating once that machine applies the removal, because that machine's guest gate requires its own current member and the tokens it issues name that person. This command does not delete those tokens. Guest tokens on other machines are not touched.",
       "Cards in private projects the caller cannot see are neither listed nor reassigned. A private project's channel is kept to the team's owners, so an owner running this command sees those projects.",
@@ -344,9 +344,11 @@ async function catchUpAuthorityRoster(c: RouteCtx): Promise<boolean> {
 
 /**
  * Apply one role on the authority. Never leaves a roster request queued: a miss is an error and nothing is stored.
- * Never signs observer for a login the roster now shows removed (`removed` / `same` write nothing).
+ * Never signs observer for a login the roster now shows removed (`removed` / `same` write nothing). `stale`: the
+ * authority refused observer because that person was removed, or had their role changed, after this command read
+ * the roster (WALK-109).
  */
-async function writeRole(c: RouteCtx, who: MemberRec, role: "observer" | "removed"): Promise<"wrote" | "removed" | "same"> {
+async function writeRole(c: RouteCtx, who: MemberRec, role: "observer" | "removed"): Promise<"wrote" | "removed" | "same" | "stale"> {
   const current = memberByHandle(c.core.roster, who.handle);
   if (role === "observer" && current?.role === "removed") return "removed";
   if (current?.role === role) return "same";
@@ -357,7 +359,13 @@ async function writeRole(c: RouteCtx, who: MemberRec, role: "observer" | "remove
   }
   // Same early check send() uses. A missing transport writes nothing, not even a signed request.
   if (authoritySendBlock(c.core, c.client)) throw notReached(who.handle);
-  const res = await submitRequest(c.core, c.client, c.sync.requestCatchUp, "team.member", body, { queue: false });
+  let res: Awaited<ReturnType<typeof submitRequest>>;
+  try {
+    res = await submitRequest(c.core, c.client, c.sync.requestCatchUp, "team.member", body, { queue: false });
+  } catch (err) {
+    if (role === "observer" && err instanceof HttpError && err.code === "stale_request") return "stale";
+    throw err;
+  }
   if ("queued" in res) {
     c.core.store.dequeueRequest(res.request_id);
     throw notConfirmed(who.handle);
@@ -478,9 +486,9 @@ function removedSteps(): OffboardStep[] {
  * optional card reassignment. Stops at the first failure. A roster write is never left queued. A follower
  * catches up the authority before deciding. This machine's queued role requests for that login are dropped
  * in one store transaction before the first write, after waiting for a flush that is already in progress.
- * Offboard decides from the roster that catch-up just read. A removal that arrives after that read can still
- * be followed by the observer write (WALK-109); this command then removes the person again. A second call
- * skips what is already done. If the catch-up did not read the authority, this answers 409 and signs nothing,
+ * Offboard decides from the roster that catch-up just read. A removal or another role change that arrives after that
+ * read makes the authority refuse the observer write as stale (WALK-109); this command then removes the person. A second
+ * call skips what is already done. If the catch-up did not read the authority, this answers 409 and signs nothing,
  * including when the local roster already shows them removed.
  */
 export async function applyOffboard(c: RouteCtx, handle: string, reassignTo: string | undefined): Promise<{ handle: string; role: string; steps: OffboardStep[] }> {
@@ -530,7 +538,9 @@ export async function applyOffboard(c: RouteCtx, handle: string, reassignTo: str
       } else {
         steps.push(suspend === "wrote"
           ? { step: "suspend", status: "done", detail: "role is observer" }
-          : { step: "suspend", status: "skipped", detail: "already an observer" });
+          : suspend === "stale"
+            ? { step: "suspend", status: "skipped", detail: "the roster authority changed their membership after this command read the roster, so they were not set to observer" }
+            : { step: "suspend", status: "skipped", detail: "already an observer" });
         const after = memberByHandle(c.core.roster, who.handle);
         if (after?.role === "removed") {
           steps.push({ step: "remove", status: "skipped", detail: "already removed" });

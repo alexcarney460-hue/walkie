@@ -1,7 +1,7 @@
 // PROJECT-PAGES-1 in the daemon: facts and screens written through the service and the real routes (a person, a named agent,
-// an unnamed one, an observer, someone who cannot see the project), what the page answers (the counts Walkie makes itself,
+// an unnamed one, an observer, someone who cannot see the project), what the page answers (the counts Sqwakie makes itself,
 // the story the report post carries, the facts, the screens in groups), and the access rules (a project of the team's
-// owners, cards labelled confidential, a report that is not WalkieTalkie's own).
+// owners, cards labelled confidential, a report that is not Talkie's own).
 import { afterEach, describe, expect, test } from "bun:test";
 import { dispatch, type RouteCtx } from "../../src/daemon/local-routes.ts";
 import { createLogger } from "../../src/daemon/logger.ts";
@@ -360,7 +360,7 @@ describe("the page", () => {
     expect(p).toMatchObject({ mode: "off", story: null, facts: { computed: null, set: [{ label: "Live build" }] }, screens: { total: 1 } });
   });
 
-  test("it counts what Walkie knows itself: done in the last 24 hours and 7 days, in progress, in review, blocked or waiting, agents working, and the last change", async () => {
+  test("it counts what Sqwakie knows itself: done in the last 24 hours and 7 days, in progress, in review, blocked or waiting, agents working, and the last change", async () => {
     const { t, web, page } = await owner();
     const t0 = t.wall();
     createCard(t.w, web.channel, { title: "Old", column: "done" }); // 10 days before the page is read: in neither window
@@ -452,7 +452,7 @@ describe("the story", () => {
 
   test("it is read through the cleaning again, whoever signed it: a link goes, a join code drops the item or the page, a card key goes, a secret is redacted", async () => {
     const { t, web, page } = await owner();
-    // A second owner's WalkieTalkie, as a daemon that did not clean would post (this daemon's own emit refuses a join code from an agent).
+    // A second owner's Talkie, as a daemon that did not clean would post (this daemon's own emit refuses a join code from an agent).
     const modified = t.teammate("kira", "owner");
     const post = (status_page: unknown) => { t.tick(H); modified.post(web.channel, { text: "**Status report · Website relaunch · as of x**\n\nBody.", status_report: { v: 1, as_of: t.wall() }, status_page }, t.wall(), "orchestrator"); };
     post({ ...story, headline: "Visit https://evil.example now: the portal is on track (WEB-12)", live_now: ["Key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA is set.", `Invite wk1${"Q".repeat(60)} sent.`, "Fine."] });
@@ -469,7 +469,7 @@ describe("the story", () => {
     expect(page().story?.headline).toContain("Visit now");
   });
 
-  test("a post by someone who is not an owner is not a report, even under WalkieTalkie's name", async () => {
+  test("a post by someone who is not an owner is not a report, even under Talkie's name", async () => {
     const { t, web, page } = await owner();
     t.teammate("kira").post(web.channel, { text: "**Status report · x**\n\nForged.", status_report: { v: 1, as_of: t.wall() }, status_page: { ...story, headline: "FORGED: everything is fine here" } }, undefined, "orchestrator");
     expect(page().story).toBeNull();
@@ -581,7 +581,7 @@ describe("the routes", () => {
     expect(await gone.json()).toMatchObject({ facts: [] });
   });
 
-  test("a named agent writes; an unnamed one is refused; WalkieTalkie's reserved name is refused; a join code in an agent's text is refused", async () => {
+  test("a named agent writes; an unnamed one is refused; Talkie's reserved name is refused; a join code in an agent's text is refused", async () => {
     const { t, web } = await owner();
     const call = caller(t);
     expect((await call("POST", `/v1/projects/${web.channel}/page/facts`, { agent: "cc-1", body: { label: "Next release", value: "Friday" } })).status).toBe(200);

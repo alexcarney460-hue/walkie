@@ -1,5 +1,5 @@
 // WALK-67 lane 8, round 2: `walkie ssh enable` no longer opens Remote Login. On macOS (and Linux and WSL) it installs, or
-// repairs, Walkie's own SSH service for a machine that already has an owner SSH authorization: the person types yes, one
+// repairs, Sqwakie's own SSH service for a machine that already has an owner SSH authorization: the person types yes, one
 // sudo runs `provision root-marker install <home> ssh-macos|ssh-linux`, and the result is judged only by the daemon's
 // status. Stubbed seams only: no sudo, no daemon, no service.
 import { describe, expect, test } from "bun:test";
@@ -13,7 +13,7 @@ import { fakeDaemon } from "../helpers/fake-daemon.ts";
 import { SERVICES, systemctlSays } from "../helpers/systemctl-show.ts";
 
 const ready: SshStatus = { owner_key_present: true, tunnel_allowed: true, reason: null, server: { enabled: true, detail: "up" } };
-const down: SshStatus = { ...ready, server: { enabled: false, detail: "Walkie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } };
+const down: SshStatus = { ...ready, server: { enabled: false, detail: "Sqwakie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } };
 
 function setup(over: { platform?: NodeJS.Platform; status?: SshStatus; after?: SshStatus; confirm?: () => Promise<void>; batch?: Parameters<typeof batchOf>[0]; walkieUnit?: boolean; hints?: Pick<SshStepDeps, "walkieUnit" | "walkieActive"> } = {}) {
   const lines: string[] = []; const order: string[] = []; const needs: RootBatchNeed[] = [];
@@ -37,12 +37,12 @@ function batchOf(over: { markerPresent?: boolean; result?: Partial<Awaited<Retur
 }
 
 describe("walkie ssh enable", () => {
-  test("macOS: asks the person once, runs the ONE sudo for Walkie's service, then judges only by the daemon's status", async () => {
+  test("macOS: asks the person once, runs the ONE sudo for Sqwakie's service, then judges only by the daemon's status", async () => {
     const s = setup();
     expect(await sshEnableCommand([], s.deps)).toBe(0);
     expect(s.order).toEqual(["status", "confirm", "sudo"]);
     expect(s.needs).toEqual([{ marker: false, sshLinux: false, sshMacos: true }]);
-    expect(s.text()).toContain("one administrator step (sudo asks for your password once): Walkie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)");
+    expect(s.text()).toContain("one administrator step (sudo asks for your password once): Sqwakie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)");
     expect(s.text()).toContain("owner SSH is ready");
   });
   test("Linux and WSL: the same command installs the loopback sshd service instead", async () => {
@@ -50,7 +50,7 @@ describe("walkie ssh enable", () => {
     expect(await sshEnableCommand([], s.deps)).toBe(0);
     expect(s.needs).toEqual([{ marker: false, sshLinux: true, sshMacos: false }]);
   });
-  test("it never opens, mentions or asks for Remote Login except to say Walkie does not use it", async () => {
+  test("it never opens, mentions or asks for Remote Login except to say Sqwakie does not use it", async () => {
     const s = setup();
     await sshEnableCommand([], s.deps);
     expect(Object.keys(s.deps.step).sort()).toEqual(["now", "platform", "pollMs", "read", "sleep", "timeoutMs"]);
@@ -65,25 +65,25 @@ describe("walkie ssh enable", () => {
     expect(s.text()).toContain("already answers");
     expect(s.text()).toContain("owner SSH is ready");
   });
-  test("Linux and WSL: an SSH server that is not Walkie's answering on 22 is not used and not called ready: said plainly, nothing asked, nothing run (final review A)", async () => {
+  test("Linux and WSL: an SSH server that is not Sqwakie's answering on 22 is not used and not called ready: said plainly, nothing asked, nothing run (final review A)", async () => {
     for (const unit of [false, undefined] as const) {
       const s = setup({ platform: "linux", status: ready, ...(unit === undefined ? {} : { walkieUnit: unit }) });
       expect(await sshEnableCommand([], s.deps)).toBe(1);
       expect(s.order).toEqual(["status"]);
-      expect(s.text()).toContain("This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off.");
+      expect(s.text()).toContain("This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off.");
       expect(s.text()).not.toContain("already answers");
       expect(s.text()).not.toContain("owner SSH is ready");
     }
   });
-  test("Linux and WSL: Walkie's own service answering (its unit installed) is reported as before", async () => {
+  test("Linux and WSL: Sqwakie's own service answering (its unit installed) is reported as before", async () => {
     const s = setup({ platform: "linux", status: ready, walkieUnit: true });
     expect(await sshEnableCommand([], s.deps)).toBe(0);
     expect(s.text()).toContain("already answers");
     expect(s.text()).toContain("owner SSH is ready");
   });
-  test("Linux and WSL: Walkie's own running service, as systemd tells the unprivileged person, is reported as before; any other systemd answer for the same server stays off (final review C, F1)", async () => {
-    // The unit FILE sat behind a root-only /etc/systemd/system, so a healthy Walkie machine was told "owner SSH stays off".
-    for (const [name, text, ok] of [["Walkie's own, running", SERVICES.walkies, true], ["Walkie's own, stopped", SERVICES.stopped, false],
+  test("Linux and WSL: Sqwakie's own running service, as systemd tells the unprivileged person, is reported as before; any other systemd answer for the same server stays off (final review C, F1)", async () => {
+    // The unit FILE sat behind a root-only /etc/systemd/system, so a healthy Sqwakie machine was told "owner SSH stays off".
+    for (const [name, text, ok] of [["Sqwakie's own, running", SERVICES.walkies, true], ["Sqwakie's own, stopped", SERVICES.stopped, false],
       ["another unit of that name", SERVICES.foreign, false], ["no such unit", SERVICES.missing, false]] as const) {
       const s = setup({ platform: "linux", status: ready, hints: walkieUnitHints("linux", systemctlSays(text)) });
       expect([name, await sshEnableCommand([], s.deps)]).toEqual([name, ok ? 0 : 1]);
@@ -98,7 +98,7 @@ describe("walkie ssh enable", () => {
     expect(s.text()).toContain("--owner-ssh");
   });
   test("a person who does not confirm (or an agent) gets nothing installed", async () => {
-    const s = setup({ confirm: async () => { throw new Error("only a person can install Walkie's SSH service on this machine, at a terminal"); } });
+    const s = setup({ confirm: async () => { throw new Error("only a person can install Sqwakie's SSH service on this machine, at a terminal"); } });
     await expect(sshEnableCommand([], s.deps)).rejects.toThrow("only a person");
     expect(s.order).toEqual(["status"]);
     expect(s.needs).toEqual([]);

@@ -33,9 +33,9 @@ export interface Placement {
   /** Which memory it runs from there: "GPU memory", "unified memory", "system memory (CPU)". */
   memory: string;
   /**
-   * The speed of this part is the machine's GPU speed (a hardware estimate), but Walkie's own runtime is counted as CPU
+   * The speed of this part is the machine's GPU speed (a hardware estimate), but Sqwakie's own runtime is counted as CPU
    * only there (a DGX Spark, an NVIDIA card on Linux arm64, a machine that did not report its platform): the same speed
-   * needs a GPU build of llama.cpp that Walkie does not install. Absent: the part's speed is what Walkie's runtime gets.
+   * needs a GPU build of llama.cpp that Sqwakie does not install. Absent: the part's speed is what Sqwakie's runtime gets.
    */
   gpuSpeedOnly?: true;
 }
@@ -73,7 +73,7 @@ export interface GroupSuggestion {
   alternatives: Pick[];
   /**
    * A bigger model if the machines were otherwise idle (only the OS and a few GB of apps; see capacity.ts), when
-   * that changes the answer. Not "if the agents stopped": Walkie doesn't attribute memory to agents.
+   * that changes the answer. Not "if the agents stopped": Sqwakie doesn't attribute memory to agents.
    */
   ifIdle: Pick | null;
 }
@@ -137,7 +137,7 @@ export type Field = "usable" | "usableIdle";
 /** One machine and one way it could run a model. */
 export interface Slot { m: MachineCapacity; b: Backend }
 
-/** One machine's part of a pick, flagged when its speed is a GPU's that Walkie's own runtime does not use there. */
+/** One machine's part of a pick, flagged when its speed is a GPU's that Sqwakie's own runtime does not use there. */
 export function placementOf(s: Slot, bytes: number): Placement {
   return {
     node_id: s.m.node_id, hostname: s.m.hostname, handle: s.m.handle, bytes, memory: s.b.memory,

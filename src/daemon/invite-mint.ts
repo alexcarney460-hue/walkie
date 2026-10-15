@@ -1,4 +1,4 @@
-// Minting a Walkie Direct code on this (owner) node: `walkie invite`, `walkie team add-machine`, and a rented
+// Minting a Sqwakie Direct code on this (owner) node: `walkie invite`, `walkie team add-machine`, and a rented
 // machine's 1-hour code (RENT-2, src/daemon/compute/). Shared so the local routes and the compute poller mint the same
 // way. The code is a bearer credential: only its chain id is ever logged.
 import type { Role } from "../protocol/schemas.ts";
@@ -18,7 +18,7 @@ export async function mintInviteCode(
   const authority = authorityId ? core.roster.nodes.get(authorityId) : undefined;
   if (!authority || !servesDirect(authority)) {
     const where = core.isAuthority() ? "run: walkie direct enable" : `on ${authority?.hostname ?? "the authority"} run: walkie direct enable`;
-    throw new HttpError(409, "direct_unavailable", `the team's roster authority doesn't run Walkie Direct yet, so an invite code couldn't reach it (${where}); Tailscale teammates: walkie invite <tailscale-login> --handle <name>`);
+    throw new HttpError(409, "direct_unavailable", `the team's roster authority doesn't run Sqwakie Direct yet, so an invite code couldn't reach it (${where}); Tailscale teammates: walkie invite <tailscale-login> --handle <name>`);
   }
   // A current member's invite adds a machine: their role stays what it is.
   const holder = memberByHandle(core.roster, handle);

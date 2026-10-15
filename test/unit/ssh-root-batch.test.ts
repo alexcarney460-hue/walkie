@@ -30,17 +30,17 @@ describe("what the one batch has to do", () => {
     expect(planRootBatch({ markerPresent: false, carriesSsh: false, platform: "linux", serverAnswers: false })).toEqual(need(true, false, false));
     expect(planRootBatch({ markerPresent: true, carriesSsh: true, platform: "linux", serverAnswers: false })).toEqual(need(false, true, false));
   });
-  test("macOS gets Walkie's own SSH service from the same batch (never Remote Login), by the same rule", () => {
+  test("macOS gets Sqwakie's own SSH service from the same batch (never Remote Login), by the same rule", () => {
     expect(planRootBatch({ markerPresent: false, carriesSsh: true, platform: "darwin", serverAnswers: false })).toEqual(need(true, false, true));
     expect(planRootBatch({ markerPresent: true, carriesSsh: true, platform: "darwin", serverAnswers: false })).toEqual(need(false, false, true));
     expect(planRootBatch({ markerPresent: false, carriesSsh: true, platform: "darwin", serverAnswers: true })).toEqual(need(true, false, false));
     expect(planRootBatch({ markerPresent: false, carriesSsh: false, platform: "darwin", serverAnswers: false })).toEqual(need(true, false, false));
   });
   test("what the person is told before the prompt names each thing the one sudo will do", () => {
-    expect(describeRootBatch(need(true, true, false))).toBe("the root-owned company-machine marker, then Walkie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)");
+    expect(describeRootBatch(need(true, true, false))).toBe("the root-owned company-machine marker, then Sqwakie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)");
     expect(describeRootBatch(need(true, false, false))).toBe("the root-owned company-machine marker");
-    expect(describeRootBatch(need(false, true, false))).toBe("Walkie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)");
-    expect(describeRootBatch(need(true, false, true))).toBe("the root-owned company-machine marker, then Walkie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)");
+    expect(describeRootBatch(need(false, true, false))).toBe("Sqwakie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)");
+    expect(describeRootBatch(need(true, false, true))).toBe("the root-owned company-machine marker, then Sqwakie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)");
   });
 });
 
@@ -111,7 +111,7 @@ describe("the administrator step both company flows share", () => {
     const s = step({ platform: "darwin" });
     expect(await s.result).toEqual({ ok: true });
     expect(s.ran).toEqual([need(true, false, true)]);
-    expect(s.said).toEqual(["one administrator step (sudo asks for your password once): the root-owned company-machine marker, then Walkie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)"]);
+    expect(s.said).toEqual(["one administrator step (sudo asks for your password once): the root-owned company-machine marker, then Sqwakie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)"]);
   });
   test("nothing to do is silent and runs no sudo, and the server is only asked about when the link carries a packet", async () => {
     const s = step({ markerPresent: true, answers: true });
@@ -158,7 +158,7 @@ describe("the root helper the sudo runs", () => {
     expect(await rootMarkerHelper(["root-marker", "install", HOME, "ssh-linux"], base({ order }))).toBe(0);
     expect(order).toEqual(["marker", "ssh-linux:1000"]);
   });
-  test("on macOS the same one process installs the marker and then Walkie's own SSH service, for the person who ran sudo", async () => {
+  test("on macOS the same one process installs the marker and then Sqwakie's own SSH service, for the person who ran sudo", async () => {
     const order: string[] = [];
     expect(await rootMarkerHelper(["root-marker", "install", HOME, "ssh-macos"], base({ order, sudoUid: 501, ownerOf: () => 501 }))).toBe(0);
     expect(order).toEqual(["marker", "ssh-macos:501"]);

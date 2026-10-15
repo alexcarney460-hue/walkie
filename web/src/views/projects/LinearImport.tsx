@@ -1,5 +1,5 @@
 // "Switch from Linear" (LINEAR-IMPORT-1): connect (the Linear integration's key, or a key file), a dry-run plan the
-// person edits (projects and issues ticked, relevance flags), the import with live progress, then keeping Walkie in
+// person edits (projects and issues ticked, relevance flags), the import with live progress, then keeping Sqwakie in
 // sync while the team switches. Every write here is a person's (the dashboard session); the daemon does the work.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
@@ -238,7 +238,7 @@ export function LinearImport({ onClose }: { onClose: () => void }) {
         <div className="dialog-body li-body">
           {step === "connect" && (
             <>
-              <p className="muted">Every Linear project becomes a Walkie project with its issues as cards: columns, labels, assignees, estimates, due dates, parents, and each issue's history and comments. Nothing is written until you review the plan.</p>
+              <p className="muted">Every Linear project becomes a Sqwakie project with its issues as cards: columns, labels, assignees, estimates, due dates, parents, and each issue's history and comments. Nothing is written until you review the plan.</p>
               {status?.integration ? (
                 <p className="li-ok"><Check size={14} strokeWidth={2} /> Using the Linear integration's key.</p>
               ) : (
@@ -320,9 +320,9 @@ export function LinearImport({ onClose }: { onClose: () => void }) {
                   {job.projects.length > 12 && <li className="muted">… and {job.projects.length - 12} more</li>}
                 </ul>
               )}
-              <p className="muted">While your team switches, keep Walkie current: new Linear issues become cards, and moves and renames in Linear reach the cards. When both sides changed, the latest change wins and the card gets a note.</p>
+              <p className="muted">While your team switches, keep Sqwakie current: new Linear issues become cards, and moves and renames in Linear reach the cards. When both sides changed, the latest change wins and the card gets a note.</p>
               <label className="check"><input type="checkbox" checked={schedule} onChange={(e) => void saveSchedule(e.target.checked, twoWay)} /><span>Sync every 10 minutes {status?.integration ? "(with the Linear integration's key)" : "(needs the key file above, or the Linear integration)"}</span></label>
-              <label className="check"><input type="checkbox" checked={twoWay} onChange={(e) => { setTwoWay(e.target.checked); if (schedule) void saveSchedule(true, e.target.checked); }} /><span>Two-way: moving an imported card in Walkie sets the Linear issue's state (only the state; titles and the rest stay one-way)</span></label>
+              <label className="check"><input type="checkbox" checked={twoWay} onChange={(e) => { setTwoWay(e.target.checked); if (schedule) void saveSchedule(true, e.target.checked); }} /><span>Two-way: moving an imported card in Sqwakie sets the Linear issue's state (only the state; titles and the rest stay one-way)</span></label>
               {sync && <p className="li-ok"><Check size={14} strokeWidth={2} /> Synced: {sync.read} issues read, {sync.created} new cards, {sync.updated} updated, {sync.conflicts} conflict{sync.conflicts === 1 ? "" : "s"} noted{sync.two_way ? `, ${sync.to_linear} Linear state${sync.to_linear === 1 ? "" : "s"} set` : ""}.</p>}
               {status?.sync.last_error && !sync && <p className="field-error">Last sync: {status.sync.last_error}</p>}
             </>

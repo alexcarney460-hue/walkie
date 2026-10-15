@@ -1,8 +1,9 @@
 // ACCOUNTS-2 round 2 (Codex + Opus re-audits): a test per finding.
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateFixtureDir } from "../helpers/private-fixture-dir.ts";
 import { checkTrusted, recordTrusted, sameObjects, trustProblem, type TrustOptions } from "../../src/switch/trusted.ts";
 import { markApplies } from "../../src/accounts/leases.ts";
 import { select, selectOwnFirst, type Candidate } from "../../src/accounts/select.ts";
@@ -22,7 +23,7 @@ function tree(): string {
 const NATIVE = Buffer.concat([Buffer.from("cffaedfe", "hex"), Buffer.alloc(64)]);
 function file(root: string, rel: string, body: string | Buffer = NATIVE, mode = 0o755): string {
   const p = join(root, rel);
-  mkdirSync(join(p, ".."), { recursive: true });
+  privateFixtureDir(root, join(p, ".."));
   writeFileSync(p, body, { mode });
   chmodSync(p, mode);
   return p;
@@ -32,10 +33,10 @@ const base = (root: string, extra: Partial<TrustOptions> = {}): TrustOptions => 
 describe("Homebrew by exact prefix only (Codex 2, Opus 5)", () => {
   test("a repository carrying Library/Homebrew is still a repository; an exact prefix is not", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const fake = file(root, "brewlike/tools/claude");
-    mkdirSync(join(root, "brewlike/.git"));
-    mkdirSync(join(root, "brewlike/Library/Homebrew"), { recursive: true });
+    privateFixtureDir(root, join(root, "brewlike/.git"));
+    privateFixtureDir(root, join(root, "brewlike/Library/Homebrew"));
     expect(trustProblem(fake, base(root))).toMatch(/git work tree/);
     expect(trustProblem(fake, base(root, { brewPrefixes: [join(root, "brewlike")] }))).toBeNull();
   });
@@ -44,12 +45,12 @@ describe("Homebrew by exact prefix only (Codex 2, Opus 5)", () => {
 describe("symlink hops, ancestors, and executing what was validated (Codex 3, Opus 7)", () => {
   test("a writable ancestor of an intermediate hop is refused even when the chain ends somewhere protected", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const real = file(root, "protected/bin/claude");
-    mkdirSync(join(root, "shared"));
+    privateFixtureDir(root, join(root, "shared"));
     chmodSync(join(root, "shared"), 0o777);
     symlinkSync(join(root, "protected"), join(root, "shared/route"));
-    mkdirSync(join(root, "home/bin"), { recursive: true });
+    privateFixtureDir(root, join(root, "home/bin"));
     symlinkSync(join(root, "shared/route/bin/claude"), join(root, "home/bin/claude"));
     expect(trustProblem(join(root, "home/bin/claude"), base(root))).toMatch(/shared is writable by others/);
     expect(trustProblem(real, base(root))).toBeNull();
@@ -57,9 +58,9 @@ describe("symlink hops, ancestors, and executing what was validated (Codex 3, Op
 
   test("sameObjects notices a replaced file (inode) and a rewritten one (size / mtime)", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const walkie = join(root, "w");
-    mkdirSync(walkie);
+    privateFixtureDir(root, walkie);
     const cli = file(root, "home/bin/claude");
     recordTrusted(walkie, "claude", cli, base(root));
     const t = checkTrusted(walkie, "claude", cli, base(root));
@@ -77,7 +78,7 @@ describe("symlink hops, ancestors, and executing what was validated (Codex 3, Op
 describe("ACLs on the trust chain (Opus 6)", () => {
   test("an ACL entry letting anyone else write is refused; the person's own entry is fine", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const cli = file(root, "home/bin/claude");
     const acl = (p: string) => (p === join(root, "home") ? ["group:everyone allow add_file,delete_child", "user:alex allow write"] : []);
     expect(trustProblem(cli, base(root, { acl, user: "alex" }))).toMatch(/ACL entry letting group:everyone write/);
@@ -86,7 +87,7 @@ describe("ACLs on the trust chain (Opus 6)", () => {
 
   test.if(process.platform === "darwin")("macOS: a real ACL set with chmod +a is found", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const cli = file(root, "home/bin/claude");
     const r = Bun.spawnSync(["/bin/chmod", "+a", "group:everyone allow add_file", join(root, "home")]);
     expect(r.exitCode).toBe(0);

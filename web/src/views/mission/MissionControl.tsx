@@ -10,6 +10,7 @@ import { STATE_LABEL, STATE_RANK, askBody, canAnswer, displayName, hueFor, machi
 import { getRoute, hrefFor, navigate } from "../../lib/route.ts";
 import { ago, useCoarseNow, useNow } from "../../lib/time.ts";
 import { useStore } from "../../state/store.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { archiveCountText, hiddenByNode, isArchived, shownByDefault } from "../../../../src/protocol/agent-roster.ts";
 import { ActivityFeed } from "./ActivityFeed.tsx";
 import { accountForAgent, AccountsRow } from "../../components/Accounts.tsx";
@@ -18,7 +19,7 @@ import { AgentGroupView, groupAgents } from "./Subagents.tsx";
 import { ArchiveView } from "./Archive.tsx";
 import { WalkieTalkieCard } from "../orchestrator/TalkieState.tsx";
 import { rentalForNode, useCompute, type ComputeSnapshot } from "../../api/compute.ts";
-import { AddComputeButton, AddComputeSheet } from "../compute/AddComputeSheet.tsx";
+import { AddComputeButton, AddComputeSheet, ComputeOnAuthority, CreditButton, authorityHost, computeAction } from "../compute/AddComputeSheet.tsx";
 import { RentedChip } from "../compute/RentedChip.tsx";
 import { projectCounts } from "../../lib/project-counts.ts";
 import { useProjects } from "../../state/projects.ts";
@@ -65,7 +66,8 @@ export function useRosterSplit(): { shown: AgentView[]; cloud: AgentView[]; hidd
 }
 
 function ProjectCountStrip({ shown }: { shown: readonly AgentView[] }) {
-  const { projects } = useProjects();
+  const { projects, status } = useProjects();
+  if (status !== "ready") return null;
   return (
     <ErrorBoundary scope="item" name="project counts" resetKeys={[shown, projects]}>
       <ProjectCounts shown={shown} projects={projects} />
@@ -174,7 +176,7 @@ function AttentionList({ agents, onOpen }: { agents: AgentView[]; onOpen: (id: s
                     <span className="mono">{a.agent}</span>
                     <span className="muted"> · {displayName(team?.members, a.handle).split(" ")[0]} · {a.hostname}</span>
                   </span>
-                  <span className="attention-title truncate">{a.status.title}</span>
+                  <span className="attention-title truncate">{a.status.title ? displayStoredText(a.status.title) : a.status.title}</span>
                   <span className="attention-time tnum muted">{ago(a.updated_at, now)}</span>
                 </button>
                 <span className="attention-cta-slot">
@@ -258,7 +260,7 @@ function UnreportedGuest({ guest, killed, refresh }: { guest: GuestListing; kill
       <span className="agent-foot"><span className="agent-activity mono">{guest.lastReportAt ? `Last report ${ago(guest.lastReportAt, now)} ago` : "No report received"} · current state unverified</span></span>
       <button type="button" className="btn btn-sm" disabled={guest.revoked || killed} onClick={() => {
         void api.revokeGuest(guest.agent).then(refresh).catch(() => setError(true));
-      }}>{guest.revoked ? "Access revoked" : killed ? "Guest access off" : "Revoke Walkie access"}</button>
+      }}>{guest.revoked ? "Access revoked" : killed ? "Guest access off" : "Revoke Sqwakie access"}</button>
       {error && <span role="alert">Could not revoke access.</span>}
     </div>
   );
@@ -285,7 +287,11 @@ export function MissionControl() {
   return (
     <div className="mission">
       <div className="mission-main">
-        <PageHeader title="Mission Control" actions={me?.role === "owner" && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined} />
+        <PageHeader title="Mission Control" actions={me?.role === "owner" && computeAction(compute) === "rent"
+          ? compute.authorityRequired
+            ? <ComputeOnAuthority host={authorityHost(nodes, team?.authority)} />
+            : <AddComputeButton onOpen={() => setRenting(true)} />
+          : me?.role === "owner" && computeAction(compute) === "credit" ? <CreditButton onOpen={() => setRenting(true)} /> : undefined} />
         <LocalLagBanner lag={localLag} now={now} />
         <UnreachedNotice />
         {tab === "live" && <ProjectCountStrip shown={counted} />}
@@ -440,7 +446,7 @@ function MissionExtras() {
   const now = useNow();
   return (
     <div className="mission-extras">
-      <ErrorBoundary scope="item" name="WalkieTalkie card"><WalkieTalkieCard /></ErrorBoundary>
+      <ErrorBoundary scope="item" name="Talkie card"><WalkieTalkieCard /></ErrorBoundary>
       <ErrorBoundary scope="item" name="accounts" resetKeys={[accounts]}><AccountsRow accounts={accounts} now={now} /></ErrorBoundary>
       <ErrorBoundary scope="item" name="local models" resetKeys={[nodes]}><LocalModelsCard nodes={nodes} /></ErrorBoundary>
     </div>

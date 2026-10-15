@@ -40,7 +40,7 @@ function PairPanel({ pair, onDone }: { pair: PairView; onDone: () => void }) {
       <QrCode rows={pair.qr} />
       <ol className="phone-steps">
         <li>Scan it with your phone's camera and open the link.</li>
-        <li>iPhone: tap Share, then Add to Home Screen, open Walkie there and paste the code.</li>
+        <li>iPhone: tap Share, then Add to Home Screen, open Sqwakie there and paste the code.</li>
       </ol>
       <div className="phone-code">
         <code className="mono">{pair.code}</code>

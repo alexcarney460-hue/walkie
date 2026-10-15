@@ -322,7 +322,7 @@ describe("ORCH-2 models", () => {
     const env = { PATH: process.env.PATH ?? "", NO_COLOR: "1", WALKIE_HOME: alex.home, WALKIE_SOCKET: alex.socket };
     const cli = join(import.meta.dir, "../../src/cli/main.ts");
     const who = await runAsPerson([process.execPath, cli, "who", "--all"], env);
-    expect(who.out).toMatch(/WalkieTalkie\s+idle\s+.*· claude-sonnet-4-6/);
+    expect(who.out).toMatch(/(?:^|\n)\s*Talkie\s+idle\s+.*· claude-sonnet-4-6/);
     const st = await runAsPerson([process.execPath, cli, "orchestrator", "status", "--json"], env);
     expect((JSON.parse(st.out) as OrchestratorView).local.model_setting).toBe("claude-sonnet-4-6");
     const sw = await runAsPerson([process.execPath, cli, "orchestrator", "model", "opus"], env);

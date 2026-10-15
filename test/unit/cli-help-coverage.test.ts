@@ -11,6 +11,11 @@ describe("walkie help coverage", () => {
   }
 });
 
+test("the help header names Sqwakie and preserves the walkie command", () => {
+  expect(USAGE.split("\n", 1)[0]).toMatch(/^Sqwakie /);
+  expect(USAGE).toContain("usage: walkie <command> [args] [--json]");
+});
+
 test("seats allow help explains person and exact agent entries", () => {
   expect(USAGE).toContain("person entries cover their agents");
   expect(USAGE).toContain("exact agents");

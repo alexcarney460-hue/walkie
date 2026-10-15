@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { walkieArgv } from "../../hooks/install.ts";
 import { HEARTBEAT_MS, OS_USER_RUNNER_PARENT } from "./supervisor.ts";
 import { killMarkedProcesses } from "./marked-processes.ts";
+import { noteOwnedChild, reapAdoptedZombies } from "../adopted-zombies.ts";
 import { existsSync, statSync, realpathSync, writeFileSync, renameSync, rmSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -26,7 +27,7 @@ export interface ArgsSpec {
   permissionMode: PermissionMode;
   /** The installed claude knows `--permission-prompts` (then prompts are denied instead of waiting on stdin). */
   permissionPrompts: boolean;
-  /** Permission rules allowed without a prompt (ORCH-2: the Walkie tools), sent as one comma-separated value. */
+  /** Permission rules allowed without a prompt (ORCH-2: the Sqwakie tools), sent as one comma-separated value. */
   allowedTools: readonly string[];
   /** An MCP config (JSON) loaded for this session: the walkie server, so its tools exist whatever the hooks say. */
   mcpConfig?: string;
@@ -51,7 +52,7 @@ export function walkieMcpConfig(argv: readonly string[], home: string, socket: s
 
 /**
  * The flags only a tool-less turn's argv carries (claudeArgs `tools: "none"`). A claude that rejects one of them cannot run
- * such a turn; the host then fails that turn alone (host.ts onToollessRejected) instead of giving up on WalkieTalkie.
+ * such a turn; the host then fails that turn alone (host.ts onToollessRejected) instead of giving up on Talkie.
  */
 export const TOOLLESS_FLAGS: readonly string[] = ["--tools", "--strict-mcp-config"];
 
@@ -110,7 +111,7 @@ export function dropFromChild(name: string): boolean {
   return name === "CLAUDECODE" || name.startsWith("CLAUDE_CODE_") || name.startsWith("ANTHROPIC_");
 }
 
-/** The child's environment: ours minus dropFromChild, the given PATH (claude's dir first), and the Walkie variables. */
+/** The child's environment: ours minus dropFromChild, the given PATH (claude's dir first), and the Sqwakie variables. */
 export function childEnv(base: NodeJS.ProcessEnv, bin: string, path: string | undefined, walkie: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined && !dropFromChild(k)) env[k] = v;
@@ -269,6 +270,8 @@ export class ClaudeChild<S = ClaudeSignal> {
           USER: os.name, LOGNAME: os.name, CLAUDE_CONFIG_DIR: join(os.home, ".claude"), TMPDIR: "/tmp" } })}\n`);
         sink.flush();
       }
+      // Bun waits for this pid. An adopted grandchild is not this pid; the subreaper reaps only those zombies.
+      noteOwnedChild(this.proc.pid, this.proc.exited);
     } catch (err) {
       if (file) rmSync(file, { force: true });
       throw err;
@@ -313,6 +316,7 @@ export class ClaudeChild<S = ClaudeSignal> {
     if (this.runMarker) {
       killMarkedProcesses(this.proc.pid, this.runMarker);
       this.signalGroup("SIGKILL");
+      reapAdoptedZombies();
       return;
     }
     if (!this.signalGroup("SIGTERM")) return;
@@ -321,14 +325,16 @@ export class ClaudeChild<S = ClaudeSignal> {
     await this.groupGone(REAP_KILL_WAIT_MS); // SIGKILL can't be ignored; this only waits for the exits to land
   }
 
-  /** Polls until no process of the group is left (true) or `ms` pass (false). */
+  /** Polls until no process of the group is left (true) or `ms` pass (false). A Linux zombie still answers signal 0. */
   private async groupGone(ms: number): Promise<boolean> {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
-      await Bun.sleep(REAP_POLL_MS);
+      reapAdoptedZombies();
       if (!this.signalGroup(0)) return true;
+      await Bun.sleep(REAP_POLL_MS);
     }
-    return false;
+    reapAdoptedZombies();
+    return !this.signalGroup(0);
   }
 
   get pid(): number { return this.proc.pid; }

@@ -222,3 +222,82 @@ test("a round's result for the authority counts only under the transfer count it
     expect(sent).toEqual([spend.id]);
   } finally { s.stop(); }
 });
+
+// The transfer count is part of what `moved` compares. A round
+// for the authority that is still running when the authority goes to another machine and comes back holds the spend even
+// though the authority is the same machine again when the flush resumes.
+test("an authority handed away and back while a sync round is awaited holds the spend (the transfer count moved)", async () => {
+  const bea = tnode("bea"), alex = tnode("alex"), kira = tnode("kira");
+  const authority = makeCore(bea, "0000000000000000", cleanups);
+  authority.store.deleteMeta("team");
+  authority.createTeam("acme", "bea", { login: bea.login });
+  const team = authority.teamId as string;
+  authority.emit("team.member", { login: alex.login, handle: alex.handle, role: "owner" });
+  authority.emit("team.node", { node_id: alex.keys.nodeId, login: alex.login, hostname: alex.hostname, pubkey: alex.keys.pubkey, ip: "127.0.0.1", port: 7458 });
+  authority.emit("team.member", { login: kira.login, handle: kira.handle, role: "owner" });
+  authority.emit("team.node", { node_id: kira.keys.nodeId, login: kira.login, hostname: kira.hostname, pubkey: kira.keys.pubkey, ip: "127.0.0.1", port: 7458 });
+  const daemon = makeCore(alex, team, cleanups);
+  feed(daemon, authority);
+  const n0 = daemon.roster.nodes.get(alex.keys.nodeId)!;
+  const spend = signRequest(daemon, "team.node", { node_id: n0.node_id, login: n0.login, hostname: n0.hostname, pubkey: n0.pubkey,
+    ip: n0.ip, port: n0.port, ...transportFields(n0), invite: "a1".repeat(16) });
+  daemon.store.queueRequest(spend.id, JSON.stringify(spend));
+  const sent: string[] = [];
+  const client = {
+    addrOf: (n: { node_id: string }) => ({ ip: "127.0.0.1", port: 7458, node: n.node_id }),
+    rosterRequest: async (_a: PeerAddr, req: RosterRequest) => { sent.push(req.id); const ev = applyRequest(authority, req); return { event: ev ? { id: ev.id, seq: ev.seq } : null }; },
+  } as unknown as PeerClient;
+  const s = new SyncManager(daemon, client, {});
+  const origins = (s as unknown as { authorityOrigin: Map<string, { term: number; promise: Promise<{ contacted: boolean; level: boolean }> }> }).authorityOrigin;
+  let settle!: (v: { contacted: boolean; level: boolean }) => void;
+  const pending = new Promise<{ contacted: boolean; level: boolean }>((r) => { settle = r; });
+  try {
+    const before = daemon.authorityLeaseTerm;
+    origins.set(bea.keys.nodeId, { term: before, promise: pending });
+    const flush = s.flushRequests();
+    // While the round is awaited: bea hands the authority to kira, and kira hands it back.
+    authority.emit("team.authority", { node_id: kira.keys.nodeId });
+    const heir = makeCore(kira, team, cleanups);
+    feed(heir, authority);
+    heir.emit("team.authority", { node_id: bea.keys.nodeId });
+    feed(authority, heir);
+    feed(daemon, authority);
+    expect(daemon.authority).toBe(bea.keys.nodeId);
+    expect(daemon.authorityLeaseTerm).toBe(before + 2);
+    settle({ contacted: true, level: true }); // the old round reports caught up with bea
+    await flush;
+    expect(sent).toEqual([]);
+    expect(daemon.store.queuedRequests().map((q) => q.id)).toContain(spend.id);
+  } finally { s.stop(); }
+});
+
+// The cached transfer count is keyed by the chain's length and
+// its last entry's id, and an event id is made from (origin, seq). A rolled-back transaction frees the seq, so the next
+// roster entry can have the same id at the same length: the cache must not outlive the rollback.
+test("the transfer count is recounted after a rolled-back transaction, even when the next entry has the same length and id", () => {
+  const bea = tnode("bea"), kira = tnode("kira"), noor = tnode("noor");
+  const authority = makeCore(bea, "0000000000000000", cleanups);
+  authority.store.deleteMeta("team");
+  authority.createTeam("acme", "bea", { login: bea.login });
+  authority.emit("team.member", { login: kira.login, handle: kira.handle, role: "owner" });
+  authority.emit("team.node", { node_id: kira.keys.nodeId, login: kira.login, hostname: kira.hostname, pubkey: kira.keys.pubkey, ip: "127.0.0.1", port: 7458 });
+  const recount = (): number => authority.rosterEntries().filter((e) => e.kind === "team.authority").length;
+  const length = authority.chainLength;
+  let inside = -1;
+  let lengthInside = -1;
+  try {
+    authority.store.transaction(() => {
+      authority.emit("team.authority", { node_id: kira.keys.nodeId });
+      inside = authority.authorityLeaseTerm; // cached for (length + 1, the transfer's id)
+      lengthInside = authority.chainLength;
+      throw new Error("rolled back on purpose");
+    });
+  } catch (err) { if (!(err instanceof Error) || err.message !== "rolled back on purpose") throw err; }
+  // The term is not read here: the cache still holds the rolled-back state.
+  authority.emit("team.member", { login: noor.login, handle: noor.handle, role: "member" });
+  expect(inside).toBe(1);
+  expect(lengthInside).toBe(length + 1);
+  expect(authority.chainLength).toBe(length + 1);
+  expect(authority.authorityLeaseTerm).toBe(recount());
+  expect(authority.authorityLeaseTerm).toBe(0);
+});

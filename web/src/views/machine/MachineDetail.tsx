@@ -1,5 +1,5 @@
 // The machine page (#/machines/<node-id>): everything the team knows about one machine, live over the stream. The
-// header (owner, platform, Walkie version, how it is reached, roster authority), live stats, its agents (working and
+// header (owner, platform, Sqwakie version, how it is reached, roster authority), live stats, its agents (working and
 // needing a person first; idle and archived agents in a collapsed section), the accounts its agents use, the largest
 // local model it could run on its own, and open asks to or from it. Only data the daemon already shares: agent
 // titles follow the team's share settings because they come from the same /v1/agents roster as Mission Control.
@@ -18,6 +18,7 @@ import { agoLong, useNow } from "../../lib/time.ts";
 import { useStore } from "../../state/store.tsx";
 import { bestLabel, rankingNote } from "../../../../src/pool/format.ts";
 import { suggestTeam } from "../../../../src/pool/suggest.ts";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { AgentCard } from "../mission/AgentCard.tsx";
 import { MachineGauges } from "./MachineGauges.tsx";
 import { useMachineArchive } from "./machine-archive.ts";
@@ -30,7 +31,7 @@ export function transportText(n: NodeView): string {
   if (n.self) return "This machine";
   const rtt = n.rtt_ms !== null ? ` · ${n.rtt_ms} ms` : "";
   if (n.via === "relay") return "Relayed through a teammate's machine";
-  if (n.via === "direct" || (!n.via && n.transports?.includes("direct") && !n.transports.includes("tailscale"))) return `Walkie Direct${rtt}`;
+  if (n.via === "direct" || (!n.via && n.transports?.includes("direct") && !n.transports.includes("tailscale"))) return `Sqwakie Direct${rtt}`;
   return `Tailscale${n.ip ? ` · ${n.ip}` : ""}${rtt}`;
 }
 
@@ -93,7 +94,7 @@ function Header({ node, seats }: { node: NodeView; seats: SeatsView | null }) {
           <dd>{[sys ? `${OS_LABEL[sys.os]} · ${sys.arch}` : null, node.stats?.accel?.chip ?? null].filter(Boolean).join(" · ") || "not reported"}</dd>
         </div>
         <div>
-          <dt>Walkie</dt>
+          <dt>Sqwakie</dt>
           <dd className="mono">{version ?? "not reported"}{behind && <span className="mh-behind"> · your machine: {me?.version}</span>}</dd>
         </div>
         <div>
@@ -228,7 +229,7 @@ function AsksSection({ list }: { list: AskView[] }) {
                 <span className="mono">{b.to}</span>
                 <span className="muted"> · <RelTime ts={v.ask.ts} /></span>
               </p>
-              <p className="mdx-ask-text">{b.text}</p>
+              <p className="mdx-ask-text">{displayStoredText(b.text)}</p>
               {canAnswer(v, me?.handle ?? null, agents, now) && me?.role !== "observer" && <AskAnswer view={v} />}
             </li>
           );

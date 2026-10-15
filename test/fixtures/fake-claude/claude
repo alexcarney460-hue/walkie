@@ -80,7 +80,11 @@ const DEMO_REPLY = [
 
 const out = (o: Record<string, unknown>) => process.stdout.write(JSON.stringify({ ...o, session_id: session }) + "\n");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-let interrupted = false;
+// One per user message read, oldest first, until its turn ends. An interrupt stops the oldest: the turn in progress, or
+// the one about to start (a slow start reads the user message and the stop in one chunk; the flag used to be cleared
+// when the turn began, which lost that interrupt and let the full count run: the pre.17 gate, 2026-10-09).
+type Turn = { interrupted: boolean };
+const unfinished: Turn[] = [];
 let busy: Promise<void> = Promise.resolve();
 
 function assistant(content: unknown[]) {
@@ -90,8 +94,7 @@ function delta(text: string) {
   out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }, parent_tool_use_id: null });
 }
 
-async function turn(text: string): Promise<void> {
-  interrupted = false;
+async function turn(text: string, me: Turn): Promise<void> {
   turns.push(text);
   writeFileSync(file, JSON.stringify(turns));
   log({ turn: text, session, n: turns.length });
@@ -147,8 +150,8 @@ async function turn(text: string): Promise<void> {
   let reply: string;
   if (text.includes("slow")) {
     let acc = "";
-    for (let i = 1; i <= 300 && !interrupted; i++) { const d = `${i} `; acc += d; delta(d); await sleep(30); }
-    if (interrupted) {
+    for (let i = 1; i <= 300 && !me.interrupted; i++) { const d = `${i} `; acc += d; delta(d); await sleep(30); }
+    if (me.interrupted) {
       assistant([{ type: "text", text: acc }]);
       out({ type: "user", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] }, parent_tool_use_id: null });
       out({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
@@ -160,8 +163,8 @@ async function turn(text: string): Promise<void> {
     const words = reply.split(/(?<=\s)/);
     const pause = Math.max(1, Math.floor(Number(process.env.FAKE_CLAUDE_DEMO_MS ?? 4000) / words.length));
     let acc = "";
-    for (const w of words) { if (interrupted) break; acc += w; delta(w); await sleep(pause); }
-    if (interrupted) {
+    for (const w of words) { if (me.interrupted) break; acc += w; delta(w); await sleep(pause); }
+    if (me.interrupted) {
       assistant([{ type: "text", text: acc }]);
       out({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
       return;
@@ -233,13 +236,15 @@ for await (const chunk of Bun.stdin.stream()) {
     if (!line) continue;
     const m = JSON.parse(line);
     if (m.type === "control_request" && m.request?.subtype === "interrupt") {
-      interrupted = true;
+      if (unfinished[0]) unfinished[0].interrupted = true;
       out({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: {} } });
       continue;
     }
     if (m.type === "user") {
       const text = typeof m.message?.content === "string" ? m.message.content : "";
-      busy = busy.then(() => turn(text));
+      const me: Turn = { interrupted: false };
+      unfinished.push(me);
+      busy = busy.then(() => turn(text, me)).finally(() => { unfinished.shift(); });
     }
   }
 }

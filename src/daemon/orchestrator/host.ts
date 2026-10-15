@@ -45,7 +45,7 @@ export interface OrchestratorOptions {
   restartMaxMs?: number;
   /** Minimum gap between progress statuses during a reply (default 1 s). */
   statusThrottleMs?: number;
-  /** How often a running WalkieTalkie re-announces its status (default ORCH_HEARTBEAT_MS). */
+  /** How often a running Talkie re-announces its status (default ORCH_HEARTBEAT_MS). */
   heartbeatMs?: number;
   /** Messages older than this when they arrive are not acted on (default 10 min). */
   maxAgeMs?: number;
@@ -56,7 +56,7 @@ export interface OrchestratorOptions {
   /** How often the host re-checks that this machine still counts as its person (default 2 s; if not, it stops). */
   gateCheckMs?: number;
   /**
-   * ORCH-2: WalkieTalkie starts on its own on the team's lead machine with a model login (auto.ts). On for the real
+   * ORCH-2: Talkie starts on its own on the team's lead machine with a model login (auto.ts). On for the real
    * daemon (runForeground); off unless asked in tests.
    */
   auto?: boolean;
@@ -127,10 +127,10 @@ interface HostState {
 interface Item { id: string; text: string; thread: string; ts: number; origin: MessageOrigin; tools?: "none" }
 /** Why a queued message was not answered when its turn came, in the words a duty's result shows. */
 const IGNORED_TEXT = {
-  stale: "Not run: the turn waited too long in WalkieTalkie's queue",
+  stale: "Not run: the turn waited too long in Talkie's queue",
   credential_ended: "Not run: the session that sent it ended before its turn",
-  not_the_person: "Not run: this machine no longer counts as WalkieTalkie's person",
-  observer: "Not run: WalkieTalkie's person is now an observer, and observers can't run WalkieTalkie",
+  not_the_person: "Not run: this machine no longer counts as Talkie's person",
+  observer: "Not run: Talkie's person is now an observer, and observers can't run Talkie",
 } as const;
 interface Turn {
   id: string; thread: string; texts: string[];
@@ -153,8 +153,14 @@ const TRANSCRIPT_MESSAGES = 30;
 /** At most one live text frame per this many ms (10 a second). */
 const LIVE_FRAME_MS = 100;
 const TRANSCRIPT_CHARS = 24_000;
-/** A child that ran this long before exiting resets the backoff. */
+/** A child that ran this long before exiting, or before completing a reply, resets the backoff. */
 const HEALTHY_MS = 60_000;
+/**
+ * Why a Claude is being launched again. A crash backs off and counts towards giving up. An unsupported flag is retried
+ * at once without it and is not counted. A switch is a running Claude deliberately replaced for the next message (another
+ * conversation, other tools, or one that answered a duty): it is not a failure, so it is not counted and waits for nothing.
+ */
+type RestartKind = "crash" | "unsupported" | "switch";
 /** How a tool-less turn ends on a Claude that does not know the flags it needs: its reply in the conversation and its duty's result. */
 const TOOLLESS_UNSUPPORTED = "this Claude is too old for tool-less report turns; update Claude";
 const MAX_RAPID_FAILURES = 5;
@@ -193,7 +199,7 @@ export function prepareFor(deps: Pick<HostDeps, "orchestrationPoll" | "cardCurat
   return Promise.resolve("");
 }
 
-/** How often a running WalkieTalkie re-announces its status (views treat a card older than 30 min as offline). */
+/** How often a running Talkie re-announces its status (views treat a card older than 30 min as offline). */
 export const ORCH_HEARTBEAT_MS = 10 * 60_000;
 
 export class OrchestratorHost {
@@ -217,7 +223,7 @@ export class OrchestratorHost {
   private childTools: "platform" | "none" = "platform";
   /**
    * The binary (claudeBinaryIdentity) that rejected the flags of a tool-less turn: tool-less turns fail at once, without a
-   * launch, for as long as that is the Claude that would be launched. A start of WalkieTalkie, or a replaced `claude`,
+   * launch, for as long as that is the Claude that would be launched. A start of Talkie, or a replaced `claude`,
    * clears it.
    */
   private toollessRejected: { binary: string | null } | null = null;
@@ -239,8 +245,8 @@ export class OrchestratorHost {
   private interruptTimer: ReturnType<typeof setTimeout> | null = null;
   private liveTimer: ReturnType<typeof setTimeout> | null = null;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Re-announces the current status while WalkieTalkie runs: an idle card older than STALE_STATUS_MS reads as offline to
-   * every dashboard (the WalkieTalkie page then showed "starting" for a running WalkieTalkie). */
+  /** Re-announces the current status while Talkie runs: an idle card older than STALE_STATUS_MS reads as offline to
+   * every dashboard (the Talkie page then showed "starting" for a running Talkie). */
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastStatusAt = 0;
   private heldActivity: string | null = null;
@@ -404,7 +410,7 @@ export class OrchestratorHost {
       }
       if (!this.state?.active) return;
       if (this.state.owner !== this.core.myHandle()) { this.state = { ...this.state, active: false }; this.save(); return; }
-      if (this.gaveUp) { this.phase = "failed"; this.lastError = "WalkieTalkie kept failing before the daemon restarted"; return; }
+      if (this.gaveUp) { this.phase = "failed"; this.lastError = "Talkie kept failing before the daemon restarted"; return; }
       this.log.info("orchestrator_resumed", { started_at: this.state.started_at });
       try { await this.boot(mark); } catch (err) { await this.bootFailed(err); }
     }).catch((err) => this.log.warn("orchestrator_init_failed", { err: (err as Error).message }));
@@ -480,7 +486,7 @@ export class OrchestratorHost {
     if (req.access && !ORCHESTRATOR_ACCESS.includes(req.access)) throw new HttpError(400, "invalid", "bad access (platform or full)");
     if (req.model !== undefined && !validModel(req.model)) throw new HttpError(400, "invalid", BAD_MODEL);
     if ((req.access === "full" || req.permission_mode === "bypassPermissions") && this.shellUser.pendingCleanup)
-      throw new HttpError(409, "talkie_cleanup_pending", "WalkieTalkie shell user cleanup pending; wait for verified uid cleanup");
+      throw new HttpError(409, "talkie_cleanup_pending", "Talkie shell user cleanup pending; wait for verified uid cleanup");
     if (req.access === "full" || req.permission_mode === "bypassPermissions") this.shellUser.assertInstalled();
     const claude = findClaude(req.claude, req.path ?? this.env.PATH);
     if (!claude) throw new HttpError(409, "claude_not_found", "the claude CLI was not found (install Claude Code and sign in, or pass --claude <path>)");
@@ -490,7 +496,7 @@ export class OrchestratorHost {
     try {
       if (!(await this.leadership.acquire())) {
         this.leadership.stop();
-        throw new HttpError(409, "leadership_unavailable", "WalkieTalkie needs an exclusive lease from the roster authority; another holder or an unreachable authority prevents this start");
+        throw new HttpError(409, "leadership_unavailable", "Talkie needs an exclusive lease from the roster authority; another holder or an unreachable authority prevents this start");
       }
     } finally { this.requestingStart = false; }
     if (this.stopRequests !== mark) return; // the queued Stop releases the lease and stops whatever ran before
@@ -589,6 +595,11 @@ export class OrchestratorHost {
     return timingSafeEqual(Buffer.from(token), Buffer.from(mine));
   }
 
+  /** Browser contexts follow the active interactive conversation, never a caller-supplied thread. */
+  browserThread(token: string | undefined): string | null {
+    return this.acceptsToken(token) && this.turn?.item.origin.via !== "schedule" ? this.turn?.thread ?? null : null;
+  }
+
   /** The live child can act for the turn it is answering, not for a later queued message. */
   scheduledTurnActive(): boolean {
     return this.turn?.item.origin.via === "schedule";
@@ -659,7 +670,7 @@ export class OrchestratorHost {
     if (!validModel(model)) return Promise.reject(new HttpError(400, "invalid", BAD_MODEL));
     return this.serial(async () => {
       const s = this.state;
-      if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+      if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "Talkie isn't running on this machine: start it with walkie talkie start");
       const next = modelArg(model);
       const { model: _prev, ...rest } = s;
       this.state = next ? { ...rest, model: next } : rest;
@@ -680,7 +691,7 @@ export class OrchestratorHost {
     if (!ORCHESTRATOR_ACCESS.includes(access)) return Promise.reject(new HttpError(400, "invalid", "bad access (platform or full)"));
     return this.serial(async () => {
       const s = this.state;
-      if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+      if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", "Talkie isn't running on this machine: start it with walkie talkie start");
       const generation = ++this.runGeneration;
       const final = this.finalGeneration;
       const base = s.access === "full" ? "default" : s.permission_mode;
@@ -764,7 +775,7 @@ export class OrchestratorHost {
    */
   say(text: string, thread: string | undefined, origin: MessageOrigin, opts: TurnOptions = {}): OrchMessage {
     const s = this.state;
-    if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", this.lastError ?? "WalkieTalkie isn't running on this machine: start it with walkie talkie start");
+    if (!s?.active || !this.running) throw new HttpError(409, "orchestrator_not_running", this.lastError ?? "Talkie isn't running on this machine: start it with walkie talkie start");
     if (this.core.me()?.handle !== s.owner) throw new HttpError(403, "forbidden", "this machine no longer counts as the orchestrator's person");
     const body = text.trim();
     if (!body) throw new HttpError(400, "invalid", "empty message");
@@ -877,7 +888,7 @@ export class OrchestratorHost {
   }
 
   /**
-   * ORCH-2: a Claude login that lives only in the Walkie accounts vault is handed to the child as its
+   * ORCH-2: a Claude login that lives only in the Sqwakie accounts vault is handed to the child as its
    * CLAUDE_CODE_OAUTH_TOKEN (the subscription sign-in); it is kept in memory for the child's environment only.
    */
   /** The model logins now (logins.ts; the tests' own list when given), kept for the view and prepareAuth. */
@@ -941,7 +952,7 @@ export class OrchestratorHost {
       if (signal.aborted || token === undefined) throw cancelled();
       const margin = this.opts.shellTokenMarginMs ?? 10 * 60_000;
       if (typeof token !== "object" || !token.value || (token.expiresAt !== null && token.expiresAt <= Date.now() + margin)) {
-        throw new HttpError(409, "talkie_login_required", "WalkieTalkie's OS user needs a Claude login token; sign in to Claude Code or add a Claude account to Walkie");
+        throw new HttpError(409, "talkie_login_required", "Talkie's OS user needs a Claude login token; sign in to Claude Code or add a Claude account to Sqwakie");
       }
       this.authEnv = { CLAUDE_CODE_OAUTH_TOKEN: token.value };
       this.shellTokenExpiresAt = token.expiresAt;
@@ -1049,14 +1060,14 @@ export class OrchestratorHost {
     this.save();
   }
 
-  /** Whether this machine's latest WalkieTalkie status says it is there (not offline). */
+  /** Whether this machine's latest Talkie status says it is there (not offline). */
   private ownStatusLive(): boolean {
     return peerLive(this.core, this.core.nodeId);
   }
 
   /**
    * First-run onboarding (ORCH-2): on the first start on its own, and on a later one when the team has no projects
-   * (at most once a day), WalkieTalkie opens the conversation itself (a new conversation with its greeting).
+   * (at most once a day), Talkie opens the conversation itself (a new conversation with its greeting).
    */
   private kickoff(): void {
     const s = this.state;
@@ -1170,7 +1181,7 @@ export class OrchestratorHost {
     const s = this.state;
     if (!s) return;
     if ((s.access === "full" || s.permission_mode === "bypassPermissions") && !this.shellUser.active) {
-      this.onSpawnFailed("WalkieTalkie's dedicated shell user is unavailable");
+      this.onSpawnFailed("Talkie's dedicated shell user is unavailable");
       return;
     }
     const shell = this.shellUser.active;
@@ -1315,7 +1326,7 @@ export class OrchestratorHost {
     if (!this.childInit && code !== 0 && unknownFlag && !unsupported) {
       this.setGaveUp(true);
       this.phase = "failed";
-      this.lastError = `this Claude is too old for WalkieTalkie: ${unknownFlag}; update Claude`;
+      this.lastError = `this Claude is too old for Talkie: ${unknownFlag}; update Claude`;
       this.status("blocked", this.lastError, true);
       void this.cleanupAfterGiveUp();
       return;
@@ -1347,7 +1358,7 @@ export class OrchestratorHost {
     if (ranMs > HEALTHY_MS) this.attempt = 0;
     this.pendingModel = undefined; // the restart runs the settings already
     this.pendingNote = undefined;
-    this.scheduleRestart(!!unsupported);
+    this.scheduleRestart(unsupported ? "unsupported" : "crash");
   }
 
   /**
@@ -1377,8 +1388,8 @@ export class OrchestratorHost {
   /**
    * A tool-less Claude exited at launch because this Claude does not know one of its flags (too old). Only tool-less turns
    * are affected: the one in flight ends here, plainly (failToolless), and tool-less turns fail at once, with no launch
-   * (pump), until the binary changes or WalkieTalkie is started again; any queued behind it end the same way when the
-   * restart pumps. WalkieTalkie itself stays up: this is not a failure that counts towards giving up, and the Claude that
+   * (pump), until the binary changes or Talkie is started again; any queued behind it end the same way when the
+   * restart pumps. Talkie itself stays up: this is not a failure that counts towards giving up, and the Claude that
    * follows is launched with the usual flags for whatever comes next.
    */
   private onToollessRejected(session: string | null, flag: string, tail: string): void {
@@ -1393,27 +1404,31 @@ export class OrchestratorHost {
     }
     this.pendingModel = undefined;
     this.pendingNote = undefined;
-    this.scheduleRestart(true);
+    this.scheduleRestart("unsupported");
   }
 
-  private scheduleRestart(unsupportedRetry = false): void {
+  private scheduleRestart(kind: RestartKind = "crash"): void {
     if (this.stopping || !this.state?.active) return;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
-    if (!unsupportedRetry && this.attempt >= MAX_RAPID_FAILURES - 1) {
+    const counted = kind === "crash";
+    // A Claude that had been up longer than a healthy run when it was replaced on purpose was healthy. onExit's check
+    // never sees it (pump let go of it first), so a run of conversation switches would otherwise never clear an old count.
+    if (kind === "switch" && Date.now() - this.childStartedAt > HEALTHY_MS) this.attempt = 0;
+    if (counted && this.attempt >= MAX_RAPID_FAILURES - 1) {
       this.attempt += 1;
       this.setGaveUp(true);
       this.phase = "failed";
-      this.lastError = `WalkieTalkie keeps failing: ${this.lastError ?? "Claude exited without a diagnostic"}`;
-      this.status("blocked", "WalkieTalkie keeps failing; check walkie talkie status", true);
+      this.lastError = `Talkie keeps failing: ${this.lastError ?? "Claude exited without a diagnostic"}`;
+      this.status("blocked", "Talkie keeps failing; check walkie talkie status", true);
       void this.cleanupAfterGiveUp();
       return;
     }
-    const delay = unsupportedRetry ? 0 : Math.min(this.restartMax, this.restartBase * 2 ** this.attempt);
-    if (!unsupportedRetry) this.attempt += 1;
+    const delay = counted ? Math.min(this.restartMax, this.restartBase * 2 ** this.attempt) : 0;
+    if (counted) this.attempt += 1;
     this.restarts += 1;
     this.phase = "restarting";
-    this.status("idle", unsupportedRetry ? "Retrying Claude with a supported option" : "Restarting Claude…", true);
+    this.status("idle", kind === "unsupported" ? "Retrying Claude with a supported option" : "Restarting Claude…", true);
     this.restartTimer = setTimeout(() => { this.restartTimer = null; void this.serial(async () => {
       const generation = ++this.runGeneration;
       const final = this.finalGeneration;
@@ -1450,7 +1465,7 @@ export class OrchestratorHost {
   /**
    * The session the Claude a restart launches is for. The message at the head of the queue decides it, as it does in pump
    * (and in spawn, which reads its tools from it): the session of its conversation when there is one (resumed), a fresh one
-   * when the message starts a conversation. This is how a full-access WalkieTalkie, which changes conversation by
+   * when the message starts a conversation. This is how a full-access Talkie, which changes conversation by
    * restarting, gets the Claude the next message needs; the session that was running is never what it wants then. With
    * nothing waiting, the session that was running continues after a crash, or a fresh one starts when it was never used.
    */
@@ -1487,7 +1502,7 @@ export class OrchestratorHost {
     this.childToken = null;
     try { await child?.close(1_000); }
     catch (err) { this.log.warn("orchestrator_give_up_child_close_failed", { err: scrub(String(err)).slice(0, 300) }); }
-    // The lead lease stays: a give-up waits for a person and must not hand WalkieTalkie to another machine (pre.9).
+    // The lead lease stays: a give-up waits for a person and must not hand Talkie to another machine (pre.9).
     try { await this.shellUser.destroy(); }
     catch (err) { this.log.warn("orchestrator_give_up_cleanup_failed", { err: scrub(String(err)).slice(0, 300) }); }
   }
@@ -1551,11 +1566,17 @@ export class OrchestratorHost {
     const ready = this.child?.alive && !this.childScheduled && (known ? this.childSession === known : this.childFresh) && this.childTools === (item.tools ?? "platform");
     if (!ready) {
       const child = this.child;
+      // Read before close() marks it closed: a Claude that was running is replaced on purpose, one that already died is not.
+      const wasRunning = !!child?.alive;
+      // Exit can precede onExit while output drains. Detaching here bypasses its healthy-run reset; a missing child
+      // must not inherit health from a stale childStartedAt left by an earlier run.
+      if (child && !wasRunning && Date.now() - this.childStartedAt > HEALTHY_MS) this.attempt = 0;
       this.child = null;
       if (child) void child.close(1_000);
       if (s.access === "full" || s.permission_mode === "bypassPermissions") {
-        // The retry path re-reads the access-only login before it creates a fresh shell process.
-        this.scheduleRestart();
+        // The retry path re-reads the access-only login before it creates a fresh shell process. Changing conversation is
+        // done this way, so a running Claude replaced here is a switch (not counted); anything else found here is a failure.
+        this.scheduleRestart(wasRunning ? "switch" : "crash");
         return;
       }
       this.spawn(known ?? randomUUID(), !!known);
@@ -1668,7 +1689,9 @@ export class OrchestratorHost {
     if (!text && sig.text.trim()) text = sig.text.trim();
     if (t.interrupted || sig.subtype === "error_during_execution") text = stoppedText(text);
     else if (!sig.ok) text = `${text}\n\n_(Claude reported a problem: ${sig.subtype}${sig.text && !text.includes(sig.text) ? ` — ${sig.text.slice(0, 300)}` : ""})_`.trim();
-    if (sig.ok && !failed) this.attempt = 0;
+    // Only a child that has been up longer than a healthy run clears the backoff (as onExit does): one that answers and then
+    // dies within a minute, over and over, must still reach the give-up.
+    if (sig.ok && !failed && Date.now() - this.childStartedAt > HEALTHY_MS) this.attempt = 0;
     this.endLive(t);
     this.postReply(t.thread, text, t);
     if (t.item.origin.via === "schedule") this.scheduleReplies.set(t.id, { text, ok: sig.ok && !t.interrupted });

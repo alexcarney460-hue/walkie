@@ -1,5 +1,5 @@
 // The last step of owner-SSH enrollment on a terminal, after the person's consent recorded the grant with the packet:
-// watch `GET /v1/ssh/status` until it says ready, can't become ready, or the wait is over. Walkie's SSH service came
+// watch `GET /v1/ssh/status` until it says ready, can't become ready, or the wait is over. Sqwakie's SSH service came
 // with the enrollment's one root batch (macOS, Linux and WSL alike), so there is nothing for the person to switch on and
 // nothing is opened: this only watches, and says why and what fixes it when it can't get ready.
 import type { WalkieClient } from "../client/index.ts";
@@ -14,10 +14,10 @@ export interface SshStepDeps {
   read(): Promise<SshStatus>;
   sleep(ms: number): Promise<void>;
   now(): number;
-  /** Linux and WSL: whether Walkie's own SSH unit (walkie-sshd) is installed on this machine, so a fix may name it. Asked of systemd (src/cli/ssh-unit.ts). */
+  /** Linux and WSL: whether Sqwakie's own SSH unit (walkie-sshd) is installed on this machine, so a fix may name it. Asked of systemd (src/cli/ssh-unit.ts). */
   walkieUnit?(): boolean;
   /**
-   * Linux and WSL: whether that unit is running. A server that answers on 127.0.0.1:22 is Walkie's only when its unit is
+   * Linux and WSL: whether that unit is running. A server that answers on 127.0.0.1:22 is Sqwakie's only when its unit is
    * installed and, when this says, running (src/cli/ssh-foreign.ts). Absent: not known, and a unit that exists is taken as running.
    */
   walkieActive?(): boolean;

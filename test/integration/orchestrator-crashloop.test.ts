@@ -60,14 +60,14 @@ ${mode === "fail" ? "echo 'fatal: test binary cannot start' >&2; exit 1" : "exec
   await waitFor(async () => (await node.client("").orchestrator()).local.state === "failed", { what: "old Claude setting hook is terminal" });
   expect(launches()[4]).toBe("0:1");
   expect(launches()).toHaveLength(5);
-  expect((await node.client("").orchestrator()).local.last_error).toContain("this Claude is too old for WalkieTalkie: --settings; update Claude");
+  expect((await node.client("").orchestrator()).local.last_error).toContain("this Claude is too old for Talkie: --settings; update Claude");
 
   install(false, "fail");
   await start();
   await waitFor(async () => (await node.client("").orchestrator()).local.state === "failed", { what: "terminal crash status", timeoutMs: 10_000 });
   const failed = (await node.client("").orchestrator()).local;
   expect(failed.running).toBe(false);
-  expect(failed.last_error).toContain("WalkieTalkie keeps failing: claude exited (code 1): fatal: test binary cannot start");
+  expect(failed.last_error).toContain("Talkie keeps failing: claude exited (code 1): fatal: test binary cannot start");
   expect(failed.restarts).toBe(4); // four respawns after the initial failure, then a hard stop
   expect(launches()).toHaveLength(10);
   await Bun.sleep(250);

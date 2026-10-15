@@ -24,6 +24,8 @@ export const RecordRow = z.object({
    *  switcher also reads when the daemon does not answer). */
   vault: z.boolean().optional(),
   reading: AccountUsage.nullable(),
+  /** A local Codex sessions folder was shared with a vault home; old rollouts cannot be assigned to this login. */
+  passive_blocked: z.boolean().optional(),
   /** RESET-CLOCK-1: the remembered reset times (validated entry by entry on load; absent in files from pre.5). */
   clock: z.array(z.unknown()).optional().catch(undefined),
 });

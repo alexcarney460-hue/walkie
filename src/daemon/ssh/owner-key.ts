@@ -5,10 +5,10 @@ import { ownerKeyLine } from "./authorized-keys.ts";
 
 export const ownerPrivateKeyPath = (walkieHome: string): string => join(walkieHome, "owner-ssh-ed25519");
 
-/** This key stays in Walkie's private home; it is never installed in the person's ~/.ssh by default. */
+/** This key stays in Sqwakie's private home; it is never installed in the person's ~/.ssh by default. */
 export function ownerPublicKey(walkieHome: string, create = false): string | null {
   if (create && !existsSync(walkieHome)) mkdirSync(walkieHome, { recursive: true, mode: 0o700 });
-  if (!lstatSync(walkieHome).isDirectory()) throw new Error("Walkie home must be a directory");
+  if (!lstatSync(walkieHome).isDirectory()) throw new Error("Sqwakie home must be a directory");
   const privatePath = ownerPrivateKeyPath(walkieHome);
   const publicPath = `${privatePath}.pub`;
   if (!existsSync(privatePath)) {

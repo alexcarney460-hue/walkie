@@ -353,7 +353,7 @@ describe("a v2 seat's account, checked against the host's vault policy", () => {
     // A local-policy account on another of Arvid's machines stays there.
     const local = view("arvid", [machine({ handle: "arvid", vault: { policy: "local" } })]);
     expect(planSeatAccount(`arvid:${ID}`, { ...base, pooled: [local] })).toMatchObject({ kind: "refused", why: expect.stringMatching(/policy is local/) });
-    expect(planSeatAccount(`arvid:${ID}`, { ...base, runtime: "kimi" })).toMatchObject({ kind: "refused", why: expect.stringMatching(/^account_not_usable: Kimi logins/) });
+    expect(planSeatAccount(`arvid:${ID}`, { ...base, runtime: "kimi" })).toMatchObject({ kind: "refused", why: expect.stringMatching(/^account_not_usable: Kimi rotates its token/) });
     expect(planSeatAccount(`arvid:${ID}`, { ...base, runtime: "codex", vault: [entry()] })).toMatchObject({ kind: "refused", why: expect.stringMatching(/claude login and this seat runs codex/) });
     expect(planSeatAccount(`arvid:${ID}`, { ...base, runtime: "codex" })).toMatchObject({ kind: "refused", why: expect.stringMatching(/no Codex account/) });
     // In this machine's own vault: usable here whatever its policy.
@@ -407,8 +407,9 @@ describe("a v2 seat's account, checked against the host's vault policy", () => {
   });
 
   test("a local vault account: Claude's token for this run, Codex's own home (as the person) or its access-only auth (as a seat user)", async () => {
-    const home = tmp();
-    writeFileSync(join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "at", refresh_token: "rt" } }));
+    const home = join(tmp(), "vault", "codex", ID);
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    writeFileSync(join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "at", refresh_token: "rt" } }), { mode: 0o600 });
     const deps = { claudeToken: async () => "sk-ant-oat01-LOCALTOKEN0123456789abcdefgh", lease: async () => { throw new Error("no"); }, accessOnlyCodex: (t: string) => (JSON.parse(t).tokens.access_token ? '{"tokens":{"access_token":"at"}}' : null) };
     expect((await seatCredentials({ kind: "local", entry: entry() }, "arvid", false, deps)).env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-LOCALTOKEN0123456789abcdefgh" });
     const codex = entry({ provider: "codex", home });
@@ -429,15 +430,15 @@ describe("r1 HIGH 1: the person's branches are never reset", () => {
     expect(SeatRunV2.safeParse(v2Body({ workspace: { repo: "app", ref: "main", mode: "branch", branch: "walkie/sp-210" } })).success).toBe(true);
   });
 
-  test("an existing lane branch Walkie didn't create is refused and left exactly where it was", async () => {
+  test("an existing lane branch Sqwakie didn't create is refused and left exactly where it was", async () => {
     const { dir, shas } = repoWithCommits(2);
     g(dir, "branch", "lane/sp-9", shas[0] as string); // the person's own branch that happens to have a lane name
-    await expect(addWorktree(dir, "sp-9", "branch", shas[1] as string, undefined, ENV)).rejects.toThrow(/branch lane\/sp-9 exists .* isn't Walkie's/);
+    await expect(addWorktree(dir, "sp-9", "branch", shas[1] as string, undefined, ENV)).rejects.toThrow(/branch lane\/sp-9 exists .* isn't Sqwakie's/);
     expect(g(dir, "rev-parse", "lane/sp-9")).toBe(shas[0] as string);
     expect(existsSync(join(dir, ".worktrees", "sp-9"))).toBe(false);
   });
 
-  test("Walkie's own lane branch: fast-forwarded when safe; with commits the new base lacks, a fresh -2 (nothing lost)", async () => {
+  test("Sqwakie's own lane branch: fast-forwarded when safe; with commits the new base lacks, a fresh -2 (nothing lost)", async () => {
     const { dir, shas } = repoWithCommits(3);
     const a = await addWorktree(dir, "sp-7", "branch", shas[0] as string, undefined, ENV);
     expect(a.branch).toBe("lane/sp-7");
@@ -460,7 +461,7 @@ describe("r1 HIGH 1: the person's branches are never reset", () => {
   });
 });
 
-describe("r1 HIGH 2 + HIGH 8: only Walkie's own worktrees are replaced, inside a real .worktrees", () => {
+describe("r1 HIGH 2 + HIGH 8: only Sqwakie's own worktrees are replaced, inside a real .worktrees", () => {
   test("a person's clean worktree at .worktrees/<label> (with an ignored .env) is refused, never removed", async () => {
     const { dir, shas } = repoWithCommits(1);
     writeFileSync(join(dir, ".gitignore"), ".env\n");
@@ -468,12 +469,12 @@ describe("r1 HIGH 2 + HIGH 8: only Walkie's own worktrees are replaced, inside a
     g(dir, "commit", "-q", "-m", "ignore .env");
     g(dir, "worktree", "add", "-q", "--detach", join(dir, ".worktrees", "mine"), "HEAD");
     writeFileSync(join(dir, ".worktrees", "mine", ".env"), "SECRET=1\n");
-    await expect(addWorktree(dir, "mine", "detached", shas[0] as string, undefined, ENV)).rejects.toThrow(/isn't a worktree Walkie made/);
+    await expect(addWorktree(dir, "mine", "detached", shas[0] as string, undefined, ENV)).rejects.toThrow(/isn't a worktree Sqwakie made/);
     expect(readFileSync(join(dir, ".worktrees", "mine", ".env"), "utf8")).toBe("SECRET=1\n");
     // A plain directory there is refused too.
     mkdirSync(join(dir, ".worktrees", "plain"));
-    await expect(addWorktree(dir, "plain", "detached", shas[0] as string, undefined, ENV)).rejects.toThrow(/isn't a worktree Walkie made/);
-    // Walkie's own (its marker in the admin directory) is replaced.
+    await expect(addWorktree(dir, "plain", "detached", shas[0] as string, undefined, ENV)).rejects.toThrow(/isn't a worktree Sqwakie made/);
+    // Sqwakie's own (its marker in the admin directory) is replaced.
     const w = await addWorktree(dir, "ours", "detached", shas[0] as string, undefined, ENV);
     expect(existsSync(join(w.dirs.gitDir, LANE_MARKER))).toBe(true);
     expect(existsSync(join(w.cwd, LANE_MARKER))).toBe(false); // never in the tree
@@ -481,7 +482,7 @@ describe("r1 HIGH 2 + HIGH 8: only Walkie's own worktrees are replaced, inside a
     expect(again.cwd).toBe(w.cwd);
   });
 
-  test("a vanished worktree's record: Walkie's own is dropped and re-made; the person's is refused (no worktree prune)", async () => {
+  test("a vanished worktree's record: Sqwakie's own is dropped and re-made; the person's is refused (no worktree prune)", async () => {
     const { dir, shas } = repoWithCommits(1);
     const w = await addWorktree(dir, "gone", "detached", shas[0] as string, undefined, ENV);
     rmSync(w.cwd, { recursive: true });
@@ -489,7 +490,7 @@ describe("r1 HIGH 2 + HIGH 8: only Walkie's own worktrees are replaced, inside a
     g(dir, "worktree", "add", "-q", "--detach", join(dir, ".worktrees", "theirs"), "HEAD");
     g(dir, "worktree", "add", "-q", "--detach", join(tmp(), "elsewhere"), "HEAD"); // another of the person's
     rmSync(join(dir, ".worktrees", "theirs"), { recursive: true });
-    await expect(addWorktree(dir, "theirs", "detached", shas[0] as string, undefined, ENV)).rejects.toThrow(/registered .* worktree Walkie didn't make/);
+    await expect(addWorktree(dir, "theirs", "detached", shas[0] as string, undefined, ENV)).rejects.toThrow(/registered .* worktree Sqwakie didn't make/);
     expect(g(dir, "worktree", "list", "--porcelain")).toContain("theirs"); // its record kept
   });
 
@@ -763,7 +764,7 @@ describe("r2 LOWs", () => {
     expect(existsSync(join(dir, ".worktrees", "many"))).toBe(false);
   });
 
-  test("ownership: a record whose branch is gone is dropped; a branch the person moved since isn't Walkie's", async () => {
+  test("ownership: a record whose branch is gone is dropped; a branch the person moved since isn't Sqwakie's", async () => {
     const { dir, shas } = repoWithCommits(2);
     const a = await addWorktree(dir, "own", "branch", shas[0] as string, undefined, ENV);
     g(dir, "worktree", "remove", a.cwd);
@@ -772,11 +773,11 @@ describe("r2 LOWs", () => {
     expect(b.branch).toBe("lane/own");
     g(dir, "worktree", "remove", b.cwd);
     g(dir, "update-ref", "refs/heads/lane/own", shas[0] as string); // the person moves it
-    await expect(addWorktree(dir, "own", "branch", shas[1] as string, undefined, ENV)).rejects.toThrow(/isn't Walkie's/);
+    await expect(addWorktree(dir, "own", "branch", shas[1] as string, undefined, ENV)).rejects.toThrow(/isn't Sqwakie's/);
     expect(g(dir, "rev-parse", "lane/own")).toBe(shas[0] as string);
   });
 
-  test("a clean Walkie worktree with ignored files is refused, not deleted; a refused branch leaves the old worktree in place", async () => {
+  test("a clean Sqwakie worktree with ignored files is refused, not deleted; a refused branch leaves the old worktree in place", async () => {
     const { dir, shas } = repoWithCommits(1);
     writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
     g(dir, "add", ".gitignore");
@@ -787,10 +788,10 @@ describe("r2 LOWs", () => {
     writeFileSync(join(w.cwd, "node_modules", "x.js"), "x");
     await expect(addWorktree(dir, "ig", "detached", sha, undefined, ENV)).rejects.toThrow(/ignored files/);
     expect(existsSync(join(w.cwd, "node_modules", "x.js"))).toBe(true);
-    // Selection before removal: a branch Walkie can't use leaves the existing worktree where it was.
+    // Selection before removal: a branch Sqwakie can't use leaves the existing worktree where it was.
     const k = await addWorktree(dir, "keep", "detached", sha, undefined, ENV);
     g(dir, "branch", "walkie/theirs", shas[0] as string);
-    await expect(addWorktree(dir, "keep", "branch", sha, "walkie/theirs", ENV)).rejects.toThrow(/isn't Walkie's/);
+    await expect(addWorktree(dir, "keep", "branch", sha, "walkie/theirs", ENV)).rejects.toThrow(/isn't Sqwakie's/);
     expect(existsSync(join(k.cwd, ".gitignore"))).toBe(true);
   });
 
@@ -851,7 +852,7 @@ describe("r3 MED 1: a delta bundle can't borrow an unpublished tree or blob eith
 });
 
 describe("r3 LOWs: lane records", () => {
-  test("the branch and Walkie's record of it move in one step (created, fast-forwarded)", async () => {
+  test("the branch and Sqwakie's record of it move in one step (created, fast-forwarded)", async () => {
     const { dir, shas } = repoWithCommits(2);
     const a = await addWorktree(dir, "tx", "branch", shas[0] as string, undefined, ENV);
     expect(g(dir, "rev-parse", "refs/walkie/lanes/lane/tx")).toBe(g(dir, "rev-parse", "lane/tx"));
@@ -915,12 +916,12 @@ describe("Codex r3 MED 4: recovery never adopts a person's replacement branch", 
     const { dir, shas } = repoWithCommits(2);
     const w = await addWorktree(dir, "rb", "branch", shas[0] as string, undefined, ENV);
     g(dir, "worktree", "remove", w.cwd);
-    // Daemon down: the person deletes Walkie's lane and makes their own branch of that name elsewhere.
+    // Daemon down: the person deletes Sqwakie's lane and makes their own branch of that name elsewhere.
     g(dir, "branch", "-D", "lane/rb");
     g(dir, "branch", "lane/rb", shas[1] as string);
     await recordLaneTip(dir, "lane/rb", ENV); // the start's recovery: no seat result
     expect(g(dir, "rev-parse", "refs/walkie/lanes/lane/rb")).toBe(shas[0] as string); // not moved to the person's
-    await expect(addWorktree(dir, "rb", "branch", shas[1] as string, undefined, ENV)).rejects.toThrow(/isn't Walkie's/);
+    await expect(addWorktree(dir, "rb", "branch", shas[1] as string, undefined, ENV)).rejects.toThrow(/isn't Sqwakie's/);
     expect(g(dir, "rev-parse", "lane/rb")).toBe(shas[1] as string);
   });
 });

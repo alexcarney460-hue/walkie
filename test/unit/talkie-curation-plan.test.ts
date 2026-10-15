@@ -25,10 +25,10 @@ function card(title: string, column: string, extra: Partial<StewardCard> = {}): 
 }
 const builder = (title: string): LiveAgent => ({ address: "@kira/kiras-mbp/codex-1", handle: "kira", agent: "codex-1", text: title, auditor: false });
 const branch = (name: string, own: number, at: number | null, merged: string | null = null): BranchEvidence => ({ repo: "/r", branch: name, own_commits: own, last_commit_at: at, merged_into: merged });
-const cmt = (text: string, ts: number): TimelineEntry => ({ id: `c${ts}`, ts, author: { handle: "alex", node: "n", agent: "cc-orch" }, kind: "comment", text });
-const moved = (column: string, ts: number): TimelineEntry => ({ id: `m${ts}`, ts, author: { handle: "alex", node: "n" }, kind: "op", changes: { column, pos: "i" } });
+const cmt = (text: string, ts: number): TimelineEntry => ({ id: `a000000000000001:${ts}`, ts, author: { handle: "alex", node: "n", agent: "cc-orch" }, kind: "comment", text });
+const moved = (column: string, ts: number): TimelineEntry => ({ id: `a000000000000001:${ts}`, ts, author: { handle: "alex", node: "n" }, kind: "op", changes: { column, pos: "i" } });
 /** An agent's move: unlike a person's, it does not pin the card against the steward for a day. */
-const placed = (column: string, ts: number): TimelineEntry => ({ id: `p${ts}`, ts, author: { handle: "alex", node: "n", agent: "cc-orch" }, kind: "op", changes: { column, pos: "i" } });
+const placed = (column: string, ts: number): TimelineEntry => ({ id: `a000000000000001:${ts}`, ts, author: { handle: "alex", node: "n", agent: "cc-orch" }, kind: "op", changes: { column, pos: "i" } });
 
 function steward(cards: StewardCard[], ev: Record<string, Partial<CardEvidence>>, extra: Partial<StewardInput> = {}): StewardInput {
   const evidence = new Map<string, CardEvidence>();
@@ -73,7 +73,7 @@ describe("the steward's plan, as recommendations", () => {
       [building.id]: { agents: [builder("Write the onboarding guide")] },
     });
     const by = Object.fromEntries(r.recs.map((x) => [(x.action as { card: string }).card, x]));
-    expect(by[merged.id]).toMatchObject({ summary: "Move “Ship the invoice export” to Done", reason: "Its work has been merged." });
+    expect(by[merged.id]).toMatchObject({ summary: "Move “Ship the invoice export” to Done", reason: "It is marked as finished elsewhere." });
     expect(by[ready.id]).toMatchObject({ summary: "Move “Tidy the settings page” to In review", reason: "The work is ready and nobody is building it." });
     expect(by[building.id]).toMatchObject({ summary: "Move “Write the onboarding guide” to In progress", reason: "An agent is working on it." });
   });

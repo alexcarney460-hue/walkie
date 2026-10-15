@@ -1,4 +1,4 @@
-// The backlink of a Linear issue created from a Walkie thread, when it couldn't be posted at creation
+// The backlink of a Linear issue created from a Sqwakie thread, when it couldn't be posted at creation
 // time (FINAL Codex 6): the issue exists, so the create answers a partial success and the backlink is a
 // persisted job in `integration_retries` that the connector's runs post when the channel allows.
 import type { RunCtx } from "./types.ts";

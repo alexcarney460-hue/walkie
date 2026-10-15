@@ -38,7 +38,7 @@ test("founder-only team refuses an unsigned legacy join until the owner disables
     const denied = await fetch(url, { method: "POST", headers, body });
     expect(denied.status).toBe(403);
     expect((await denied.json() as { error: { code: string; message: string } }).error).toMatchObject({
-      code: "update_required", message: "this team requires Walkie 0.2.0-pre.10 or newer: update, then join again",
+      code: "update_required", message: "this team requires Sqwakie 0.2.0-pre.10 or newer: update, then join again",
     });
     await owner.client().request("POST", "/v1/team/peer-sig-strict", { strict: false });
     expect(peerSigStrict(owner.d.core.roster, owner.d.core.store)).toBe(false);
@@ -133,7 +133,7 @@ test("signed admission is replicated; the last legacy proof engages strict mode"
       headers: { "X-Walkie-Node": newKey.nodeId }, body: JSON.stringify({ pubkey: newKey.pubkey, hostname: "old-new", ip: "127.0.0.1" }) });
     expect(join.status).toBe(403);
     expect((await join.json() as { error: { code: string; message: string } }).error).toMatchObject({
-      code: "update_required", message: "this team requires Walkie 0.2.0-pre.10 or newer: update, then join again",
+      code: "update_required", message: "this team requires Sqwakie 0.2.0-pre.10 or newer: update, then join again",
     });
   } finally { await cluster.close(); }
 }, 30_000);
@@ -325,7 +325,11 @@ test("a consumed relay envelope is recorded once and a lost response is safely r
     expect(await (await send()).json()).toEqual({ recorded: true });
     expect(owner.d.core.store.vv()[owner.d.nodeId]).toBe(recordedAt);
     await owner.restart();
-    expect(await (await send()).json()).toEqual({ recorded: true });
+    const retried = await waitFor(async () => {
+      const response = await send();
+      return response.status === 200 ? response : null;
+    }, { what: "restarted peer proof listener", timeoutMs: 5_000 });
+    expect(await retried.json()).toEqual({ recorded: true });
     expect(owner.d.core.store.vv()[owner.d.nodeId]).toBe(recordedAt);
     expect(owner.d.core.store.listMeta("peer_proof_consumed:")).toHaveLength(1);
   } finally { await cluster.close(); }

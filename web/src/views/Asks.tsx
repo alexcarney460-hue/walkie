@@ -10,6 +10,7 @@ import { hrefFor, useRoute } from "../lib/route.ts";
 import { clock, countdown, fullTime, useNow } from "../lib/time.ts";
 import { useStore } from "../state/store.tsx";
 import { useMdOpts } from "../state/useMdOpts.ts";
+import { displayStoredText } from "../../../src/protocol/display-text.ts";
 
 type Tab = "open" | "resolved" | "expired";
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -47,7 +48,7 @@ function AskRow({ view, showState }: { view: AskView; showState: boolean }) {
           {!forMe && actionable && <span className="chip chip-amber" title="The target agent routes asks to a person">Needs a person</span>}
         </div>
         <div className="ask-row-text">
-          <Markdown text={body.text} opts={md} />
+          <Markdown text={displayStoredText(body.text)} opts={md} />
         </div>
         <div className="ask-row-meta tnum">
           <span title={fullTime(view.ask.ts)}>asked <RelTime ts={view.ask.ts} long /></span>
@@ -70,7 +71,7 @@ function AskRow({ view, showState }: { view: AskView; showState: boolean }) {
                   {a.author.agent ? <span className="mono">{a.author.agent}</span> : displayName(team?.members, a.author.handle)}
                   <span className="muted"> {declined ? "declined" : "answered"} · <RelTime ts={a.ts} long /></span>
                 </p>
-                <Markdown text={String((a.body as { text: string }).text)} opts={md} />
+                <Markdown text={displayStoredText(String((a.body as { text: string }).text))} opts={md} />
               </div>
             </div>
           );

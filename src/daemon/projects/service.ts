@@ -187,7 +187,7 @@ export function post(w: WriteCtx, channel: string, text: string, board: Record<s
 
 /** The channel exists (created through the roster authority, as every channel is) or the call fails with why. */
 async function createChannel(w: WriteCtx, name: string, members: string[] | undefined): Promise<void> {
-  const body = { name, topic: "Walkie project", project: true as const, ...(members ? { members } : {}) };
+  const body = { name, topic: "Sqwakie project", project: true as const, ...(members ? { members } : {}) };
   if (w.core.isAuthority()) {
     w.core.emit("channel.upsert", body);
     return;
@@ -296,7 +296,7 @@ async function createProjectNow(w: WriteCtx, req: CreateProject): Promise<Projec
   do channel = `p-${randomBytes(4).toString("hex")}`; while (w.core.roster.channels.has(channel));
   await createChannel(w, channel, req.private ? owners.slice(0, 50) : undefined);
   if (!w.core.isProjectChannel(channel)) {
-    throw new HttpError(409, "conflict", "the team's roster authority runs a Walkie without Projects (the channel was created without the project marker); upgrade that machine first");
+    throw new HttpError(409, "conflict", "the team's roster authority runs a Sqwakie without Projects (the channel was created without the project marker); upgrade that machine first");
   }
   const name = clean(w, req.name);
   post(w, channel, `Project "${name}" (${prefix}) created`, {
@@ -316,7 +316,7 @@ export interface UpdateProject {
   automations?: Automations; state?: "active" | "archived" | "deleted"; private?: boolean;
   /** FO-6: the board steward on or off for this project, and the machine whose loop keeps it. */
   steward?: "on" | "off"; steward_node?: string;
-  /** PROJECT-REPORTS-1: WalkieTalkie's hourly status report for this project, on or off. */
+  /** PROJECT-REPORTS-1: Talkie's hourly status report for this project, on or off. */
   status_report?: "hourly" | "off";
   /** WALK-73: who resolves a dispute (`@handle` or `@handle/machine`); null or "" clears it. */
   escalation_contact?: string | null;
@@ -346,13 +346,13 @@ function normalizeEscalationContact(w: WriteCtx, channel: string, raw: string | 
   return v;
 }
 
-/** Settings, archive / delete, visibility: the project's admins (owners and its creator), people only. */
-export function updateProject(w: WriteCtx, channel: string, req: UpdateProject): Promise<ProjectView> {
+/** Settings, archive / delete, visibility: the project's admins (owners and its creator), signed as a person. */
+export function updateProject(w: WriteCtx, channel: string, req: UpdateProject, reportActor?: string): Promise<ProjectView> {
   requirePerson(w, "changing a project's settings");
-  return serial(w.core, () => updateProjectNow(w, channel, req));
+  return serial(w.core, () => updateProjectNow(w, channel, req, reportActor));
 }
 
-async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject): Promise<ProjectView> {
+async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject, reportActor?: string): Promise<ProjectView> {
   // The "same contact again" check below compares with the folded view: fold what has arrived first (WALK-73 r5 review LOW-a).
   w.idx.flushAll();
   const p = visibleProject(w, channel);
@@ -404,7 +404,7 @@ async function updateProjectNow(w: WriteCtx, channel: string, req: UpdateProject
       : Object.keys(changes).length === 1 && changes.status_report ? `status report turned ${changes.status_report === "hourly" ? "on" : "off"}`
       : Object.keys(changes).length === 1 && changes.escalation_contact !== undefined ? (changes.escalation_contact ? "escalation contact set" : "escalation contact cleared")
       : Object.keys(changes).length === 1 && changes.steward_node !== undefined ? "board steward machine set" : `settings changed (${Object.keys(changes).join(", ")})`;
-    post(w, channel, `Project "${p.name}" ${what}`, { v: 1, rev, op: "project", ...(after ? { after } : {}), ...changes }, { thread: p.id });
+    post(w, channel, `Project "${p.name}" ${what}${req.status_report !== undefined && reportActor ? ` by ${reportActor}` : ""}`, { v: 1, rev, op: "project", ...(after ? { after } : {}), ...changes }, { thread: p.id });
   }
   w.idx.touchSettings(channel);
   return visibleProject(w, channel);

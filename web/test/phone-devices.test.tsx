@@ -9,7 +9,7 @@ test("qrPath draws one unit square per dark module, offset by the quiet zone", (
 });
 
 test("the QR code renders black modules on white with a 4-module quiet zone", () => {
-  const rows = qrRows("https://getwalkie.vercel.app/m#pair=AAAAAAAAAAAAAAAAAAAAAA");
+  const rows = qrRows("https://sqwakie.si/m#pair=AAAAAAAAAAAAAAAAAAAAAA");
   const html = renderToStaticMarkup(<QrCode rows={rows} />);
   const n = rows.length + 8;
   expect(html).toContain(`viewBox="0 0 ${n} ${n}"`);

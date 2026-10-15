@@ -1,12 +1,13 @@
 // Optional meeting summaries through the user's OWN `claude` CLI (their subscription; never an API key).
 // No tools, no MCP servers, no session persistence, a scratch cwd, and a dead WALKIE_SOCKET so the
-// user's Walkie hooks don't report the summarizer as an agent. Any failure → null (post without it).
+// user's Sqwakie hooks don't report the summarizer as an agent. Any failure → null (post without it).
 //
 // Containment: the CLI runs in its own process group (detached). stdout is read as a stream with a
 // 64 KB cap; on timeout, cap, failure, and after a normal exit, the whole group is SIGKILLed (so a
 // descendant holding stdout can't linger), the reader is destroyed, and the call waits for the exit
 // (the process is reaped) before returning. The caller redacts the transcript before it gets here.
 import { spawn } from "node:child_process";
+import { noteChildProcess } from "../daemon/adopted-zombies.ts";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,6 +64,7 @@ function runContained(bin: string, args: string[], input: string, cwd: string, e
       resolve(null);
       return;
     }
+    noteChildProcess(child);
     const chunks: Buffer[] = [];
     let bytes = 0;
     let settled = false;

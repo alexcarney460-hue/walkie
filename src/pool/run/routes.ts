@@ -129,9 +129,9 @@ route("POST", "/v1/pool/serve", async (c) => {
     throw new HttpError(409, "does_not_fit", `no machine here or sharing has ${(need / 1024 ** 3).toFixed(1)} GB of GPU memory free for ${m.name} (${quant === "q8" ? "8-bit" : "4-bit"}); split it across machines instead: walkie pool run ${m.id}`);
   }
   const on = { node_id: target.node_id, hostname: target.hostname, self: target.self };
-  // Known to share without the serve API (an older Walkie): say so. Not yet known (just joined): the machine answers.
+  // Known to share without the serve API (an older Sqwakie): say so. Not yet known (just joined): the machine answers.
   if (!target.self && target.pool && target.pool.serve !== true) {
-    throw new HttpError(409, "no_serve_support", `${target.hostname} runs a Walkie without serving models (its owner updates Walkie there)`);
+    throw new HttpError(409, "no_serve_support", `${target.hostname} runs a Sqwakie without serving models (its owner updates Sqwakie there)`);
   }
   if (target.self) return json({ on, serve: await p.server.start(m.id, quant, null) }, 202);
   requireTeam(c);

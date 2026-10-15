@@ -4,6 +4,7 @@
 import type { AgentView, AskView, Event as WalkieEvent, MeView, NodeView, TeamView } from "../../protocol/schemas.ts";
 import type { MobileLink } from "../client.ts";
 import { h, relTime, replace } from "./dom.ts";
+import { displayStoredText } from "../../protocol/display-text.ts";
 
 type Tab = "agents" | "asks" | "posts";
 
@@ -54,7 +55,7 @@ export class Mission {
   private loadedAt = Date.now();
 
   constructor(private readonly link: MobileLink, private readonly hooks: MissionHooks, banner: HTMLElement | null) {
-    this.title = h("span", { class: "top-team" }, "Walkie");
+    this.title = h("span", { class: "top-team" }, "Sqwakie");
     this.note = h("div", { class: "note", role: "status", "aria-live": "polite" });
     this.body = h("main", { class: "body", id: "main" });
     this.composer = h("div", { class: "composer-slot" });
@@ -218,7 +219,7 @@ export class Mission {
 
   private render(): void {
     this.freshness();
-    this.title.textContent = this.team?.name ?? this.me?.team?.name ?? "Walkie";
+    this.title.textContent = this.team?.name ?? this.me?.team?.name ?? "Sqwakie";
     const working = this.agents.filter((a) => a.effective_state === "working").length;
     const tabs: [Tab, string, number][] = [["agents", "Agents", working], ["asks", "Asks", this.asks?.length ?? 0], ["posts", "Posts", 0]];
     replace(this.tabs, ...tabs.map(([id, label, n]) => h("button", {
@@ -263,7 +264,8 @@ export class Mission {
 
   private agentRow(a: AgentView): HTMLElement {
     const s = a.status;
-    const detail = [s.task, s.title ?? s.activity].filter(Boolean).join(" · ");
+    const statusLine = s.title ?? s.activity;
+    const detail = [s.task, statusLine ? displayStoredText(statusLine) : null].filter(Boolean).join(" · ");
     return h("li", { class: `agent state-${a.effective_state}` },
       h("div", { class: "agent-top" },
         h("span", { class: "agent-name mono" }, a.agent),
@@ -310,7 +312,7 @@ export class Mission {
     };
     return h("article", { class: "ask" },
       h("p", { class: "ask-from" }, h("span", { class: "mono" }, from), h("span", { class: "muted" }, ` · ${ev.channel ? `#${ev.channel} · ` : ""}${relTime(ev.ts)}`)),
-      h("p", { class: "ask-text" }, text),
+      h("p", { class: "ask-text" }, displayStoredText(text)),
       box,
       h("div", { class: "row" },
         h("button", { type: "button", class: "btn", onclick: () => void send(false) }, "Answer"),
@@ -337,7 +339,7 @@ export class Mission {
       : posts.length
         ? h("ol", { class: "posts" }, ...posts.map((p) => h("li", { class: "post" },
           h("p", { class: "post-meta" }, h("strong", {}, names.get(p.author.handle) ?? p.author.handle), p.author.agent ? h("span", { class: "mono muted" }, ` /${p.author.agent}`) : null, h("span", { class: "muted" }, ` · ${relTime(p.ts)}`)),
-          h("p", { class: "post-text" }, String((p.body as { text?: unknown }).text ?? "")),
+          h("p", { class: "post-text" }, displayStoredText(String((p.body as { text?: unknown }).text ?? ""))),
         )))
         : h("p", { class: "empty" }, `No posts in #${this.channel} yet.`),
     );

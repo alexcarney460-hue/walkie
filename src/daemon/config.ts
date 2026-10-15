@@ -1,6 +1,7 @@
 // config.json with defaults; env overrides WALKIE_PEER_PORT, WALKIE_LOCAL_PORT, WALKIE_PEER_HOST.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { HermesActivityProfiles } from "../protocol/hermes-activity.ts";
 import { SEAT_RUNTIMES_V1, SeatRepoId } from "../protocol/seats.ts";
@@ -32,7 +33,7 @@ export const SeatsConfig = z.object({
   /** Extra environment variable names a seat gets, on top of the allowlist (src/daemon/seats/runtime.ts). */
   env: z.array(z.string().min(1).max(64)).max(50).optional(),
   /**
-   * The shell file sourced for each seat's login environment (default `seat-env` in the Walkie home, i.e.
+   * The shell file sourced for each seat's login environment (default `seat-env` in the Sqwakie home, i.e.
    * ~/.walkie/seat-env): an absolute path, or `~/…` in the person's home. Set in config.json only (read at start).
    */
   env_file: z.string().min(1).max(1_000).refine((v) => v.startsWith("/") || v.startsWith("~/"), "an absolute path or ~/…").optional(),
@@ -49,8 +50,10 @@ export const SeatsConfig = z.object({
   runtime_dir: z.string().min(2).max(1_000).regex(/^\//).optional(),
   /** The person accepted that seats run as the daemon's own user (`walkie seats allow --same-user`). */
   same_user: z.boolean().optional(),
-  /** Explicit opt-in: same-user seats use this person's provider settings, CLAUDE.md and hooks. Default is a Walkie worker template. */
+  /** Explicit opt-in: same-user seats use this person's provider settings, CLAUDE.md and hooks. Default is a Sqwakie worker template. */
   inherit_person_config: z.boolean().optional(),
+  /** Separate person-only local consent; never implies same-user/allow. */
+  codex_oss_ollama: z.boolean().optional(),
   /** The person accepted that seat users can read their home (`--accept-readable-home`). */
   accept_readable_home: z.boolean().optional(),
   /**
@@ -121,17 +124,18 @@ export const ConfigSchema = z.object({
   machine_stats_interval_s: z.number().int().min(5).max(3_600).default(30),
   /** Record the provider accounts running sessions use, read their usage and share it with the team (src/accounts/). */
   accounts: z.boolean().default(true),
+  accounts_auto_import: z.boolean().default(false),
   /**
-   * v0.2: "direct" (Walkie Direct, iroh) or "tailscale". Unset: what this node's roster record says, else chosen at
+   * v0.2: "direct" (Sqwakie Direct, iroh) or "tailscale". Unset: what this node's roster record says, else chosen at
    * `walkie init` / `walkie join` (src/daemon/direct/link.ts).
    */
   transport: z.enum(["tailscale", "direct"]).optional(),
   /**
-   * v0.2 mixed teams: a Tailscale node also serves Walkie Direct (dual), so machines that joined with an invite code
+   * v0.2 mixed teams: a Tailscale node also serves Sqwakie Direct (dual), so machines that joined with an invite code
    * can reach it (`walkie direct enable` sets it). The roster authority of a team with Direct-only machines needs it.
    */
   direct: z.boolean().optional(),
-  /** v0.2: Walkie Direct relay URLs replacing n0's public relays; [] = no relay (direct paths only). */
+  /** v0.2: Sqwakie Direct relay URLs replacing n0's public relays; [] = no relay (direct paths only). */
   relays: z.array(z.string().url().max(200)).max(16).optional(),
   /**
    * WALKIE-POOL-2: this machine's owner lets teammates' split runs use its compute (`walkie pool share on`, the
@@ -170,10 +174,21 @@ export const ConfigSchema = z.object({
   agent_admin: z.boolean().default(true),
   /**
    * AGENT-ADMIN-1: team owners (and their agents), and this person's own other machines, may run allow-listed admin
-   * commands here over Walkie (`walkie admin --machine <this> …`). On unless the person turned it off
+   * commands here over Sqwakie (`walkie admin --machine <this> …`). On unless the person turned it off
    * (`walkie admin remote off`); absent = on. Only this machine's person turns it back on.
    */
   remote_admin: z.boolean().default(true),
+  /** WALK-151: browser use is off until this machine's person enables it. */
+  browser_enabled: z.boolean().default(false),
+  /** Only explicitly named seat agents may share the browser capability; Talkie is covered by browser_enabled. */
+  browser_allowed_agents: z.array(z.string().min(1).max(140)).max(64).default([]),
+  /** Extra blocked domains, in addition to the built-in banking, mail and social denylist. */
+  browser_denylist: z.array(z.string().regex(/^[a-z0-9.-]+$/).max(253)).max(100).default([]),
+  /** WALK-152: messaging web apps are a separate person-controlled capability. */
+  channels_enabled: z.boolean().default(false),
+  channels_owner_number: z.string().regex(/^\+[1-9]\d{6,14}$/).nullable().default(null),
+  /** First successful channel enablement. A missing quota after this point is damage. */
+  channels_quota_initialized: z.string().datetime().nullable().default(null),
   /** Optional loopback-only HTTP MCP gateway; a trusted outbound tunnel proxy supplies signed assertions. */
   guest_gateway: z.object({
     port: z.number().int().min(1).max(65535),
@@ -196,6 +211,27 @@ export function saveConfigField(path: string, key: keyof Config, value: unknown)
   if (existsSync(path)) raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   const next = ConfigSchema.parse({ ...raw, [key]: value });
   writeFileSync(path, JSON.stringify({ ...raw, [key]: next[key] }, null, 2) + "\n", { mode: 0o600 });
+}
+
+/** Commit channel enablement and its durable quota marker in one settings replacement. */
+export function saveChannelConfig(path: string, enabled: boolean, initialized: string | null): void {
+  const raw = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown> : {};
+  const patch = { channels_enabled: enabled, channels_quota_initialized: initialized };
+  ConfigSchema.parse({ ...raw, ...patch });
+  const tmp = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    const fd = openSync(tmp, "wx", 0o600);
+    try {
+      writeFileSync(fd, JSON.stringify({ ...raw, ...patch }, null, 2) + "\n");
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    renameSync(tmp, path);
+    const dir = openSync(dirname(path), "r");
+    try { fsyncSync(dir); } finally { closeSync(dir); }
+  } catch (error) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* preserve first failure */ }
+    throw error;
+  }
 }
 
 export function loadConfig(path: string, env = true): Config {
@@ -236,7 +272,7 @@ export function saveFleetConfig(path: string, fleet: FleetConfig): void {
 
 /**
  * Writes `hermes_activity_profiles` into config.json (`walkie hooks install hermes --activity`), keeping every other key exactly as
- * the file has it and creating the file, and the Walkie home, when there are none. A file that is not a JSON object is refused and left
+ * the file has it and creating the file, and the Sqwakie home, when there are none. A file that is not a JSON object is refused and left
  * alone. Atomic (temp file + rename), 0600. Invalid names are refused before anything is written.
  */
 export function saveHermesActivityProfiles(path: string, profiles: readonly string[]): void {

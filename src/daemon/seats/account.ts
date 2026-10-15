@@ -10,12 +10,13 @@
 //     its 10 % reserve and re-checks everything before it lends.
 //     The host person's own accounts serve any launcher allowed on their machine (their consent: `seats allow`).
 // Without an account a seat keeps this machine's own login (Alex's decision). A Codex login from another machine is
-// LEASED as an access-only copy (never its refresh token: codex-access.ts), and Kimi logins aren't vault accounts.
+// LEASED as an access-only copy (never its refresh token: codex-access.ts). Kimi vault homes stay on their machine.
 // Anything else is refused `account_not_usable`. Credentials live in the seat's environment (or a leased Codex home)
 // for one run and are never posted or logged.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname } from "node:path";
 import { mayLeaseUnder } from "../../accounts/pool.ts";
+import { readKimiToken } from "../../accounts/adapters/kimi.ts";
+import { readVaultCredential } from "../../accounts/vault/vault-path.ts";
 import type { AccountVault, AccountView, TeamPolicy } from "../../protocol/accounts.ts";
 import type { SeatRuntime } from "../../protocol/seats.ts";
 import type { VaultEntry } from "../../accounts/vault/vault.ts";
@@ -49,7 +50,6 @@ export function planSeatAccount(
   const owner = key.slice(0, at);
   const id = key.slice(at + 1);
   if (at <= 0 || !/^[0-9a-f]{24}$/.test(id)) return refused("not an account key (<owner>:<24 hex id>)");
-  if (o.runtime === "kimi") return refused("Kimi logins aren't vault accounts: leave the account out to use this machine's own Kimi login");
   if (o.runtime === "grok") return refused("Grok uses only this machine's subscription login, not a vault account");
   if (owner === o.me) {
     const entry = o.vault.find((e) => e.id === id);
@@ -57,6 +57,7 @@ export function planSeatAccount(
       return entry.provider === o.runtime ? { kind: "local", entry } : refused(`that account is a ${entry.provider} login and this seat runs ${o.runtime}`);
     }
   }
+  if (o.runtime === "kimi") return refused("Kimi rotates its token about every 15 minutes; its vault login cannot be leased to another machine");
   const runtime = o.runtime;
   const name = runtime === "codex" ? "Codex" : "Claude";
   const view = o.pooled.find((v) => v.provider === runtime && v.id === id && (v.owners[0] ?? "") === owner);
@@ -106,7 +107,7 @@ export interface SeatCredentials {
   /** A hand-out's credential generation as the lending machine reported it (absent from older lenders). */
   gen?: string;
   /** For the router's lease (the account id, a hand-out's node, owner and grant). */
-  lease: { provider: "claude" | "codex"; account: string; from_node?: string; owner?: string; grant?: string };
+  lease: { provider: "claude" | "codex" | "kimi"; account: string; from_node?: string; owner?: string; grant?: string };
 }
 
 export interface CredentialDeps {
@@ -145,10 +146,17 @@ export async function seatCredentials(plan: Exclude<AccountPlan, { kind: "refuse
   }
   const e = plan.entry;
   if (e.provider === "claude") return { env: { CLAUDE_CODE_OAUTH_TOKEN: await d.claudeToken(e.id) }, lease: { provider: "claude", account: e.id } };
+  if (e.provider === "kimi") {
+    if (asSeatUser || !e.home) throw new Error("Kimi's rotating login runs only as this machine's person in its vault home");
+    if (readKimiToken({ provider: "kimi", dir: e.home, isDefault: false, vault: true }) === "none") throw new Error("that Kimi account has no safe credential in its vault home");
+    return { env: { KIMI_CODE_HOME: e.home }, lease: { provider: "kimi", account: e.id } };
+  }
   if (!e.home) throw new Error("the vault's Codex account has no home directory");
+  const text = readVaultCredential(dirname(dirname(dirname(e.home))), "codex", e.home, "auth.json");
+  if (text === null) throw new Error("that Codex account isn't signed in where a seat user can use it (no auth.json in its vault home)");
   if (!asSeatUser) return { env: { CODEX_HOME: e.home }, lease: { provider: "codex", account: e.id } };
   let copy: string | null = null;
-  try { copy = d.accessOnlyCodex(readFileSync(join(e.home, "auth.json"), "utf8")); } catch { copy = null; }
+  try { copy = d.accessOnlyCodex(text); } catch { copy = null; }
   if (!copy) throw new Error("that Codex account isn't signed in where a seat user can use it (no auth.json in its vault home)");
   return { env: {}, codexAuth: copy, lease: { provider: "codex", account: e.id } };
 }

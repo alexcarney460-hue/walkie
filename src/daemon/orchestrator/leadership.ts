@@ -135,7 +135,7 @@ export class Leadership {
       return this.valid && this.epoch === claim.epoch ? result : { claimed: false };
     } catch (err) {
       if (err instanceof PeerCallError && err.status === 404)
-        throw new HttpError(409, "authority_outdated", node.hostname + " runs an older Walkie; update it");
+        throw new HttpError(409, "authority_outdated", node.hostname + " runs an older Sqwakie; update it");
       if (err instanceof PeerCallError && ["clock_skew", "stale_run", "forbidden", "rate_limited", "just_ran"].includes(err.code))
         throw new HttpError(err.status, err.code, err.message);
       throw new HttpError(503, "authority_unreachable", node.hostname + " is unreachable");

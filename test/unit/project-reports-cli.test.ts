@@ -33,10 +33,11 @@ afterEach(() => {
   if (savedSocket === undefined) delete process.env.WALKIE_SOCKET; else process.env.WALKIE_SOCKET = savedSocket;
 });
 
-function run(pos: string[], opts: { json?: boolean; forAgent?: boolean } = {}) {
+function run(pos: string[], opts: { json?: boolean; forAgent?: boolean; unattended?: boolean } = {}) {
   const lines: string[] = [];
   const ctx = {
-    args: { pos, flags: new Map() }, json: opts.json === true, forAgent: opts.forAgent === true, agentMarker: () => null,
+    args: { pos, flags: new Map() }, json: opts.json === true, forAgent: opts.forAgent === true, agentMarker: () => opts.forAgent ? "cc-reports" : null,
+    person: { interactive: () => !opts.unattended },
     client: () => { throw new Error("projects uses its own client"); }, out: (s: string) => lines.push(s), err: (s: string) => lines.push(s),
   } as unknown as Ctx;
   return { lines, done: projectsCmd(ctx) };
@@ -44,6 +45,12 @@ function run(pos: string[], opts: { json?: boolean; forAgent?: boolean } = {}) {
 const posts = () => daemon.requests.filter((r) => r.method === "POST");
 
 describe("walkie projects report", () => {
+  test("an agent and an unattended caller mark the settings write for admin gating", async () => {
+    for (const opts of [{ forAgent: true }, { unattended: true }]) {
+      expect(await run(["report", "WEB", "on"], opts).done).toBe(0);
+    }
+    expect(posts().map((p) => p.headers["x-walkie-under-agent"])).toEqual(["1", "1"]);
+  });
   test("on sets hourly; off sets off; each says so", async () => {
     const on = run(["report", "WEB", "on"]);
     expect(await on.done).toBe(0);

@@ -1,13 +1,13 @@
-// Which Walkie on this machine owns its seat users (WALK-103). Seat users, the root helper's id ledger and the sudo
-// rules are per person (sudo's SUDO_UID), but one person can run more than one Walkie daemon: a smoke test, a second
+// Which Sqwakie on this machine owns its seat users (WALK-103). Seat users, the root helper's id ledger and the sudo
+// rules are per person (sudo's SUDO_UID), but one person can run more than one Sqwakie daemon: a smoke test, a second
 // `walkie daemon run` with HOME or WALKIE_HOME pointed elsewhere, a copy of ~/.walkie. Such a daemon used to list the
 // person's real seat users through `seat-admin pending` and destroy every one, since none was in its own records.
 //
-// `walkie seats setup-user --apply` now records, root-owned, the Walkie it set seat users up for: its user and uid,
-// its Walkie home, and its daemon socket (whose `<socket>.lock` the daemon holds for as long as it runs:
+// `walkie seats setup-user --apply` now records, root-owned, the Sqwakie it set seat users up for: its user and uid,
+// its Sqwakie home, and its daemon socket (whose `<socket>.lock` the daemon holds for as long as it runs:
 // instance-lock.ts). The root helper (admin.ts, admin-sys.ts) lists, makes and removes seat users only for the daemon
 // that holds that socket's lock, and the daemon (host.ts) never asks the helper at all when the record names another
-// Walkie. A setup from before this record existed is "legacy": the helper and daemon then keep the person's own seats
+// Sqwakie. A setup from before this record existed is "legacy": the helper and daemon then keep the person's own seats
 // working but never remove a seat user the daemon did not make itself, until setup-user --apply runs again: each seat
 // user in seats.json is stamped with the socket of the daemon that made it (host.ts `made_by`), so a copied
 // seats.json, or one from before the stamps, names no seat user this daemon destroys. A running seat left
@@ -30,7 +30,7 @@ export interface SeatRegistration {
   /** The person whose daemon owns the seat users, and their uid (sudo's SUDO_UID for that daemon). */
   user: string;
   uid: number;
-  /** That daemon's Walkie home (shown in messages) and its socket (what root binds the caller to). */
+  /** That daemon's Sqwakie home (shown in messages) and its socket (what root binds the caller to). */
   home: string;
   socket: string;
 }
@@ -41,7 +41,7 @@ export type RegistrationRead =
   | { state: "present"; registration: SeatRegistration };
 
 /**
- * What this daemon may do with the helper. `own`: the record names it; `other`: the record names another Walkie (or
+ * What this daemon may do with the helper. `own`: the record names it; `other`: the record names another Sqwakie (or
  * can't be read), so it never asks the helper; `legacy`: nothing recorded (a setup from before WALK-103), so it never
  * removes a seat user it didn't make itself.
  */
@@ -97,7 +97,7 @@ function rootOnlyProblem(path: string, stat: (p: string) => Stats): string | nul
 /**
  * The record at `path`. `root`: it must be root's alone, its directories too (the real helper and daemon; tests read
  * a temporary one with `root` false). Anything but a missing file that can't be read as one record is `invalid`,
- * which fails closed like a record naming another Walkie.
+ * which fails closed like a record naming another Sqwakie.
  */
 export function readSeatRegistration(path = SEAT_INSTANCE_FILE, root = true, stat: (p: string) => Stats = lstatSync): RegistrationRead {
   let st: Stats;
@@ -115,24 +115,24 @@ export function readSeatRegistration(path = SEAT_INSTANCE_FILE, root = true, sta
   let text: string;
   try { text = readFileSync(path, "utf8"); } catch (err) { return { state: "invalid", why: `${path} can't be read (${(err as Error).message})` }; }
   const registration = parseSeatRegistration(text);
-  return registration ? { state: "present", registration } : { state: "invalid", why: `${path} doesn't hold a Walkie seat registration` };
+  return registration ? { state: "present", registration } : { state: "invalid", why: `${path} doesn't hold a Sqwakie seat registration` };
 }
 
-export const LEGACY_SCOPE_WHY = "this machine's seat users were set up by an earlier Walkie, which didn't record which Walkie on this machine owns them. "
-  + "Until walkie seats setup-user --apply runs again from this Walkie: this Walkie removes only the seat users it made itself since this update; "
-  + "seat users made before it, or by another Walkie here (a copied ~/.walkie included), are left as they are, never removed and their processes never stopped; "
-  + "and the seat user helper installed then checks nothing itself, so an older Walkie started with another home could still remove them. "
-  + "After setup-user --apply the helper lists, makes and removes seat users for this Walkie only";
+export const LEGACY_SCOPE_WHY = "this machine's seat users were set up by an earlier Sqwakie, which didn't record which Sqwakie on this machine owns them. "
+  + "Until walkie seats setup-user --apply runs again from this Sqwakie: this Sqwakie removes only the seat users it made itself since this update; "
+  + "seat users made before it, or by another Sqwakie here (a copied ~/.walkie included), are left as they are, never removed and their processes never stopped; "
+  + "and the seat user helper installed then checks nothing itself, so an older Sqwakie started with another home could still remove them. "
+  + "After setup-user --apply the helper lists, makes and removes seat users for this Sqwakie only";
 
 export function otherScopeWhy(r: SeatRegistration): string {
-  return `seat users on this machine are managed by another Walkie (${r.user}'s, home ${r.home}): this Walkie doesn't list, make or remove them. `
-    + "To move them to this Walkie, run walkie seats setup-user --apply from it";
+  return `seat users on this machine are managed by another Sqwakie (${r.user}'s, home ${r.home}): this Sqwakie doesn't list, make or remove them. `
+    + "To move them to this Sqwakie, run walkie seats setup-user --apply from it";
 }
 
 /** The daemon's side: whether the record names this daemon (`socket`: its own, `uid`: its own). */
 export function seatScopeFor(read: RegistrationRead, socket: string, uid: number): SeatScope {
   if (read.state === "absent") return { state: "legacy", why: LEGACY_SCOPE_WHY };
-  if (read.state === "invalid") return { state: "other", why: `${read.why}: Walkie doesn't use the seat user helper until walkie seats setup-user --apply records this Walkie again` };
+  if (read.state === "invalid") return { state: "other", why: `${read.why}: Sqwakie doesn't use the seat user helper until walkie seats setup-user --apply records this Sqwakie again` };
   const r = read.registration;
   return r.uid === uid && r.socket === canonicalPath(socket) ? { state: "own" } : { state: "other", why: otherScopeWhy(r) };
 }

@@ -20,7 +20,7 @@ export interface AuditEntry {
   readonly action: string;
   /** The machine it happened on (this machine's hostname). */
   readonly machine: string;
-  /** "local" (an agent on this machine) or "remote" (over Walkie from another machine). */
+  /** "local" (an agent on this machine) or "remote" (over Sqwakie from another machine). */
   readonly via: "local" | "remote";
   /** Refused, and why (logged here only, never posted). */
   readonly refused?: string;
@@ -130,12 +130,12 @@ export function readAudit(home: string, limit = 50): Record<string, unknown>[] {
 const NOTICE_FILE = "admin-notice-v1";
 
 /** The one post after the upgrade that brought agent and remote admin (AGENT-ADMIN-1 §(c)), mentioning this person. */
-export const UPGRADE_NOTICE = "Walkie update: agents on this machine can now set Walkie up for you, and team owners (and your own other "
-  + "machines) can run allow-listed walkie setup commands here over Walkie (seats, accounts, hooks, pool, orchestrator; never a "
+export const UPGRADE_NOTICE = "Sqwakie update: agents on this machine can now set Sqwakie up for you, and team owners (and your own other "
+  + "machines) can run allow-listed walkie setup commands here over Sqwakie (seats, accounts, hooks, pool, orchestrator; never a "
   + "shell). Every such action is posted here, naming who did it. To refuse it on this machine: walkie admin remote off (remote) and "
   + "walkie agents admin off (local agents); only you can turn them back on.";
 
-/** Posts the upgrade notice once per machine (a marker file in the Walkie home), when it is on a team. */
+/** Posts the upgrade notice once per machine (a marker file in the Sqwakie home), when it is on a team. */
 export function postUpgradeNotice(core: Core): void {
   const marker = join(core.paths.home, NOTICE_FILE);
   const me = core.myHandle();

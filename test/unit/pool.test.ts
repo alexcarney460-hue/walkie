@@ -117,7 +117,7 @@ describe("capacity: memory in use is not counted", () => {
     expect(cpu.kind).toBe("cpu");
     expect(cpu.usable).toBe(23 * GiB);
     const old = machineCapacity(node("old", 32, 8, undefined))!;
-    expect(old.notes[0]).toContain("older Walkie");
+    expect(old.notes[0]).toContain("older Sqwakie");
     expect(machineCapacity({ node_id: "x", hostname: "x", handle: "h" })).toBeNull();
     expect(machineCapacity(node("full", 16, 16, apple("Apple M1")))!.usable).toBe(0);
   });
@@ -139,7 +139,7 @@ describe("grouping", () => {
     expect(g.groups[1]!.why).toContain("38 ms from this machine");
     expect(g.excluded).toEqual([
       { hostname: "gone", handle: "h", reason: "offline" },
-      { hostname: "quiet", handle: "h", reason: "no memory reported (machine stats turned off, or an older Walkie)" },
+      { hostname: "quiet", handle: "h", reason: "no memory reported (machine stats turned off, or an older Sqwakie)" },
     ]);
   });
 

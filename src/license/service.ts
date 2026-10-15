@@ -1,4 +1,4 @@
-// The vendor's license service (site/api/license/{bind,renew}): the only calls Walkie makes home, both
+// The vendor's license service (site/api/license/{bind,renew}): the only calls Sqwakie makes home, both
 // from the roster authority. The origin is pinned to SITE_ORIGIN (audit M6): WALKIE_LICENSE_URL is
 // honored only for plain-http loopback AND WALKIE_DEV=1, and requests never follow a redirect.
 // Tests inject `fetch` (and may name a base) through the constructor, never through the environment.
@@ -56,9 +56,9 @@ export class LicenseService {
     return this.post("/api/license/bind", { code, team_id: teamId, ...(proof === undefined ? {} : { proof }) });
   }
 
-  /** A fresh license for a bound subscription, authorized by its renewal token. */
-  renew(licId: string, renewalToken: string): Promise<ServiceReply> {
-    return this.post("/api/license/renew", { lic_id: licId, renewal_token: renewalToken });
+  /** A fresh license for a bound subscription, authorized by its renewal token (and, when asked for, a roster proof). */
+  renew(licId: string, renewalToken: string, proof?: unknown): Promise<ServiceReply> {
+    return this.post("/api/license/renew", { lic_id: licId, renewal_token: renewalToken, ...(proof === undefined ? {} : { proof }) });
   }
 
   /** The daily check-in (FINAL Codex 4): `{seats, plan, expires_at, newer}`; newer = a grant change after `issuedAt`. */

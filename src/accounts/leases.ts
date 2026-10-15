@@ -16,7 +16,7 @@ const MARK_MAX_MS = 8 * 86_400_000;
 
 export const Lease = z.object({
   id: z.string().regex(/^[0-9a-f]{16}$/),
-  provider: z.enum(["claude", "codex"]),
+  provider: z.enum(["claude", "codex", "kimi"]),
   account: z.string().regex(/^[0-9a-f]{24}$/),
   /** The wrapper (or `walkie accounts exec`) process holding it. */
   pid: z.number().int().positive(),

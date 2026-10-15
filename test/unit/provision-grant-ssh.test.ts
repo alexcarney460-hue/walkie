@@ -1,5 +1,5 @@
 // Final review A, MEDIUM, on the manual route: `walkie provision grant --owner-ssh <packet>` asks its own typed consent. When
-// an SSH server that is not Walkie's already answers on 127.0.0.1:22 (Linux and WSL), Walkie does not use it: the reason is
+// an SSH server that is not Sqwakie's already answers on 127.0.0.1:22 (Linux and WSL), Sqwakie does not use it: the reason is
 // said before the disclosure, the disclosure and the grant leave SSH out, no administrator step installs an SSH service, and
 // SSH is never reported ready. Stand-in daemon, a loopback listener standing in for port 22, stubbed terminal and sudo.
 import { afterEach, describe, expect, test } from "bun:test";
@@ -76,7 +76,7 @@ describe("walkie provision grant --owner-ssh on Linux or WSL", () => {
   test("a stock sshd answering on 22: the reason first, a disclosure and grant without SSH, the marker only, and SSH never reported ready", async () => {
     const r = run({ status: await stockSshdStatus(), walkieUnit: false });
     expect(await r.go()).toBe(0);
-    expect(r.err.join("\n")).toContain("This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off.");
+    expect(r.err.join("\n")).toContain("This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off.");
     const disclosure = r.out[0] as string; // the first thing printed is the disclosure
     expect(disclosure).toBe(consentText("alex", ["@alex"], 4, [profile])); // what a link without SSH shows
     expect(disclosure).not.toContain("SSH");
@@ -90,7 +90,7 @@ describe("walkie provision grant --owner-ssh on Linux or WSL", () => {
     expect(r.reads()).toBe(1); // only the look before the question: it dropped the packet, so there is nothing to look at again or to watch, and nothing is called ready
     expect(`${r.out.join("\n")}${r.err.join("\n")}`).not.toContain("owner SSH is ready");
   });
-  test("Walkie's own service answering (its unit installed): the check, the SSH disclosure, the packet in the grant, and ready from the status", async () => {
+  test("Sqwakie's own service answering (its unit installed): the check, the SSH disclosure, the packet in the grant, and ready from the status", async () => {
     const r = run({ walkieUnit: true });
     expect(await r.go()).toBe(0);
     expect(r.err.join("\n")).not.toContain("already runs its own SSH server");
@@ -126,7 +126,7 @@ describe("a stock sshd that starts answering after the first look (final review 
     // The question was asked with SSH in it (nothing answered yet) and the person typed yes to that: the sentence follows, and what
     // is recorded is the grant without SSH, in the text the daemon expects for a grant without it.
     expect(r.out[0]).toBe(consentText("alex", ["@alex"], 4, [profile], undefined, packet));
-    expect(r.err.join("\n")).toContain("This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent recorded leaves SSH out, though the one shown above included it.");
+    expect(r.err.join("\n")).toContain("This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent recorded leaves SSH out, though the one shown above included it.");
     expect(r.err.join("\n")).toContain(FOREIGN_SSH_AFTER_CONSENT);
     expect(r.needs).toEqual([{ marker: true, sshLinux: false, sshMacos: false }]); // the marker only: no SSH service is installed for it
     const grants = r.d.posts("/v1/provision/grant");
@@ -146,15 +146,15 @@ describe("a stock sshd that starts answering after the first look (final review 
     expect(r.err.join("\n")).not.toContain("already runs its own SSH server");
     expect(r.d.posts("/v1/provision/grant")).toEqual([]);
   });
-  test("Walkie's own service answering at both looks keeps the packet", async () => {
+  test("Sqwakie's own service answering at both looks keeps the packet", async () => {
     const r = run({ walkieUnit: true });
     expect(await r.go()).toBe(0);
     expect(r.err.join("\n")).not.toContain("already runs its own SSH server");
     expect(r.d.posts("/v1/provision/grant")[0]!.body).toHaveProperty("owner_ssh", packet);
     expect(r.err.join("\n")).toContain("owner SSH is ready");
   });
-  test("the administrator step skips the install only for WALKIE's service: a server that answers but is not Walkie's at that moment never counts", async () => {
-    // Walkie's service is running at both looks and is not when the step reads again (while something else still answers on 22).
+  test("the administrator step skips the install only for WALKIE's service: a server that answers but is not Sqwakie's at that moment never counts", async () => {
+    // Sqwakie's service is running at both looks and is not when the step reads again (while something else still answers on 22).
     let asked = 0;
     const r = run({ status: ready, walkieUnit: true, walkieActive: () => ++asked <= 2, refuseSsh: true });
     await expect(r.go()).rejects.toThrow("the SSH service was not installed");

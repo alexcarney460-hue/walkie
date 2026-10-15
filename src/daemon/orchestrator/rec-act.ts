@@ -136,7 +136,7 @@ function evidenceComment(d: RecDeps, c: RouteCtx, rec: Rec, by: string, what: st
   const marker = markerOf(rec);
   const have = d.idx.foldCardNow(w.card.channel, w.card.id)?.state.timeline.some((e) => e.kind === "comment" && typeof e.text === "string" && e.text.includes(marker));
   if (have) return null;
-  const text = `${marker}\n@${by} approved WalkieTalkie's recommendation: ${what}.${daemonWhy(rec)}`;
+  const text = `${marker}\n@${by} approved Talkie's recommendation: ${what}.${daemonWhy(rec)}`;
   return call(c, "POST", `/v1/tasks/${encodeURIComponent(w.card.id)}/comment`, { text: text.slice(0, 4_000) });
 }
 
@@ -153,7 +153,7 @@ async function moveCard(d: RecDeps, c: RouteCtx, rec: Rec, a: Extract<RecActionT
 /** The short brief a seat started from a recommendation gets: where the card is, how to claim and report on it, and what to do when it cannot. */
 export function seatBrief(rec: Rec, a: Extract<RecActionT, { kind: "start_seat" }>, w: Where, by: string): string {
   const title = cardDataTitle(w.card.title, [w.project.prefix, ...(w.project.prior_prefixes ?? [])]);
-  const head = `${markerOf(rec)} You are a ${a.role} seat, started by @${by} on WalkieTalkie's recommendation.\nCard ${w.card.ref}: ${title}\nProject: ${cardDataTitle(w.project.name, [])}`;
+  const head = `${markerOf(rec)} You are a ${a.role} seat, started by @${by} on Talkie's recommendation.\nCard ${w.card.ref}: ${title}\nProject: ${cardDataTitle(w.project.name, [])}`;
   const ref = w.card.ref;
   return a.role === "builder"
     ? `${head}\n1. Read the card: walkie task ${ref} (its description, comments and pinned documents are the brief).\n2. Claim it: walkie task start ${ref}. Work only in this seat's directory.\n3. Keep it current: walkie task comment ${ref} "<what changed>" after each real step.\n4. When the work is done and tested, run walkie task review ${ref}. Do not mark it done: a reviewer does.\nIf you cannot do it (the repository or credentials are not available here, or the card is unclear), comment on the card saying exactly what is missing, and stop.`
@@ -204,7 +204,7 @@ async function createCard(d: RecDeps, c: RouteCtx, rec: Rec, a: Extract<RecActio
   if (!raw) throw titleRefId(a.title) ? new HttpError(409, "rec_stale", TITLE_UNREADABLE) : stale("the card it would create can no longer be read");
   const title = norm(raw);
   if (d.idx.db.cards(a.project, { states: ["open"], limit: 20_000 }).some((card) => norm(card.title) === title)) return "A card with that title is already there.";
-  const body = `${markerOf(rec)}\nCreated from a WalkieTalkie recommendation approved by @${by}.${daemonWhy(rec)}`;
+  const body = `${markerOf(rec)}\nCreated from a Talkie recommendation approved by @${by}.${daemonWhy(rec)}`;
   const res = await call(c, "POST", "/v1/tasks", { project: a.project, title: raw, body, ...(a.column ? { column: a.column } : {}) });
   const made = (res as { task?: { board?: string; column?: string } }).task;
   return `Created a card in “${made?.board && made.column ? named(project, made.board, made.column) : "the project"}”.`;

@@ -9,7 +9,7 @@ import type { CardView } from "../../protocol/projects/schema.ts";
 import { planSteward, type StewardCard } from "../../protocol/projects/steward.ts";
 import type { Core } from "../core.ts";
 import { findProject, visibleProjects } from "../projects/service.ts";
-import { gather, type AgentRow, type StewardSource } from "../projects/steward-gather.ts";
+import { gather, privatePhrasesFor, type AgentRow, type StewardSource } from "../projects/steward-gather.ts";
 import { stewardConfig } from "../projects/steward-run.ts";
 import { planCuration } from "./curation-plan.ts";
 import type { SkippedTurn } from "./prepared.ts";
@@ -72,6 +72,7 @@ function sourceOf(d: CurationDeps): StewardSource {
     timeline: async (p, c) => d.idx.foldCardNow(p.channel, c.id)?.state.timeline ?? [],
     agents: async () => d.agents() as unknown as AgentRow[],
     owners: async () => [...d.core.roster.members.values()].filter((m) => m.role === "owner").map((m) => m.handle),
+    privatePhrases: async (target) => privatePhrasesFor(target, visibleProjects(ro), async (p) => d.idx.db.cards(p.channel, { states: ["open", "archived"], limit: 20_000 })),
     linear: async () => null,
   };
 }
@@ -92,7 +93,7 @@ export async function prepareCardCuration(d: CurationDeps, canAct: () => boolean
   const planned: string[] = [];
   let failed = 0, held = 0, ambiguous = 0, deferred = 0;
   for (const p of order) {
-    if (!canAct() || signal?.aborted) throw new Error("WalkieTalkie lease expired");
+    if (!canAct() || signal?.aborted) throw new Error("Talkie lease expired");
     if (planned.length + failed > 0 && performance.now() - started >= budget) break;
     await yieldLoop();
     try {
@@ -111,7 +112,7 @@ export async function prepareCardCuration(d: CurationDeps, canAct: () => boolean
       d.log?.warn("talkie_curation_project_failed", { project: p.prefix, err: String(err).slice(0, 200) });
     }
   }
-  if (!canAct()) throw new Error("WalkieTalkie lease expired");
+  if (!canAct()) throw new Error("Talkie lease expired");
   const done = reconcile(d, { source: "curation", scope: new Set(planned), desired, canAct });
   if (planned.length) notePlanned(d.core, planned, new Set(projects.map((p) => p.channel)), now);
   const reached = `checked ${planned.length} of ${projects.length} project${projects.length === 1 ? "" : "s"}${failed ? ` (${failed} failed)` : ""}${planned.length + failed < projects.length ? `, the rest next time` : ""}`;

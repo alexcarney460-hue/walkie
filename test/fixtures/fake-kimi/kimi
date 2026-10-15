@@ -18,11 +18,11 @@ const taskPath = m ? join(cwd, m[1] as string) : null;
 const task = taskPath && existsSync(taskPath) ? readFileSync(taskPath, "utf8") : null;
 const stdin = await new Response(Bun.stdin.stream()).text();
 const SEEN = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY", "GEMINI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
-  "CODEX_HOME", "UNIT_MARK", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "WALKIE_HOME", "WALKIE_SEAT_TOKEN_FILE", "WALKIE_AGENT"];
+  "CODEX_HOME", "KIMI_CODE_HOME", "UNIT_MARK", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "WALKIE_HOME", "WALKIE_SEAT_TOKEN_FILE", "WALKIE_AGENT"];
 const log = process.env.FAKE_KIMI_LOG;
 if (log) {
   appendFileSync(log, JSON.stringify({
-    pid: process.pid, argv, cwd, task, stdin, env: SEEN.filter((k) => process.env[k] !== undefined), token_tail: (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "").slice(-6),
+    pid: process.pid, argv, cwd, task, stdin, env: SEEN.filter((k) => process.env[k] !== undefined), kimi_home: process.env.KIMI_CODE_HOME ?? null, token_tail: (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "").slice(-6),
   }) + "\n");
 }
 const say = (t: string) => process.stdout.write(`${t}\n`);

@@ -1,8 +1,9 @@
 // ACCOUNTS-2 round 4 (Codex r4 + Opus r4): a test per finding.
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateFixtureDir } from "../helpers/private-fixture-dir.ts";
 import {
   CLAUDE_ENDPOINT_KEYS, CLAUDE_PROXY_KEYS, launchSettings, OFFICIAL_ANTHROPIC_BASE_URL, pinnedEnv, readUserSettings, settingsValue, withoutSettings,
 } from "../../src/switch/claude-settings.ts";
@@ -78,9 +79,9 @@ describe("finding 1: credential routing pinned in the wrapper's own --settings",
 describe("finding 2 (Codex 2): `accounts add codex` runs only the trusted native codex, in a clean environment", () => {
   test("a script codex is refused; a native one passes; the login environment is cleaned", () => {
     const d = tree();
-    mkdirSync(join(d, "work"));
-    mkdirSync(join(d, "w"));
-    const mk = (rel: string, body: string | Buffer) => { const p = join(d, rel); mkdirSync(join(p, ".."), { recursive: true }); writeFileSync(p, body, { mode: 0o755 }); chmodSync(p, 0o755); return p; };
+    privateFixtureDir(d, join(d, "work"));
+    privateFixtureDir(d, join(d, "w"));
+    const mk = (rel: string, body: string | Buffer) => { const p = join(d, rel); privateFixtureDir(d, join(p, "..")); writeFileSync(p, body, { mode: 0o755 }); chmodSync(p, 0o755); return p; };
     const script = mk("npm/bin/codex", "#!/usr/bin/env node\n");
     const native = mk("bin/codex", Buffer.concat([Buffer.from("cffaedfe", "hex"), Buffer.alloc(32)]));
     const o = { cwd: join(d, "work"), stopAt: d, adminGroup: null, acl: () => [] as string[] };

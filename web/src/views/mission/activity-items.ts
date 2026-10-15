@@ -2,12 +2,13 @@
 // - Flapping: an agent that goes X → Y → X within FLAP_MS shows once (the excursion is dropped, counted on the entry).
 // - Churn: sessions that appear and go offline within CHURN_MS are grouped per machine ("hestia-wsl: 3 agents came and
 //   went") instead of one Offline entry each.
-// - Tool-level lines, when the team shares them (anything but Walkie's fixed phrases): "Editing web/src/…"; an agent's
+// - Tool-level lines, when the team shares them (anything but Sqwakie's fixed phrases): "Editing web/src/…"; an agent's
 //   consecutive steps within STEP_MERGE_MS are one entry showing the latest.
 // Pure over the event list, so the rules are unit-tested (web/test/live-2.test.ts).
 import type { AgentState, Event, MemberView, NodeView, StatusBody } from "../../api/types.ts";
 import { STATE_LABEL, askBody, displayName, hostFor } from "../../lib/format.ts";
 import { plainPreview } from "../../lib/markdown.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import type { Route } from "../../lib/route.ts";
 import { ACTIVITY_PHRASES } from "../../../../src/protocol/activity-phrases.ts";
 
@@ -116,7 +117,7 @@ export function buildActivity(events: readonly Event[], nodes: readonly NodeView
     if (h.length > 4) h.shift();
     const carried = carry.get(key);
     carry.delete(key);
-    items.push({ id: e.id, ts: e.ts, kind: "state", who: whoFull, state: b.state, text: b.title ?? STATE_LABEL[b.state], to: agentRoute, ...(carried ? { count: carried } : {}) });
+    items.push({ id: e.id, ts: e.ts, kind: "state", who: whoFull, state: b.state, text: b.title ? displayStoredText(b.title) : STATE_LABEL[b.state], to: agentRoute, ...(carried ? { count: carried } : {}) });
   }
   return items.filter((x): x is Item => x !== null).sort((a, b) => b.ts - a.ts).slice(0, limit);
 }
@@ -128,13 +129,13 @@ function churnText(n: number): string {
 function other(e: Event, who: string): Item {
   if (e.kind === "msg.post") {
     const body = e.body as { text: string; thread?: string };
-    return { id: e.id, ts: e.ts, kind: "post", who, text: `${body.thread ? "replied in" : "posted in"} #${e.channel}: ${plainPreview(body.text, 110)}`, to: { view: "board", channel: e.channel, thread: body.thread ?? e.id } };
+    return { id: e.id, ts: e.ts, kind: "post", who, text: `${body.thread ? "replied in" : "posted in"} #${e.channel}: ${plainPreview(displayStoredText(body.text), 110)}`, to: { view: "board", channel: e.channel, thread: body.thread ?? e.id } };
   }
   if (e.kind === "artifact.share") {
     const body = e.body as { name: string };
     return { id: e.id, ts: e.ts, kind: "file", who, text: `shared ${body.name}${e.channel ? ` in #${e.channel}` : ""}`, to: { view: "artifacts" } };
   }
-  if (e.kind === "ask") return { id: e.id, ts: e.ts, kind: "ask", who, text: `asked ${askBody(e).to}: ${plainPreview(askBody(e).text, 90)}`, to: { view: "asks" } };
+  if (e.kind === "ask") return { id: e.id, ts: e.ts, kind: "ask", who, text: `asked ${askBody(e).to}: ${plainPreview(displayStoredText(askBody(e).text), 90)}`, to: { view: "asks" } };
   const declined = !!(e.body as { declined?: boolean }).declined;
   return { id: e.id, ts: e.ts, kind: "answer", who, text: declined ? "declined an ask" : "answered an ask", to: { view: "asks", tab: "resolved" } };
 }

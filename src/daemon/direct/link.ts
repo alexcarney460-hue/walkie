@@ -1,4 +1,4 @@
-// Which transport this daemon runs, and the Walkie Direct endpoint's lifecycle.
+// Which transport this daemon runs, and the Sqwakie Direct endpoint's lifecycle.
 //
 // The mode is config.json `transport` when set, else what this node's own `team.node` says (a Direct-only node's
 // record lists just "direct"; a v0.1 record means Tailscale), else undecided until `walkie init` / `walkie join`
@@ -28,7 +28,7 @@ export function resolveMode(core: Core, config: Pick<Config, "transport">): Tran
   return null;
 }
 
-/** Whether a Tailscale (or undecided) node should also run Walkie Direct: config `direct`, or its record serves it. */
+/** Whether a Tailscale (or undecided) node should also run Sqwakie Direct: config `direct`, or its record serves it. */
 export function wantsDual(core: Core, config: Pick<Config, "transport" | "direct">): boolean {
   if (resolveMode(core, config) === "direct") return false;
   const mine = core.roster.nodes.get(core.nodeId);
@@ -55,11 +55,11 @@ export interface TransportControl {
   /** The transports this daemon serves now (a dual node: both). */
   serving(): TransportKind[];
   /**
-   * Mixed teams: runs Walkie Direct alongside Tailscale on this node (`walkie direct enable`) and has the roster
+   * Mixed teams: runs Sqwakie Direct alongside Tailscale on this node (`walkie direct enable`) and has the roster
    * record say so. Resolves once the endpoint is up; `advertised` says whether the record already serves Direct.
    */
   enableDual(): Promise<{ advertised: boolean; reason?: string }>;
-  /** Starts Walkie Direct (idempotent) and makes it this daemon's transport. */
+  /** Starts Sqwakie Direct (idempotent) and makes it this daemon's transport. */
   enableDirect(): Promise<DirectNet>;
   /** The running endpoint (null when Direct isn't running). */
   direct(): { endpoint: string; relay: string | null } | null;
@@ -97,7 +97,7 @@ export class DirectLink implements TransportControl {
   }
 
   /**
-   * This daemon should run Walkie Direct (its team, config or roster record says so) but the endpoint is not up: still
+   * This daemon should run Sqwakie Direct (its team, config or roster record says so) but the endpoint is not up: still
    * starting, or failing to bind and retrying. Until it is, this machine reaches no machine over Direct, which says
    * nothing about the team (SyncManager.unreached stays quiet; doctor's "walkie direct" check names the problem).
    */
@@ -219,7 +219,7 @@ export class DirectLink implements TransportControl {
     return this.net ? this.net.online(ms) : null;
   }
 
-  /** Makes Walkie Direct this daemon's only transport (init/join of a Direct team): the tailnet listener stops. */
+  /** Makes Sqwakie Direct this daemon's only transport (init/join of a Direct team): the tailnet listener stops. */
   async enableDirect(): Promise<DirectNet> {
     if (this.chosen === "tailscale" && this.config.transport === "tailscale") {
       throw new Error("config.json sets transport to tailscale");

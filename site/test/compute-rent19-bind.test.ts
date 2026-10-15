@@ -3,6 +3,8 @@ import * as C from './rent6-fixtures.ts';
 import type { ComputeStore } from '../api/_lib/compute/store.ts';
 import { renewHash } from '../api/_lib/metadata.ts';
 import { teamAuthority } from '../api/_lib/compute/team-proof.ts';
+import { COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION } from '../api/_lib/compute/release-gate.ts';
+import { LATEST_MIGRATION } from '../api/_lib/compute/migrations.ts';
 
 const signer = C.LH.testKeypair();
 const env = C.LH.fullEnv(signer.pem);
@@ -15,8 +17,11 @@ const request = (extra: Record<string, unknown> = {}) => new Request('https://si
   method: 'POST', body: JSON.stringify({ code, team_id: team.team, ...extra }),
 });
 const stripe = () => { const s = new C.LH.MockStripe(); s.subs.set(lic, C.LH.subscription({ id: lic })); return s; };
-const call = (s: C.LH.MockStripe, store?: ComputeStore, extra: Record<string, unknown> = {}) =>
-  C.makeBind({ ...C.LH.deps(s, env), ...(store ? { computeStore: () => store } : {}) })(request(extra));
+/** A bind through the compute-capable site. It binds only with its store (lane C round 11): `store` or a fresh empty one. */
+const call = (s: C.LH.MockStripe, store?: ComputeStore, extra: Record<string, unknown> = {}) => {
+  const selected = store ?? C.world().store;
+  return C.makeBind({ ...C.LH.deps(s, env), computeStore: () => selected })(request(extra));
+};
 const withoutNetwork = async (run: () => Promise<void>): Promise<void> => {
   const previous = globalThis.fetch;
   globalThis.fetch = (async () => { throw Error('unexpected network request'); }) as unknown as typeof fetch;
@@ -53,39 +58,29 @@ test('proofless own-team rebind returns a key despite existing compute state wit
   expect(s.subs.get(lic)!.metadata).toEqual(before);
 }));
 
-test('version-zero emptiness is checked after the bind lock, before any Stripe write', async () => {
-  const s = stripe(), w = C.world();
-  let checks = 0;
+// Lane C round 12: a version-zero (empty, unmigrated) store is refused before any transaction and any Stripe call. It
+// used to be the drained bind's legacy path, which bound without recording the binding.
+test('a version-zero store is refused before any transaction or Stripe call', async () => {
+  const s = stripe();
+  let transactions = 0, reads = 0;
+  const read = s.getSubscription.bind(s);
+  s.getSubscription = async id => { reads++; return read(id); };
   const store: ComputeStore = { schemaVersion: async () => 0, legacyEmpty: async () => true,
-    tx: fn => w.store.tx(t => fn({ ...t, legacyEmpty: async () => { checks++; return false; } })) };
+    tx: async () => { transactions++; throw Error('no transaction expected'); } };
   const response = await call(s, store);
-  expect([response.status, await response.json()]).toEqual([503, { error: 'compute_state_unavailable' }]);
-  expect(checks).toBe(1);
-  expect(s.calls.metadata).toHaveLength(0);
+  expect([response.status, await response.json()]).toEqual([503, { error: 'licence_store_required' }]);
+  expect([transactions, reads, s.calls.metadata.length]).toEqual([0, 0, 0]);
 });
 
 test('missing compute table inside the locked transaction fails closed', async () => {
   const s = stripe(), w = C.world();
-  const store: ComputeStore = { schemaVersion: async () => 0, legacyEmpty: async () => true,
-    tx: fn => w.store.tx(t => fn({ ...t, legacyEmpty: async () => {
+  const store: ComputeStore = { schemaVersion: async () => LATEST_MIGRATION,
+    tx: fn => w.store.tx(t => fn({ ...t, enrollment: async () => {
       throw Object.assign(Error('table changed'), { code: '42P01' });
     } })) };
   const response = await call(s, store);
   expect([response.status, await response.json()]).toEqual([503, { error: 'compute_state_unavailable' }]);
   expect(s.calls.metadata).toHaveLength(0);
-});
-
-test('version-zero proofless binds never write compute state', async () => {
-  const s = stripe(), w = C.world();
-  const store: ComputeStore = { schemaVersion: async () => 0,
-    bindClaim: id => w.store.bindClaim(id), saveBindClaim: (id, claim) => w.store.saveBindClaim(id, claim),
-    clearBindClaim: (id, hash) => w.store.clearBindClaim(id, hash),
-    tx: fn => w.store.tx(t => fn({ ...t,
-    legacyEmpty: async () => true,
-    lockControl: async () => { throw Error('compute write'); },
-    setControl: async () => { throw Error('compute write'); },
-  })) };
-  expect((await call(s, store)).status).toBe(200);
 });
 
 test('two same-team first binds with a store return only one live renewal token', async () => {
@@ -117,7 +112,9 @@ test('two proven first binds re-read subscription after their store lock', async
   expect(renewHash(tokens[0]!)).toBe(s.subs.get(lic)!.metadata.walkie_renew_hash!);
 });
 
-test('legacy errors are handled with the main statuses and bodies', async () => {
+// The main (released) no-store statuses exist only while the lock is on: the compute-capable site binds with its store.
+test.skipIf(COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION)('legacy errors are handled with the main statuses and bodies', async () => {
+  const released = (s: C.LH.MockStripe, e = env) => C.makeBind({ ...C.LH.deps(s, e), previewCompute: false });
   const cases: { name: string; change: (s: C.LH.MockStripe) => void; status: number; error: string }[] = [
     { name: 'write', change: s => { s.setSubscriptionMetadata = async () => { throw Error('write'); }; }, status: 502, error: 'stripe_unavailable' },
     { name: 'readback', change: s => { const read = s.getSubscription.bind(s); let n = 0;
@@ -127,7 +124,7 @@ test('legacy errors are handled with the main statuses and bodies', async () => 
   for (const testCase of cases) {
     const s = stripe();
     testCase.change(s);
-    const response = await call(s);
+    const response = await released(s)(request());
     expect([response.status, await response.json()]).toEqual([testCase.status, { error: testCase.error }]);
   }
   const changingEnv = { ...env };
@@ -135,7 +132,7 @@ test('legacy errors are handled with the main statuses and bodies', async () => 
   Object.defineProperty(changingEnv, 'WALKIE_LICENSE_SIGNING_KEY', {
     get: () => ++keyReads <= 2 ? signer.pem : 'invalid private key',
   });
-  const issueResponse = await C.makeBind(C.LH.deps(stripe(), changingEnv))(request());
+  const issueResponse = await released(stripe(), changingEnv)(request());
   expect([issueResponse.status, await issueResponse.json()]).toEqual([500, { error: 'license_unavailable' }]);
 });
 
@@ -210,7 +207,7 @@ test('proofless oversized requests use 8 KiB cap and null proof binds', async ()
 });
 
 test('large non-object JSON and falsey proof values follow the legacy body cap', () => withoutNetwork(async () => {
-  const bind = C.makeBind(C.LH.deps(stripe(), env));
+  const bind = C.makeBind({ ...C.LH.deps(stripe(), env), computeStore: () => C.world().store });
   const nonObject = await bind(new Request('https://site.test/api/license/bind', {
     method: 'POST', body: JSON.stringify('x'.repeat(9_000)),
   }));
@@ -224,20 +221,25 @@ test('large non-object JSON and falsey proof values follow the legacy body cap',
   }
 }));
 
-test('disabled compute on a migrated store uses only the per-team read lock', () => withoutNetwork(async () => {
-  const s = stripe(), w = C.world(), locks: string[] = [];
-  const store: ComputeStore = { schemaVersion: async () => 6,
+test('disabled compute on a migrated store uses only the per-team read lock and writes only the binding record', () => withoutNetwork(async () => {
+  const s = stripe(), w = C.world(), locks: string[] = [], writes: string[] = [];
+  const store: ComputeStore = { schemaVersion: async () => LATEST_MIGRATION,
     bindClaim: id => w.store.bindClaim(id), saveBindClaim: (id, claim) => w.store.saveBindClaim(id, claim),
     clearBindClaim: (id, hash) => w.store.clearBindClaim(id, hash),
     tx: fn => w.store.tx(t => fn({ ...t,
       lockLegacyBind: async () => { locks.push('migration'); },
       lockTeamBind: async () => { locks.push('team'); },
       lockControl: async () => { locks.push('write'); },
-      setControl: async () => { throw Error('disabled compute write'); },
+      setControl: async (key: string, value: unknown) => {
+        if (!key.startsWith('licence-bindings:')) throw Error('disabled compute write');
+        writes.push(key);
+        return t.setControl(key, value);
+      },
     })) };
   const response = await call(s, store);
   expect(response.status).toBe(200);
   expect(locks).toEqual(['team']);
+  expect(writes).toEqual([`licence-bindings:${team.team}`]);
 }));
 
 test('rejected proof logs without an alert row when compute is disabled', () => withoutNetwork(async () => {

@@ -155,7 +155,7 @@ test("the summary names roster hostnames only, and does not advertise seats a li
     { node: "bbbbbbbbbbbbbbbb", hostname: "olive-box", free_slots: 1, limiting_factor: "seats", score: 25 },
   ];
   const text = fleetSummaryText(rows);
-  expect(text.startsWith("WalkieTalkie fleet capacity: 1 free seat on 1 of 2 machines.")).toBe(true);
+  expect(text.startsWith("Talkie fleet capacity: 1 free seat on 1 of 2 machines.")).toBe(true);
   expect(text).toContain("olive-box: 1 free, limited by seats, score 25");
   expect(text).toContain("mac-a: 3 free, limited by memory, score 0");
   expect(text.indexOf("mac-a")).toBeLessThan(text.indexOf("olive-box"));
@@ -175,7 +175,7 @@ test("the summary names roster hostnames only, and does not advertise seats a li
   expect(long).toContain("and 1 more machine");
   expect(long.split("\n")).toHaveLength(42); // headline + 40 machines + the more line
   expect(factorLabel("load_unknown")).toBe("load unknown");
-  expect(fleetSummaryText([])).toBe("WalkieTalkie fleet capacity: 0 free seats on 0 of 0 machines.");
+  expect(fleetSummaryText([])).toBe("Talkie fleet capacity: 0 free seats on 0 of 0 machines.");
 });
 
 test("owners are told they can derive every host's free seats the lead can see", () => {

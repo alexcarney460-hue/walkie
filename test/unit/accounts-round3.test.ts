@@ -1,8 +1,9 @@
 // ACCOUNTS-2 round 3 (Codex r3 + Opus r3, "simplify"): a test per decision.
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateFixtureDir } from "../helpers/private-fixture-dir.ts";
 import { randomBytes } from "node:crypto";
 import { checkTrusted, isNative, NATIVE_INSTALL, parseAce, recordTrusted, trustProblem, type TrustOptions } from "../../src/switch/trusted.ts";
 import { credentialEnv, proxyAllowed } from "../../src/switch/wrapper.ts";
@@ -25,7 +26,7 @@ function tree(): string {
 const NATIVE = Buffer.concat([Buffer.from("cffaedfe", "hex"), Buffer.alloc(64)]);
 function file(root: string, rel: string, body: string | Buffer = NATIVE): string {
   const p = join(root, rel);
-  mkdirSync(join(p, ".."), { recursive: true });
+  privateFixtureDir(root, join(p, ".."));
   writeFileSync(p, body, { mode: 0o755 });
   chmodSync(p, 0o755);
   return p;
@@ -35,7 +36,7 @@ const base = (root: string, extra: Partial<TrustOptions> = {}): TrustOptions => 
 describe("decision 2: credentials only to a native executable", () => {
   test("Mach-O / ELF magic is native; a shebang launcher is refused with the official install command", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const native = file(root, "bin/claude");
     const elf = file(root, "bin/codex", Buffer.concat([Buffer.from("7f454c46", "hex"), Buffer.alloc(16)]));
     const script = file(root, "npm/bin/claude", "#!/usr/bin/env node\nrequire('./cli.js')\n");
@@ -49,8 +50,8 @@ describe("decision 2: credentials only to a native executable", () => {
 
   test("re-validated at every launch: a trusted native binary replaced by a script loses its credentials", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
-    mkdirSync(join(root, "w"));
+    privateFixtureDir(root, join(root, "work"));
+    privateFixtureDir(root, join(root, "w"));
     const cli = file(root, "bin/claude");
     recordTrusted(join(root, "w"), "claude", cli, base(root));
     const ok = checkTrusted(join(root, "w"), "claude", cli, base(root));
@@ -73,7 +74,7 @@ describe("decision 3: ACL entries parsed structurally, failing closed", () => {
 
   test("inherited / spaced-principal write entries, unrecognised entries and an unreadable ACL are all refused", () => {
     const root = tree();
-    mkdirSync(join(root, "work"));
+    privateFixtureDir(root, join(root, "work"));
     const cli = file(root, "home/bin/claude");
     const at = (lines: string[] | null) => (p: string) => (p === join(root, "home") ? lines : []);
     const o = (acl: TrustOptions["acl"]) => base(root, { acl, user: "alex" });

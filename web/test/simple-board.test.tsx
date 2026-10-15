@@ -154,7 +154,11 @@ function installApi(): void {
     if (world.fail) throw new ApiError("synthetic", "Synthetic failure", 503);
     return value;
   };
-  api.projects = () => gate({ projects: world.projects, stubs: [] });
+  // Keep the shared list flight finite; the task/ask promises below exercise the loading state.
+  api.projects = async () => {
+    if (world.fail) throw new ApiError("synthetic", "Synthetic failure", 503);
+    return { projects: world.projects, stubs: [] };
+  };
   api.tasks = (p = {}) => {
     world.taskQueries.push({ ...p });
     let tasks = world.cards;
@@ -609,6 +613,19 @@ test("an ask is answered in place, and confidential or unknown work stays off th
   await hidden.unmount();
 });
 
+test("retained ask names change in the decision row and detail without changing the ask", async () => {
+  const old = ask("bbbbbbbbbbbbbbbb:10", "@alex", "Walkie access revoked", { handle: "bea" }, later);
+  world.asks = [old];
+  const page = await render();
+  await until(page, () => page.text().includes("Sqwakie access revoked"));
+  expect(page.text()).not.toContain("Walkie access revoked");
+  await page.click(page.all("button.simple-card").find((b) => b.textContent.includes("Sqwakie access revoked"))!);
+  await until(page, () => page.one("[role=dialog]") !== null);
+  expect(page.one("h1")?.textContent).toBe("Sqwakie access revoked");
+  expect((old.ask.body as { text: string }).text).toBe("Walkie access revoked");
+  await page.unmount();
+});
+
 test("partition keeps a review in my work when someone else reviews it, and drops confidential asks", () => {
   const hold = card({ id: "c-hold", title: "Hold the copy", column: "review", n: 8, assignee: "@alex", reviewer: "@bea" });
   const unassigned = card({ id: "c-rev", title: "Read the draft", column: "review", n: 11, assignee: "@alex", reviewer: null });
@@ -853,4 +870,97 @@ test("integration (WALK-75 review LOW-1/LOW-2): every punctuation mark is a word
   expect(parts.myWork.map((c) => c.id)).not.toContain(merger.id);
   expect(parts.counts.find((c) => c.channel === website.channel)?.counts["To do"]).toBe(1);
   expect(parts.confidentialLeftOff).toBe(true);
+});
+
+for (const action of ["move", "approve", "question"] as const) {
+  test(`SimpleBoard ${action} drops an in-flight write after revoke and restore`, async () => {
+    const store = (await import("../src/state/projects.ts")).projectsStore;
+    store.set({ status: "ready", error: null, projects: [website], stubs: [], cards: { [website.channel]: [welcome, check] },
+      cardsError: {}, rooms: {}, roomsError: {} });
+    const page = await render();
+    let complete!: (value: { task: CardView; event: Event }) => void;
+    const response = new Promise<{ task: CardView; event: Event }>((resolve) => { complete = resolve; });
+    let sent = false;
+    try {
+      await until(page, () => page.text().includes("Write the welcome note"));
+      if (action === "move") {
+        api.updateTask = async () => { sent = true; return response; };
+        await page.click(labeled(page, "Move Write the welcome note to Working on"));
+      } else {
+        await openCard(page, action === "approve" ? "Check the homepage" : "Write the welcome note");
+        api.commentTask = async () => { sent = true; return response; };
+        if (action === "approve") await page.click(byText(page, "button", "Approve"));
+        else {
+          await page.click(byText(page, "button", "Ask a question"));
+          await page.fill(page.one("textarea")!, "Synthetic question");
+          await page.click(byText(page, "button", "Send"));
+        }
+      }
+      await until(page, () => sent);
+      await act(async () => {
+        // The endpoint may still return an old projection; the proved removal wins.
+        await store.accessChanged({ kind: "channel.upsert", body: { name: website.channel, members: [] } }, "alex");
+      });
+      expect(page.text()).not.toContain("Write the welcome note");
+      await act(async () => {
+        world.projects = [website];
+        await store.accessChanged({ kind: "channel.upsert", body: { name: website.channel, members: ["alex"] } }, "alex");
+      });
+      store.set({ ...store.get(), cards: { [website.channel]: [welcome, check] } });
+      await act(async () => { complete({ task: { ...welcome, title: "STALE PRIVATE WRITE" }, event: {} as Event }); });
+      expect(store.get().cards[website.channel]).toEqual([welcome, check]);
+      expect(page.text()).not.toContain("STALE PRIVATE WRITE");
+      if (action === "approve") expect(world.actionCalls).toEqual([]);
+    } finally {
+      await page.unmount();
+      store.set({ status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+    }
+  });
+}
+
+test("SimpleBoard move reports an accepted write while an unrelated roster refresh is pending", async () => {
+  const store = (await import("../src/state/projects.ts")).projectsStore;
+  store.set({ status: "ready", error: null, projects: [website], stubs: [], cards: { [website.channel]: [welcome, check] },
+    cardsError: {}, rooms: {}, roomsError: {} });
+  const page = await render();
+  let complete!: (value: { task: CardView; event: Event }) => void;
+  const response = new Promise<{ task: CardView; event: Event }>((resolve) => { complete = resolve; });
+  let finishRead!: (value: { projects: ProjectView[]; stubs: [] }) => void;
+  const read = new Promise<{ projects: ProjectView[]; stubs: [] }>((resolve) => { finishRead = resolve; });
+  try {
+    await until(page, () => page.text().includes("Write the welcome note"));
+    api.updateTask = async () => response;
+    await page.click(labeled(page, "Move Write the welcome note to Working on"));
+    api.projects = async () => read;
+    await act(async () => { void store.accessChanged({ kind: "team.member", body: { handle: "someone-else", role: "member" } }, "alex"); });
+    await act(async () => { complete({ task: { ...welcome, column: "doing" }, event: {} as Event }); });
+    expect(page.text()).toContain("Saved; refreshing");
+    expect(store.get().cards[website.channel]).toEqual([welcome, check]);
+  } finally {
+    finishRead({ projects: [website], stubs: [] });
+    await act(async () => { await Bun.sleep(0); });
+    await page.unmount();
+    store.set({ status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  }
+});
+
+test("SimpleBoard keeps an unsent question when a roster event is about someone else", async () => {
+  const store = (await import("../src/state/projects.ts")).projectsStore;
+  store.set({ status: "ready", error: null, projects: [website], stubs: [], cards: { [website.channel]: [welcome, check] },
+    cardsError: {}, rooms: {}, roomsError: {} });
+  const page = await render();
+  try {
+    await until(page, () => page.text().includes("Write the welcome note"));
+    await openCard(page, "Write the welcome note");
+    await page.click(byText(page, "button", "Ask a question"));
+    await page.fill(page.one("textarea")!, "Synthetic unsent draft");
+    await act(async () => {
+      await store.accessChanged({ kind: "team.member", body: { handle: "newcomer", role: "member" } }, "alex");
+    });
+    await settle();
+    expect(page.one("textarea")?.value).toBe("Synthetic unsent draft");
+  } finally {
+    await page.unmount();
+    store.set({ status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
+  }
 });

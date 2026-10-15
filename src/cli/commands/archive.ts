@@ -9,6 +9,7 @@ import { agentViewJson, WHO_NOTE } from "../agent-output.ts";
 import { int, need, str, UsageError } from "../args.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { ago, c, pad, safeTerm } from "../format.ts";
+import { displayStoredText } from "../../protocol/display-text.ts";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
@@ -33,7 +34,7 @@ export function renderArchive(list: readonly AgentView[], total: number, now = D
     lines.push(`${c.bold(safeTerm(host))} ${c.dim(`@${mine[0]?.handle ?? "?"} · ${count ? archiveCountText(count) : ""}`)}`);
     for (const a of mine) {
       const st = a.effective_state;
-      const title = [a.status.title, a.status.task ? `(${a.status.task})` : ""].filter(Boolean).join(" ") || c.dim("(no title)");
+      const title = [a.status.title ? displayStoredText(a.status.title) : "", a.status.task ? `(${a.status.task})` : ""].filter(Boolean).join(" ") || c.dim("(no title)");
       const where = a.status.repo ? `${a.status.repo}${a.status.branch ? `@${a.status.branch}` : ""}` : "";
       lines.push(`  ${pad(safeTerm(a.agent), 20)} ${pad(st === "idle" ? c.dim(st) : c.gray(st), 8)} ${pad(safeTerm(title).slice(0, 56), 58)} ${pad(safeTerm(where).slice(0, 30), 32)} ${c.dim(`seen ${ago(a.updated_at, now)} ago`)}`);
     }

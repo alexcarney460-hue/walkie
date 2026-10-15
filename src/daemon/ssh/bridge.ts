@@ -43,7 +43,7 @@ async function serve(core: Core, client: PeerClient, socket: Socket): Promise<vo
   const id = machine(core, name);
   const target = id ? core.roster.nodes.get(id) : null;
   const addr = target ? client.addrVia(target, "direct") : null;
-  if (!addr) throw new Error("target_outdated: machine does not serve Walkie Direct");
+  if (!addr) throw new Error("target_outdated: machine does not serve Sqwakie Direct");
   let remote;
   const caller = classifySshCaller(pid, processTable, agent as string | undefined, peerStartTime);
   try { remote = await client.tunnelTo(addr, "/peer/v1/ssh", caller); }

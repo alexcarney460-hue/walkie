@@ -9,6 +9,7 @@ import { AuthorAvatar } from "../../components/Author.tsx";
 import { EmptyState, ErrorState, RelTime, SkeletonRows } from "../../components/primitives.tsx";
 import { bytes, displayName, mimeKind } from "../../lib/format.ts";
 import { hrefFor } from "../../lib/route.ts";
+import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
 import { fullTime } from "../../lib/time.ts";
 import { projectsStore, useProjects } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
@@ -38,9 +39,11 @@ export function DataRoom({ project, cards }: { project: ProjectView; cards: Card
   const total = live.reduce((n, f) => n + f.size, 0);
 
   const change = async (f: RoomFileView, body: Parameters<typeof api.roomChange>[2]) => {
+    const generation = projectsStore.accessGeneration();
     setError(null);
     try {
-      projectsStore.roomFile((await api.roomChange(project.channel, f.id, body)).file);
+      const file = (await api.roomChange(project.channel, f.id, body)).file;
+      if (!storeWriteAnswer({ kind: "roomFile", value: file }, generation, () => setError(null))) setError(SAVED_REFRESHING);
       return true;
     } catch (err) {
       setError(friendlyError(err));

@@ -467,7 +467,7 @@ export function sweep(roots: readonly SweepRoot[], owned: OwnedFn, opts: SweepOp
   return r;
 }
 
-/** Read-only recheck before a later WalkieTalkie generation can reuse its fixed uid. */
+/** Read-only recheck before a later Talkie generation can reuse its fixed uid. */
 export function verifyProtectedResidue(folder: string, uid: number,
   opts: Omit<SweepOptions, "remove" | "residueOnly"> = {}): { verified: boolean; leftoverDirs: string[] } {
   const r = sweep([{ path: folder, owned: true, sunlnk: true }], (st) => st.uid === uid,

@@ -11,6 +11,7 @@ import { WalkieClient } from "../../src/client/index.ts";
 import { FakeIdentity } from "../../src/daemon/identity.ts";
 import { startDaemon } from "../../src/daemon/main.ts";
 import { hostFor } from "../../src/daemon/orchestrator/host.ts";
+import { ComputeSite } from "../../src/daemon/compute/site.ts";
 
 const [home, mode] = process.argv.slice(2) as [string, "first" | "again"];
 const fake = join(import.meta.dir, "fake-claude");
@@ -23,6 +24,9 @@ const d = await startDaemon({
   peerHost: "127.0.0.1", peerPort: 0, localPort: false, hostname: "alex-mbp", env: false, webDir: join(home, "no-web"),
   integrations: { autoRun: false }, licenseRenew: false, discovery: false, machineStats: false, accounts: false,
   licenseService: { fetch: async () => { throw new Error("no license service"); } },
+  // Rental compute is on from pre.17: without a stub the owner's poller would ask the real site (this process has no
+  // test fetch guard) for a handover status. Same stub as test/helpers/cluster.ts.
+  compute: { site: new ComputeSite({ base: "http://127.0.0.1", fetch: async () => { throw new Error("no compute site in this fixture"); } }) },
   orchestrator: { autoCheckMs: 150, restartBaseMs: 50, restartMaxMs: 200, statusThrottleMs: 50, env: { ...process.env, PATH: "/usr/bin:/bin", FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: log } },
 });
 const person = new WalkieClient({ socket: d.socket, agent: "", timeoutMs: 15_000 });

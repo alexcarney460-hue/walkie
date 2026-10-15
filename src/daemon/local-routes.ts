@@ -1,3 +1,4 @@
+import { AdmitLinkReq } from "./fleet-link-service.ts";
 // Local API routes (PROTOCOL §5). Transport/auth checks live in local-api.ts.
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -21,7 +22,8 @@ import { MAX_BLOB_BYTES, readBlob, sha256Hex, writeBlob } from "./blobs.ts";
 import { ActivateReq, activateOnAuthority, alreadyActive, checkActivatable } from "../license/activate.ts";
 import type { Core } from "./core.ts";
 import { HttpError, json, parseWith, readBytes, readJson } from "./http.ts";
-import { joinTeam, joinWithInvite } from "./join.ts";
+import { joinTeam, joinWithInvite, joinWithLink } from "./join.ts";
+import { linkTokenFrom } from "./fleet-link.ts";
 import type { PeerClient } from "./peer-client.ts";
 import type { PeerApiStatus } from "./peer-link.ts";
 import { blobServable, shareChannels } from "./blob-auth.ts";
@@ -54,7 +56,7 @@ import type { MobileManager } from "./mobile/manager.ts";
 import type { ProjectsIndex } from "./projects/index.ts";
 
 export const LOCAL_BODY_MAX = 256 * 1024;
-/** The dedicated WalkieTalkie user's proxy forces this marker (os-user.ts in the integrated pre.10 line). */
+/** The dedicated Talkie user's proxy forces this marker (os-user.ts in the integrated pre.10 line). */
 const TALKIE_SHELL_HEADER = "X-Walkie-Talkie-Shell";
 
 export interface RouteCtx {
@@ -83,7 +85,7 @@ export interface RouteCtx {
   /** X-Walkie-Orchestrator-Token: the orchestrator host's child proving it writes as `orchestrator` (ORCH-FIX-13). */
   readonly orchestratorToken?: string;
   readonly credentialSignal?: AbortSignal;
-  /** Which transport this daemon runs, and Walkie Direct's endpoint (src/daemon/direct/link.ts). */
+  /** Which transport this daemon runs, and Sqwakie Direct's endpoint (src/daemon/direct/link.ts). */
   readonly transport?: TransportControl;
   /** This machine's accounts service (limit resets, src/accounts/routes.ts); null when accounts are off. */
   readonly accounts?: () => AccountsService | null;
@@ -97,7 +99,7 @@ export interface RouteCtx {
   readonly projects?: ProjectsIndex;
   /**
    * Which listener the request came in on (ACCOUNTS-2; `transport` on its lane, renamed at the pre.4 merge because pre.3
-   * uses `transport` for Walkie Direct's control): "unix" = the unix socket (this OS user); "tcp" = loopback, token or
+   * uses `transport` for Sqwakie Direct's control): "unix" = the unix socket (this OS user); "tcp" = loopback, token or
    * dashboard; absent = neither (a paired phone's request through the relay).
    */
   readonly listener?: "unix" | "tcp";
@@ -116,18 +118,18 @@ export function hasRoute(method: string, path: string): boolean {
 }
 
 /**
- * TALKIE-OPS-1: nothing a scheduled duty does changes anything. While one of WalkieTalkie's scheduled turns runs, and afterwards
+ * TALKIE-OPS-1: nothing a scheduled duty does changes anything. While one of Talkie's scheduled turns runs, and afterwards
  * until that Claude child is replaced (a job it left running keeps its token), the child may write only what is not an action: a
  * post in an existing channel, and a recommendation for a person to approve. Every other write that reaches `dispatch` (a card
  * created, moved or commented on, a seat started or stopped, a command run on another machine, an ask, an answer, a status, a
  * file, a setting, a schedule run, a new channel) is refused, so text injected through a card title has nothing to call. Routes
  * the local API answers before `dispatch` do not pass through here: the dashboard login nonce and the desktop challenge are a
  * person's alone and refuse the child outright, and sign-out and token rotation repeat this hold themselves (local-api.ts authRoute).
- * A person's own conversation with WalkieTalkie (a new child) and a person at a terminal are not held back.
+ * A person's own conversation with Talkie (a new child) and a person at a terminal are not held back.
  */
 const SCHEDULED_TURN_WRITES: ReadonlySet<string> = new Set(["POST /v1/post", "POST /v1/talkie/recs"]);
 /**
- * The request is WalkieTalkie's child while it is held to a scheduled turn's limits (host.ts scheduledChildActive).
+ * The request is Talkie's child while it is held to a scheduled turn's limits (host.ts scheduledChildActive).
  * Dispatch refuses its writes. Personal memory also refuses its reads: the child can still post, so a read would
  * let a scheduled turn copy this person's notes into the team.
  */
@@ -140,7 +142,7 @@ function refuseScheduledWrite(c: RouteCtx): void {
   const method = c.req.method;
   if (method === "GET" || method === "HEAD" || SCHEDULED_TURN_WRITES.has(`${method} ${c.url.pathname}`)) return;
   if (!scheduledChild(c)) return;
-  throw new HttpError(403, "scheduled_turn_cannot_act", "a scheduled WalkieTalkie turn changes nothing: record what it would do with `walkie talkie recommend` and a person approves it");
+  throw new HttpError(403, "scheduled_turn_cannot_act", "a scheduled Talkie turn changes nothing: record what it would do with `walkie talkie recommend` and a person approves it");
 }
 
 export async function dispatch(c: RouteCtx): Promise<Response> {
@@ -169,7 +171,7 @@ export function requireTeam(c: RouteCtx): void {
   if (!c.core.me()) throw new HttpError(403, "forbidden", "this node is not an admitted member");
 }
 
-function requireOwner(c: RouteCtx): void {
+export function requireOwner(c: RouteCtx): void {
   requireTeam(c);
   if (c.core.me()?.role !== "owner") throw new HttpError(403, "forbidden", "owner role required");
 }
@@ -229,7 +231,7 @@ function agentAskPolicy(c: RouteCtx, agent: string): string {
  */
 async function rosterWrite(c: RouteCtx, kind: RosterRequestKind, body: Record<string, unknown>): Promise<Response> {
   refuseReservedAgent(c);
-  if (c.core.isAuthority() && kind !== "team.admit") return json({ event: c.core.emit(kind, body as never, { agent: c.agent }) });
+  if (c.core.isAuthority() && kind !== "team.admit" && kind !== "team.admit-link") return json({ event: c.core.emit(kind, body as never, { agent: c.agent }) });
   const res = await submitRequest(c.core, c.client, c.sync.requestCatchUp, kind, body);
   return "queued" in res ? json(res, 202) : json(res);
 }
@@ -255,13 +257,13 @@ function privateJoinCaller(c: RouteCtx): boolean {
  * request; while the authority is unreachable the creation is queued and the post is refused (409
  * `channel_pending`) rather than held, so nothing unsendable sits in anyone's log.
  */
-async function ensureChannel(c: RouteCtx, name: string): Promise<void> {
+export async function ensureChannel(c: RouteCtx, name: string): Promise<void> {
   const ch = c.core.roster.channels.get(name);
   if (!ch && name.startsWith("p-")) {
     throw new HttpError(409, "unknown_channel", `#${name}: channel names starting with p- are reserved for projects (walkie projects create <name>)`);
   }
   if (!ch && scheduledChild(c)) {
-    throw new HttpError(403, "scheduled_turn_cannot_act", `#${name} doesn't exist and a scheduled WalkieTalkie turn creates no channel: post in an existing one`);
+    throw new HttpError(403, "scheduled_turn_cannot_act", `#${name} doesn't exist and a scheduled Talkie turn creates no channel: post in an existing one`);
   }
   if (!ch) {
     // `seats-<node>` is made by that machine's `walkie seats enable` only (PROTOCOL §11): a post never creates it.
@@ -300,19 +302,19 @@ function parseEvent(json: string): Event { return JSON.parse(json) as Event; }
 route("GET", "/v1/healthz", () => json({ ok: true, version: VERSION }));
 route("GET", "/v1/me", (c) => json(meView(c.core, c.tailscaleError, c.transport)));
 
-/** Starts Walkie Direct for init/join (503 when this daemon can't run it). */
+/** Starts Sqwakie Direct for init/join (503 when this daemon can't run it). */
 async function enableDirect(c: RouteCtx): Promise<void> {
-  if (!c.transport) throw new HttpError(503, "direct_unavailable", "Walkie Direct is not available in this daemon");
+  if (!c.transport) throw new HttpError(503, "direct_unavailable", "Sqwakie Direct is not available in this daemon");
   try {
     await c.transport.enableDirect();
   } catch (err) {
-    throw new HttpError(503, "direct_unavailable", `Walkie Direct could not start: ${(err as Error).message}`);
+    throw new HttpError(503, "direct_unavailable", `Sqwakie Direct could not start: ${(err as Error).message}`);
   }
 }
 
 /**
  * The transport a new team uses: the one asked for; else the daemon's configured one; else Tailscale when it is
- * signed in (v0.1 behaviour) and Walkie Direct when it isn't. `walkie setup` asks for Direct explicitly.
+ * signed in (v0.1 behaviour) and Sqwakie Direct when it isn't. `walkie setup` asks for Direct explicitly.
  */
 function initTransport(c: RouteCtx, asked: TransportKind | undefined): TransportKind {
   const current = c.transport?.mode() ?? null;
@@ -329,7 +331,7 @@ route("POST", "/v1/init", async (c) => {
     if (c.core.teamId) throw new HttpError(409, "team_exists", "this node already belongs to a team");
     await enableDirect(c);
     c.core.createTeam(body.team_name, body.handle, { login: directLogin(body.handle) });
-    // The founding node's record says it serves Walkie Direct (team.create predates the transport fields).
+    // The founding node's record says it serves Sqwakie Direct (team.create predates the transport fields).
     c.core.emit("team.node", {
       node_id: c.core.nodeId, login: directLogin(body.handle), hostname: c.core.hostname, pubkey: c.core.keys.pubkey,
       ip: "", port: c.core.peerPort || DEFAULT_PEER_PORT, endpoint: endpointHex(c.core.keys.pubkey), transports: ["direct"],
@@ -342,12 +344,19 @@ route("POST", "/v1/init", async (c) => {
   return json(meView(c.core, c.tailscaleError, c.transport));
 });
 
-/** `peer`: a teammate's machine (Tailscale), or a Walkie Direct invite code; `invite` names the latter explicitly. */
-const JoinReq = z.object({ peer: z.string().min(1).max(512).optional(), invite: z.string().min(1).max(512).optional() })
-  .refine((b) => !!b.peer !== !!b.invite, { message: "give peer or invite" });
+/** `peer`: a teammate's machine (Tailscale), or a Sqwakie Direct invite code; `invite` names the latter explicitly. */
+const JoinReq = z.object({
+  peer: z.string().min(1).max(512).optional(), invite: z.string().min(1).max(512).optional(),
+  /** FLEET-LINK-1: a fleet link's token, the /join link, or the install command holding it. */
+  link: z.string().min(1).max(2_048).optional(),
+}).refine((b) => [b.peer, b.invite, b.link].filter((v) => v !== undefined).length === 1, { message: "give one of peer, invite or link" });
 route("POST", "/v1/join", async (c) => {
   const body = parseWith(JoinReq, await readJson(c.req, LOCAL_BODY_MAX));
   c.noTimeout();
+  // A fleet link (FLEET-LINK-1): named explicitly, or pasted where a peer goes (a token, the /join link, the command).
+  const token = body.link !== undefined ? linkTokenFrom(body.link) : body.peer !== undefined ? linkTokenFrom(body.peer) : null;
+  if (!token && (body.link !== undefined || looksLikeFleetLink(body.peer ?? ""))) throw new HttpError(400, "invalid", "that is not a Sqwakie fleet link (the token starts with wl1: copy the whole link or command again)");
+  if (token) return json(await joinWithLink(c.core, c.sync, c.client, token, () => enableDirect(c)));
   // A pasted code may carry whitespace (a trailing newline, a wrapped line): codes never contain any. Anything that
   // looks like a code takes the invite path, whose errors never echo it (it is a bearer credential).
   const target = (body.invite ?? body.peer as string).trim();
@@ -357,13 +366,18 @@ route("POST", "/v1/join", async (c) => {
   return json(await joinTeam(c.core, c.sync, c.client, target));
 });
 
+/** Catch damaged fleet tokens, fragment URLs and install commands before any peer parser can echo them. */
+function looksLikeFleetLink(s: string): boolean {
+  return /(?:^|[\s#='"])wl1/.test(s.trim()) || s.includes("--join-link");
+}
+
 /** An invite code, or something meant to be one (damaged in the paste): "wk1" and 40+ characters with no dot. */
 function looksLikeInvite(s: string): boolean {
   return s.startsWith(INVITE_PREFIX) && s.length > 40 && !s.includes(".");
 }
 
 /**
- * `walkie invite --handle <name>` (owner, Walkie Direct): a single-use code valid for 7 days, signed by this node,
+ * `walkie invite --handle <name>` (owner, Sqwakie Direct): a single-use code valid for 7 days, signed by this node,
  * naming the roster authority's endpoint (and its relay when this node is the authority). Nothing is emitted
  * until the invite is used; the code itself is never logged. On a Tailscale team (mixed teams) the authority must
  * serve Direct (`walkie direct enable` there); the minting machine itself needn't.
@@ -375,7 +389,7 @@ route("POST", "/v1/team/invite-code", async (c) => {
   adminGate(c, `minted an invite code for @${b.handle} (${b.role})`);
   const inv = await mintInvite(c, b.handle, b.role);
   if (privateJoinCaller(c)) return privateJoinDelivery(c,
-    `Invite for @${b.handle} (${inv.role}), expires ${new Date(inv.expires_at).toISOString()}.\nCode: ${inv.code}\nInstall: curl -fsSL https://getwalkie.vercel.app/install.sh | sh -s -- --invite ${inv.code}`,
+    `Invite for @${b.handle} (${inv.role}), expires ${new Date(inv.expires_at).toISOString()}.\nCode: ${inv.code}\nInstall: curl -fsSL https://sqwakie.si/install.sh | sh -s -- --invite ${inv.code}`,
     b.handle, inv.expires_at);
   return json({ code: inv.code, handle: b.handle, role: inv.role, expires_at: inv.expires_at, existing_member: inv.existing_member });
 });
@@ -387,8 +401,11 @@ route("POST", "/v1/team/invite-code", async (c) => {
  * person's (personOnly). An agent is a request naming X-Walkie-Agent (the MCP server, the CLI with WALKIE_AGENT) or
  * marked X-Walkie-Under-Agent (the CLI in an agent runtime's environment).
  */
+export function requirePerson(c: RouteCtx, what: string): void {
+  if (c.agent || c.underAgent) throw new HttpError(403, "person_only", `agents can't ${what}; a person does it, in the dashboard or in their own terminal`);
+}
 
-/** Mints a Walkie Direct code for `handle` through this request's transport (invite-mint.ts). */
+/** Mints a Sqwakie Direct code for `handle` through this request's transport (invite-mint.ts). */
 async function mintInvite(c: RouteCtx, handle: string, asked: Role): Promise<{ code: string; id: string; role: Role; expires_at: number; existing_member: boolean }> {
   c.noTimeout();
   return mintInviteCode(c.core, c.transport, handle, asked);
@@ -487,7 +504,7 @@ route("POST", "/v1/team/peer-sig-strict", async (c) => {
 
 /**
  * `walkie team revoke <machine>` (owner): revokes one machine (node id or hostname) through the roster authority,
- * like every roster write; its key is refused at once and its open Walkie Direct connections are closed. The
+ * like every roster write; its key is refused at once and its open Sqwakie Direct connections are closed. The
  * member keeps their other machines. Not this machine (another owner revokes it), and never the authority (the
  * chain refuses it: transfer authority first). An explicitly revoked key can't rejoin, even with a new invite.
  */
@@ -510,13 +527,13 @@ route("POST", "/v1/team/revoke", async (c) => {
 });
 
 /**
- * `walkie direct enable` (mixed teams, PROTOCOL §4): this Tailscale machine also serves Walkie Direct, so machines
+ * `walkie direct enable` (mixed teams, PROTOCOL §4): this Tailscale machine also serves Sqwakie Direct, so machines
  * that joined with an invite code can reach it. Persisted (`"direct": true` in config.json); its roster record gains
  * "direct" (the authority re-pins itself, another machine proves its key to the authority over Direct).
  */
 route("POST", "/v1/direct/enable", async (c) => {
   requireTeam(c);
-  if (!c.transport) throw new HttpError(503, "direct_unavailable", "Walkie Direct is not available in this daemon");
+  if (!c.transport) throw new HttpError(503, "direct_unavailable", "Sqwakie Direct is not available in this daemon");
   if (c.transport.mode() === "direct") return json({ transports: c.transport.serving(), advertised: true, direct: c.transport.direct() });
   c.noTimeout();
   saveConfigField(c.core.paths.config, "direct", true);
@@ -524,18 +541,51 @@ route("POST", "/v1/direct/enable", async (c) => {
   try {
     res = await c.transport.enableDual();
   } catch (err) {
-    throw new HttpError(503, "direct_unavailable", `Walkie Direct could not start: ${(err as Error).message}`);
+    throw new HttpError(503, "direct_unavailable", `Sqwakie Direct could not start: ${(err as Error).message}`);
   }
   return json({ transports: c.transport.serving(), ...res, direct: c.transport.direct() });
 });
 
 const AdmitReq = z.object({ node_id: NodeId, approve: z.boolean() });
+function requireLiveCredential(c: RouteCtx): void {
+  if (c.credentialSignal?.aborted) {
+    throw new HttpError(401, "unauthorized", "missing or invalid token, or the dashboard session ended (sign in again with: walkie dashboard)");
+  }
+}
+async function admissionWrite(c: RouteCtx, kind: "team.admit" | "team.admit-link", body: Record<string, unknown>): Promise<Response> {
+  if (c.via !== "dashboard") return rosterWrite(c, kind, body);
+  refuseReservedAgent(c);
+  const client = new Proxy(c.client, {
+    get(target, property, receiver) {
+      if (property === "rosterRequest") return (...args: Parameters<PeerClient["rosterRequest"]>) => {
+        requireLiveCredential(c);
+        return target.rosterRequest(args[0], args[1], c.credentialSignal);
+      };
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const result = await submitRequest(c.core, client, c.sync.requestCatchUp, kind, body, { queue: false });
+  requireLiveCredential(c);
+  if ("unreachable" in result) throw new HttpError(503, "authority_unreachable", "the roster authority is unavailable; try again while this dashboard session is active");
+  return json(result);
+}
 route("POST", "/v1/team/admit", async (c) => {
   requireOwner(c);
   const b = parseWith(AdmitReq, await readJson(c.req, LOCAL_BODY_MAX));
-  adminGate(c, `${b.approve ? "approved" : "denied"} the join of machine ${b.node_id}`);
+  personOnly(c, `${b.approve ? "approve" : "deny"} the join of a machine`);
+  requireLiveCredential(c);
   if (c.core.isAuthority()) return json({ event: admitJoin(c.core, b.node_id, b.approve) });
-  return rosterWrite(c, "team.admit", b);
+  return admissionWrite(c, "team.admit", b);
+});
+
+// A new path prevents a new client talking to an old daemon from losing its binding in an old parser.
+route("POST", "/v1/team/admit-link", async (c) => {
+  requireOwner(c);
+  const b = parseWith(AdmitLinkReq, await readJson(c.req, LOCAL_BODY_MAX));
+  personOnly(c, `${b.approve ? "approve" : "deny"} the join of a machine`);
+  requireLiveCredential(c);
+  if (c.core.isAuthority()) return json({ event: admitJoin(c.core, b.node_id, b.approve, undefined, undefined, b) });
+  return admissionWrite(c, "team.admit-link", b);
 });
 
 /** Join requests awaiting approval (held by the authority) and this node's queued roster requests. */
@@ -543,7 +593,11 @@ route("GET", "/v1/team/pending", (c) => {
   requireTeam(c);
   const owner = c.core.me()?.role === "owner";
   return json({
-    requests: owner ? c.core.store.joinRequests(c.core.clock()).map(({ pubkey: _p, ...rest }) => rest) : [],
+    // The handle the machine would join as (a fleet link's machines join as an existing member's: FLEET-LINK-1).
+    requests: owner ? c.core.store.joinRequests(c.core.clock()).map(({ pubkey: _p, ...rest }) => {
+      const handle = c.core.roster.members.get(rest.login)?.handle;
+      return { ...rest, ...(handle ? { handle } : {}) };
+    }) : [],
     roster_requests: queuedView(c.core),
   });
 });
@@ -552,7 +606,7 @@ route("POST", "/v1/channels", async (c) => {
   requireTeam(c);
   // `requested_by` is the authority's to set (it says who asked); a caller never supplies it.
   const { requested_by: _by, ...b } = parseWith(ChannelReq, await readJson(c.req, LOCAL_BODY_MAX));
-  if (b.name === SCHEDULE_CHANNEL) throw new HttpError(409, "conflict", "#talkie-schedules is reserved for WalkieTalkie");
+  if (b.name === SCHEDULE_CHANNEL) throw new HttpError(409, "conflict", "#talkie-schedules is reserved for Talkie");
   // Project channels are made by `walkie projects create` and changed through project settings; a NEW `p-` name is
   // reserved. An existing `p-…` channel from before Projects (no project marker) stays an ordinary channel and is
   // managed here like any other (round-2 audit, Codex M7).
@@ -715,8 +769,10 @@ route("GET", "/v1/asks", (c) => {
   const maxBytes = intParam(c, "max_bytes", 64 * 1024 * 1024);
   const asks: unknown[] = [];
   let size = 0;
-  for (const row of c.core.store.asks()) {
-    const v0 = askView(c.core, row);
+  const rows = c.core.store.asks();
+  const replies = c.core.store.askReplies(rows.map((row) => row.id));
+  for (const row of rows) {
+    const v0 = askView(c.core, row, replies.get(row.id) ?? [], row.received_at);
     if (!c.core.visible(v0.ask) || (state && v0.state !== state)) continue;
     if (toMe && !(handle !== null && addressedTo((v0.ask.body as { to: string }).to,
       { handle, hostname: c.core.hostname, ...(c.agent ? { agent: c.agent } : {}) }))) continue;
@@ -744,6 +800,10 @@ route("POST", "/v1/answer", async (c) => {
   refuseAgentJoinContent(c, b.text);
   limitWrite(c);
   const view = getAskView(c.core, b.ask);
+  if (String(view.ask.body.text ?? "").startsWith("Talkie browser needs your confirmation:")) {
+    requirePerson(c, "confirm a browser action");
+    if (c.via === "phone") throw new HttpError(403, "person_only", "confirm this browser action on its machine");
+  }
   const to = parseAddress((view.ask.body as { to: string }).to);
   if (to.handle !== c.core.myHandle()) throw new HttpError(403, "forbidden", `this ask is addressed to @${to.handle}`);
   if (view.state === "expired") throw new HttpError(409, "conflict", "ask expired");
@@ -867,7 +927,7 @@ route("POST", "/v1/vault/lease", async (c) => {
   const raw = await readJson(c.req, 16 * 1024);
   const local = LocalLeaseReq.omit({ launcher: true }).safeParse(raw);
   if (!local.success) throw new HttpError(400, "invalid", "bad lease request");
-  // The owner's machine over a transport both serve (pre.4 merge: a Walkie Direct owner too), like every peer call.
+  // The owner's machine over a transport both serve (pre.4 merge: a Sqwakie Direct owner too), like every peer call.
   const res = await requestLease(c.core, (_addr, body, node) => c.client.vaultLease(ownerAddr(c, node), body).catch((err: unknown) => {
     const e = err as { status?: number; code?: string; message?: string };
     throw new HttpError(e.status && e.status >= 400 && e.status < 600 ? e.status : 502, e.code ?? "unreachable", `the owner's machine refused: ${plainText(String(e.message ?? "unreachable"), 200)}`);

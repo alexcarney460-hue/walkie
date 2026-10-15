@@ -30,7 +30,7 @@ const PRE3 = MIGRATIONS.slice(0, ORCH + 1);
 const CH = "p-0e1c7ed0";
 
 describe("migration order", () => {
-  test("orch_messages is 11, projects boards are 12, stall indexes are 13, claim lookup is 14, the schedule count is 15, Hermes sessions are 16 to 18", () => {
+  test("orch_messages is 11, projects boards are 12, stall indexes are 13, claim lookup is 14, the schedule count is 15, Hermes sessions are 16 to 18, project and origin indexes are 19", () => {
     expect(ORCH + 1).toBe(11);
     expect(BOARDS + 1).toBe(12);
     expect(MIGRATIONS[13]).toContain("ADD COLUMN claim_schedule");
@@ -38,7 +38,9 @@ describe("migration order", () => {
     expect(HERMES + 1).toBe(16);
     expect(MIGRATIONS[HERMES + 1]).toContain("ADD COLUMN received_at");
     expect(MIGRATIONS[HERMES + 2]).toContain("ADD COLUMN pid");
-    expect(MIGRATIONS.length).toBe(18);
+    expect(MIGRATIONS[18]).toContain("CREATE INDEX IF NOT EXISTS events_project_roots");
+    expect(MIGRATIONS[18]).toContain("CREATE INDEX IF NOT EXISTS events_origin_rowid");
+    expect(MIGRATIONS.length).toBe(19);
   });
 
   test("a fresh store runs every migration once", () => {
@@ -56,7 +58,7 @@ describe("migration order", () => {
     expect(store.claimIndexReady).toBe(true);
   });
 
-  test("a store at pre.11's migration 15 (claim index built) gets the Hermes migrations 16 to 18 in order, and is ready", () => {
+  test("a store at pre.11's migration 15 (claim index built) gets migrations 16 to 19 in order, and is ready", () => {
     const dir = mkdtempSync("/tmp/walkie-pre11-");
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     const path = join(dir, "walkie.db");
@@ -67,7 +69,7 @@ describe("migration order", () => {
     const store = new Store(path);
     cleanups.push(() => store.close());
     expect(store.db.query<{ version: number }, []>("SELECT version FROM migrations ORDER BY version").all().map((r) => r.version))
-      .toEqual(Array.from({ length: 18 }, (_, i) => i + 1));
+      .toEqual(Array.from({ length: 19 }, (_, i) => i + 1));
     expect(store.db.query("SELECT pid, received_at FROM hermes_sessions").all()).toEqual([]);
     expect(store.claimIndexReady).toBe(true);
   });

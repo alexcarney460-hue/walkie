@@ -1,7 +1,7 @@
 // PROJECT-REPORTS-1: the small part of the status report the dashboard shares with the daemon and the CLI (the setting,
 // who may change it, the posted report's header). No imports: the dashboard bundles it as is.
 
-/** The project setting: WalkieTalkie writes a report each hour something changed, or never. */
+/** The project setting: Talkie writes a report each hour something changed, or never. */
 export type StatusReportMode = "hourly" | "off";
 
 /** A project's mode; a view stored before the field existed has none, which reads as off. */
@@ -10,12 +10,11 @@ export function reportMode(p: { status_report?: StatusReportMode | undefined }):
 }
 
 /**
- * Why this person may not turn a project's status report on or off, or null when they may: its creator (while still a
- * member) and the team's owners, as people (the fold's own rule for project settings, fold.ts isAdmin). The caller says
- * whether it is a person; an agent is refused wherever the request arrives.
+ * Why the caller's person may not turn a project's status report on or off, or null when they may: its creator (while
+ * still a member) and the team's owners. An agent-admin request acts for that person and is signed as the person.
  */
 export function statusReportDenial(role: string | null | undefined, handle: string | null | undefined, creator: string): string | null {
-  if (role === "observer") return "observers can't change a project's status report";
+  if (role === "observer") return "observers can't change a project's status report; only the project's creator or an owner can turn it on or off";
   if (role === "owner" || (role === "member" && !!handle && handle === creator)) return null;
   return "only the project's creator or an owner can turn its status report on or off";
 }

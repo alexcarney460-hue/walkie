@@ -1,4 +1,4 @@
-// Walkie wire contract. Every surface (daemon, CLI, MCP, hooks, dashboard)
+// Sqwakie wire contract. Every surface (daemon, CLI, MCP, hooks, dashboard)
 // validates against these schemas. See docs/PROTOCOL.md for semantics.
 import type { OrchMessage } from "./orchestrator.ts";
 import { z } from "zod";
@@ -42,12 +42,12 @@ export type AgentState = z.infer<typeof AgentState>;
 
 export const AskPolicy = z.enum(["auto", "human", "off"]);
 
-/** How a node is reached (PROTOCOL §4): HTTP over the tailnet, or Walkie Direct (iroh QUIC, dialed by node key). */
+/** How a node is reached (PROTOCOL §4): HTTP over the tailnet, or Sqwakie Direct (iroh QUIC, dialed by node key). */
 export const TransportKind = z.enum(["tailscale", "direct"]);
 export type TransportKind = z.infer<typeof TransportKind>;
 /** A transport name on the wire: lenient, so a future transport doesn't make v0.2 reject the whole event. */
 export const TransportName = z.string().regex(/^[a-z0-9-]{1,16}$/);
-/** Hex of the raw 32-byte ed25519 node public key: the iroh endpoint id Walkie Direct dials. */
+/** Hex of the raw 32-byte ed25519 node public key: the iroh endpoint id Sqwakie Direct dials. */
 export const EndpointHex = z.string().regex(/^[0-9a-f]{64}$/);
 /** sha256(invite secret) hex, first 32 chars: recorded on the chain so an invite is used once (PROTOCOL §4). */
 export const InviteId = z.string().regex(/^[0-9a-f]{32}$/);
@@ -176,6 +176,8 @@ export const Bodies = {
     thread: EventId.optional(),
     mentions: z.array(Address).max(20).optional(),
     artifacts: z.array(BlobHash).max(10).optional(),
+    /** Optional catalog operation; old peers ignore this field and display text. */
+    skill: z.unknown().optional(),
   }),
   /** Directed request to an agent/person. Pending until an answer references it or it expires. */
   "ask": z.object({
@@ -310,8 +312,10 @@ export const PeerJoinReq = z.object({
   hostname: z.string().min(1).max(63),
   ip: z.string().max(45),
   port: z.number().int().min(1).max(65535).optional(), // joiner's peer port, default 7458
-  /** Walkie Direct: the invite code (PROTOCOL §4). Never logged. */
+  /** Sqwakie Direct: the invite code (PROTOCOL §4). Never logged. */
   invite: z.string().min(1).max(512).optional(),
+  /** Sqwakie Direct: a fleet link's token (FLEET-LINK-1, PROTOCOL §4 "Fleet links"). Never logged. */
+  link: z.string().min(1).max(512).optional(),
 });
 export const PeerEventsPush = z.object({ events: z.array(z.unknown()).max(100) });
 
@@ -356,9 +360,10 @@ export const PeerJoinResSchema = z.object({
 /**
  * A non-authority node asking the roster authority to append a roster event (PROTOCOL §4
  * `/peer/v1/roster-request`). `sig` = the requester node's signature over canonicalJson of the other
- * fields plus `team`. `team.admit` ({node_id, approve}) decides a join request held by the authority.
+ * fields plus `team`. `team.admit` ({node_id, approve}) decides an ordinary join request held by the authority.
+ * Fleet decisions use `team.admit-link` ({node_id, approve, link, generation}); old authorities reject the new kind.
  */
-export const RosterRequestKind = z.enum(["team.member", "team.node", "channel.upsert", "team.authority", "team.license", "team.integration", "team.admit"]);
+export const RosterRequestKind = z.enum(["team.member", "team.node", "channel.upsert", "team.authority", "team.license", "team.integration", "team.admit", "team.admit-link"]);
 export type RosterRequestKind = z.infer<typeof RosterRequestKind>;
 export const RosterRequest = z.object({
   id: z.string().regex(/^[0-9a-f]{32}$/), kind: RosterRequestKind, body: z.record(z.unknown()),
@@ -477,7 +482,7 @@ export interface MeView {
   tailscale: { ok: boolean; login: string | null; error?: string };
   /**
    * v0.2: how this node reaches its team. `mode` null = not decided yet (no team). `direct` is present
-   * while the Walkie Direct endpoint runs: its endpoint id and home relay (null until connected).
+   * while the Sqwakie Direct endpoint runs: its endpoint id and home relay (null until connected).
    */
   transport?: {
     mode: TransportKind | null; direct?: { endpoint: string; relay: string | null };
@@ -503,7 +508,7 @@ export interface NodeView {
    * online, and its agents show here, only while a machine that reaches it vouches for it: `vouched` false means no
    * machine does now, so it shows offline (`online` is false too) and its agents are hidden on this machine. Absent for
    * an observer's machine (an observer publishes no agent status, so nothing of theirs is hidden), and for every peer
-   * while this machine's own Walkie Direct endpoint is not up but should be (starting, or failing to bind).
+   * while this machine's own Sqwakie Direct endpoint is not up but should be (starting, or failing to bind).
    */
   unreached?: { vouched: boolean };
   online: boolean; last_seen: number | null; rtt_ms: number | null; self: boolean;
@@ -512,7 +517,7 @@ export interface NodeView {
   sync: { behind: number; last_sync: number | null; error?: string; skew_ms?: number }; // skew = peer clock - ours
   /** Memory and temperature, the last the node published (`at` on this node's clock); absent = never reported. */
   stats?: MachineStats;
-  /** WALKIE-POOL-2: whether its owner shares it for split runs (absent = an older Walkie, or never reported). */
+  /** WALKIE-POOL-2: whether its owner shares it for split runs (absent = an older Sqwakie, or never reported). */
   pool?: PoolShare;
 }
 export interface ChannelView {

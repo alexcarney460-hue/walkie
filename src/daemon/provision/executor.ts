@@ -12,7 +12,7 @@ import { processIdentity, type InstallerProcess } from "./process.ts";
 import { ProvisionInterrupted } from "./interrupt.ts";
 
 const NODE_VERSION = "22.20.0";
-/** Official nodejs.org v22.20.0 SHASUMS256 entries, frozen in the signed Walkie release. */
+/** Official nodejs.org v22.20.0 SHASUMS256 entries, frozen in the signed Sqwakie release. */
 const NODE_SHA256: Readonly<Record<string, string>> = {
   "darwin-arm64": "f2ed1fbdfb79afb9343dfbb609efde657b41e7efcd5215264ce78f8906356b4d",
   "darwin-x64": "2a291f0a9555f5d6685d96ce9429da3d0ea3cd896c012702c6ee0015f818684e",

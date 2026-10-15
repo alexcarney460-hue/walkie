@@ -238,6 +238,14 @@ export async function seatOutcome(
     const head = readHead(gitDir, commonDir);
     if (head) writeFileSync(join(inspect, "HEAD"), `${head}\n`);
     const at = { signal, env: { GIT_DIR: inspect, GIT_WORK_TREE: repo } };
+    // The copied index may claim tracked files are unchanged (cached stat data or assume-unchanged flags).
+    // Reinsert its staged entries in the scratch index to retain their object IDs but clear those hints.
+    const entries = await git(["ls-files", "--stage", "-z"], repo, env, at);
+    if (entries.code !== 0) return null;
+    if (entries.out) {
+      const refreshed = await git(["update-index", "-z", "--index-info"], repo, env, { ...at, input: entries.out });
+      if (refreshed.code !== 0) return null;
+    }
     // Untracked files are counted without running content filters (none are configured here anyway).
     const status = await git(["-c", "core.bare=false", "status", "--porcelain", "--ignore-submodules=all"], repo, env, at);
     const dirty = status.code === 0 && status.out ? status.out.split("\n").filter(Boolean).length : 0;

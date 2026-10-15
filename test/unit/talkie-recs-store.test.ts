@@ -15,14 +15,14 @@ const events = (t: ReturnType<typeof recsWorld>): number => t.core.store.db.quer
 const want = (t: ReturnType<typeof recsWorld>, channel: string, recs: Parameters<typeof t.moveRec>[0][], over = {}): Desired[] => recs.map((c) => ({ rec: t.moveRec(c, over), channel }));
 
 describe("a recommendation is a signed post", () => {
-  test("a team one is in its project's channel as WalkieTalkie, in words an older peer can show", async () => {
+  test("a team one is in its project's channel as Talkie, in words an older peer can show", async () => {
     const t = recsWorld(cleanups);
     const p = await t.project("Website", "WEB", { off: true });
     const c = t.card(p, "Fix the login page");
     const id = createRec(t.deps, t.moveRec(c), p.channel);
     const event = JSON.parse(t.core.store.getRow(id)?.json as string);
     expect(event).toMatchObject({ channel: p.channel, author: { handle: "alex", agent: "orchestrator" }, kind: "msg.post" });
-    expect(event.body.text).toBe("WalkieTalkie recommends: Move “Fix the login page” to review");
+    expect(event.body.text).toBe("Talkie recommends: Move “Fix the login page” to review");
     expect(event.body.talkie_rec).toMatchObject({ v: 1, op: "create", key: recKey.move(c.id, "review"), audience: "team" });
     expect(readRecs(t.deps)).toMatchObject([{ id, status: "pending", project: p.channel, channel: p.channel, audience: "team", kind: "move_card" }]);
   });
@@ -205,7 +205,7 @@ describe("who sees what", () => {
   test("a second owner reads the owners-only ones too, once they are in the schedule channel", async () => {
     const t = recsWorld(cleanups);
     const kira = t.person("kira", "owner");
-    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "kira"] });
+    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "kira"] });
     const open = await t.project("Website", "WEB", { off: true });
     createRec(t.deps, t.moveRec(t.card(open, "Public work")), open.channel);
     createRec(t.deps, t.ownersRec(open, t.card(open, "Confidential work")), open.channel);
@@ -213,11 +213,11 @@ describe("who sees what", () => {
     expect(readRecs(kira.deps).map((r) => r.audience).sort()).toEqual(["owners", "team"]);
   });
 
-  test("a member's own WalkieTalkie cannot write one, nor retire one", async () => {
+  test("a member's own Talkie cannot write one, nor retire one", async () => {
     const { t, open } = await world();
     const maren = t.person("maren");
     const real = readRecs(t.deps).find((r) => r.audience === "team")!;
-    maren.core.emit("msg.post", { text: "WalkieTalkie recommends: do it", talkie_rec: { v: 1, op: "create", key: "forged", group: "moves", source: "turn", audience: "team",
+    maren.core.emit("msg.post", { text: "Talkie recommends: do it", talkie_rec: { v: 1, op: "create", key: "forged", group: "moves", source: "turn", audience: "team",
       action: { kind: "create_card", project: open.channel, title: "Forged" }, summary: "Do the forged thing", reason: "Because", evidence: [], ttl_ms: REC_TTL_MS } } as never, { channel: open.channel, agent: "orchestrator" });
     maren.core.emit("msg.post", { text: "retired", talkie_rec: { v: 1, op: "resolve", rec: real.id, status: "superseded" } } as never, { channel: open.channel, agent: "orchestrator" });
     maren.push();
@@ -238,7 +238,7 @@ describe("answers", () => {
     maren.push();
     expect(readRecs(t.deps)[0]).toMatchObject({ status: "approved", resolved: { status: "approved", by: "maren", note: "go" } });
     const post = t.core.store.db.query<{ json: string }, []>("SELECT json FROM events WHERE json_extract(body, '$.talkie_rec.op') = 'resolve'").get();
-    expect(JSON.parse(post!.json).body.text).toBe("@maren approved WalkieTalkie's recommendation: Move “One” to review");
+    expect(JSON.parse(post!.json).body.text).toBe("@maren approved Talkie's recommendation: Move “One” to review");
     expect(JSON.parse(post!.json).author.agent).toBeUndefined();
   });
 

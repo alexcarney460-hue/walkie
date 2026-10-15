@@ -65,7 +65,7 @@ export function disputeAskText(key: string, project: string, summary: string, re
     `Dispute on ${key} in ${project}: ${summary}`,
     `Resolve it with: walkie dispute resolve ${ref} <reason>`,
     "Nothing escalates on its own. This ask expiring does not close the dispute and does not escalate it.",
-    "A Walkie from before this release cannot resolve a dispute. Upgrade, or an owner on this release can resolve it.",
+    "A Sqwakie from before this release cannot resolve a dispute. Upgrade, or an owner on this release can resolve it.",
   ].join("\n");
 }
 

@@ -32,6 +32,10 @@ function makeInner(deps: HandlerDeps): (req: Request) => Promise<Response> {
         await t.lockControl(`enrollment-chain:${a.team_id}`);
         const current = await t.lockAccount(a.id);
         if (!current || current.token_hash !== a.token_hash) throw new ComputeError(401, 'invalid_token');
+        // A frozen account (dispute, refund, fraud warning) could never spend new credit: no checkout (REVIEW-merged-opus.md 9).
+        if (current.status === 'frozen') throw new ComputeError(403, 'account_frozen');
+        // Under review (a mining stop): its credit cannot be spent until the operator clears it (REVIEW-fixdiff-opus.md P3-5).
+        if (current.review) throw new ComputeError(403, 'account_under_review');
         if (await launchFrozen(t, a.team_id)) throw new ComputeError(403, 'handover_pending');
         const chain = await t.control(`enrollment-chain:${a.team_id}`) as { chainId?: string } | undefined;
         if (!(await openCheckout(t, a.id, { id: attemptId, expires_at: expiresAt,

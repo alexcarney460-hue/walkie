@@ -6,7 +6,7 @@ test("a refused second daemon Start keeps its plain owner message in local statu
   const r = await rig();
   try {
     const host = r.host();
-    const message = "Another Walkie daemon owns shell access on this machine; stop it before starting here";
+    const message = "Another Sqwakie daemon owns shell access on this machine; stop it before starting here";
     host.shellUser.prepare = async () => { throw new HttpError(409, "talkie_user_owned", message); };
     await expect(r.alex.client("").orchestratorStart({ access: "full" })).rejects.toThrow(message);
     expect(host.view().last_error).toBe(message);

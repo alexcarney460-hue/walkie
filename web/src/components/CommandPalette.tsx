@@ -5,6 +5,7 @@ import { STATE_LABEL, displayName } from "../lib/format.ts";
 import { getRoute, navigate } from "../lib/route.ts";
 import { setTheme, toggleTheme } from "../lib/theme.ts";
 import { useStore } from "../state/store.tsx";
+import { displayStoredText } from "../../../src/protocol/display-text.ts";
 
 interface Cmd { id: string; group: string; label: string; hint?: string; icon: typeof Bot; keys?: string; run: () => void }
 
@@ -40,7 +41,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       { id: "v-r", group: "Go to", label: "Updates · project status reports", icon: Newspaper, keys: "G R", run: () => navigate({ view: "updates" }) },
       { id: "v-p", group: "Go to", label: "Projects", icon: FolderKanban, keys: "G P", run: () => navigate({ view: "projects" }) },
       { id: "v-n", group: "Go to", label: "Simple", icon: ListChecks, keys: "G N", run: () => navigate({ view: "simple" }) },
-      { id: "v-o", group: "Go to", label: "WalkieTalkie", icon: Sparkles, keys: "G O", run: () => navigate({ view: "orchestrator" }) },
+      { id: "v-o", group: "Go to", label: "Talkie", icon: Sparkles, keys: "G O", run: () => navigate({ view: "orchestrator" }) },
       { id: "v-b", group: "Go to", label: "Channels", icon: MessagesSquare, keys: "G B", run: () => navigate({ view: "board" }) },
       { id: "v-a", group: "Go to", label: "Asks", icon: CircleHelp, keys: "G A", run: () => navigate({ view: "asks" }) },
       { id: "v-f", group: "Go to", label: "Artifacts", icon: FileText, keys: "G F", run: () => navigate({ view: "artifacts" }) },
@@ -50,7 +51,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       { id: "v-s", group: "Go to", label: "Seats", icon: Armchair, keys: "G S", run: () => navigate({ view: "seats" }) },
     ];
     const agentCmds: Cmd[] = agents.map((a) => ({
-      id: `a-${a.id}`, group: "Agents", label: `${a.agent} · ${a.hostname}`, hint: `${STATE_LABEL[a.effective_state]}${a.status.title ? ` · ${a.status.title}` : ""}`,
+      id: `a-${a.id}`, group: "Agents", label: `${a.agent} · ${a.hostname}`, hint: `${STATE_LABEL[a.effective_state]}${a.status.title ? ` · ${displayStoredText(a.status.title)}` : ""}`,
       icon: Bot, run: () => navigate({ ...getRoute(), agent: a.id }),
     }));
     const channels: Cmd[] = (team?.channels ?? []).map((c) => ({

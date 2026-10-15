@@ -14,7 +14,7 @@ export interface WhoView { handle: string; agent?: string }
  */
 export interface StoryCounts { blocked: number; in_progress: number; in_review: number }
 
-/** The plain-English parts of the latest report that carried them (WalkieTalkie's), with when they were written. */
+/** The plain-English parts of the latest report that carried them (Talkie's), with when they were written. */
 export interface StoryView {
   headline: string; lede: string; live_now: string[]; landing_next: string[];
   /** "Screens are out of date …": present only while it is still true when the page is read. */
@@ -28,7 +28,7 @@ export interface StoryView {
   counts?: StoryCounts;
 }
 
-/** What Walkie counts itself, from the project's cards (those labelled confidential are in none of it) and its agents. */
+/** What Sqwakie counts itself, from the project's cards (those labelled confidential are in none of it) and its agents. */
 export interface ComputedFacts {
   done_day: number; done_week: number; in_progress: number; in_review: number; blocked: number;
   /** Agents working on the project now, and on how many machines. */

@@ -23,6 +23,8 @@ describe("recommendation panel", () => {
     expect(html.match(/<details>/g)?.length).toBe(5);
     expect(html).not.toContain("<details open");
     expect(html).toContain("Fictional fixture");
+    expect(html).toContain("[Talkie recommendation 00000003]");
+    expect(html).not.toContain("[WalkieTalkie recommendation 00000003]");
   });
   test("uses each capability independently and shows the server reason", () => {
     const rec = recommendationFixtures()[0]!;
@@ -32,12 +34,12 @@ describe("recommendation panel", () => {
     expect(html).toContain("Approval is unavailable here");
     expect(render([{ ...rec, can_approve: true, can_dismiss: false }])).toMatch(/disabled="">Dismiss/);
   });
-  test("an ask shows word for word what approving sends as you, and what WalkieTalkie wrote quoted as not sent", () => {
+  test("an ask shows word for word what approving sends as you, and what Talkie wrote quoted as not sent", () => {
     const [, , review, stalled] = recommendationFixtures();
     const html = render([review!, stalled!]);
     expect(html.match(/Approving does this in your name/g)?.length).toBe(2);
     expect(html).toContain("Please take the review of card DEMO-3.");
-    expect(html).toContain("WalkieTalkie wrote this (it is not sent)");
+    expect(html).toContain("Talkie wrote this (it is not sent)");
     expect(html).toContain("the import task");
     expect(render([{ ...stalled!, outgoing: null }])).toContain("Its card is gone, so approving it will be refused.");
     // Once answered there is nothing left to send.
@@ -224,9 +226,9 @@ describe.skipIf(!browserEnabled)("mounted recommendation interactions", () => {
         expect(await action(1, "Approve").isEnabled()).toBe(true);
         expect(await action(1, "Dismiss").isDisabled()).toBe(true);
         await panel.getByText("Approval unavailable for this record").waitFor();
-        // The asks show what approving sends in the person's name; what WalkieTalkie wrote is quoted as not sent.
+        // The asks show what approving sends in the person's name; what Talkie wrote is quoted as not sent.
         await row(2).getByText("Approving does this in your name").waitFor();
-        await row(3).getByText("WalkieTalkie wrote this (it is not sent)").waitFor();
+        await row(3).getByText("Talkie wrote this (it is not sent)").waitFor();
         await row(0).locator("summary").click();
         expect(await row(0).locator("details").getAttribute("open")).not.toBeNull();
         await row(0).locator("summary").click();
@@ -301,7 +303,7 @@ describe.skipIf(!browserEnabled)("mounted recommendation interactions", () => {
         const bottomShot = await page.screenshot({ path: `${evidence}/recommendations-bottom-${width}-${theme}.png` });
         expect(posts()).toHaveLength(7);
         // Reading suggestions has not taken over the conversation's composer.
-        await page.getByRole("textbox", { name: "Message WalkieTalkie" }).fill("Synthetic conversation still works");
+        await page.getByRole("textbox", { name: "Message Talkie" }).fill("Synthetic conversation still works");
         await page.getByRole("button", { name: "Send message", exact: true }).click();
         await page.getByRole("log", { name: "Conversation" }).getByText("Synthetic conversation still works").waitFor();
         expect(writes).toHaveLength(8);

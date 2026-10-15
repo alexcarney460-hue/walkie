@@ -1,4 +1,4 @@
-// WALK-67 lane 8, round 2 (review finding 2): on macOS Walkie never asks for Remote Login. Its own launchd system daemon,
+// WALK-67 lane 8, round 2 (review finding 2): on macOS Sqwakie never asks for Remote Login. Its own launchd system daemon,
 // dev.walkie.sshd, listens only on this Mac (127.0.0.1 and ::1, port 22022) and accepts only key logins (the keys in the enrolled person's own authorized_keys).
 // Everything here runs against a scratch directory with every system command stubbed: no real sudo, launchctl,
 // ssh-keygen, sshd or Remote Login, and nothing under /Library or /etc.
@@ -48,7 +48,7 @@ describe("the generated sshd_config", () => {
     expect(macSshdConfig("arvid")).not.toContain("0.0.0.0");
     expect(macSshdConfig("arvid")).not.toMatch(/ListenAddress\s+(\*|::)\s*$/m);
   });
-  test("it names no path outside Walkie's own directory except the person's own authorized_keys", () => {
+  test("it names no path outside Sqwakie's own directory except the person's own authorized_keys", () => {
     const text = macSshdConfig("arvid");
     expect(text).not.toContain("/etc/ssh");
     expect(text).not.toContain("com.openssh");
@@ -68,7 +68,7 @@ describe("the generated sshd_config", () => {
 });
 
 describe("the launchd plist", () => {
-  test("label and program arguments are pinned: a system daemon running sshd -D with Walkie's own config", () => {
+  test("label and program arguments are pinned: a system daemon running sshd -D with Sqwakie's own config", () => {
     const text = macSshdPlist();
     expect(MAC_SSH_LABEL).toBe("dev.walkie.sshd");
     expect(MAC_SSH_PLIST).toBe("/Library/LaunchDaemons/dev.walkie.sshd.plist");
@@ -101,7 +101,7 @@ type Script = (argv: string[], w: World) => { exitCode: number; stderr?: string;
 function world(over: { answers?: () => Promise<boolean>; user?: string | null; script?: Script; euid?: number; platform?: NodeJS.Platform } = {}): World {
   const root = mkdtempSync(join(tmpdir(), "walkie-macssh-"));
   scratch.push(root);
-  const parent = join(root, "Library", "Application Support", "Walkie");
+  const parent = join(root, "Library", "Application Support", "Sqwakie");
   const dir = join(parent, "ssh");
   const daemons = join(root, "Library", "LaunchDaemons");
   mkdirSync(parent, { recursive: true, mode: 0o755 });
@@ -137,7 +137,7 @@ const argvs = (w: World): string[] => w.calls.map((c) => c.argv.join(" "));
 const names = (d: string): string[] => readdirSync(d).sort();
 
 describe("installing the service", () => {
-  test("writes only Walkie's own files, in a private root directory, and loads the service", async () => {
+  test("writes only Sqwakie's own files, in a private root directory, and loads the service", async () => {
     const w = world();
     const result = await installMacSshService(501, w.io);
     expect(result).toEqual({ ok: true });
@@ -179,7 +179,7 @@ describe("installing the service", () => {
     const w = world();
     await installMacSshService(501, w.io);
     expect(w.seen.configStaged).not.toBe(join(w.dir, "sshd_config"));
-    expect(w.seen.configStaged!.startsWith(`${w.dir}/`)).toBe(true); // in Walkie's own root-only directory, never TMPDIR
+    expect(w.seen.configStaged!.startsWith(`${w.dir}/`)).toBe(true); // in Sqwakie's own root-only directory, never TMPDIR
     expect(w.seen.configFinalExisted).toBe("false"); // nothing sat at the final path while the new bytes were still being checked
     expect(w.seen.configMode).toBe("600");
     expect(w.seen.plistStaged).not.toBe(w.plist);
@@ -188,7 +188,7 @@ describe("installing the service", () => {
     expect(existsSync(w.seen.configStaged!)).toBe(false);
     expect(existsSync(w.seen.plistStaged!)).toBe(false);
   });
-  test("a reinstall keeps the host key (the owner's known_hosts stays valid), replaces only Walkie's own files and leaves everything else alone", async () => {
+  test("a reinstall keeps the host key (the owner's known_hosts stays valid), replaces only Sqwakie's own files and leaves everything else alone", async () => {
     const w = world();
     await installMacSshService(501, w.io);
     const key = readFileSync(join(w.dir, "ssh_host_ed25519_key"), "utf8");
@@ -298,7 +298,7 @@ describe("who may install it, and as whom", () => {
   test("a directory that is not private and owned by root is refused, and a link is never followed", async () => {
     const open = world();
     mkdirSync(open.dir, { mode: 0o755 });
-    // The mode is repaired (the directory is Walkie's own and empty of anyone else's files)...
+    // The mode is repaired (the directory is Sqwakie's own and empty of anyone else's files)...
     expect((await installMacSshService(501, open.io)).ok).toBe(true);
     expect(lstatSync(open.dir).mode & 0o777).toBe(0o700);
     // ...but a symlink where the directory should be is refused outright.

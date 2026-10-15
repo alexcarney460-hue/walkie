@@ -38,7 +38,7 @@ for (const [name, Component] of [["Team page", LocalModelsSection], ["Mission Co
     expect(text(html)).toContain("Not enough published benchmark results to rate (0 of 3 needed");
   });
 
-  test(`${name}: the list built into Walkie as shipped has no rated model, and says so`, () => {
+  test(`${name}: the list built into Sqwakie as shipped has no rated model, and says so`, () => {
     const html = renderToStaticMarkup(<Component nodes={[mac]} models={models(CATALOG, "built-in")} />);
     expect(text(html)).toContain(NO_RATING_NOTE);
     expect(html).toContain(">Newest overall<");
@@ -66,7 +66,7 @@ test("machine page: nothing rated -> 'Newest on this machine' and the note; not 
   expect(text(html)).toContain(NO_RATING_NOTE);
 });
 
-test("machine page: the list built into Walkie as shipped says the same", () => {
+test("machine page: the list built into Sqwakie as shipped says the same", () => {
   const html = renderToStaticMarkup(<LocalModelSection node={mac} models={models(CATALOG, "built-in")} />);
   expect(html).toContain("Newest on this machine");
   expect(text(html)).toContain(NO_RATING_NOTE);

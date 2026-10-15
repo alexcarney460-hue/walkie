@@ -1,5 +1,6 @@
 import { connect } from "node:net";
 import { spawn } from "node:child_process";
+import { noteChildProcess } from "../../daemon/adopted-zombies.ts";
 import { defaultHome } from "../../daemon/paths.ts";
 import { ownerPublicKey, ownerPrivateKeyPath } from "../../daemon/ssh/owner-key.ts";
 import { sshBridgePath } from "../../daemon/ssh/bridge.ts";
@@ -50,6 +51,7 @@ export async function sshCommand(args: readonly string[]): Promise<number> {
   const info = await new WalkieClient().request<{ user: string }>("GET", `/v1/ssh/target?machine=${machine}`);
   const child = spawn("ssh", ["-i", ownerPrivateKeyPath(home), "-o", "IdentitiesOnly=yes",
     "-o", `ProxyCommand=walkie tunnel ssh ${machine}`, "-l", info.user, ...extra, `${machine}.walkie`], { stdio: "inherit" });
+  noteChildProcess(child);
   return await new Promise<number>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code ?? 1));
@@ -123,35 +125,35 @@ async function realEnableDeps(): Promise<SshEnableDeps> {
   const ctx = makeCtx(parseArgs([], CLI_BOOLEANS));
   return {
     platform: process.platform, out: (line) => writeOut(`${line}\n`), root: realRootBatch(defaultHome()), step: realSshStepDeps(client),
-    confirm: () => requirePerson(ctx, "install Walkie's SSH service on this machine (one administrator step)", "yes"),
+    confirm: () => requirePerson(ctx, "install Sqwakie's SSH service on this machine (one administrator step)", "yes"),
     status: () => client.request<SshStatus>("GET", "/v1/ssh/status"),
   };
 }
 
 /**
- * `walkie ssh enable`: installs (or repairs) Walkie's own SSH service on a machine that already has an owner SSH
+ * `walkie ssh enable`: installs (or repairs) Sqwakie's own SSH service on a machine that already has an owner SSH
  * authorization: macOS's launchd service on 127.0.0.1:22022, or Linux and WSL's loopback sshd, from the same one
  * administrator step the enrollment runs. It never opens Remote Login. Nothing is asked or run when the service already
  * answers or when there is no authorization to serve; ready is only what the daemon's status says afterwards. On Linux and
- * WSL an SSH server that is not Walkie's, already answering on 22, is not used: it says so and owner SSH stays off.
+ * WSL an SSH server that is not Sqwakie's, already answering on 22, is not used: it says so and owner SSH stays off.
  */
 export async function sshEnableCommand(rest: readonly string[], deps?: SshEnableDeps): Promise<number> {
   if (rest.length) throw new Error("usage: walkie ssh enable");
   const d = deps ?? await realEnableDeps();
-  if (d.platform !== "darwin" && d.platform !== "linux") throw new Error("walkie ssh enable installs Walkie's SSH service on macOS, Linux and WSL");
+  if (d.platform !== "darwin" && d.platform !== "linux") throw new Error("walkie ssh enable installs Sqwakie's SSH service on macOS, Linux and WSL");
   const now = await d.status();
   if (now.reason === "grant_absent") {
     d.out("This machine has no owner SSH authorization, so there is no SSH service to turn on. The owner's add-machine link carries one: run its command (walkie setup --invite … --company-machine --owner-ssh …) here.");
     return 1;
   }
-  // Linux and WSL: an SSH server that is not Walkie's already answers on 22. Walkie does not use it and does not call SSH ready
+  // Linux and WSL: an SSH server that is not Sqwakie's already answers on 22. Sqwakie does not use it and does not call SSH ready
   // through it: owner SSH stays off on this machine in this release (src/cli/ssh-foreign.ts).
   if (await foreignSshServer({ platform: d.platform, read: async () => now, ...(d.step.walkieUnit ? { walkieUnit: d.step.walkieUnit } : {}), ...(d.step.walkieActive ? { walkieActive: d.step.walkieActive } : {}) })) {
     d.out(FOREIGN_SSH_WHY);
     return 1;
   }
   if (now.server.enabled) {
-    d.out("Walkie's SSH service already answers on this machine.");
+    d.out("Sqwakie's SSH service already answers on this machine.");
   } else {
     await d.confirm();
     const stepped = await runAdministratorStep((line) => d.out(line), d.root, { carriesSsh: true, platform: d.platform, serverAnswers: async () => false, again: "run walkie ssh enable again" });

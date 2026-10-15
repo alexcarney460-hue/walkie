@@ -34,6 +34,18 @@ export const RENEW_HASH_META = "walkie_renew_hash";
 /** Authority that received the token. These move only when a new renewal hash is issued. */
 export const RENEW_AUTHORITY_META = 'walkie_renew_authority';
 export const RENEW_CHAIN_META = 'walkie_renew_chain';
+/**
+ * A renewal token bound without any authority: the released compute-locked bind (pre.10 to pre.16) writes only
+ * walkie_team + walkie_renew_hash; a database-backed proofless bind also writes both renew markers as 'legacy'.
+ * Any authority metadata, or one renew marker without the other (an operator reset keeps the old holder's),
+ * means the token is not legacy.
+ */
+export function legacyRenewal(meta: Metadata): boolean {
+  if (meta[AUTHORITY_META] || meta[AUTHORITY_CHAIN_META] || meta[AUTHORITY_DEPTH_META] || meta[`${AUTHORITY_PATH_META}0`])
+    return false;
+  const holder = meta[RENEW_AUTHORITY_META], chain = meta[RENEW_CHAIN_META];
+  return (!holder && !chain) || (holder === 'legacy' && chain === 'legacy');
+}
 /** Unix ms of the last seat/price change the webhook saw: the daemon's daily status check-in compares it (FINAL Codex 4). */
 export const REFRESH_META = "walkie_refresh_at";
 const LEGACY_LICENSE_META = "walkie_license";

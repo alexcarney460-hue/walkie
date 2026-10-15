@@ -265,7 +265,7 @@ test("protocol versions: a relay that never says hello, or says an older version
   a.holdRoom(await roomOf(randomBytes(32)), randomBytes(32), true);
   const t0 = Date.now();
   while (!seen.length && Date.now() - t0 < 3_000) await Bun.sleep(20);
-  expect(seen[0]).toContain("older than this Walkie");
+  expect(seen[0]).toContain("older than this Sqwakie");
   const old = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req, srv) { return srv.upgrade(req) ? undefined : new Response("no"); }, websocket: { open(ws) { ws.send(JSON.stringify({ t: "hello", v: 1 })); }, message() { /* none */ } } });
   stops.push(() => old.stop(true));
   const seen2: string[] = [];
@@ -274,7 +274,7 @@ test("protocol versions: a relay that never says hello, or says an older version
   b.holdRoom(await roomOf(randomBytes(32)), randomBytes(32), true);
   const t1 = Date.now();
   while (!seen2.length && Date.now() - t1 < 3_000) await Bun.sleep(20);
-  expect(seen2[0]).toContain("older than this Walkie");
+  expect(seen2[0]).toContain("older than this Sqwakie");
   // and the relay refuses a daemon of another protocol with a clear 426
   const { startRelay } = await import("../../src/relay/server.ts");
   const r = startRelay({ port: 0, hostname: "127.0.0.1" });

@@ -26,7 +26,7 @@ const key = (() => {
   return `ssh-ed25519 ${Buffer.concat([a, name, b, Buffer.alloc(32, 4)]).toString("base64")}`;
 })();
 
-/** A Walkie home under `root` with its own enrollment-marker root: consent needs the marker, and tests never touch the host's. */
+/** A Sqwakie home under `root` with its own enrollment-marker root: consent needs the marker, and tests never touch the host's. */
 function walkieHome(root: string): string {
   const home = join(root, "walkie");
   setTestEnrollmentRoot(home, join(root, "enrollment-root"));
@@ -266,7 +266,7 @@ test("doctor says SSH waits for the team's authority, or for every peer when thi
   expect(tunnel(waiting)).toBe("SSH waits for the team's authority to confirm access");
   expect(tunnel({ ...waiting, is_authority: true }))
     .toBe("SSH waits for every team machine that shares a transport with this one to confirm access (this machine is the team's authority)");
-  expect(tunnel({ ...waiting, tunnel_allowed: true, reason: null })).toBe("allowed through Walkie Direct");
+  expect(tunnel({ ...waiting, tunnel_allowed: true, reason: null })).toBe("allowed through Sqwakie Direct");
 });
 
 test("a revocation that wrote nothing durable is reported as unsaved; any one durable write is enough", () => {

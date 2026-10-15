@@ -160,7 +160,7 @@ echo "== release, then tag"
 refuse_if_tagged
 refuse_if_changed
 if ! gh release create "$tag" -R "$rel_repo" \
-  dist/walkie-* dist/install.sh dist/SHA256SUMS dist/SHA256SUMS.sig --title "Walkie $tag" --notes-file dist/NOTES.md \
+  dist/walkie-* dist/install.sh dist/SHA256SUMS dist/SHA256SUMS.sig --title "Sqwakie $tag" --notes-file dist/NOTES.md \
   $( [ "$pre" = 1 ] && echo --prerelease --latest=false ); then
   # Say which state exists: a release left behind by an earlier or partial run must not be answered with "run again".
   view_rc=0

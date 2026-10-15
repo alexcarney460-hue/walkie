@@ -4,7 +4,10 @@
 // RENEW_WINDOW_MS OR the service reports a newer grant (a seat or price change made in the billing
 // portal). The returned key is activated if it verifies, names this team and the same license, and the
 // chain's license hasn't changed while the request was in flight (audit M7). The renewal token comes
-// from the token file written at activation (renew-token.ts); without one there is no call. Every
+// from the token file written at activation (renew-token.ts); without one there is no call. A token the
+// released compute-locked site bound without an authority stops renewing on the token alone once the team
+// has compute state: the site answers 403 invalid_renewal, and the exchange retries once with this
+// authority's roster proof signed over the renew message (lane C, go-live review O P1-3). Every
 // failure is logged and retried the next day; none is ever fatal. `walkie license refresh` runs the
 // same exchange on demand.
 import type { Core } from "../daemon/core.ts";
@@ -15,15 +18,32 @@ import { licenseForTeam } from "./format.ts";
 import { DAY_MS } from "./plans.ts";
 import { loadRenewToken, type StoredToken } from "./renew-token.ts";
 import { LicenseService, replyKey, type ServiceReply } from "./service.ts";
+import { rosterProof } from "../daemon/compute/team-proof.ts";
 
 export const RENEW_WINDOW_MS = 7 * DAY_MS;
 export const RENEW_EVERY_MS = DAY_MS;
 /** Each wait is RENEW_EVERY_MS plus up to this much, and the first one is 1 min plus up to this much. */
 export const RENEW_JITTER_MS = 60 * 60_000;
 const FIRST_DELAY_MS = 60_000;
+/** How long a renewal proof's signature is valid (the site accepts at most 5 minutes). */
+const PROOF_TTL_MS = 240_000;
 
 export type RenewOutcome =
-  | "not_authority" | "no_license" | "not_due" | "no_token" | "renewed" | "refreshed" | "unchanged" | "superseded" | "refused" | "failed";
+  | "not_authority" | "no_license" | "not_due" | "no_token" | "renewed" | "refreshed" | "unchanged" | "superseded" | "refused"
+  | "proof_refused" | "fork_open" | "failed";
+
+/** The site paused renewal because a conflicting authority branch (a fork) awaits the operator. */
+const FORK_OPEN_HINT = "the license service paused renewal: a conflicting roster authority branch was presented for this team " +
+  "(a fork), and Sqwakie support must resolve it before the shared renewal token renews again. Renewal resumes by itself " +
+  "once it is resolved. If this machine is the team's rightful roster authority, email support.";
+
+/** Why a renewal signed with this machine's roster proof is still refused, and what the owner can do. */
+const PROOF_REFUSED_HINT = "the license service refused the renewal even with this machine's signed roster proof: the team uses " +
+  "compute, and its compute enrollment does not accept this machine as the team's roster authority yet. If this machine " +
+  "is the current roster authority, start a compute credit checkout here once (paying is not required) so the enrollment " +
+  "moves to it. If that checkout is refused, or the team has compute credit, the move needs a review: email support, and " +
+  "renewal resumes once it is resolved. If this machine is not the current roster authority, run `walkie license refresh` " +
+  "on the one that is. The renewal token may also no longer match.";
 
 export interface RenewOptions {
   /** The license service client (default: the pinned production origin). */
@@ -48,13 +68,34 @@ function ready(core: Core, log: Logger): Ready | RenewOutcome {
   return { core, lic, tok, team };
 }
 
+/** This authority's roster proof, signed for one renewal of `licId` (the site's renewMessage). */
+function renewProof(core: Core, team: string, licId: string): Record<string, unknown> {
+  const expires_at = core.clock() + PROOF_TTL_MS;
+  return { ...rosterProof(core), expires_at,
+    renew_signature: core.keys.sign(`walkie-license-renew-v1\n${team}\n${licId}\n${expires_at}`) };
+}
+
 /**
  * One renewal exchange: POST renew, verify, activate. `why` names the trigger for the log. Throws on
- * a malformed answer (the caller logs it); returns "refused" on a 4xx/5xx.
+ * a malformed answer (the caller logs it); returns "refused" on a 4xx/5xx, "proof_refused" when the
+ * retry signed with this machine's roster proof is refused as well, and "fork_open" while the site pauses
+ * renewal for an unresolved authority fork.
  */
 async function exchange(r: Ready, service: LicenseService, log: Logger, why: "expiry" | "newer" | "manual"): Promise<RenewOutcome> {
   const { core, lic, tok, team } = r;
-  const res = await service.renew(lic.payload.lic_id, tok.token);
+  let res = await service.renew(lic.payload.lic_id, tok.token);
+  if (res.status === 403 && res.body?.error === "invalid_renewal") {
+    log.info("license_renew_proof_retry", { lic_id: lic.payload.lic_id, why });
+    res = await service.renew(lic.payload.lic_id, tok.token, renewProof(core, team, lic.payload.lic_id));
+    if (res.status === 403 && res.body?.error === "invalid_renewal") {
+      log.warn("license_renew_proof_refused", { lic_id: lic.payload.lic_id, why, hint: PROOF_REFUSED_HINT });
+      return "proof_refused";
+    }
+  }
+  if (res.status === 409 && res.body?.error === "authority_fork_open") {
+    log.warn("license_renew_fork_open", { lic_id: lic.payload.lic_id, why, hint: FORK_OPEN_HINT });
+    return "fork_open";
+  }
   if (res.status < 200 || res.status > 299) {
     log.warn("license_renew_refused", { status: res.status, lic_id: lic.payload.lic_id, why });
     return "refused";
@@ -120,6 +161,8 @@ export async function refreshLicense(core: Core, service: LicenseService, log: L
     log.warn("license_refresh_failed", { err: err instanceof Error ? err.message : String(err) });
     throw new HttpError(502, "license_service_unavailable", "the license service's answer wasn't a usable key for this team; try again later");
   }
+  if (outcome === "proof_refused") throw new HttpError(409, "renewal_authority_refused", PROOF_REFUSED_HINT);
+  if (outcome === "fork_open") throw new HttpError(409, "authority_fork_open", FORK_OPEN_HINT);
   if (outcome === "refused") throw new HttpError(402, "subscription_inactive", "the license service refused the renewal: the subscription isn't active, or the token no longer matches");
   return { outcome };
 }

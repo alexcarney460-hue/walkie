@@ -26,19 +26,26 @@ import {
   type HoldRow, type KimiAliases, type RecordRow, type Recovery,
 } from "./store.ts";
 import { identifyGrok } from "./adapters/grok.ts";
-import { provisionalKimiIdentity } from "./adapters/kimi.ts";
+import { kimiCredentialsPath, provisionalKimiIdentity } from "./adapters/kimi.ts";
 import type { FetchLike } from "./http.ts";
 import { accountId } from "./mask.ts";
-import { KEYCHAIN_BLOCK_MS, pollAccount, POLL_MS } from "./poll.ts";
+import { KEYCHAIN_BLOCK_MS, pollAccount, POLL_MS, sharesCodexSessions } from "./poll.ts";
 import { launchCodexAppServer, redeemCodexReset, renewCodexLogin, type AppServerLauncher, type ResetResult } from "./resets.ts";
 import { freshRoomOf } from "./select.ts";
 import { sweepLeaseHomes } from "./vault/codex-lease-home.ts";
+import { sweepSharedCodexSessions } from "./vault/codex-home.ts";
 import type { ResetAttemptView } from "../protocol/accounts.ts";
 import type { Identity, Login, Reading } from "./types.ts";
 import { activeLeases, markApplies, markExcludes, markLifted, readMarks, readSessionReadings, type Lease } from "./leases.ts";
 import { clockFromMark, clockFromReading, markGuessed, mergeClock, validClock } from "./clock.ts";
 import type { VaultEntry } from "./vault/vault.ts";
 import type { CodexAccess } from "./vault/codex-access.ts";
+import { codexFingerprint, importTracked, type RemoteFingerprint } from "./vault/import.ts";
+import { Vault } from "./vault/vault.ts";
+import { readFileSync } from "node:fs";
+import { realCli } from "../switch/shims.ts";
+import { sameObjects, trustedRecipient } from "../switch/trusted.ts";
+import { writeDurable } from "./store.ts";
 import { type AccountLease, type AccountVault, type AccountUsage as UsageT, type ResetClock, type TeamPolicyAd } from "../protocol/accounts.ts";
 
 export const RECORD_TTL_MS = 7 * 86_400_000;
@@ -54,11 +61,11 @@ export const TICK_MS = 15_000;
 export interface SessionRef {
   agent: string;
   runtime: "claude-code" | "codex" | "kimi" | "grok";
-  /** CLAUDE_CONFIG_DIR (Claude) or CODEX_HOME (Codex) from the session's environment, when set. */
+  /** CLAUDE_CONFIG_DIR, CODEX_HOME or KIMI_CODE_HOME from the session's environment, when set. */
   login_dir?: string;
   /** The session runs on an environment token (detected by variable name only): its account is unknown. */
   token_login?: boolean;
-  /** ACCOUNTS-2: WALKIE_ACCOUNT of a session a Walkie wrapper launched on a vault account (an account id, not a secret). */
+  /** ACCOUNTS-2: WALKIE_ACCOUNT of a session a Sqwakie wrapper launched on a vault account (an account id, not a secret). */
   account?: string;
 }
 
@@ -89,6 +96,9 @@ export interface AccountsOptions {
   teamPolicy?: () => TeamPolicyAd | null;
   /** COMPANY POOL: whether the team's pool is on as this machine knows it (fail closed: false when unknown). */
   poolOn?: () => boolean;
+  /** Other machines' current fingerprints. */
+  remoteFingerprints?: () => readonly RemoteFingerprint[];
+  importNotice?: (text: string) => void;
 }
 
 /** Why a reset or refresh request was refused before anything happened (the route maps it to an HTTP status). */
@@ -110,6 +120,8 @@ interface Rec {
   agents: readonly string[];
   lastSeen: number;
   reading: Reading | null;
+  /** Once shared, passive Codex files cannot be attributed to this login even after the link is removed. */
+  passiveBlocked?: boolean;
   nextAt: number;
   backoffMs: number;
   /** Polls in a row skipped for an expiring token (poll.ts tokenGate). */
@@ -144,7 +156,7 @@ export function loginFor(s: Pick<SessionRef, "runtime" | "login_dir">, home: str
   };
   if (s.runtime === "claude-code") return pick(".claude");
   if (s.runtime === "codex") return pick(".codex");
-  if (s.runtime === "kimi") return { provider: "kimi", dir: def(".kimi-code"), isDefault: true };
+  if (s.runtime === "kimi") return { provider: "kimi", dir: s.login_dir ? resolve(s.login_dir) : def(".kimi-code"), isDefault: !s.login_dir };
   return { provider: "grok", dir: def(".grok"), isDefault: true };
 }
 
@@ -171,6 +183,7 @@ export class AccountsService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private stopped = false;
+  private sharedSessionsSwept = false;
   private keychainBlockedUntil = 0;
   private identityCache = new Map<string, { mtime: number; identity: Identity | null }>();
   private readonly launcher: AppServerLauncher;
@@ -194,6 +207,9 @@ export class AccountsService {
   private readonly renewTried = new Map<string, number>();
   private renewing: Promise<void> | null = null;
   private lastSweep = 0;
+  private readonly remoteFingerprints: () => readonly RemoteFingerprint[];
+  private readonly importNoted = new Set<string>();
+  private readonly importNotice: (text: string) => void;
 
   constructor(walkieHome: string, private readonly log: Logger, private readonly onChange: (s: AccountsSnapshot) => void, opts: AccountsOptions = {}) {
     this.home = opts.home ?? homedir();
@@ -207,15 +223,22 @@ export class AccountsService {
     this.vault = opts.vault ?? null;
     this.teamPolicy = opts.teamPolicy ?? (() => null);
     this.poolOn = opts.poolOn ?? (() => false);
+    this.remoteFingerprints = opts.remoteFingerprints ?? (() => []);
+    this.importNotice = opts.importNotice ?? (() => undefined);
     this.file = join(walkieHome, "accounts.json");
     this.walkieHome = walkieHome;
     this.ledgerFile = join(walkieHome, LEDGER_FILE);
+    try {
+      const ids = JSON.parse(readFileSync(join(walkieHome, "accounts-import-noted.json"), "utf8")) as unknown;
+      if (Array.isArray(ids)) for (const id of ids) if (typeof id === "string" && /^[0-9a-f]{24}$/.test(id)) this.importNoted.add(id);
+    } catch { /* first run */ }
     this.load();
     if (this.keychainBlockedUntil > Date.now()) blockClaudeKeychain(this.keychainSource, this.keychainBlockedUntil);
   }
 
   start(): void {
     this.stopped = false;
+    this.sweepSharedSessions();
     this.publish();
     if (!this.polling) return;
     this.timer = setInterval(() => void this.tick(), this.tickMs);
@@ -229,6 +252,18 @@ export class AccountsService {
     this.timer = null;
   }
 
+  private sweepSharedSessions(): void {
+    if (this.sharedSessionsSwept) return;
+    let failed = false;
+    sweepSharedCodexSessions(this.walkieHome, (home, err) => {
+      failed = true;
+      this.log.warn("codex_shared_sessions_sweep_failed", {
+        home, error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    this.sharedSessionsSwept = !failed;
+  }
+
   // ---- recording -----------------------------------------------------------------
 
   private identify(login: Login, now: number): Identity | null {
@@ -238,9 +273,10 @@ export class AccountsService {
     }
     const file = login.provider === "claude" ? (login.isDefault ? join(this.home, ".claude.json") : join(login.dir, ".claude.json"))
       : login.provider === "codex" ? join(login.dir, "auth.json")
-      : login.provider === "kimi" ? join(login.dir, "credentials", "kimi-code.json")
+      : login.provider === "kimi" ? kimiCredentialsPath(login)
       : join(login.dir, "auth.json");
     let mtime = -1;
+    if (!file) return null;
     try { mtime = statSync(file).mtimeMs; } catch { return null; }
     const key = `${login.provider}|${login.dir}`;
     const hit = this.identityCache.get(key);
@@ -274,6 +310,7 @@ export class AccountsService {
   /** Whether the record's login still belongs to its account (else it is not polled, and a raced result is dropped). */
   private bound(rec: Rec, now: number): boolean {
     if (rec.identity.tokenLogin) return false;
+    if (rec.login.vault && rec.identity.provider === "kimi") return true; // /me checks the current token on every poll
     if (rec.identity.pending) return true; // a provisional Kimi id is the login itself
     return this.currentIdentity(rec.login, now)?.id === rec.identity.id;
   }
@@ -338,7 +375,9 @@ export class AccountsService {
     if (this.running || this.stopped) return;
     this.running = true;
     try {
+      this.sweepSharedSessions();
       this.syncVault();
+      await this.importNewLogins();
       this.syncLeases();
       this.syncTeamPolicy();
       this.learnPassive();
@@ -363,6 +402,51 @@ export class AccountsService {
     }
   }
 
+  /** A local, opt-in import. The same importer validates tracked identity and vault insertion as the CLI. */
+  private async importNewLogins(): Promise<void> {
+    const candidates = [...this.records.values()].filter((r) =>
+      (r.identity.provider === "claude" || r.identity.provider === "codex") && !r.identity.tokenLogin && !r.login.vault && !this.vaultEntries.has(r.identity.id));
+    if (!candidates.length) return;
+    let enabled = false;
+    try { enabled = (JSON.parse(readFileSync(join(this.walkieHome, "config.json"), "utf8")) as { accounts_auto_import?: unknown }).accounts_auto_import === true; }
+    catch { /* off by default */ }
+    const remote = this.remoteFingerprints();
+    if (!enabled) {
+      for (const r of candidates) if (!this.importNoted.has(r.identity.id)) {
+        const copied = r.identity.provider === "codex" && remote.some((x) => x.id === r.identity.id && x.fingerprint === codexFingerprint(r.login.dir, this.walkieHome));
+        this.noteImport(r.identity.id, copied
+          ? `${r.identity.label}: this Codex session is a copy from another machine. Its shared refresh token can die when the source signs in again; sign in separately here.`
+          : `${r.identity.label} can be added to this machine's vault: walkie accounts import`);
+      }
+      return;
+    }
+    const vault = Vault.open(this.walkieHome);
+    try {
+      const rows = candidates.map((r) => ({ id: r.identity.id, provider: r.identity.provider, label: r.identity.label,
+        plan: r.identity.plan, dir: r.login.dir, is_default: r.login.isDefault }));
+      const result = await importTracked({ rows, vault, walkieHome: this.walkieHome, home: this.home,
+        remote, approve: async () => true, keychain: this.keychain,
+        checkCodexCli: () => {
+          const real = realCli("codex", this.walkieHome);
+          if (!real) throw new Error("codex CLI unavailable for automatic import");
+          const trust = trustedRecipient(this.walkieHome, "codex", real, { cwd: this.home, shimDir: join(this.walkieHome, "bin") });
+          if (!trust.ok || !sameObjects(trust.ids)) throw new Error("codex CLI is not trusted for automatic import");
+        } });
+      for (const e of result.imported) this.log.info("account_auto_imported", { account: e.id, provider: e.provider });
+      for (const s of result.skipped) if (s.reason === "copied session" && !this.importNoted.has(s.id)) {
+        this.noteImport(s.id, `${s.label}: this Codex session is a copy from another machine. Its shared refresh token can die when the source signs in again; sign in separately here.`);
+      }
+      if (result.imported.length) this.syncVault();
+    } finally { vault.close(); }
+  }
+
+  private noteImport(id: string, text: string): void {
+    this.importNotice(text);
+    this.importNoted.add(id);
+    writeDurable(join(this.walkieHome, "accounts-import-noted.json"), JSON.stringify([...this.importNoted]) + "\n");
+    this.log.info("account_import_note", { account: id });
+  }
+
   /** Leaves a record whose login changed hands unpolled for now (re-checked every 5 min: the user may log back in). */
   private unbound(rec: Rec, now: number): void {
     this.records.set(rec.identity.id, { ...rec, nextAt: now + POLL_MS, backoffMs: 0, skips: 0, unbound: true });
@@ -376,6 +460,8 @@ export class AccountsService {
     const entry = vaultId ? this.vaultEntries.get(vaultId) : undefined;
     const res = await pollAccount(rec.identity.provider, rec.login, rec.identity, rec.reading, rec.backoffMs, {
       fetch: this.fetchFn, keychain: this.keychain, now, keychainBlockedUntil: this.keychainBlockedUntil, tokenSkips: rec.skips,
+      ...(rec.identity.provider === "codex" ? { codexVaultRoot: join(this.walkieHome, "vault", "codex") } : {}),
+      ...(rec.passiveBlocked ? { passiveBlocked: true } : {}),
       ...(vaultId && this.vault ? { vaultToken: { read: () => (this.vault as VaultSource).claudeToken(vaultId), expiresAt: entry?.expires_at ?? null } } : {}),
     });
     if (res.keychainBlockedUntil) {
@@ -391,9 +477,12 @@ export class AccountsService {
     // Anchored to when the answer ARRIVED (RESET-4): a Retry-After counts from its receipt, not from the request's start.
     const reread = (current.rereadAt ?? 0) > now ? current.rereadAt as number : 0; // not yet satisfied by this poll
     const cadenceAt = after + res.nextInMs;
+    const passiveBlocked = current.passiveBlocked || (current.identity.provider === "codex" && !current.login.vault && !!res.passiveShared);
+    const droppedPassive = passiveBlocked && current.reading?.source === "session";
     const next: Rec = {
-      ...current, reading: res.reading ?? current.reading, backoffMs: res.backoffMs, skips, unbound: false,
-      resetClock: mergeClock(current.resetClock, clockFromReading(res.reading), after),
+      ...current, reading: res.reading ?? (droppedPassive ? null : current.reading),
+      ...(passiveBlocked ? { passiveBlocked: true } : {}), backoffMs: res.backoffMs, skips, unbound: false,
+      resetClock: mergeClock(droppedPassive ? [] : current.resetClock, clockFromReading(res.reading), after),
       nextAt: held || !reread ? cadenceAt : Math.min(cadenceAt, reread), notBefore: held ? cadenceAt : 0, rereadAt: reread,
     };
     if (res.identity) this.kimiAnswered(current, next, res.identity);
@@ -410,6 +499,10 @@ export class AccountsService {
    */
   private kimiAnswered(current: Rec, next: Rec, real: Identity): void {
     const oldId = current.identity.id;
+    if (current.login.vault) {
+      this.records.set(oldId, { ...next, identity: { ...real, id: oldId } });
+      return;
+    }
     if (real.id === oldId) { this.records.set(oldId, next); return; }
     const provisional = this.identify(current.login, this.clock());
     if (provisional?.pending) this.kimiAliases = { ...this.kimiAliases, [provisional.id]: { id: real.id, label: real.label, plan: real.plan } };
@@ -449,7 +542,7 @@ export class AccountsService {
   /**
    * The attempt the confirmation sheet confirms (RESET-2). While this account has an attempt that is not final, that
    * attempt comes back (never a new id): above all an unconfirmed one, which a new id could double-spend. A new one is
-   * bound to the account (Walkie and ChatGPT account ids) and its login directory, from one read of the login.
+   * bound to the account (Sqwakie and ChatGPT account ids) and its login directory, from one read of the login.
    */
   prepareReset(account: string): ResetAttemptView {
     const { rec, snap } = this.resetTarget(account);
@@ -652,12 +745,13 @@ export class AccountsService {
       if (prev && !prev.login.vault) continue; // a real login of the same account is recorded: it meters it
       // A new credential under the same id: its old reading and polling deadline are about the old one.
       const replaced = !!prev && prevEntries.get(e.id)?.gen !== undefined && prevEntries.get(e.id)?.gen !== e.gen;
-      const login: Login = e.provider === "codex" && e.home
-        ? { provider: "codex", dir: e.home, isDefault: false, vault: true }
-        : { provider: "claude", dir: `vault:${e.id}`, isDefault: false, vault: true };
-      if (e.provider === "codex" && !e.home) continue;
+      if (e.provider !== "claude" && !e.home) continue;
+      const login: Login = e.provider === "claude"
+        ? { provider: "claude", dir: `vault:${e.id}`, isDefault: false, vault: true }
+        : { provider: e.provider, dir: e.home as string, isDefault: false, vault: true };
       this.records.set(e.id, {
-        identity: { provider: e.provider, id: e.id, label: e.label, plan: e.plan }, login,
+        identity: e.provider === "kimi" && prev?.identity.provider === "kimi" && !prev.identity.pending
+          ? prev.identity : { provider: e.provider, id: e.id, label: e.label, plan: e.plan, ...(e.provider === "kimi" ? { pending: true } : {}) }, login,
         agents: prev?.agents ?? [], lastSeen: now,
         reading: replaced ? null : prev?.reading ?? this.savedVaultReadings.get(e.id) ?? null, nextAt: replaced ? now : prev?.nextAt ?? now,
         backoffMs: replaced ? 0 : prev?.backoffMs ?? 0, skips: replaced ? 0 : prev?.skips ?? 0,
@@ -791,23 +885,49 @@ export class AccountsService {
 
   // ---- views ---------------------------------------------------------------------
 
+  /** A saved local session reading cannot survive detection of a shared Codex sessions folder. */
+  private fenceSharedCodexReadings(): Set<string> {
+    let changed = false;
+    const uncertain = new Set<string>();
+    for (const [id, rec] of this.records) {
+      if (rec.identity.provider !== "codex" || rec.login.vault) continue;
+      const sharing = rec.passiveBlocked ? "shared" : sharesCodexSessions(rec.login, join(this.walkieHome, "vault", "codex"));
+      if (sharing === "unknown") uncertain.add(id);
+      const shared = sharing === "shared";
+      if (!shared) continue;
+      const reading = rec.reading?.source === "session" ? null : rec.reading;
+      const resetClock = rec.resetClock.filter((clock) => clock.source !== "session");
+      if (rec.passiveBlocked && reading === rec.reading && resetClock.length === rec.resetClock.length) continue;
+      this.records.set(id, { ...rec, passiveBlocked: true, reading, resetClock });
+      changed = true;
+    }
+    if (changed) this.save();
+    return uncertain;
+  }
+
   /** This machine's accounts as the team sees them (validated; only numbers, enums and masked labels). */
   snapshot(): AccountsSnapshot {
+    const uncertain = this.fenceSharedCodexReadings();
     const now = this.clock();
     const marks = readMarks(this.walkieHome, now);
     const sessions = readSessionReadings(this.walkieHome, now);
     const accounts: AccountSummary[] = [...this.records.values()]
       .sort((a, b) => b.lastSeen - a.lastSeen)
       .slice(0, MAX_ACCOUNTS_PER_NODE)
-      .map((r) => ({
-        id: r.identity.id, provider: r.identity.provider, label: r.identity.label, plan: r.identity.plan,
-        agents: r.agents.filter((a) => AGENT_RE.test(a)).slice(0, MAX_ACCOUNT_AGENTS),
-        usage: r.identity.tokenLogin ? { at: this.clock(), state: "unknown", reason: "token_login", source: "none", windows: [], until: null }
-          : withMark(newer(r.reading, sessions[r.identity.id]) ?? (r.identity.pending ? { at: this.clock(), state: "unknown", reason: "identity_pending", source: "none", windows: [], until: null } : null), marks[r.identity.id], now, this.vaultEntries.get(r.identity.id)?.gen),
-        last_seen: r.lastSeen,
-        ...(this.vaultEntries.has(r.identity.id) ? { vault: vaultOf(this.vaultEntries.get(r.identity.id) as VaultEntry, this.poolOnNow()) } : {}),
-        ...(!r.identity.tokenLogin && r.resetClock.length ? { clock: [...r.resetClock] } : {}),
-      }));
+      .map((r) => {
+        const reading = uncertain.has(r.identity.id) && r.reading?.source === "session" ? null : r.reading;
+        const resetClock = uncertain.has(r.identity.id) ? r.resetClock.filter((clock) => clock.source !== "session") : r.resetClock;
+        return {
+          id: r.identity.id, provider: r.identity.provider, label: r.identity.label, plan: r.identity.plan,
+          agents: r.agents.filter((a) => AGENT_RE.test(a)).slice(0, MAX_ACCOUNT_AGENTS),
+          usage: r.identity.tokenLogin ? { at: this.clock(), state: "unknown", reason: "token_login", source: "none", windows: [], until: null }
+            : withMark(newer(reading, sessions[r.identity.id]) ?? (r.identity.pending ? { at: this.clock(), state: "unknown", reason: "identity_pending", source: "none", windows: [], until: null } : null), marks[r.identity.id], now, this.vaultEntries.get(r.identity.id)?.gen),
+          last_seen: r.lastSeen,
+          ...(this.vaultEntries.has(r.identity.id) ? { vault: vaultOf(this.vaultEntries.get(r.identity.id) as VaultEntry, this.poolOnNow()) } : {}),
+          ...(r.identity.provider === "codex" && !r.login.vault && codexFingerprint(r.login.dir, this.walkieHome) ? { fingerprint: codexFingerprint(r.login.dir, this.walkieHome) as string } : {}),
+          ...(!r.identity.tokenLogin && resetClock.length ? { clock: [...resetClock] } : {}),
+        };
+      });
     const leases = this.leaseSummaries();
     const team = this.currentTeamPolicy();
     const snap = { at: this.clock(), accounts, ...(leases.length ? { leases } : {}), ...(team ? { team_policy: team } : {}) };
@@ -868,7 +988,7 @@ export class AccountsService {
         this.records.set(row.id, this.withHold({
           identity: { provider: row.provider, id: row.id, label: row.label, plan: row.plan, ...(row.pending ? { pending: true } : {}), ...(row.token_login ? { tokenLogin: true } : {}) },
           login: { provider: row.provider, dir: row.dir, isDefault: row.is_default },
-          agents: [], lastSeen: row.last_seen, reading: row.reading, nextAt: row.token_login ? NEVER : now, backoffMs: 0, skips: 0, resetClock,
+          agents: [], lastSeen: row.last_seen, reading: row.reading, ...(row.passive_blocked ? { passiveBlocked: true } : {}), nextAt: row.token_login ? NEVER : now, backoffMs: 0, skips: 0, resetClock,
         }, now));
       }
     } else if (existsSync(this.file)) {
@@ -889,6 +1009,7 @@ export class AccountsService {
       id: r.identity.id, provider: r.identity.provider, label: r.identity.label, plan: r.identity.plan,
       ...(r.identity.pending ? { pending: true } : {}), ...(r.identity.tokenLogin ? { token_login: true } : {}),
       dir: r.login.dir, is_default: r.login.isDefault, last_seen: r.lastSeen, reading: r.reading, ...(r.login.vault ? { vault: true } : {}),
+      ...(r.passiveBlocked ? { passive_blocked: true } : {}),
       clock: [...r.resetClock],
     }));
     try {
@@ -919,7 +1040,7 @@ export function vaultOf(e: VaultEntry, poolOn = false): AccountVault {
   return {
     policy: e.policy, ...(e.policy === "shared" && e.share_with.length ? { share_with: e.share_with.slice(0, 16) } : {}),
     ...(/^[0-9a-f]{1,32}$/.test(e.gen) ? { gen: e.gen } : {}),
-    ...(poolOn && !e.personal ? { company: true as const } : {}),
+    ...(poolOn && !e.personal && e.provider !== "kimi" ? { company: true as const } : {}),
     ...(e.personal ? { personal: true as const } : {}),
     ...(Number.isSafeInteger(e.home_at) && e.home_at > 0 ? { home_at: e.home_at } : {}),
   };

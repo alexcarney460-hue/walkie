@@ -46,6 +46,13 @@ function req(over: Partial<PeerLeaseReq> = {}): PeerLeaseReq & { key: ReturnType
 const body = (r: ReturnType<typeof req>) => { const { key: _k, ...b } = r; return b; };
 
 describe("grantLease (the owner's machine)", () => {
+  test("a Kimi vault login refuses a remote lease with the rotating-token reason", async () => {
+    const { core, alex } = owner();
+    const d = { vault: vault([{ provider: "kimi", label: "Kimi account", home: "/tmp/fake-kimi-home", policy: "local" }]), sharing: true, nonces: new NonceBook() };
+    await expect(grantLease(core, d, "node-2", alex, body(req()), now()))
+      .rejects.toMatchObject({ code: "not_allowed", message: expect.stringMatching(/rotates its token.*cannot be leased/) });
+  });
+
   test("four own machines share one 256 hand-out ceiling at their vault holder", async () => {
     const { core, alex } = owner();
     writeFileSync(core.paths.config, JSON.stringify({ vault_own_lease_limit: 256 }));

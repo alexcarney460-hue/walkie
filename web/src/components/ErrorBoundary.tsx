@@ -131,9 +131,9 @@ function RootFallback({ message, detail, onBack }: { message: string; detail: st
   return (
     <main className="firstrun boundary-root" data-testid="boundary-root">
       <div className="firstrun-inner">
-        <div className="firstrun-brand"><Logo size={28} /><span>Walkie</span></div>
+        <div className="firstrun-brand"><Logo size={28} /><span>Sqwakie</span></div>
         <div className="boundary-alert" role="alert">
-          <h1 className="firstrun-title">Walkie's dashboard hit an error</h1>
+          <h1 className="firstrun-title">Sqwakie's dashboard hit an error</h1>
           <p className="firstrun-lede boundary-message">{message}</p>
         </div>
         <Details text={detail} />
@@ -192,5 +192,5 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, BoundaryState> 
  */
 export function RootBoundary({ children }: { children?: ReactNode }) {
   const route = useRoute();
-  return <ErrorBoundary scope="root" name="Walkie dashboard" resetKeys={[pageKey(route)]}>{children}</ErrorBoundary>;
+  return <ErrorBoundary scope="root" name="Sqwakie dashboard" resetKeys={[pageKey(route)]}>{children}</ErrorBoundary>;
 }

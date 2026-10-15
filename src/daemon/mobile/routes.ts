@@ -1,4 +1,4 @@
-// Local API routes for Walkie on your phone (PROTOCOL §5, WALKIE-PWA-1). Imported by the daemon for its side effect
+// Local API routes for Sqwakie on your phone (PROTOCOL §5, WALKIE-PWA-1). Imported by the daemon for its side effect
 // of registering routes. People only (an X-Walkie-Agent or X-Walkie-Under-Agent header is refused). A desktop dashboard session may read the
 // status, open a pairing and revoke one device (local-api.ts DASHBOARD_ROUTES); revoking every device is CLI only.
 // The phone itself reaches none of these: its requests run through tunnel.ts's allow-list.
@@ -8,7 +8,7 @@ import type { MobileManager } from "./manager.ts";
 import { adminGate, adminRead, personOnly } from "../admin/gate.ts";
 
 function need(c: RouteCtx): MobileManager {
-  if (!c.mobile) throw new HttpError(404, "not_found", "Walkie on your phone is not available on this daemon");
+  if (!c.mobile) throw new HttpError(404, "not_found", "Sqwakie on your phone is not available on this daemon");
   return c.mobile;
 }
 

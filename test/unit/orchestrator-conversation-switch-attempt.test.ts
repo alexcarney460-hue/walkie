@@ -19,7 +19,8 @@ test("successful full-access conversation switches do not exhaust restart attemp
         .some((reply: { role: string; text: string }) => reply.role === "orchestrator" && reply.text === `pong: conversation ${n}`)).toBe(true);
     }
     expect(r.rows().length).toBeGreaterThan(5);
-    expect(host.attempt).toBeLessThanOrEqual(1);
+    // Deliberate switches are not failures, so none of them was counted.
+    expect(host.attempt).toBe(0);
   } finally {
     await r.c.close();
   }

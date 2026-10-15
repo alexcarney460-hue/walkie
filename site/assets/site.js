@@ -1,9 +1,11 @@
-// Landing page behaviour: theme toggle, copy buttons, pricing controls, scroll reveals. No dependencies.
+// Shared site controls: copy, pricing, refraction highlights, motion. No dependencies.
 (function () {
   "use strict";
   var root = document.documentElement;
   var announcer = document.querySelector("[data-announce]");
-  var lightQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+  root.classList.add("js");
+  var motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var reduced = motionQuery.matches;
 
   function announce(msg) {
     if (!announcer) return;
@@ -11,38 +13,75 @@
     window.setTimeout(function () { announcer.textContent = msg; }, 30);
   }
 
-  // ---- theme ----
-  function currentTheme() {
-    var set = root.dataset.theme;
-    if (set === "light" || set === "dark") return set;
-    return lightQuery && lightQuery.matches ? "light" : "dark";
-  }
-  function syncThemeButtons() {
-    var next = currentTheme() === "dark" ? "light" : "dark";
-    document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
-      btn.setAttribute("aria-label", "Switch to " + next + " theme");
+  var nav = document.querySelector(".nav");
+  function updateNav() { if (nav) nav.classList.toggle("is-scrolled", window.scrollY > 24); }
+  updateNav();
+  window.addEventListener("scroll", updateNav, { passive: true });
+
+  var menuToggle = document.querySelector(".nav-menu-toggle");
+  var mobileMenu = document.getElementById("mobile-menu");
+  if (menuToggle && mobileMenu) {
+    var closeMenu = function (restoreFocus) {
+      mobileMenu.hidden = true;
+      menuToggle.setAttribute("aria-expanded", "false");
+      menuToggle.setAttribute("aria-label", "Open menu");
+      menuToggle.textContent = "Menu";
+      if (restoreFocus) menuToggle.focus();
+    };
+    menuToggle.addEventListener("click", function () {
+      if (!mobileMenu.hidden) { closeMenu(true); return; }
+      mobileMenu.hidden = false;
+      menuToggle.setAttribute("aria-expanded", "true");
+      menuToggle.setAttribute("aria-label", "Close menu");
+      menuToggle.textContent = "Close";
+      var firstLink = mobileMenu.querySelector("a");
+      if (firstLink) firstLink.focus();
+    });
+    mobileMenu.addEventListener("click", function (event) {
+      if (event.target.closest("a")) closeMenu(true);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !mobileMenu.hidden) { event.preventDefault(); closeMenu(true); }
+    });
+    window.matchMedia("(min-width: 901px)").addEventListener("change", function (event) {
+      if (event.matches && !mobileMenu.hidden) closeMenu(false);
     });
   }
-  document.querySelectorAll("[data-theme-toggle]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var next = currentTheme() === "dark" ? "light" : "dark";
-      root.dataset.theme = next;
-      try { localStorage.setItem("theme", next); } catch (e) { /* storage blocked: theme lasts for this page view */ }
-      if (window.themePictures) window.themePictures();
-      syncThemeButtons();
-      announce(next === "dark" ? "Dark theme" : "Light theme");
+
+  var ticker = document.querySelector(".ticker");
+  var tickerToggle = ticker && ticker.querySelector(".ticker-toggle");
+  if (tickerToggle) tickerToggle.addEventListener("click", function () {
+    var paused = ticker.classList.toggle("is-paused");
+    tickerToggle.setAttribute("aria-pressed", paused ? "true" : "false");
+    tickerToggle.setAttribute("aria-label", paused ? "Play example activity" : "Pause example activity");
+    tickerToggle.textContent = paused ? "Play" : "Pause";
+  });
+
+  // Activate refraction only when the browser recognizes the filter form.
+  if (window.CSS && CSS.supports("backdrop-filter", "url(#sq-liquid) blur(10px) saturate(1.7)")) root.classList.add("sq-refract");
+  var highlightControls = document.getElementById("top") ? document.querySelectorAll(".glass") : [];
+  highlightControls.forEach(function (el) {
+    el.addEventListener("pointermove", function (e) {
+      var r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", ((e.clientX - r.left) / r.width * 100).toFixed(1) + "%");
+      el.style.setProperty("--my", ((e.clientY - r.top) / r.height * 100).toFixed(1) + "%");
     });
   });
-  if (lightQuery && lightQuery.addEventListener) lightQuery.addEventListener("change", syncThemeButtons);
-  syncThemeButtons();
+  document.querySelectorAll("[data-install-focus]").forEach(function (link) {
+    link.addEventListener("click", function () {
+      window.setTimeout(function () {
+        var box = document.querySelector("#install .copy");
+        if (box) box.focus({ preventScroll: true });
+      }, reduced ? 0 : 500);
+    });
+  });
 
   // ---- copy ----
   function fallbackCopy(text) {
     var area = document.createElement("textarea");
     area.value = text;
     area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
+    area.className = "copy-fallback";
     document.body.appendChild(area);
     area.select();
     var ok = false;
@@ -157,18 +196,45 @@
     render();
   }
 
-  // ---- reveals ----
-  // Content is visible from the start. An element that is still below the fold gets .in just before it scrolls
-  // into view and rises in once; anything already on screen, or scrolled past quickly, is left as it is.
-  var items = document.querySelectorAll(".reveal");
-  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduced || !("IntersectionObserver" in window)) return;
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (entry) {
-      if (!entry.isIntersecting) return;
-      io.unobserve(entry.target);
-      if (entry.boundingClientRect.top >= window.innerHeight) entry.target.classList.add("in");
+  // Scroll reveals are one shot; browser and no-script views keep content visible.
+  if ("IntersectionObserver" in window) {
+    var revealObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        revealObserver.unobserve(entry.target);
+        if (!reduced && entry.boundingClientRect.top > window.innerHeight * 0.55) entry.target.classList.add("in");
+        if (entry.target.classList.contains("mission-shot")) entry.target.classList.add("is-settled");
+        entry.target.querySelectorAll(".draw-line").forEach(function (line) { line.classList.add("is-drawn"); });
+        if (entry.target.classList.contains("draw-line")) entry.target.classList.add("is-drawn");
+      });
+    }, { threshold: 0.15 });
+    document.querySelectorAll(".reveal, .draw-line, .mission-shot").forEach(function (el) { revealObserver.observe(el); });
+  } else {
+    document.querySelectorAll(".draw-line").forEach(function (line) { line.classList.add("is-drawn"); });
+  }
+
+  // The still is the default. The local video only loads when motion and data settings allow it.
+  var video = document.querySelector("[data-hero-video]");
+  if (video && !reduced && !(navigator.connection && navigator.connection.saveData) && "IntersectionObserver" in window) {
+    var videoVisible = false;
+    var videoObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        videoVisible = entry.isIntersecting;
+        video.autoplay = videoVisible && !motionQuery.matches;
+        if (!videoVisible || motionQuery.matches) { video.pause(); return; }
+        if (video.dataset.ready === "yes") video.play().catch(function () {});
+      });
     });
-  }, { rootMargin: "0px 0px 20% 0px", threshold: 0 });
-  items.forEach(function (el) { io.observe(el); });
+    videoObserver.observe(video);
+    video.addEventListener("loadeddata", function () {
+      video.dataset.ready = "yes";
+      if (videoVisible && !motionQuery.matches) video.play().then(function () { video.classList.add("is-playing"); }).catch(function () {});
+    }, { once: true });
+    video.addEventListener("error", function () { video.classList.remove("is-playing"); });
+    video.preload = "metadata";
+    video.load();
+    if (motionQuery.addEventListener) motionQuery.addEventListener("change", function (event) {
+      if (event.matches) { video.pause(); video.classList.remove("is-playing"); }
+    });
+  }
 })();

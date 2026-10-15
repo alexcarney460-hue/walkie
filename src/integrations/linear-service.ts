@@ -1,7 +1,7 @@
 // Linear features driven by the local API: task enrichment (GET /v1/linear/issues, cached 5 min in a
-// local table, never replicated) and "create from Walkie" (POST /v1/linear/issues).
+// local table, never replicated) and "create from Sqwakie" (POST /v1/linear/issues).
 //
-// Export rule: every message an issue carries out of Walkie (the initiating event, its thread root and
+// Export rule: every message an issue carries out of Sqwakie (the initiating event, its thread root and
 // every reply) must be accepted, unredacted, currently visible to this node's member (the local read
 // API's check) and in the initiating event's channel. Otherwise the export is refused with 403: a thread
 // is never partially filled. Every upstream error is scrubbed of the configured keys before it leaves.
@@ -140,7 +140,7 @@ export class LinearService {
     if (!replies.every(exportable)) throw new HttpError(403, "forbidden", NOT_EXPORTABLE);
     const msgs = [root, ...replies].slice(0, MAX_THREAD_MESSAGES);
     const body = msgs.map((e) => `**@${e.author.handle}**${e.author.agent ? ` (${e.author.agent})` : ""} · ${utcStamp(e.ts)}${e.id === from ? " ← linked message" : ""}\n${textOf(e)}`).join("\n\n");
-    const text = this.m.poster.clean(`From Walkie #${channel}:\n\n${body}`);
+    const text = this.m.poster.clean(`From Sqwakie #${channel}:\n\n${body}`);
     return { text: text.length > MAX_DESCRIPTION_CHARS ? text.slice(0, MAX_DESCRIPTION_CHARS - 1) + "…" : text, channel, root: root.id };
   }
 
@@ -158,8 +158,8 @@ export class LinearService {
     if (!bound && !req.dry_run) throw new HttpError(409, "not_configured", "Linear isn't enabled on this machine (walkie integrations enable linear --key-path …)");
     const thread = req.from ? this.threadText(req.from) : null;
     if (thread && !req.dry_run) this.m.poster.ensureChannel(thread.channel); // PostError → 409 post_failed, before any mutation
-    const backlink = req.from ? `\n\n---\nWalkie backlink: walkie://event/${req.from} (thread ${thread?.root}; \`walkie get --thread ${thread?.root}\`)` : "";
-    const description = `${thread ? thread.text : "Created from Walkie."}${backlink}`;
+    const backlink = req.from ? `\n\n---\nSqwakie backlink: walkie://event/${req.from} (thread ${thread?.root}; \`walkie get --thread ${thread?.root}\`)` : "";
+    const description = `${thread ? thread.text : "Created from Sqwakie."}${backlink}`;
     const teamKey = req.team ?? settings.default_team ?? settings.teams?.[0];
     let team: { id: string; key: string } | null = null;
     if (bound) {

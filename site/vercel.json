@@ -5,9 +5,50 @@
   "outputDirectory": ".",
   "cleanUrls": true,
   "trailingSlash": false,
+  "crons": [{ "path": "/api/compute/tick", "schedule": "* * * * *" }],
   "functions": {
+    "api/compute/tick.ts": { "maxDuration": 60 },
+    "api/compute/webhook.ts": { "maxDuration": 15 },
     "api/**/*.ts": { "maxDuration": 10 }
   },
+  "redirects": [
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "sqwaukie.si" }],
+      "destination": "https://sqwakie.si/",
+      "permanent": true
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.sqwaukie.si" }],
+      "destination": "https://sqwakie.si/",
+      "permanent": true
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.sqwakie.si" }],
+      "destination": "https://sqwakie.si/",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "sqwaukie.si" }],
+      "destination": "https://sqwakie.si/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.sqwaukie.si" }],
+      "destination": "https://sqwakie.si/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.sqwakie.si" }],
+      "destination": "https://sqwakie.si/:path*",
+      "permanent": true
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",

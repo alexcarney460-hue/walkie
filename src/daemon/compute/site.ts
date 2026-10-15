@@ -14,7 +14,7 @@ const TIMEOUT_MS = 20_000;
 /** A state with 1,000 rentals is ~400 KB; anything past this is not our site. */
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 /** Numeric details of a site error the daemon passes on (e.g. a 402's needed/balance). Nothing else crosses. */
-const ERROR_DETAILS = ["needed_micros", "balance_micros", "retry_after_s"] as const;
+const ERROR_DETAILS = ["needed_micros", "balance_micros", "expiring_micros", "retry_after_s"] as const;
 
 export interface ComputeSiteOptions { readonly base?: string; readonly fetch?: FetchLike }
 
@@ -104,12 +104,12 @@ export class ComputeSite {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (err) {
-      throw new ComputeSiteError(0, "site_unreachable", `the Walkie site couldn't be reached (${(err as Error).name})`);
+      throw new ComputeSiteError(0, "site_unreachable", `the Sqwakie site couldn't be reached (${(err as Error).name})`);
     }
     const parsed = parseJson(await readCapped(res));
     if (res.status < 200 || res.status > 299) throw siteError(res.status, parsed);
     const ok = schema.safeParse(parsed);
-    if (!ok.success) throw new ComputeSiteError(502, "bad_site_reply", `the Walkie site's answer to ${path} didn't match this version's contract`);
+    if (!ok.success) throw new ComputeSiteError(502, "bad_site_reply", `the Sqwakie site's answer to ${path} didn't match this version's contract`);
     return ok.data;
   }
 }
@@ -126,12 +126,12 @@ function siteError(status: number, body: unknown): ComputeSiteError {
     const v = o[k];
     if (typeof v === "number" && Number.isFinite(v)) details[k] = v;
   }
-  return new ComputeSiteError(status, code, `the Walkie site refused: ${code}`, details);
+  return new ComputeSiteError(status, code, `the Sqwakie site refused: ${code}`, details);
 }
 
 /** Reads at most MAX_RESPONSE_BYTES, whatever Content-Length claims. */
 async function readCapped(res: Response): Promise<string> {
-  if (Number(res.headers.get("content-length") ?? "0") > MAX_RESPONSE_BYTES) throw new ComputeSiteError(502, "bad_site_reply", "the Walkie site's answer is too large");
+  if (Number(res.headers.get("content-length") ?? "0") > MAX_RESPONSE_BYTES) throw new ComputeSiteError(502, "bad_site_reply", "the Sqwakie site's answer is too large");
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -142,7 +142,7 @@ async function readCapped(res: Response): Promise<string> {
     total += value.byteLength;
     if (total > MAX_RESPONSE_BYTES) {
       await reader.cancel().catch(() => undefined);
-      throw new ComputeSiteError(502, "bad_site_reply", "the Walkie site's answer is too large");
+      throw new ComputeSiteError(502, "bad_site_reply", "the Sqwakie site's answer is too large");
     }
     chunks.push(value);
   }

@@ -1,8 +1,13 @@
 import { optionalEnv, type Env } from "../env.js";
 import { fail } from "../http.js";
 
-/** This release contains the compute code for review, but cannot activate the control plane. */
-export const COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION = false;
+/**
+ * Rental compute ships switched on in code from v0.2.0-pre.17: the deployment's environment decides the mode (fully off
+ * without COMPUTE_PRIVATE_CONFIG, drained without COMPUTE_ENABLED=1, enabled with it; handler.ts). Setting this back to
+ * false is the code-level lock that pre.10 to pre.16 shipped with: every /api/compute/* route answers 503. The rollback
+ * for a live site is drain, not a locked build (a locked build binds licences without recording them; docs/COMPUTE-GOLIVE.md).
+ */
+export const COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION = true;
 
 export function computeReleaseGate(env: Env): Response | null {
   if (COMPUTE_LIVE_AVAILABLE_IN_THIS_VERSION) return null;

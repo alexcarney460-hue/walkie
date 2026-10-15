@@ -199,10 +199,15 @@ function verdictOf(core: Core, id: string): string {
 
 function rosterShape(core: Core): unknown {
   const r = core.roster;
-  // `removed_pos` is a chain index (the invite cut-off, DIRECT-FIX-2): license and integration entries are chain
-  // entries too, so it differs between the two histories by construction, while every verdict stays the same.
-  const members = [...r.members.entries()].map(([k, { removed_pos: _p, ...m }]) => [k, m]);
-  return { members, nodes: [...r.nodes.entries()], channels: [...r.channels.entries()] };
+  // License and integration entries shift chain positions without changing member-event verdicts.
+  // Compare semantic roster fields here; chainShape below checks exact positions across arrival orders.
+  const members = [...r.members.entries()].map(([k, {
+    removed_pos: _removed, changed_pos: _changed, role_changed_pos: _roleChanged,
+    owner_lost_pos: _ownerLost, demoted_pos: _demoted, ...m
+  }]) => [k, m]);
+  const nodes = [...r.nodes.entries()].map(([k, { revoked_pos: _revoked, ...n }]) => [k, n]);
+  const channels = [...r.channels.entries()].map(([k, { membership_pos: _membership, ...channel }]) => [k, channel]);
+  return { members, nodes, channels };
 }
 
 /**
@@ -386,7 +391,8 @@ describe("soft enforcement at emit", () => {
     core.emit("team.member", { login: b.login, handle: "bea", role: "owner" });
     core.emit("team.node", nodeBody(b));
     setClock(created + TRIAL_MS + 1);
-    const req = signRequest({ nodeId: b.keys.nodeId, teamId: team, keys: b.keys } as unknown as Core, "team.member",
+    // A role request is signed with the requester's roster position (WALK-109); bea's machine holds the authority's roster.
+    const req = signRequest({ nodeId: b.keys.nodeId, teamId: team, keys: b.keys, roster: core.roster } as unknown as Core, "team.member",
       { login: "cal@example.com", handle: "cal", role: "member" });
     const err = thrown(() => applyRequest(core, req));
     expect([err?.status, err?.code]).toEqual([402, "plan_limit"]);

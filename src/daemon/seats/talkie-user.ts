@@ -1,4 +1,4 @@
-// A single dedicated uid for shell-capable WalkieTalkie. The root-owned seat helper creates and destroys it;
+// A single dedicated uid for shell-capable Talkie. The root-owned seat helper creates and destroys it;
 // destroy uses the same uid-wide process, service, schedule, mount and file cleanup as a seat.
 import { SEATS_GROUP, endProcesses, removeEmptyHome, removeUnusedHome, type AdminResult, type AdminSys } from "./admin.ts";
 import { processAlive, selfOp, type OpId } from "./admin-ledger.ts";
@@ -68,6 +68,9 @@ export async function createTalkieUser(sys: AdminSys, generation: string, instan
 async function createRecordedTalkieUser(sys: AdminSys, generation: string, instance: string): Promise<AdminResult> {
   const home = talkieHome(sys);
   let made = false;
+  let reserved = false;
+  let accountAttempted = false;
+  let claimedOwner = 0;
   let op: OpId;
   try { op = (sys.self ?? selfOp)(); }
   catch (err) { return { ok: false, code: "refused", why: `could not identify the helper operation: ${message(err)}` }; }
@@ -75,10 +78,10 @@ async function createRecordedTalkieUser(sys: AdminSys, generation: string, insta
     const owner = sys.caller();
     const claimed = sys.talkieOwnerReadOnly ? sys.talkieOwnerReadOnly(TALKIE_UID) : sys.ledger().talkieOwner(TALKIE_UID);
     if (claimed?.instance && claimed.instance !== instance) {
-      return { ok: false, code: "busy", why: "another Walkie daemon owns shell access on this machine" };
+      return { ok: false, code: "busy", why: "another Sqwakie daemon owns shell access on this machine" };
     }
     if (sys.nameTaken(TALKIE_USER) || sys.idTaken(TALKIE_UID) || sys.stat(home)) {
-      return { ok: false, code: "used", why: `${TALKIE_USER} or uid ${TALKIE_UID} already exists; ${TALKIE_USER} not created by Walkie is refused` };
+      return { ok: false, code: "used", why: `${TALKIE_USER} or uid ${TALKIE_UID} already exists; ${TALKIE_USER} not created by Sqwakie is refused` };
     }
     const residues = sys.ledger().talkieResidues(TALKIE_UID);
     if (residues.some((residue) => residue.owner !== owner || residueFolder(residue.paths) !== residue.folder))
@@ -86,14 +89,19 @@ async function createRecordedTalkieUser(sys: AdminSys, generation: string, insta
     // A reservation serializes helpers, but is not yet proof of a created account.
     const daemon = sys.talkieDaemonIdentity?.(owner, instance) ?? null;
     if (!sys.ledger().claimTalkie(TALKIE_UID, owner, generation, instance, op, daemon)) throw new Error("the dedicated user is already claimed");
+    reserved = true;
+    claimedOwner = owner;
+    await withSeatFileLock(`${sys.ledger().path}.schedulers.lock`, !!sys.talkieLockRoot,
+      async () => sys.denySchedulers(TALKIE_USER));
+    const schedulerWhy = schedulerProblem([TALKIE_USER], sys.schedulerFiles, (p) => sys.readSchedulerFile(p));
+    if (schedulerWhy) throw new Error(schedulerWhy);
     // A createUser failure may have found an external directory account or left a partial local one.
     // Neither case authorizes a uid-wide kill.
+    accountAttempted = true;
     sys.createUser({ name: TALKIE_USER, uid: TALKIE_UID, home });
     sys.ledger().markTalkieCreated(TALKIE_UID, owner, generation, op);
     made = true;
     sys.makeHome(home, TALKIE_UID);
-    await withSeatFileLock(`${sys.ledger().path}.schedulers.lock`, !!sys.talkieLockRoot,
-      async () => sys.denySchedulers(TALKIE_USER));
     const u = sys.lookup(TALKIE_USER);
     const group = sys.lookup(SEATS_GROUP)?.gid;
     const extra = u?.gids.filter((g) => g !== TALKIE_UID && g !== group) ?? [];
@@ -107,7 +115,13 @@ async function createRecordedTalkieUser(sys: AdminSys, generation: string, insta
     sys.ledger().releaseTalkieOp(TALKIE_UID, op);
     return { ok: true, name: TALKIE_USER, uid: TALKIE_UID, home, generation };
   } catch (err) {
-    if (!made) return { ok: false, code: "refused", why: `could not check ${TALKIE_USER}: ${message(err)}` };
+    if (!made) {
+      if (reserved && !accountAttempted) {
+        try { sys.ledger().releaseTalkie(TALKIE_UID, claimedOwner, op); }
+        catch (releaseErr) { return { ok: false, code: "refused", why: `could not check ${TALKIE_USER}: ${message(err)}; could not release its claim: ${message(releaseErr)}` }; }
+      }
+      return { ok: false, code: "refused", why: `could not check ${TALKIE_USER}: ${message(err)}` };
+    }
     const undone = await destroyRecordedTalkieUser(sys, generation);
     return { ok: false, code: "failed", why: `could not create ${TALKIE_USER}: ${message(err)}${undone.ok ? "" : `; cleanup: ${undone.why}`}` };
   }
@@ -165,13 +179,13 @@ async function destroyRecordedTalkieUser(sys: AdminSys, generation: string, inst
     const recordedOwner = sys.talkieOwnerReadOnly ? sys.talkieOwnerReadOnly(TALKIE_UID) : sys.ledger().talkieOwner(TALKIE_UID);
     if (recordedOwner === null) {
       if (sys.lookup(TALKIE_USER) || sys.idTaken(TALKIE_UID) || sys.stat(home) || sys.procs(TALKIE_UID).length)
-        throw new Error(`${TALKIE_USER} was not created by Walkie; refusing cleanup`);
+        throw new Error(`${TALKIE_USER} was not created by Sqwakie; refusing cleanup`);
       // A concurrent daemon or monitor may have just verified removal. A generation-qualified retry is
       // idempotently clean only when the fixed uid, account and home are all absent.
       return { ok: true, name: TALKIE_USER, uid: TALKIE_UID };
     }
     if (instance && recordedOwner.instance !== instance) {
-      throw new Error(recordedOwner.instance ? "another Walkie daemon owns shell access on this machine"
+      throw new Error(recordedOwner.instance ? "another Sqwakie daemon owns shell access on this machine"
         : "the dedicated account has no daemon owner; run walkie talkie cleanup --repair");
     }
     let claim: ReturnType<ReturnType<AdminSys["ledger"]>["takeTalkieForDestroy"]>;

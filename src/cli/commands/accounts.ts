@@ -63,7 +63,7 @@ export function renderAccounts(list: AccountView[], now = Date.now(), tz?: strin
     }
     if (a.claimed_by?.length) lines.push(`  ${c.dim(`also reported by ${safeTerm(a.claimed_by.join(", "))} (unverified, listed separately)`)}`);
     if (st === "relogin") {
-      const host = a.machines[0]?.hostname ?? "that machine";
+      const host = a.usage_host ?? a.machines.find((m) => m.usage?.state === "relogin")?.hostname ?? "that machine";
       lines.push(`  ${c.red("needs re-login")} — ${reloginStep(a.provider, safeTerm(host))}`);
       continue;
     }
@@ -98,7 +98,7 @@ export async function accounts(ctx: Ctx): Promise<number> {
   if (sub && sub !== "list") {
     const r = await vaultCommand(ctx, sub);
     if (r !== null) return r;
-    throw new UsageError(`unknown accounts command "${sub}" (add, remove, policy, vault, pick, exec, shims, split, pool, personal, promote, borrow, allow-proxy, lease-limit, trust-cli)`);
+    throw new UsageError(`unknown accounts command "${sub}" (add, import, auto-import, remove, policy, vault, pick, exec, shims, split, pool, personal, promote, borrow, allow-proxy, lease-limit, trust-cli)`);
   }
   // RESET-CLOCK-1: every machine's accounts, windows and resets, and who uses what now (for an orchestrator).
   if (bool(ctx.args, "all")) return fleetCommand(ctx);

@@ -257,7 +257,7 @@ describe("I'm using this computer (seats busy)", () => {
     const r = await follow;
     expect(r.code).toBe(1);
     expect(r.out).toContain("queued: arvid-mac is busy");
-    expect(r.out.trim().split("\n").pop()).toBe("stopped · the host's Walkie daemon stopped");
+    expect(r.out.trim().split("\n").pop()).toBe("stopped · the host's Sqwakie daemon stopped");
     // A new launch now queues on the restarted daemon, and `walkie seats resume` starts it.
     const follow2 = walkie(alex, ["seat", "run", "--machine", "arvid-mac", "--runtime", "codex", "--wait", "--", "ticker", "3"]);
     await waitFor(async () => (await person(arvid).seats()).local.queued === 1, { what: "queued after the restart" });

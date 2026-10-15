@@ -2,7 +2,7 @@
 //
 // `connect` asks the serving machine for a bearer key (`POST /peer/v1/pool/serve` connect), writes it to a key file
 // (0600, <home>/pool/connect/<node>.key) and opens a listener on 127.0.0.1 here; every TCP connection an app makes
-// to it is tunnelled over Walkie (`/peer/v1/pool/serve-tunnel/<id>`: a Walkie Direct stream or a Tailscale WebSocket)
+// to it is tunnelled over Sqwakie (`/peer/v1/pool/serve-tunnel/<id>`: a Sqwakie Direct stream or a Tailscale WebSocket)
 // into the serving machine's allow-list proxy. So any OpenAI-compatible client on this machine uses
 // `http://127.0.0.1:<port>/v1` with `Authorization: Bearer $(cat <key file>)`. The lease is renewed every RENEW_MS;
 // two failed renews in a row mean the model is gone (stopped, sharing off, the machine unreachable): the listener
@@ -118,7 +118,7 @@ export class PoolConnections {
     } catch (err) {
       this.d.log.warn("pool_connect_tunnel_failed", { node: link.view.node_id, err: (err as Error).message.slice(0, 200) });
       // Tell the app why, as an HTTP answer, instead of a bare reset.
-      const msg = JSON.stringify({ error: { code: "tunnel_failed", message: `Walkie couldn't reach the model on ${link.view.hostname}: ${(err as Error).message.slice(0, 200)}` } });
+      const msg = JSON.stringify({ error: { code: "tunnel_failed", message: `Sqwakie couldn't reach the model on ${link.view.hostname}: ${(err as Error).message.slice(0, 200)}` } });
       sock.end(`HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(msg)}\r\nConnection: close\r\n\r\n${msg}`);
       return;
     }
@@ -166,7 +166,6 @@ export class PoolConnections {
     if (!link) return null;
     const id = link.view.id;
     await this.close(link, "closed");
-    this.links.delete(node);
     await this.d.serve(node, { action: "disconnect", id }).catch(() => undefined);
     return { ...link.view };
   }

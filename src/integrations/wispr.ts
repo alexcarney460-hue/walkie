@@ -169,7 +169,7 @@ export function makeWispr(summarizeOpts: SummarizeOptions = {}): Connector {
         if (!ctx.state.claim("wispr", cand.id, ctx.now())) continue;
         try {
           const transcript = transcriptText(meeting);
-          // Redacted (configured keys + secret patterns) BEFORE it leaves Walkie for the summarizer,
+          // Redacted (configured keys + secret patterns) BEFORE it leaves Sqwakie for the summarizer,
           // which the generation's signal aborts (#8: a reconfigure kills the CLI at once).
           const summary = ctx.settings.summarize === "claude" ? await summarizeWithClaude(ctx.scrub(transcript), summarizeOpts, ctx.signal) : null;
           const stamp = meeting.startedAt ? new Date(meeting.startedAt).toISOString().slice(0, 10) : "undated";

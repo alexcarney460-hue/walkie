@@ -26,7 +26,7 @@ export const RENTAL_ID = /^r_[0-9a-f]{16}$/;
 export const ACCOUNT_ID = /^ca_[0-9a-f]{16}$/;
 export const TEAM_ID = /^[0-9a-f]{16}$/;
 export const NODE_ID = /^[0-9a-f]{16}$/;
-/** A Walkie Direct add-machine code: "wk1" + base64url, at most 300 characters (src/daemon/invite.ts). */
+/** A Sqwakie Direct add-machine code: "wk1" + base64url, at most 300 characters (src/daemon/invite.ts). */
 export const JOIN_CODE = /^wk1[A-Za-z0-9_-]{37,297}$/;
 export const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -45,10 +45,18 @@ export interface RentalView {
   price_per_hour_micros: number; spent_micros: number; created_at: number; started_at: number | null;
   ended_at: number | null; end_reason: StopReason | null; node_id: string | null; idle_minutes: number;
 }
+/** One unexpired credit lot with credit left (lots.ts): bought `purchased_at`, usable until `expires_at`. */
+export interface CreditLotView {
+  purchased_micros: number; remaining_micros: number; purchased_at: number; expires_at: number;
+  /** It expires within 7 days. */
+  expiring_soon: boolean;
+}
 export interface ComputeStateView {
   alerts?: ("tick_stale" | "termination_delayed")[];
   account_id: string; team_id: string; status: "active" | "frozen"; balance_micros: number;
-  burn_per_hour_micros: number; hours_left: number | null; rentals: RentalView[];
+  burn_per_hour_micros: number; hours_left: number | null;
+  /** Soonest expiry first, at most MAX_CREDIT_LOTS_SHOWN; balance_micros is their sum (plus credit in no lot, normally none). */
+  credit_lots: CreditLotView[]; next_expiry_at: number | null; rentals: RentalView[];
 }
 export interface RentResult {
   rentals: RentalView[]; started: number; queued: number; code_index: Record<string, number>;

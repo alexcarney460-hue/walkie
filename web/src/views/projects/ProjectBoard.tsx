@@ -11,7 +11,8 @@ import { tagHue } from "../../lib/format.ts";
 import { isTyping } from "../../lib/hotkeys.ts";
 import { columnsOf, dropTarget, isMe, moveFocus, NO_FILTERS, presence, type Filters, type Focus } from "../../lib/projects.ts";
 import { hrefFor, navigate } from "../../lib/route.ts";
-import { reportMode } from "../../lib/status-report.ts";
+import { ACCESS_REFRESHING, reportMode } from "../../lib/status-report.ts";
+import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
 import { projectsStore, useProjects } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
 import { CardDrawer } from "./CardDrawer.tsx";
@@ -28,13 +29,21 @@ export function ProjectBoard({ channel, boardId, cardId, room, page, group }: { 
   const s = useProjects();
   const { me, agents } = useStore();
   useEffect(() => {
-    if (s.status === "idle") void projectsStore.refresh();
+    if (s.status === "idle") { void projectsStore.refresh(); return; }
+    if (s.status !== "ready") return;
     void projectsStore.loadCards(channel);
     void projectsStore.loadRoom(channel); // the Data Room: the tab's count, and each card's attachments
-  }, [channel]);
+  }, [channel, s.status, s.visibilityGeneration?.[channel]]);
   const project = s.projects.find((p) => p.channel === channel);
   const cards = s.cards[channel];
   const loadError = s.cardsError[channel];
+  if (s.status === "error") return <div className="page"><ErrorState message={s.error ?? "Couldn't load projects."} onRetry={() => void projectsStore.refresh()} /></div>;
+  if (s.status === "ready" && !project) return (
+    <div className="page page-board">
+      <ErrorState message="This project is no longer available to you" />
+      <a className="btn btn-sm" href={hrefFor({ view: "projects" })}>Back to Projects</a>
+    </div>
+  );
   if (loadError && !cards) return <div className="page"><ErrorState message={loadError} onRetry={() => void projectsStore.loadCards(channel)} /></div>;
   if (!project || !cards) {
     return (
@@ -85,10 +94,15 @@ function BoardBody({ project, cards, boardId, cardId, room, page, group, me, age
 
   const go = (card?: CardView) => navigate({ view: "projects", channel: project.channel, ...(board ? { board: board.id } : {}), ...(card ? { card: card.id } : {}) });
 
-  const write = async (fn: () => Promise<{ task: CardView }>) => {
+  const write = async (fn: () => Promise<{ task: CardView }>, generation = projectsStore.accessGeneration()) => {
+    if (!projectsStore.isVisible(project.channel, generation)) { setError(ACCESS_REFRESHING); return false; }
     setError(null);
     try {
-      projectsStore.card((await fn()).task);
+      const { task } = await fn();
+      if (!storeWriteAnswer({ kind: "card", value: task }, generation, () => setError(null))) {
+        setError(SAVED_REFRESHING);
+        return true;
+      }
       return true;
     } catch (err) {
       setError(friendlyError(err));
@@ -101,9 +115,11 @@ function BoardBody({ project, cards, boardId, cardId, room, page, group, me, age
     await write(() => api.updateTask(card.id, { column, ...where }));
   };
   const moveMany = async (ids: string[], column: string) => {
+    const generation = projectsStore.accessGeneration();
     for (const id of ids) {
+      if (!projectsStore.isVisible(project.channel, generation)) { setError(ACCESS_REFRESHING); return; }
       const card = cards.find((c) => c.id === id);
-      if (card && card.column !== column) await write(() => api.updateTask(id, { column }));
+      if (card && card.column !== column) await write(() => api.updateTask(id, { column }), generation);
     }
   };
   const create = async (column: string, title: string) => {
@@ -111,10 +127,17 @@ function BoardBody({ project, cards, boardId, cardId, room, page, group, me, age
     return write(() => api.createTask({ project: project.channel, board: board.id, column, title }));
   };
   const addBoard = async () => {
+    const generation = projectsStore.accessGeneration();
     setLimit(null);
     setError(null);
     try {
       const { board: b } = await api.createBoard(project.channel, { name: boardName.trim() });
+      if (!projectsStore.isVisible(project.channel, generation)) {
+        setAddingBoard(false);
+        setBoardName("");
+        setError("Board added. Access is refreshing, so it may take a moment to appear.");
+        return;
+      }
       setAddingBoard(false);
       setBoardName("");
       void projectsStore.loadCards(project.channel);

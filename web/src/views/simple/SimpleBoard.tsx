@@ -1,7 +1,7 @@
 // Simple mode (WALK-75): three plain blocks, Move buttons, and the existing task and ask routes.
 // Activity lines are a fixed reading of the card's history, not a written summary.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { api, friendlyError } from "../../api/client.ts";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { api, ApiError, friendlyError } from "../../api/client.ts";
 import type { AskView, CardView, MemberView, ProjectView } from "../../api/types.ts";
 import { displayName } from "../../lib/format.ts";
 import { presence } from "../../lib/projects.ts";
@@ -12,8 +12,10 @@ import {
   type SimpleModel,
 } from "../../lib/simple-board.ts";
 import { useNow } from "../../lib/time.ts";
-import { projectsStore } from "../../state/projects.ts";
+import { projectsStore, useProjects } from "../../state/projects.ts";
+import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
 import { useActions, useStore } from "../../state/store.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 
 const MAX_NOTE = 2_000;
 const STALE = "This card changed. Refresh to see the latest.";
@@ -23,7 +25,22 @@ function replaceTask(list: CardView[], task: CardView): CardView[] {
   return list.some((c) => c.id === task.id) ? list.map((c) => (c.id === task.id ? task : c)) : list;
 }
 
+/**
+ * Remounts (dropping drafts, the open form and focus) only when what this viewer can see shrinks: a visible project
+ * disappears, or the viewer's own handle or role changes. A roster event about someone else leaves the board in place;
+ * SimpleBoardContent reads the lists again instead.
+ */
 export function SimpleBoard() {
+  const { me } = useStore();
+  const projects = useProjects().projects;
+  const seen = useRef<{ channels: Set<string>; epoch: number }>({ channels: new Set(), epoch: 0 });
+  const channels = new Set(projects.map((p) => p.channel));
+  if (channels !== seen.current.channels && ![...seen.current.channels].every((c) => channels.has(c))) seen.current.epoch += 1;
+  seen.current.channels = channels;
+  return <SimpleBoardContent key={`${me?.handle ?? ""}|${me?.role ?? ""}|${seen.current.epoch}`} />;
+}
+
+function SimpleBoardContent() {
   const route = useRoute();
   const { me, team, agents } = useStore();
   const now = useNow();
@@ -45,11 +62,15 @@ export function SimpleBoard() {
   const returnTo = useRef<string | null>(null);
   const gen = useRef(0);
 
-  function remember(task: CardView) {
+  function remember(task: CardView, generation: number): boolean {
+    if (!storeWriteAnswer({ kind: "card", value: task, localView: true }, generation, () => setError(null))) {
+      setError(SAVED_REFRESHING);
+      return false;
+    }
     setTeamTasks((list) => replaceTask(list, task));
     setMineTasks((list) => replaceTask(list, task));
     setReviewTasks((list) => replaceTask(list, task));
-    projectsStore.card(task);
+    return true;
   }
 
   function markAnswered(id: string) {
@@ -64,6 +85,7 @@ export function SimpleBoard() {
 
   async function load(mode: "first" | "refresh") {
     const token = ++gen.current;
+    const generation = projectsStore.accessGeneration();
     if (mode === "first") {
       setPhase("loading");
       setError(null);
@@ -73,13 +95,17 @@ export function SimpleBoard() {
     }
     try {
       const [proj, teamPage, minePage, reviewPage, askPage] = await Promise.all([
-        api.projects(),
+        projectsStore.refresh().then(() => {
+          const state = projectsStore.get();
+          if (state.error) throw new ApiError("project_list", state.error, 0);
+          return { projects: state.projects };
+        }),
         api.tasks({ state: "open", limit: 500 }),
         api.tasks({ state: "open", assignee: "me", limit: 500 }),
         api.tasks({ state: "open", role: "review", limit: 500 }),
         api.asks(),
       ]);
-      if (token !== gen.current) return;
+      if (token !== gen.current || generation !== projectsStore.accessGeneration()) return;
       setProjects(proj.projects);
       setTeamTasks(teamPage.tasks);
       setMineTasks(minePage.tasks);
@@ -89,7 +115,7 @@ export function SimpleBoard() {
       setPhase("ready");
       setError(null);
     } catch (err) {
-      if (token !== gen.current) return;
+      if (token !== gen.current || generation !== projectsStore.accessGeneration()) return;
       const message = friendlyError(err);
       if (mode === "first") {
         setProjects([]);
@@ -108,6 +134,14 @@ export function SimpleBoard() {
   }
 
   useEffect(() => { void load("first"); }, []);
+  // Access moved without a remount (a roster event about someone else): what was sent before it is read again.
+  const access = useSyncExternalStore(projectsStore.subscribe, () => projectsStore.accessGeneration(), () => projectsStore.accessGeneration());
+  const loadedAt = useRef(access);
+  useEffect(() => {
+    if (loadedAt.current === access) return;
+    loadedAt.current = access;
+    void load("refresh");
+  }, [access]);
 
   const model = useMemo(
     () => partition(teamTasks, projects, handle, { mine: mineTasks, review: reviewTasks }),
@@ -125,16 +159,18 @@ export function SimpleBoard() {
 
   async function move(card: CardView, columnId: string) {
     if (busy || readOnly) return;
+    const generation = projectsStore.accessGeneration();
     setBusy(true);
     setError(null);
     try {
       const detail = await api.task(card.id);
+      if (generation !== projectsStore.accessGeneration()) return;
       if (detail.card.column !== card.column) {
         setError(STALE);
         return;
       }
       const res = await api.updateTask(card.id, { column: columnId });
-      remember(res.task);
+      remember(res.task, generation);
     } catch (err) {
       setError(friendlyError(err));
     } finally {
@@ -209,7 +245,7 @@ function BoardList({
           ...model.decisions.map((card) => rowFor(card, model, members, handle, busy, readOnly, onOpen, onMove)),
           ...asks.map((ask) => ({
             key: ask.ask.id,
-            label: askRowLabel(plainText(askText(ask)), whoFromAuthor(ask.ask.author, handle, members)),
+            label: askRowLabel(plainText(displayStoredText(askText(ask))), whoFromAuthor(ask.ask.author, handle, members)),
             open: () => {
               returnTo.current = ask.ask.id;
               navigate({ view: "simple", ask: ask.ask.id });
@@ -398,7 +434,7 @@ function shownCard(tasks: readonly CardView[], projects: readonly ProjectView[],
 
 function CardRoute({ cardId, tasks, model, members, handle, busy, readOnly, error, onTask, onMove }: {
   cardId: string; tasks: readonly CardView[]; model: SimpleModel; members: readonly MemberView[] | undefined; handle: string | null;
-  busy: boolean; readOnly: boolean; error: string | null; onTask: (task: CardView) => void; onMove: (card: CardView, columnId: string) => void;
+  busy: boolean; readOnly: boolean; error: string | null; onTask: (task: CardView, generation: number) => boolean; onMove: (card: CardView, columnId: string) => void;
 }) {
   if (model.hiddenIds.has(cardId)) return <Hidden kind="confidential" />;
   const stored = shownCard(tasks, model.projects, cardId);
@@ -428,7 +464,7 @@ function useDialogFocus(): RefObject<HTMLDivElement | null> {
 
 function CardPage({ card, projects, members, handle, busy, readOnly, error, onTask, onMove }: {
   card: CardView; projects: readonly ProjectView[]; members: readonly MemberView[] | undefined; handle: string | null;
-  busy: boolean; readOnly: boolean; error: string | null; onTask: (task: CardView) => void; onMove: (card: CardView, columnId: string) => void;
+  busy: boolean; readOnly: boolean; error: string | null; onTask: (task: CardView, generation: number) => boolean; onMove: (card: CardView, columnId: string) => void;
 }) {
   const status = statusName(cardRole(card, projects)) ?? "To do";
   const who = whoFromAddress(card.assignee, handle, members);
@@ -446,12 +482,13 @@ function CardPage({ card, projects, members, handle, busy, readOnly, error, onTa
 
   useEffect(() => {
     let cancel = false;
+    const generation = projectsStore.accessGeneration();
     setAct({ phase: "loading", lines: [], message: "" });
     api.task(card.id).then((detail) => {
-      if (cancel) return;
+      if (cancel || generation !== projectsStore.accessGeneration()) return;
       setAct({ phase: "ready", lines: activityLines(detail.timeline ?? [], columns, handle, members), message: "" });
     }).catch((err: unknown) => {
-      if (cancel) return;
+      if (cancel || generation !== projectsStore.accessGeneration()) return;
       setAct({ phase: "error", lines: [], message: friendlyError(err) });
     });
     return () => { cancel = true; };
@@ -459,24 +496,29 @@ function CardPage({ card, projects, members, handle, busy, readOnly, error, onTa
 
   async function approve() {
     if (working || readOnly || status === "Done") return;
+    const generation = projectsStore.accessGeneration();
     setLocalBusy(true);
     setBanner(null);
     let saved: CardView | null = null;
     try {
       const detail = await api.task(card.id);
+      if (generation !== projectsStore.accessGeneration()) return;
       if (detail.card.column !== card.column) {
         setBanner({ kind: "alert", text: STALE });
         return;
       }
       const commented = await api.commentTask(card.id, "Approved.");
+      if (generation !== projectsStore.accessGeneration()) {
+        onTask(commented.task, generation);
+        setBanner({ kind: "alert", text: SAVED_REFRESHING });
+        return;
+      }
       saved = commented.task;
       const done = await api.taskDone(card.id);
-      onTask(done.task);
-      setBanner({ kind: "status", text: "Approved." });
+      setBanner(onTask(done.task, generation) ? { kind: "status", text: "Approved." } : { kind: "alert", text: SAVED_REFRESHING });
     } catch (err) {
       if (saved) {
-        onTask(saved);
-        setBanner({ kind: "alert", text: "The approval was saved, but the status did not change." });
+        setBanner({ kind: "alert", text: onTask(saved, generation) ? "The approval was saved, but the status did not change." : SAVED_REFRESHING });
       } else {
         setBanner({ kind: "alert", text: friendlyError(err) });
       }
@@ -492,40 +534,72 @@ function CardPage({ card, projects, members, handle, busy, readOnly, error, onTa
       return;
     }
     if (working || readOnly) return;
+    const generation = projectsStore.accessGeneration();
     setLocalBusy(true);
     setBanner(null);
     try {
       if (form === "question") {
         const commented = await api.commentTask(card.id, text);
-        onTask(commented.task);
+        if (!onTask(commented.task, generation)) {
+          setDraft("");
+          setForm(null);
+          setBanner({ kind: "alert", text: SAVED_REFRESHING });
+          return;
+        }
         setDraft("");
         setForm(null);
         setBanner({ kind: "status", text: "Your question was posted." });
         return;
       }
       const commented = await api.commentTask(card.id, `Needs changes: ${text}`);
+      if (generation !== projectsStore.accessGeneration()) {
+        onTask(commented.task, generation);
+        setDraft("");
+        setForm(null);
+        setBanner({ kind: "alert", text: SAVED_REFRESHING });
+        return;
+      }
       let next = commented.task;
       const target = columnForStatus(columns, "Working on");
       if (target && status !== "Working on" && card.column !== target.id) {
         try {
           const detail = await api.task(card.id);
-          if (detail.card.column !== card.column) {
-            onTask(next);
+          if (generation !== projectsStore.accessGeneration()) {
+            onTask(next, generation);
             setDraft("");
             setForm(null);
-            setBanner({ kind: "alert", text: STALE });
+            setBanner({ kind: "alert", text: SAVED_REFRESHING });
+            return;
+          }
+          if (detail.card.column !== card.column) {
+            const shown = onTask(next, generation);
+            setDraft("");
+            setForm(null);
+            setBanner({ kind: "alert", text: shown ? STALE : SAVED_REFRESHING });
             return;
           }
           next = (await api.updateTask(card.id, { column: target.id })).task;
+          if (generation !== projectsStore.accessGeneration()) {
+            onTask(next, generation);
+            setDraft("");
+            setForm(null);
+            setBanner({ kind: "alert", text: SAVED_REFRESHING });
+            return;
+          }
         } catch {
-          onTask(next);
+          const shown = onTask(next, generation);
           setDraft("");
           setForm(null);
-          setBanner({ kind: "alert", text: "The note was saved, but the status did not change." });
+          setBanner({ kind: "alert", text: shown ? "The note was saved, but the status did not change." : SAVED_REFRESHING });
           return;
         }
       }
-      onTask(next);
+      if (!onTask(next, generation)) {
+        setDraft("");
+        setForm(null);
+        setBanner({ kind: "alert", text: SAVED_REFRESHING });
+        return;
+      }
       setDraft("");
       setForm(null);
       setBanner({ kind: "status", text: "Your note was saved." });
@@ -593,7 +667,7 @@ function AskPage({ ask, members, handle, readOnly, onAnswered }: {
   const [draft, setDraft] = useState("");
   const [banner, setBanner] = useState<null | { kind: "alert" | "status"; text: string }>(null);
   const [busy, setBusy] = useState(false);
-  const text = plainText(askText(ask));
+  const text = plainText(displayStoredText(askText(ask)));
   const who = whoFromAuthor(ask.ask.author, handle, members);
 
   async function answer(body: string) {

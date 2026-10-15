@@ -6,6 +6,8 @@ import {
   type BranchEvidence, type CardEvidence, type LiveAgent, type StewardCard, type StewardInput, STEWARD_AGENT,
 } from "../../protocol/projects/steward.ts";
 import { cardNamedIn, indexCards, isAuditText, linearKeyOf } from "../../protocol/projects/steward-match.ts";
+import { withoutPrivatePhrases } from "../../protocol/talkie-recs.ts";
+import { isConfidential } from "../../protocol/projects/status-report.ts";
 import { repoDirs, scanRepo, type GitRun, runGit } from "./steward-git.ts";
 
 /** One agent as the local API lists it (GET /v1/agents), the fields the steward reads. */
@@ -22,6 +24,8 @@ export interface StewardSource {
   agents(): Promise<AgentRow[]>;
   /** The team's owners' handles (their agents' text is evidence on any card). */
   owners(): Promise<string[]>;
+  /** Titles and keys on projects whose audience may be narrower than this board's. */
+  privatePhrases(project: ProjectView): Promise<{ phrases: string[]; prefixes: string[] }>;
   /** Linear issues by key (state and its type), or null when the integration is off or failed. */
   linear(keys: readonly string[]): Promise<Record<string, { state: string; state_type: string } | null> | null>;
 }
@@ -41,8 +45,25 @@ export const GIT_DEADLINE_MS = 60_000;
 
 const LINEAR_BATCH = 50;
 
+/** Private and confidential names visible to the steward but unsafe to quote on the target board. */
+export async function privatePhrasesFor(
+  target: ProjectView, projects: readonly ProjectView[], cards: (project: ProjectView) => Promise<CardView[]>,
+): Promise<{ phrases: string[]; prefixes: string[] }> {
+  const phrases: string[] = [];
+  const prefixes: string[] = [];
+  for (const project of projects) {
+    if (project.state === "deleted") continue;
+    const secret = (await cards(project)).filter((card) => card.state !== "deleted" && ((project.channel !== target.channel && project.private) || isConfidential(card.labels)));
+    if (project.channel !== target.channel && project.private) phrases.push(project.name);
+    if (!secret.length && !(project.channel !== target.channel && project.private)) continue;
+    prefixes.push(project.prefix, ...(project.prior_prefixes ?? []));
+    for (const card of secret) phrases.push(card.title, card.key);
+  }
+  return { phrases, prefixes };
+}
+
 /** Working agents, with the card each one names (by key, reference or lane code). */
-function liveAgents(rows: readonly AgentRow[], idx: ReturnType<typeof indexCards>): Map<string, LiveAgent[]> {
+function liveAgents(rows: readonly AgentRow[], idx: ReturnType<typeof indexCards>, scrub: (text: string) => string): Map<string, LiveAgent[]> {
   const out = new Map<string, LiveAgent[]>();
   for (const a of rows) {
     const state = a.effective_state ?? a.status.state;
@@ -50,7 +71,8 @@ function liveAgents(rows: readonly AgentRow[], idx: ReturnType<typeof indexCards
     const text = [a.status.task, a.status.branch, a.status.title].filter((x): x is string => !!x).join(" | ");
     const card = cardNamedIn(text, idx);
     if (!card) continue;
-    const live: LiveAgent = { address: `@${a.handle}/${a.hostname}/${a.agent}`, handle: a.handle, agent: a.agent, text, auditor: isAuditText(text) };
+    const safe = scrub(text);
+    const live: LiveAgent = { address: `@${a.handle}/${a.hostname}/${a.agent}`, handle: a.handle, agent: a.agent, text: safe, auditor: isAuditText(text) };
     out.set(card.id, [...(out.get(card.id) ?? []), live]);
   }
   return out;
@@ -72,7 +94,19 @@ export async function gather(src: StewardSource, projectRef: string, opts: Gathe
   const project = await src.project(projectRef);
   const cards = await src.cards(project);
   const idx = indexCards(project.prefix, cards);
-  const agents = liveAgents(await src.agents(), idx);
+  const privateNames = await src.privatePhrases(project);
+  const scrub = (text: string) => withoutPrivatePhrases(text, privateNames.phrases, privateNames.prefixes);
+  const safeComment = (text: string): string => {
+    const safe = scrub(text);
+    const written = withoutPrivatePhrases(text, [], []);
+    if (safe === written) return safe;
+    let start = 0;
+    while (start < safe.length && safe[start] === written[start]) start++;
+    const before = safe.slice(0, start);
+    const after = safe.slice(start);
+    return `${before}${before && !/\s$/.test(before) ? " " : ""}(private name removed)${after && !/^\s/.test(after) ? " " : ""}${after}`;
+  };
+  const agents = liveAgents(await src.agents(), idx, scrub);
   const linear = await linearStates(src, cards);
   const repos = repoDirs([...opts.repos, ...project.paths.flatMap((p) => ("path" in p ? [p.path] : []))]);
   let branches: Map<string, BranchEvidence[]> | null = null;
@@ -99,12 +133,15 @@ export async function gather(src: StewardSource, projectRef: string, opts: Gathe
   const evidence = new Map<string, CardEvidence>();
   for (const c of cards) {
     const key = linearKeyOf(c.title);
+    const issue = key ? linear.get(key) : null;
     evidence.set(c.id, {
       agents: agents.get(c.id) ?? [],
-      branches: branches === null ? null : branches.get(c.id) ?? [],
+      branches: branches === null ? null : (branches.get(c.id) ?? []).map((branch) => ({
+        ...branch, branch: scrub(branch.branch), merged_into: branch.merged_into === null ? null : scrub(branch.merged_into),
+      })),
       branchesComplete: complete && !skipped.has(c.id),
-      linear: key ? linear.get(key) ?? null : null,
-      timeline: await src.timeline(project, c),
+      linear: issue ? { ...issue, state: scrub(issue.state) } : null,
+      timeline: (await src.timeline(project, c)).map((entry) => entry.text === undefined ? entry : { ...entry, evidence_text: safeComment(entry.text) }),
     });
   }
   const view = (c: CardView): StewardCard => ({

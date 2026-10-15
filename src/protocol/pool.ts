@@ -15,7 +15,7 @@ export const ModelId = z.string().regex(/^[a-z0-9][a-z0-9.-]{1,48}$/);
 
 /**
  * A model a machine serves whole on its own GPU (POOL-REAL-1 "serve on the best machine"), as its daemon publishes
- * it: members connect to it through Walkie (`walkie pool connect <machine>`). `open` = its owner shares the machine,
+ * it: members connect to it through Sqwakie (`walkie pool connect <machine>`). `open` = its owner shares the machine,
  * so other members may connect; without it only the machine's own person uses it.
  */
 export const PoolServing = z.object({

@@ -3,6 +3,7 @@ import { bool, str, UsageError } from "../args.ts";
 import { EXIT, requirePerson, type Ctx } from "../context.ts";
 import { safeTerm } from "../format.ts";
 import { REC_GROUPS, REC_GROUP_LABELS } from "../../protocol/talkie-recs.ts";
+import { displayStoredText } from "../../protocol/display-text.ts";
 import type { RecommendInputT } from "../../daemon/orchestrator/rec-input.ts";
 
 const line = (s: string): string => safeTerm(s).replace(/[\r\n\t]/g, " ");
@@ -25,12 +26,12 @@ export async function talkieRecs(ctx: Ctx, agent: boolean): Promise<number> {
           const time = remaining >= 3_600_000 ? `${Math.ceil(remaining / 3_600_000)} h left` : `${Math.ceil(remaining / 60_000)} min left`;
           ctx.out(`  ${line(r.short)}  ${line(r.summary)}`);
           ctx.out(`    ${line(r.reason)}`);
-          // A model-driven duty's own words: quoted, marked as WalkieTalkie's, never sent in anyone's name.
-          if (r.context) ctx.out(`    WalkieTalkie wrote (not sent): “${line(r.context)}”`);
+          // A model-driven duty's own words: quoted, marked as Talkie's, never sent in anyone's name.
+          if (r.context) ctx.out(`    Talkie wrote (not sent): “${line(r.context)}”`);
           // Word for word what approving it sends or makes in this person's name.
           if (r.outgoing) {
             ctx.out("    Approving does this in your name:");
-            for (const l of r.outgoing.split("\n")) ctx.out(`      ${line(l)}`);
+            for (const l of displayStoredText(r.outgoing).split("\n")) ctx.out(`      ${line(l)}`);
           } else if (r.outgoing === null) ctx.out("    Its card is gone: approving it will be refused.");
           ctx.out(`    ${[r.project_name ? line(r.project_name) : null, line(r.status), r.status === "pending" ? time : null].filter(Boolean).join(" · ")}`);
           for (const evidence of r.evidence) ctx.out(`    ${line(evidence)}`);
@@ -61,7 +62,7 @@ export async function talkieRecs(ctx: Ctx, agent: boolean): Promise<number> {
       const shown = recs.find((r) => r.short === id || r.id === id)?.outgoing;
       if (typeof shown === "string") {
         ctx.err("Approving does this in your name:");
-        for (const l of shown.split("\n")) ctx.err(`  ${line(l)}`);
+        for (const l of displayStoredText(shown).split("\n")) ctx.err(`  ${line(l)}`);
         await requirePerson(ctx, "approve it", "yes");
         seen = shown;
       }
@@ -79,7 +80,7 @@ export async function talkieRecs(ctx: Ctx, agent: boolean): Promise<number> {
   try { body = JSON.parse(ctx.args.pos[1]!); }
   catch { throw new UsageError("talkie recommend requires valid JSON"); }
   if (body === null || typeof body !== "object" || Array.isArray(body)) throw new UsageError("talkie recommend requires a JSON object");
-  // The daemon validates the full input and authenticates WalkieTalkie's duty token. Never manufacture that identity here.
+  // The daemon validates the full input and authenticates Talkie's duty token. Never manufacture that identity here.
   const result = await ctx.client({ underAgent: agent }).talkieRecommend(body as RecommendInputT);
   ctx.out(ctx.json ? JSON.stringify(result) : "duplicate" in result ? "already recorded"
     : "suppressed" in result ? "not recorded: it was dismissed lately" : `recorded ${line(result.short)}`);

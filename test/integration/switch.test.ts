@@ -195,7 +195,7 @@ describe("walkie claude (fake Claude Code)", () => {
     launched[0]?.write(`build the parser, the key is ${secret}`);
     await until(() => logOf(d).some((l) => typeof l.turn === "string" && (l.turn as string).startsWith("build the parser")));
     launched[0]?.write("limit");
-    await until(() => launched.length === 3 && logOf(d).filter((l) => l.start).length === 3 && logOf(d).some((l) => typeof l.turn === "string" && (l.turn as string).startsWith("Walkie moved this session")));
+    await until(() => launched.length === 3 && logOf(d).filter((l) => l.start).length === 3 && logOf(d).some((l) => typeof l.turn === "string" && (l.turn as string).startsWith("Sqwakie moved this session")));
     const starts = logOf(d).filter((l) => l.start);
     // Round 1 (Codex 3 / Opus 9): the conversation is not on the command line — only a pointer to a 0600 file.
     const argv = JSON.stringify(starts[2]?.argv);
@@ -431,7 +431,7 @@ describe("round 1: trust, binding, exhaustion, failures, headless output", () =>
     launched[0]?.write("/exit");
     expect(await run).toBe(0);
     expect(logOf(d).find((l) => l.start)?.fp).toBe("none");
-    expect(says[0]).toContain("running claude without Walkie accounts");
+    expect(says[0]).toContain("running claude without Sqwakie accounts");
     expect(says[0]).not.toContain("\u001b"); // escape sequences stripped
   }, 30_000);
 

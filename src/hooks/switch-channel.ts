@@ -1,6 +1,6 @@
 // The account switcher's side channel (ACCOUNTS-2). A session launched by `walkie claude` has WALKIE_SWITCH_EVENTS
 // in its environment: a file the wrapper created in ~/.walkie/run/. Claude Code hooks (`walkie hook claude`, or the
-// `walkie hook switch` hooks the wrapper adds when Walkie's hooks are not installed) append one line per event:
+// `walkie hook switch` hooks the wrapper adds when Sqwakie's hooks are not installed) append one line per event:
 // {ev, sid, tp, cpid?, ts} for SessionStart / UserPromptSubmit / SessionEnd — the event name, the session id, the
 // transcript path, the Claude Code pid that ran the hook. No prompt, no message text. The file is written only when it is a regular file of ours inside
 // ~/.walkie/run (a variable pointing anywhere else is ignored). Failures are silent: hooks never break a session.
@@ -48,7 +48,7 @@ export function recordSwitchEvent(input: SwitchEventInput, env: NodeJS.ProcessEn
   } catch { /* never break the session */ }
 }
 
-/** `walkie hook switch`: the hook the wrapper adds when Walkie's own hooks are not installed. */
+/** `walkie hook switch`: the hook the wrapper adds when Sqwakie's own hooks are not installed. */
 export function runSwitchHook(raw: string, env: NodeJS.ProcessEnv = process.env): void {
   try { recordSwitchEvent(JSON.parse(raw) as SwitchEventInput, env); } catch { /* bad input */ }
 }

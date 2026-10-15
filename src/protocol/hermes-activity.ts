@@ -4,7 +4,7 @@
 // variable decides anything.
 import { z } from "zod";
 
-/** The profile names Walkie carries: what Hermes hooks, the status route and the installer accept. */
+/** The profile names Sqwakie carries: what Hermes hooks, the status route and the installer accept. */
 export const HERMES_PROFILE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 /** The most profiles the list may name. */
 export const HERMES_ACTIVITY_PROFILES_MAX = 64;

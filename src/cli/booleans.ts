@@ -2,4 +2,5 @@
 // so a remote command is checked exactly as the walkie that runs it will parse it (AGENT-ADMIN-1 fix round 2).
 export const CLI_BOOLEANS: ReadonlySet<string> = new Set(["json", "raw", "decline", "all", "once", "status", "dry-run", "no-open", "help", "no-service", "no-hooks", "check", "allow-downgrade", "public", "no-unfurl", "no-activity", "for-agent", "new", "direct", "tailscale", "allow-team-agents", "no-team-agents", "mine", "private", "points", "profile", "switching", "no-switching", "move",
   "wait", "follow", "pin", "save", "allow-secrets", "allow-seats", "no-seats", "yes", "same-user", "seat-users", "inherit-person-config", "company-machine", "apply", "accept-readable-home", "clear-tool-policy", "claude-token-stdin", "invite-stdin", "here", "codex-release",
-  "include-closed", "skip-stale", "skip-duplicates", "resume", "cancel", "sync", "two-way", "one-way", "no-wait", "repair", "ack-legacy", "offline", "refresh", "remove"]);
+  "include-closed", "skip-stale", "skip-duplicates", "resume", "cancel", "sync", "two-way", "one-way", "no-wait", "repair", "ack-legacy", "offline", "refresh", "remove",
+  "unlimited", "approve", "observer", "owner-machines", "join-link-stdin", "link-stdin", "replace"]);

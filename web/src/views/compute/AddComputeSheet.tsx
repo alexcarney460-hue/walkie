@@ -5,7 +5,9 @@ import {
   type ComputeState, type CreditBlock, type MachineAsk, type Quotes, type RentResult, type RentalView, type TierId,
 } from "../../api/compute.ts";
 import { ErrorState, SkeletonRows } from "../../components/primitives.tsx";
-import { ACTIVE_STATES, CREDIT_BLOCKS, IDLE_MINUTES_DEFAULT, MAX_MACHINES_PER_REQUEST, usd } from "../../../../src/protocol/compute.ts";
+import {
+  ACTIVE_STATES, CREDIT_BLOCKS, CREDIT_TERMS, IDLE_MINUTES_DEFAULT, MAX_MACHINES_PER_REQUEST, expiresInText, expiryText, usd,
+} from "../../../../src/protocol/compute.ts";
 
 export type Counts = Readonly<Partial<Record<TierId, number>>>;
 
@@ -31,14 +33,16 @@ export function rentalStateLabel(r: RentalView): string {
   return r.state === "queued" && r.queue_position ? `Queued · #${r.queue_position}` : STATE_LABEL[r.state];
 }
 
-function errorText(err: unknown): string {
+export function computeErrorText(err: unknown): string {
   if (err instanceof ComputeError) {
     if (err.code === "insufficient_credit") {
+      const expiring = (err.expiringMicros ?? 0) > 0
+        ? ` ${usd(err.expiringMicros as number)} of the credit expires within the hour, so it can't cover a machine's first hour.` : "";
       return err.neededMicros !== undefined
-        ? `Not enough credit: these machines need ${usd(err.neededMicros)} for their first hour${err.balanceMicros !== undefined ? ` and the balance is ${usd(err.balanceMicros)}` : ""}. Buy credit, then rent.`
-        : "Not enough credit for the first hour of these machines. Buy credit, then rent.";
+        ? `Not enough credit: these machines need ${usd(err.neededMicros)} for their first hour${err.balanceMicros !== undefined ? ` and the balance is ${usd(err.balanceMicros)}` : ""}.${expiring} Buy credit, then rent.`
+        : `Not enough credit for the first hour of these machines.${expiring} Buy credit, then rent.`;
     }
-    if (err.code === "account_frozen") return "Renting is paused on this team's account. Contact Walkie support.";
+    if (err.code === "account_frozen") return "Renting is paused on this team's account. Contact Sqwakie support.";
     if (err.code === "agent_admin_off") return "Agents can't rent machines here while agent admin is off.";
     if (err.code === "compute_not_configured") return "Rented machines aren't available yet.";
     return err.message;
@@ -64,12 +68,62 @@ export function egressLine(q: Quotes): string {
   return `Each machine includes ${q.egress_included_gib.toLocaleString("en-US")} GiB of outbound data per 730 hours, prorated by rented hours, then ${usd(q.egress_price_per_gib_micros)} per GiB.`;
 }
 
+/**
+ * The credit lots (each purchase: what is left, of what, and when it expires), soonest expiry first; a lot that expires
+ * within 7 days is highlighted with how soon. Nothing when the site lists none.
+ */
+function CreditLots({ state }: { state: ComputeState }) {
+  const lots = state.credit_lots ?? [];
+  if (!lots.length) return null;
+  const now = Date.now();
+  return (
+    <div className="ac-lots-wrap">
+      <ul className="ac-lots" data-testid="ac-lots" aria-label="Credit by purchase">
+        {lots.map((l, i) => (
+          <li key={`${l.expires_at}-${i}`} className={l.expiring_soon ? "ac-lot is-soon" : "ac-lot"} data-testid="ac-lot">
+            <span className="tnum">{`${usd(l.remaining_micros)} left of ${usd(l.purchased_micros)}`}</span>
+            <span className="muted">{`expires ${expiryText(l.expires_at)}`}</span>
+            {l.expiring_soon && <span className="chip ac-lot-soon">{expiresInText(l.expires_at, now)}</span>}
+          </li>
+        ))}
+      </ul>
+      {state.next_expiry_at != null && <p className="ac-lot-next muted">{`Soonest expiry: ${expiryText(state.next_expiry_at)}`}</p>}
+    </div>
+  );
+}
+
+/**
+ * The credit and its lots, read-only: shown while rentals are unavailable (drained, a stale tick, nothing on sale) for
+ * an account whose state lists lots, so their expiry dates stay visible (pre.17 review: Opus P3-2).
+ */
+export function CreditSummary({ state }: { state: ComputeState }) {
+  if (state.credit_lots === undefined) return null;
+  return (
+    <div className="ac-credit" data-testid="ac-credit">
+      <div className="ac-balance"><span className="ac-balance-label">Credit</span><b className="tnum">{usd(state.balance_micros)}</b></div>
+      <CreditLots state={state} />
+      <p className="field-hint">{CREDIT_TERMS}</p>
+    </div>
+  );
+}
+
+/** Credit in the listed lots that expires within the next hour: it cannot cover a machine's first hour. */
+function expiringWithinHour(state: ComputeState, now: number): number {
+  return (state.credit_lots ?? []).filter((l) => l.expires_at <= now + 3_600_000).reduce((n, l) => n + l.remaining_micros, 0);
+}
+
 /** The dialog body, without effects (render tests use it directly). Prices only: no cost, no provider, no instance type. */
 export function AddComputeView({ quotes, state, counts, onCount, onRent, onBuy, onStop, busy, result, error }: AddComputeViewProps) {
-  if (quotes.available !== true) return <p>Rented machines are currently unavailable. Existing rentals can still be stopped from Machines.</p>;
+  if (quotes.available !== true) return (
+    <div className="ac-body">
+      <p>Rented machines are currently unavailable. Existing rentals can still be stopped from Machines.</p>
+      <CreditSummary state={state} />
+    </div>
+  );
   const n = totalCount(counts);
   const hourly = hourlyTotal(quotes, counts);
-  const short = n > 0 && state.balance_micros < hourly;
+  const expiring = expiringWithinHour(state, Date.now());
+  const short = n > 0 && state.balance_micros - expiring < hourly;
   const frozen = state.status === "frozen";
   const pending = state.rentals.filter((r) => ACTIVE_STATES.has(r.state));
   return (
@@ -82,6 +136,7 @@ export function AddComputeView({ quotes, state, counts, onCount, onRent, onBuy, 
             {state.hours_left !== null ? `about ${state.hours_left < 10 ? state.hours_left.toFixed(1) : Math.floor(state.hours_left)} h left at ${usd(state.burn_per_hour_micros)}/h` : "nothing running"}
           </span>
         </div>
+        <CreditLots state={state} />
         <div className="ac-buy" role="group" aria-label="Buy credit">
           <span className="ac-buy-label">Buy credit</span>
           {CREDIT_BLOCKS.map((b) => (
@@ -133,10 +188,10 @@ export function AddComputeView({ quotes, state, counts, onCount, onRent, onBuy, 
       </div>
       {short && (
         <p className="ac-short" role="note" data-testid="ac-short">
-          Needs {usd(hourly)} of credit for the first hour; the balance is {usd(state.balance_micros)}.
+          {`Needs ${usd(hourly)} of credit for the first hour; the balance is ${usd(state.balance_micros)}${expiring > 0 ? `, and ${usd(expiring)} of it expires within the hour` : ""}.`}
         </p>
       )}
-      {frozen && <p className="ac-short" role="note">Renting is paused on this team&rsquo;s account. Contact Walkie support.</p>}
+      {frozen && <p className="ac-short" role="note">Renting is paused on this team&rsquo;s account. Contact Sqwakie support.</p>}
       {error && <p className="ac-error" role="alert">{error}</p>}
       {result && (
         <p className="ac-result" role="status" data-testid="ac-result">
@@ -144,8 +199,9 @@ export function AddComputeView({ quotes, state, counts, onCount, onRent, onBuy, 
         </p>
       )}
       <p className="field-hint">
-        Credit is used per minute while a machine runs. Machines stop when credit reaches $0, and after {IDLE_MINUTES_DEFAULT} minutes
-        with no agent or pool work. Stopping deletes the machine and its disk; unused credit stays on the account.
+        Credit is used per minute while a machine runs. Machines stop when credit reaches $0 (spent or expired), and after {IDLE_MINUTES_DEFAULT} minutes
+        with no agent or pool work. Stopping deletes the machine and its disk; unused credit stays on the account until it expires.
+        {` ${CREDIT_TERMS}`}
       </p>
 
       {pending.length > 0 && (
@@ -204,23 +260,23 @@ export function AddComputeSheet({ onClose }: { onClose: () => void }) {
       setCounts({});
       computeStore.refresh();
     } catch (err) {
-      setError(errorText(err));
+      setError(computeErrorText(err));
     } finally {
       setBusy(null);
     }
   };
   const onBuy = async (block: CreditBlock) => {
     setBusy("buy"); setError(null);
-    try { await buyCredit(block, undefined, accountId); } catch (err) { setError(errorText(err)); } finally { setBusy(null); }
+    try { await buyCredit(block, undefined, accountId); } catch (err) { setError(computeErrorText(err)); } finally { setBusy(null); }
   };
   const onStop = async (r: RentalView) => {
     setError(null);
-    try { await stopRental(r.id, r.name); } catch (err) { setError(errorText(err)); }
+    try { await stopRental(r.id, r.name); } catch (err) { setError(computeErrorText(err)); }
   };
   const selected = snap.state?.accounts?.find(a => a.account_id === accountId) ?? snap.state?.accounts?.[0];
   const viewedState = snap.state && selected ? { ...snap.state, account_id: selected.account_id, status: selected.status,
     balance_micros: selected.balance_micros, burn_per_hour_micros: selected.burn_per_hour_micros,
-    hours_left: selected.hours_left } : snap.state;
+    hours_left: selected.hours_left, credit_lots: selected.credit_lots, next_expiry_at: selected.next_expiry_at } : snap.state;
 
   return (
     <div className="drawer-layer">
@@ -240,7 +296,7 @@ export function AddComputeSheet({ onClose }: { onClose: () => void }) {
           {snap.status === "error" && <ErrorState message={snap.error ?? "Couldn't load prices."} onRetry={() => computeStore.refresh()} />}
           {snap.status === "ready" && snap.quotes && snap.state && (
             snap.quotes.tiers.length === 0
-              ? <p className="panel-empty">No machines are for rent right now.</p>
+              ? <><p className="panel-empty">No machines are for rent right now.</p><CreditSummary state={viewedState!} /></>
               : <>
                   {(snap.state.accounts?.length ?? 0) > 1 && <label className="field-hint">Compute account
                     <select value={selected?.account_id} onChange={e => setAccountId(e.target.value)} aria-label="Compute account">
@@ -255,6 +311,40 @@ export function AddComputeSheet({ onClose }: { onClose: () => void }) {
       </aside>
     </div>
   );
+}
+
+/**
+ * Shown instead of the button on an owner machine that isn't the roster authority: the team's compute account (and
+ * its rentals) live on the authority, so a rent from here would be refused. All of it is visible text (no tooltip), so
+ * touch and keyboard users read it too.
+ */
+export function ComputeOnAuthority({ host }: { host: string | null }) {
+  const where = host ? `${host}, the team's roster authority` : "the team's roster authority machine";
+  return (
+    <span className="muted add-compute-elsewhere" data-testid="ac-on-authority">
+      <Cpu size={13} strokeWidth={2} aria-hidden="true" />{`Rent compute from ${where}. Rented machines are seen and stopped there too.`}
+    </span>
+  );
+}
+
+/** The roster authority's hostname, for ComputeOnAuthority: the team's authority node first (a node's own flag can lag). */
+export function authorityHost(nodes: readonly { node_id: string; hostname: string; authority?: boolean }[], authority: string | null | undefined): string | null {
+  return (nodes.find((n) => n.node_id === authority) ?? nodes.find((n) => n.authority))?.hostname ?? null;
+}
+
+/** Shown instead of Add compute while rentals are unavailable, when the account holds credit lots: opens them read-only. */
+export function CreditButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button type="button" className="btn btn-sm add-compute-btn" onClick={onOpen}>
+      <Cpu size={13} strokeWidth={2} aria-hidden="true" />Compute credit
+    </button>
+  );
+}
+
+/** Owners see Add compute when rentals are available, or Compute credit when they are not and credit lots exist. */
+export function computeAction(snap: { quotes: Quotes | null; state: ComputeState | null }): "rent" | "credit" | null {
+  if (snap.quotes?.available === true) return "rent";
+  return (snap.state?.credit_lots?.length ?? 0) > 0 ? "credit" : null;
 }
 
 /** The button both views show to owners. */

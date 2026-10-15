@@ -34,11 +34,11 @@ function service(c: RouteCtx): AccountsService {
 function refused(err: unknown): never {
   if (!(err instanceof AccountActionError)) throw err;
   if (err.code === "not_found") throw new HttpError(404, "not_found", "that account's login is not on this machine; use a reset from the dashboard of the machine that holds it");
-  if (err.code === "not_supported") throw new HttpError(409, "not_supported", "this provider's resets are used on its own page, not through Walkie");
+  if (err.code === "not_supported") throw new HttpError(409, "not_supported", "this provider's resets are used on its own page, not through Sqwakie");
   if (err.code === "not_signed_in") throw new HttpError(409, "not_signed_in", "Codex isn't signed in to a ChatGPT account on this machine: run codex login");
   if (err.code === "login_changed") throw new HttpError(409, "login_changed", "the login on this machine is now a different account (or signed out); nothing was sent");
-  if (err.code === "ledger_unreadable") throw new HttpError(409, "ledger_unreadable", `Walkie couldn't read its reset records (kept as ${err.detail ?? "accounts.json.corrupt-*"}), so an earlier attempt may be missing: check the usage of every Codex account on this machine, then confirm you checked (that lets resets through again for all of them)`);
-  if (err.code === "ledger_unwritable") throw new HttpError(503, "ledger_unwritable", "Walkie couldn't write its reset records (is the disk full?); nothing was sent");
+  if (err.code === "ledger_unreadable") throw new HttpError(409, "ledger_unreadable", `Sqwakie couldn't read its reset records (kept as ${err.detail ?? "accounts.json.corrupt-*"}), so an earlier attempt may be missing: check the usage of every Codex account on this machine, then confirm you checked (that lets resets through again for all of them)`);
+  if (err.code === "ledger_unwritable") throw new HttpError(503, "ledger_unwritable", "Sqwakie couldn't write its reset records (is the disk full?); nothing was sent");
   if (err.code === "unknown_attempt") throw new HttpError(409, "unknown_attempt", "no such reset attempt here (it expired, or it was not prepared on this machine); open the sheet again");
   throw new HttpError(409, "request_reused", "that request id belongs to another account");
 }

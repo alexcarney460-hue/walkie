@@ -236,14 +236,14 @@ describe("the warning when a runtime can't be copied for the seat users names th
     expect(warning).toMatch(/claude/);
     expect(warning).toMatch(/standalone/i);
     expect(warning).toContain("curl -fsSL https://claude.ai/install.sh | bash");
-    expect(warning).toContain(NATIVE_INSTALL.claude); // the one command Walkie gives for Claude's native build, wherever it says so
+    expect(warning).toContain(NATIVE_INSTALL.claude); // the one command Sqwakie gives for Claude's native build, wherever it says so
     expect(warning).toContain("walkie seats setup-user --apply");
     expect(warning).not.toContain("seats enable");
     expect(warning).not.toMatch(/codex/);
     expect(warning).not.toContain("install it where the seat users can run it");
   });
 
-  // nativeRuntime stops at the first claude on PATH that isn't Walkie's shim (test/unit/seat-user-native.test.ts: a script before the
+  // nativeRuntime stops at the first claude on PATH that isn't Sqwakie's shim (test/unit/seat-user-native.test.ts: a script before the
   // native one means none), so the standalone build is not found until a shell has it on PATH and an older npm launcher is not first.
   test("claude: a new terminal, and an older npm claude that comes first on PATH has to go", () => {
     const warning = plan({ runtimes: { claude: null, codex: "/opt/codex" } }).warnings.join("\n");

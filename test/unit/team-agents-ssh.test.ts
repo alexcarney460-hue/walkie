@@ -71,8 +71,8 @@ function ctxOf(argv: string[]): Ctx & { lines: string[] } {
 const ready: SshStatus = { owner_key_present: true, tunnel_allowed: true, reason: null, server: { enabled: true, detail: "up" } };
 
 /**
- * The seams of the step, recorded in the order they are called. A Linux machine here has Walkie's own SSH unit unless a test
- * says otherwise (`walkieUnit: false`): a server answering on 22 is then Walkie's, and it is the stock-sshd case that needs saying.
+ * The seams of the step, recorded in the order they are called. A Linux machine here has Sqwakie's own SSH unit unless a test
+ * says otherwise (`walkieUnit: false`): a server answering on 22 is then Sqwakie's, and it is the stock-sshd case that needs saying.
  */
 function seams(over: { platform?: NodeJS.Platform; markerPresent?: boolean; statuses?: SshStatus[]; batch?: Partial<RootBatchResult>; answers?: string[]; order?: string[]; walkieUnit?: boolean; walkieActive?: boolean | (() => boolean);
   /** Every status read comes from here instead of `statuses`. */ read?: () => Promise<SshStatus>;
@@ -115,7 +115,7 @@ describe("the packet rides in the one consent", () => {
     const ctx = ctxOf(["--company-machine", "--invite", e.invite, "--owner-ssh", e.encoded]);
     expect(await teamAgentsStep(ctx, dm.client(), s.d, () => undefined)).toBe("allowed");
     const text = consentText("alex", ["@alex"], 4, [profile], undefined, e.packet);
-    expect(text).toContain("over SSH as your user, through Walkie");
+    expect(text).toContain("over SSH as your user, through Sqwakie");
     expect(companyConsentText("alex", ["@alex"], 4, e.packet)).toBe(text);
     expect(s.calls.asked).toEqual([`${text} (type yes/N)`]); // one question, no second consent screen
     const grants = dm.posts("/v1/provision/grant");
@@ -274,9 +274,9 @@ describe("the daemon checks the packet before the question and before any root w
   });
 });
 
-describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 (Linux and WSL; final review A, MEDIUM)", () => {
+describe("an SSH server that is not Sqwakie's already answers on 127.0.0.1:22 (Linux and WSL; final review A, MEDIUM)", () => {
   const argv = (e: ReturnType<typeof fixture>) => ["--company-machine", "--invite", e.invite, "--owner-ssh", e.encoded];
-  const WHY = "This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off";
+  const WHY = "This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off";
   const servers: Array<{ stop(force?: boolean): void }> = [];
   afterEach(() => { for (const x of servers) x.stop(true); servers.length = 0; });
   /** A loopback listener standing in for a stock sshd on port 22 (22 is privileged here); the daemon's own Linux probe reads it. */
@@ -310,7 +310,7 @@ describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 (Li
     expect(text).not.toContain("owner SSH is ready");
     for (const secret of [e.encoded, e.packet.signature, e.packet.public_key]) expect(text).not.toContain(secret);
   });
-  test("an installed Walkie unit that is not running does not vouch for what answers: the same refusal", async () => {
+  test("an installed Sqwakie unit that is not running does not vouch for what answers: the same refusal", async () => {
     const e = fixture();
     const dm = up();
     const s = seams({ walkieUnit: true, walkieActive: false, statuses: [ready] });
@@ -320,7 +320,7 @@ describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 (Li
     expect(dm.posts("/v1/provision/grant")[0]!.body).not.toHaveProperty("owner_ssh");
     expect(s.calls.ssh).toEqual([]);
   });
-  test("Walkie's own service answering (its unit installed and running) is used as before: the packet rides in the consent and SSH is reported from the status", async () => {
+  test("Sqwakie's own service answering (its unit installed and running) is used as before: the packet rides in the consent and SSH is reported from the status", async () => {
     const e = fixture();
     const dm = up();
     const s = seams({ walkieUnit: true, walkieActive: true, statuses: [ready] });
@@ -330,7 +330,7 @@ describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 (Li
     expect(dm.posts("/v1/provision/grant")[0]!.body).toHaveProperty("owner_ssh", e.packet);
     expect(s.calls.ssh).toEqual([{ state: "ready" }]);
   });
-  test("nothing answering on 22: the install proceeds as before (the batch installs Walkie's service)", async () => {
+  test("nothing answering on 22: the install proceeds as before (the batch installs Sqwakie's service)", async () => {
     const e = fixture();
     const noServer: SshStatus = { ...ready, server: { enabled: false, detail: "no SSH server on 127.0.0.1" } };
     const s = seams({ walkieUnit: false, statuses: [noServer, noServer, noServer, ready] }); // looked at before the question, again after the yes, again by the batch, then the wait
@@ -349,7 +349,7 @@ describe("an SSH server that is not Walkie's already answers on 127.0.0.1:22 (Li
     expect(ctx.lines.join("\n")).not.toContain("already runs its own SSH server");
     expect(dm.posts("/v1/provision/grant")[0]!.body).toHaveProperty("owner_ssh", e.packet);
   });
-  test("macOS never reads this as foreign: Walkie's own service is on 22022, and no Walkie unit exists there", async () => {
+  test("macOS never reads this as foreign: Sqwakie's own service is on 22022, and no Sqwakie unit exists there", async () => {
     const e = fixture();
     const dm = up();
     const s = seams({ platform: "darwin", walkieUnit: false, statuses: [ready] });
@@ -386,7 +386,7 @@ describe("a stock sshd that starts answering after the first look (final review 
     // The question was asked with SSH in it (nothing answered yet) and the person typed yes to that.
     expect(s.calls.asked).toEqual([`${companyConsentText("alex", ["@alex"], 4, e.packet)} (type yes/N)`]);
     const text = ctx.lines.join("\n");
-    expect(text).toContain("This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent recorded leaves SSH out, though the one shown above included it.");
+    expect(text).toContain("This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent recorded leaves SSH out, though the one shown above included it.");
     expect(text).toContain(FOREIGN_SSH_AFTER_CONSENT);
     expect(s.calls.batches).toEqual([{ marker: true, sshLinux: false, sshMacos: false }]); // the marker only: no SSH service is installed for it
     const grants = dm.posts("/v1/provision/grant");
@@ -410,7 +410,7 @@ describe("a stock sshd that starts answering after the first look (final review 
     expect(ctx.lines.join("\n")).not.toContain("already runs its own SSH server");
     expect(dm.posts("/v1/provision/grant")).toEqual([]);
   });
-  test("Walkie's own service answering at both looks keeps the packet", async () => {
+  test("Sqwakie's own service answering at both looks keeps the packet", async () => {
     const e = fixture();
     const dm = up();
     const s = seams({ walkieUnit: true, statuses: [ready] });
@@ -420,8 +420,8 @@ describe("a stock sshd that starts answering after the first look (final review 
     expect(dm.posts("/v1/provision/grant")[0]!.body).toHaveProperty("owner_ssh", e.packet);
     expect(s.calls.ssh).toEqual([{ state: "ready" }]);
   });
-  test("the administrator step skips the install only for WALKIE's service: a server that answers but is not Walkie's at that moment never counts", async () => {
-    // Walkie's service is running at both looks and is not when the step reads again (while something else still answers on 22).
+  test("the administrator step skips the install only for WALKIE's service: a server that answers but is not Sqwakie's at that moment never counts", async () => {
+    // Sqwakie's service is running at both looks and is not when the step reads again (while something else still answers on 22).
     const e = fixture();
     const dm = up();
     let asked = 0;
@@ -443,16 +443,16 @@ describe("the one root batch", () => {
     const e = fixture();
     const order: string[] = [];
     const dm = up({ order });
-    const s = seams({ order, statuses: [noServer, noServer, noServer, ready] }); // Linux reads the status before the question and again after the yes (a server that is not Walkie's?), again for the batch, then for the wait
+    const s = seams({ order, statuses: [noServer, noServer, noServer, ready] }); // Linux reads the status before the question and again after the yes (a server that is not Sqwakie's?), again for the batch, then for the wait
     const ctx = ctxOf(argv(e));
     expect(await teamAgentsStep(ctx, dm.client(), s.d, () => undefined)).toBe("allowed");
     expect(s.calls.batches).toEqual([{ marker: true, sshLinux: true, sshMacos: false }]);
     expect(order.slice(0, 4)).toEqual(["POST /v1/provision/check", "ask", "root batch", "POST /v1/provision/grant"]);
     expect(order.filter((x) => x === "root batch")).toHaveLength(1);
     expect(s.calls.sudo).toBe(0);
-    expect(ctx.lines.join("\n")).toContain("one administrator step (sudo asks for your password once): the root-owned company-machine marker, then Walkie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)");
+    expect(ctx.lines.join("\n")).toContain("one administrator step (sudo asks for your password once): the root-owned company-machine marker, then Sqwakie's SSH service for the owner's key (it listens only on this machine and accepts only key logins)");
   });
-  test("Linux with Walkie's own SSH service already answering, or the marker already there: the batch asks for only what is missing", async () => {
+  test("Linux with Sqwakie's own SSH service already answering, or the marker already there: the batch asks for only what is missing", async () => {
     const e = fixture();
     const answering = seams({ statuses: [ready] });
     await teamAgentsStep(ctxOf(argv(e)), up().client(), answering.d, () => undefined);
@@ -464,11 +464,11 @@ describe("the one root batch", () => {
     await teamAgentsStep(ctxOf(argv(e)), up().client(), nothing.d, () => undefined);
     expect(nothing.calls.batches).toEqual([]); // no sudo at all
   });
-  test("macOS: the SAME one batch installs the marker and Walkie's own SSH service (never Remote Login), before the grant; nothing is opened afterwards", async () => {
+  test("macOS: the SAME one batch installs the marker and Sqwakie's own SSH service (never Remote Login), before the grant; nothing is opened afterwards", async () => {
     const e = fixture();
     const order: string[] = [];
     const dm = up({ order });
-    const off: SshStatus = { ...ready, server: { enabled: false, detail: "Walkie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } };
+    const off: SshStatus = { ...ready, server: { enabled: false, detail: "Sqwakie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } };
     const s = seams({ platform: "darwin", order, statuses: [off, ready] });
     const ctx = ctxOf(argv(e));
     expect(await teamAgentsStep(ctx, dm.client(), s.d, () => undefined)).toBe("allowed");
@@ -476,11 +476,11 @@ describe("the one root batch", () => {
     expect(order).toEqual(["POST /v1/provision/check", "ask", "root batch", "POST /v1/provision/grant", "POST /v1/seats/config"]);
     expect(s.calls.ssh).toEqual([{ state: "ready" }]);
     const out = ctx.lines.join("\n");
-    expect(out).toContain("Walkie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)");
+    expect(out).toContain("Sqwakie's SSH service for the owner's key (it listens only on this Mac and accepts only key logins; Remote Login is not used)");
     expect(out).not.toContain("System Settings");
     expect(out.split("\n").filter((l) => l.includes("Remote Login")).every((l) => l.includes("Remote Login is not used"))).toBe(true);
   });
-  test("macOS with Walkie's service already answering needs only the marker", async () => {
+  test("macOS with Sqwakie's service already answering needs only the marker", async () => {
     const e = fixture();
     const s = seams({ platform: "darwin", statuses: [ready] });
     await teamAgentsStep(ctxOf(argv(e)), up().client(), s.d, () => undefined);
@@ -488,7 +488,7 @@ describe("the one root batch", () => {
   });
   test("macOS: a service that never answers is a failed enrollment with the reason and the fix, never ready and never 'pending'", async () => {
     const e = fixture();
-    const off: SshStatus = { ...ready, server: { enabled: false, detail: "Walkie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } };
+    const off: SshStatus = { ...ready, server: { enabled: false, detail: "Sqwakie's SSH service is not running (nothing listens on 127.0.0.1:22022)" } };
     const s = seams({ platform: "darwin", statuses: [off] });
     const ctx = ctxOf(argv(e));
     expect(await teamAgentsStep(ctx, up().client(), s.d, () => undefined)).toBe("allowed");
@@ -596,7 +596,7 @@ describe("after the grant", () => {
   test("a root marker problem shows the daemon's own message, for a seats-only link too, never the stale 'grant is pending' line", async () => {
     const e = fixture();
     for (const [code, message] of [
-      ["root_marker_invalid", "the root-owned enrollment marker /var/lib/walkie/enrolled-x.json is not what Walkie installed (mode): have an administrator fix or remove it, then run the same command again"],
+      ["root_marker_invalid", "the root-owned enrollment marker /var/lib/walkie/enrolled-x.json is not what Sqwakie installed (mode): have an administrator fix or remove it, then run the same command again"],
       ["root_marker_required", "this machine's root-owned enrollment marker is missing: run the enrollment's administrator step, then run the same command again"],
     ] as const) {
       for (const argvFor of [argv(e), ["--company-machine", "--invite", e.invite]]) {

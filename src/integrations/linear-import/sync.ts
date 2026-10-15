@@ -6,7 +6,7 @@ import type { ColumnRole } from "../../protocol/projects/schema.ts";
 
 export interface Fields {
   title: string;
-  /** Column role; a Walkie card archived outside a done column counts as "cancelled" (how the team skips work). */
+  /** Column role; a Sqwakie card archived outside a done column counts as "cancelled" (how the team skips work). */
   place: ColumnRole;
   labels: string[];
   estimate: number | null;
@@ -69,7 +69,7 @@ export function decide(o: { snap: Snap | null; linear: Fields; linearAt: number;
     conflicts.push({ field: f, linear: show(lv), walkie: show(wv), winner });
     if (winner === "linear") writeWalkie();
     else if (f === "place" && o.twoWay) writeLinear();
-    // one-way and Walkie won: the card keeps its value; the snap records it as agreed so it isn't noted again
+    // one-way and Sqwakie won: the card keeps its value; the snap records it as agreed so it isn't noted again
   }
   return { toWalkie, toLinear, conflicts, next: { l: nl as unknown as Fields, w: nw as unknown as Fields } };
 }
@@ -77,6 +77,6 @@ export function decide(o: { snap: Snap | null; linear: Fields; linearAt: number;
 /** The note a conflict leaves on the card. */
 export function conflictNote(key: string, conflicts: readonly Conflict[], at: { linear: number; walkie: number }): string {
   const when = (t: number) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
-  return `Linear sync: ${key} changed on both sides (Linear ${when(at.linear)} UTC, Walkie ${when(at.walkie)} UTC); the latest change wins.\n` +
-    conflicts.map((c) => `- ${c.field}: Linear "${c.linear}", Walkie "${c.walkie}" → kept ${c.winner === "linear" ? "Linear's" : "Walkie's"}`).join("\n");
+  return `Linear sync: ${key} changed on both sides (Linear ${when(at.linear)} UTC, Sqwakie ${when(at.walkie)} UTC); the latest change wins.\n` +
+    conflicts.map((c) => `- ${c.field}: Linear "${c.linear}", Sqwakie "${c.walkie}" → kept ${c.winner === "linear" ? "Linear's" : "Sqwakie's"}`).join("\n");
 }

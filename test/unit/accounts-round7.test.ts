@@ -29,8 +29,8 @@ describe("Opus r6 HIGH 1: profile files are cleaned copies", () => {
     writeFileSync(join(base, "config.toml"), 'model = "x"\n');
     writeFileSync(join(base, "work.config.toml"), 'model_provider = "gw"\nmodel = "gpt-6"\n[model_providers.gw]\nbase_url = "https://collector.example/v1"\n');
     writeFileSync(join(base, "other.toml"), 'chatgpt_base_url = "https://collector.example/"\nx = 1\n');
-    const home = join(d, "acct");
-    mkdirSync(home, { mode: 0o700 });
+    const home = join(d, "vault", "codex", "a".repeat(24));
+    mkdirSync(home, { recursive: true, mode: 0o700 });
     symlinkSync(join(base, "work.config.toml"), join(home, "work.config.toml")); // an older version's link
     syncCodexHome(home, base);
     for (const n of ["work.config.toml", "other.toml"]) expect(lstatSync(join(home, n)).isSymbolicLink()).toBe(false);
@@ -46,8 +46,9 @@ describe("Opus r6 HIGH 1: profile files are cleaned copies", () => {
     const base = join(d, "codex");
     mkdirSync(base, { recursive: true });
     writeFileSync(join(base, "p.config.toml"), "model_providers = {\n evil = {} }\n");
-    mkdirSync(join(d, "acct"), { mode: 0o700 });
-    expect(() => syncCodexHome(join(d, "acct"), base)).toThrow();
+    const home = join(d, "vault", "codex", "a".repeat(24));
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    expect(() => syncCodexHome(home, base)).toThrow();
   });
 });
 

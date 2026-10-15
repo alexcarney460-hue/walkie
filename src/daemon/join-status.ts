@@ -1,12 +1,12 @@
 // JOIN-STATUS-1 (WALK-50 "Doctor, recovery"): once this machine is admitted to a team, one plain status posted to
-// #general as `walkie-admin` — this machine's Walkie version, its seat capacity, and whether Claude Code / Codex
+// #general as `walkie-admin` — this machine's Sqwakie version, its seat capacity, and whether Claude Code / Codex
 // are ready to run seats here. The seats doctor (seats/doctor.ts) supplies the Claude/Codex facts; a few cheap
 // local checks (borrowed from `walkie doctor`'s own: socket/key permissions, DB integrity) stand in for "basic
 // health" — no HTTP round trip, no subprocess beyond what the seats doctor itself may run.
 //
 // A fresh join often outraces the team's #general channel being synced here, so posting is retried on every
 // roster change (JoinStatusReporter.rosterChanged, called from core.onRosterChange like every other subsystem
-// that follows the roster) until it succeeds. A marker file in the Walkie home, written only after a confirmed
+// that follows the roster) until it succeeds. A marker file in the Sqwakie home, written only after a confirmed
 // post, then makes it post at most once per admission: a crash between posting and marking, or this node
 // re-joining to re-pin its own IP (join.ts `adopt`, called again for an already-admitted node), never doubles it.
 import { Database } from "bun:sqlite";
@@ -73,9 +73,9 @@ export interface JoinStatusFacts {
   health: HealthFact;
 }
 
-/** "Ready: @handle's machine, Walkie x.y.z, seats n/max, Claude/Codex ready", or a partial status naming what isn't. */
+/** "Ready: @handle's machine, Sqwakie x.y.z, seats n/max, Claude/Codex ready", or a partial status naming what isn't. */
 export function joinStatusText(f: JoinStatusFacts): string {
-  const base = `@${f.handle}'s ${f.machine}, Walkie ${f.version}, seats ${f.seats.running}/${f.seats.max}`;
+  const base = `@${f.handle}'s ${f.machine}, Sqwakie ${f.version}, seats ${f.seats.running}/${f.seats.max}`;
   const problems: string[] = [];
   if (f.disabled_reason) problems.push(`seats unavailable: ${f.disabled_reason}`);
   if (!f.health.ok) problems.push(f.health.why ?? "a local health check failed");

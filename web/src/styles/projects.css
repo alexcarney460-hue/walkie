@@ -59,6 +59,9 @@
 .project-report-switch .toggle-row { gap: 8px; color: var(--text-2); white-space: nowrap; }
 .project-report-switch input[aria-disabled="true"] { opacity: 0.55; cursor: progress; }
 .project-report-marker { color: var(--signal); border-color: var(--signal-line); white-space: nowrap; }
+.project-report-off { color: var(--text-3); }
+.project-report-readonly { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 6px; font-size: var(--fs-12); }
+.project-report-reason { max-width: 220px; }
 .project-row {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr) auto minmax(150px, 220px) 64px;
@@ -472,6 +475,7 @@
   .room, .pboard-notice, .status-report, .spage { margin-right: 16px; }
   .project-item { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .project-report, .project-report-switch { justify-items: start; padding: 0 4px 6px; }
+  .project-report-readonly { justify-content: flex-start; }
   .room-meta-note { display: none; }
   .room-row-actions { width: auto; padding-top: 6px !important; text-align: left; }
   .room-history-row td { padding: 4px 0 8px !important; }

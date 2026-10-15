@@ -48,7 +48,7 @@ export async function provision(ctx: Ctx): Promise<number> {
     const changed = rootUnenrollProblem(home, Number(process.env.SUDO_UID), process.geteuid?.(), process.stdin.isTTY === true);
     if (changed) throw new UsageError(changed);
     removeRootMarker(home);
-    // macOS: Walkie's own SSH service goes in this same administrator step. A failure to remove it is said, but does not
+    // macOS: Sqwakie's own SSH service goes in this same administrator step. A failure to remove it is said, but does not
     // undo the un-enrollment: with the grant revoked it holds no owner key.
     const said = unenrollMacService(process.platform, () => removeMacSshService(undefined, Number(process.env.SUDO_UID)));
     if (said) ctx.err(said);
@@ -100,7 +100,7 @@ export interface GrantCliSeams {
   tty?: boolean;
   /** Asks the question and returns what was typed. */
   type?(question: string): Promise<string>;
-  /** The one administrator step (root marker, and Walkie's SSH service when the link carries owner SSH). */
+  /** The one administrator step (root marker, and Sqwakie's SSH service when the link carries owner SSH). */
   root?: RootBatchDeps;
   /** The SSH status, the unit hints and the wait: where "is an SSH server answering" and "is it ready" come from. */
   ssh?: SshStepDeps;
@@ -138,7 +138,7 @@ export async function grantFromCli(ctx: Ctx, seams: GrantCliSeams = {}): Promise
   }
   const worker_accounts = claude || codex ? { ...(claude ? { claude } : {}), ...(codex ? { codex } : {}) } : undefined;
   const ssh = seams.ssh ?? realSshStepDeps(ctx.client());
-  // Linux and WSL: an SSH server that is not Walkie's already answers on 22. Walkie does not use it: owner SSH stays off in
+  // Linux and WSL: an SSH server that is not Sqwakie's already answers on 22. Sqwakie does not use it: owner SSH stays off in
   // this release, said now, and the disclosure, the grant and the administrator step all leave SSH out.
   const owner_ssh = await ownerSshUnlessForeign(flag("owner-ssh") ? readPacket(flag("owner-ssh") as string) : undefined, ssh, (line) => ctx.err(c.yellow(line)), FOREIGN_SSH_NOTE);
   // Before the question and any administrator step: would this machine's daemon accept the packet? (Nothing is spent.)
@@ -223,22 +223,22 @@ export async function rootMarkerHelper(pos: readonly string[], d: RootHelperDeps
   return EXIT.ok;
 }
 
-/** Said before the un-enroll's sudo: on macOS with Walkie's SSH service installed, it goes in the same administrator step. */
+/** Said before the un-enroll's sudo: on macOS with Sqwakie's SSH service installed, it goes in the same administrator step. */
 export function unenrollServiceNote(platform: NodeJS.Platform, installed: boolean): string | null {
   return platform === "darwin" && installed
-    ? "this also removes Walkie's SSH service (dev.walkie.sshd) and its files, in the same administrator step" : null;
+    ? "this also removes Sqwakie's SSH service (dev.walkie.sshd) and its files, in the same administrator step" : null;
 }
 
-/** What the un-enroll's root step says after it tried to remove Walkie's macOS SSH service. Null: other platforms, or nothing was installed. */
+/** What the un-enroll's root step says after it tried to remove Sqwakie's macOS SSH service. Null: other platforms, or nothing was installed. */
 export function unenrollMacService(platform: NodeJS.Platform, remove: () => MacSshRemoval): string | null {
   if (platform !== "darwin") return null;
   const result = remove();
-  if (result.kept) return `Walkie's SSH service (dev.walkie.sshd) was left in place: ${result.kept}`;
+  if (result.kept) return `Sqwakie's SSH service (dev.walkie.sshd) was left in place: ${result.kept}`;
   if (result.why) {
-    return `Walkie's SSH service (dev.walkie.sshd) could not be removed: ${result.why}. It holds no owner key now; to remove it by hand: `
+    return `Sqwakie's SSH service (dev.walkie.sshd) could not be removed: ${result.why}. It holds no owner key now; to remove it by hand: `
       + `sudo launchctl bootout system/${MAC_SSH_LABEL}; sudo rm ${MAC_SSH_PLIST}; sudo rm -r '${MAC_SSH_DIR}'`;
   }
-  return result.removed ? "removed Walkie's SSH service (dev.walkie.sshd) and its files" : null;
+  return result.removed ? "removed Sqwakie's SSH service (dev.walkie.sshd) and its files" : null;
 }
 
 /** The privileged boundary, checked independently of the outer CLI's prompt. */

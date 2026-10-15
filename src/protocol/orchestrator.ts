@@ -10,14 +10,14 @@ export const ORCHESTRATOR_AGENT = "orchestrator";
  * ORCH-2: what people see it called. The agent name ("orchestrator", reserved), the API routes (/v1/orchestrator/*)
  * and the stored data keep their names, so older peers and existing data keep working.
  */
-export const ORCHESTRATOR_DISPLAY = "WalkieTalkie";
-/** The name shown for an agent: WalkieTalkie for the orchestrator, else its own name. */
+export const ORCHESTRATOR_DISPLAY = "Talkie";
+/** The name shown for an agent: Talkie for the orchestrator, else its own name. */
 export function agentDisplayName(agent: string): string {
   return agent === ORCHESTRATOR_AGENT ? ORCHESTRATOR_DISPLAY : agent;
 }
 /**
  * The host's own Claude proves it is the orchestrator with a per-run secret (ORCH-FIX-13): the host puts it in its
- * child's environment only, the Walkie client sends it with `X-Walkie-Agent: orchestrator`, and the daemon accepts a
+ * child's environment only, the Sqwakie client sends it with `X-Walkie-Agent: orchestrator`, and the daemon accepts a
  * write under that name only with the live child's secret (anyone else writing as `orchestrator` is refused).
  */
 export const ORCHESTRATOR_TOKEN_ENV = "WALKIE_ORCHESTRATOR_TOKEN";
@@ -36,8 +36,8 @@ export const PERMISSION_MODES: readonly PermissionMode[] = ["default", "acceptEd
 
 /**
  * What the orchestrator's Claude may do without asking (ORCH-2). It runs with nobody to answer a permission prompt, so
- * without an allow-list every tool that needs approval is denied, the Walkie tools included. `platform` (the default):
- * the Walkie MCP tools and the `walkie` CLI are always allowed, other tools follow the permission mode; `full`: every
+ * without an allow-list every tool that needs approval is denied, the Sqwakie tools included. `platform` (the default):
+ * the Sqwakie MCP tools and the `walkie` CLI are always allowed, other tools follow the permission mode; `full`: every
  * tool is allowed (Claude's bypassPermissions), for a person who wants it to act on the whole machine for them.
  */
 export type OrchestratorAccess = "platform" | "full";
@@ -101,7 +101,7 @@ export interface OrchestratorView {
     auto?: boolean;
     /** Stopped by hand (sticky until started again by hand). */
     stopped_by_hand?: boolean;
-    /** The machine that runs the team's WalkieTalkie (while this one stands by). */
+    /** The machine that runs the team's Talkie (while this one stands by). */
     lead?: string;
     /** Providers with a model login on this machine (names only). */
     logins?: string[];

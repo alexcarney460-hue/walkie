@@ -104,11 +104,11 @@ describe("local: an agent does its person's admin, audited", () => {
     const entries = () => readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { action: string; refused?: string; via: string });
     const posts = async () => (await auditPosts(alex)).length;
     const before = await posts();
-    await marked(alex).adminAudit("installed the Walkie hooks for grok (probe: done)");
-    expect(entries().find((e) => e.action === "installed the Walkie hooks for grok (probe: done)")).not.toHaveProperty("refused");
+    await marked(alex).adminAudit("installed the Sqwakie hooks for grok (probe: done)");
+    expect(entries().find((e) => e.action === "installed the Sqwakie hooks for grok (probe: done)")).not.toHaveProperty("refused");
     expect(await posts()).toBe(before + 1); // posted to #general like any admin action
-    await marked(alex).adminAudit("tried to install the Walkie hooks for grok (probe: failed)", "failed: ~/.claude/settings.json is not valid JSON; no changes made");
-    expect(entries().find((e) => e.action === "tried to install the Walkie hooks for grok (probe: failed)")).toMatchObject({ refused: "failed: ~/.claude/settings.json is not valid JSON; no changes made", via: "local" });
+    await marked(alex).adminAudit("tried to install the Sqwakie hooks for grok (probe: failed)", "failed: ~/.claude/settings.json is not valid JSON; no changes made");
+    expect(entries().find((e) => e.action === "tried to install the Sqwakie hooks for grok (probe: failed)")).toMatchObject({ refused: "failed: ~/.claude/settings.json is not valid JSON; no changes made", via: "local" });
     expect(await posts()).toBe(before + 1); // a refusal is never posted
     // A person's request is not recorded at all; an unknown field is refused (the body is strict); an empty reason is not a reason.
     expect(await alex.client().adminAudit("probe: a person", "failed: x")).toEqual({ recorded: false });
@@ -260,7 +260,7 @@ describe("the upgrade notice", () => {
     kira.spec.adminNotice = true;
     await kira.start();
     await kira.restart(); // the second start posts nothing more
-    const notices = (await auditPosts(kira)).filter((p) => p.text.includes("Walkie update:") && p.text.includes("kiras-mbp"));
+    const notices = (await auditPosts(kira)).filter((p) => p.text.includes("Sqwakie update:") && p.text.includes("kiras-mbp"));
     expect(notices.length).toBe(1);
     expect(notices[0]?.mentions).toEqual(["@kira"]);
     expect(existsSync(join(kira.home, "admin-notice-v1"))).toBe(true);

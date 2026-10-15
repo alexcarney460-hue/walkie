@@ -10,7 +10,7 @@ const fixture = (swapUsed: number, swapTotal: number | undefined, pressure: "nor
 });
 
 test("doctor warns at more than 80% swap or critical pressure, using fixture machine stats", () => {
-  expect(memoryCheck(fixture(8.1 * GiB, 10 * GiB))?.detail).toBe("this machine is low on memory and swapping; Walkie may stall: close idle apps or agents");
+  expect(memoryCheck(fixture(8.1 * GiB, 10 * GiB))?.detail).toBe("this machine is low on memory and swapping; Sqwakie may stall: close idle apps or agents");
   expect(memoryCheck(fixture(8 * GiB, 10 * GiB))).toBeNull();
   expect(memoryCheck(fixture(1 * GiB, undefined, "critical"))?.level).toBe("warn");
   expect(memoryCheck(fixture(8 * GiB, undefined))).toBeNull();

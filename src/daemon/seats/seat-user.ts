@@ -7,6 +7,7 @@ import { accessSync, chmodSync, constants, lstatSync, mkdirSync, readdirSync, rm
 import { dirname, join } from "node:path";
 import { RELEASE_BUILD } from "../../license/service.ts";
 import { SEATS_GROUP } from "./admin.ts";
+import { FCRON_FILES, fcronConfigProblem, fcronDenied } from "./fcron-policy.ts";
 
 /** A root-owned directory holding the root-owned runner copy and the seat users' runtimes. */
 export const RUNNER_DIR = "/usr/local/libexec/walkie";
@@ -161,17 +162,23 @@ export function listAcl(path: string): string | null {
 
 // ---- schedulers (Codex r4 HIGH 1) ---------------------------------------------------------------------------------
 
-export const SCHEDULER_FILES: Record<"darwin" | "linux", { cron: [string, string]; at: [string, string] }> = {
+export type SchedulerFiles = { cron: [string, string]; at: [string, string]; fcron?: [string, string] };
+export const SCHEDULER_FILES: Record<"darwin" | "linux", SchedulerFiles> = {
   darwin: { cron: ["/usr/lib/cron/cron.allow", "/usr/lib/cron/cron.deny"], at: ["/usr/lib/cron/at.allow", "/usr/lib/cron/at.deny"] },
-  linux: { cron: ["/etc/cron.allow", "/etc/cron.deny"], at: ["/etc/at.allow", "/etc/at.deny"] },
+  linux: { cron: ["/etc/cron.allow", "/etc/cron.deny"], at: ["/etc/at.allow", "/etc/at.deny"], fcron: FCRON_FILES },
 };
 
 /**
- * Why a seat user could register work with cron or at (which would run after its seat was reaped), or null. Denied
- * means: an allow file exists and doesn't list it, or there is none and the deny file lists it. `read` returns a
+ * Why a seat user could register work with a scheduler, or null. For cron/at, denied
+ * means: an allow file exists and doesn't list it, or there is none and the deny file lists it. fcron has its own
+ * first-match rules (see fcron-policy.ts). `read` returns a
  * file's text, null when it doesn't exist, and throws when it can't be read (fail closed).
  */
-export function schedulerProblem(users: readonly string[], files: { cron: [string, string]; at: [string, string] }, read: (p: string) => string | null): string | null {
+export function schedulerProblem(users: readonly string[], files: SchedulerFiles, read: (p: string) => string | null): string | null {
+  if (files.fcron) {
+    try { const why = fcronConfigProblem(read("/etc/fcron.conf")); if (why) return why; }
+    catch { return "can't read fcron's configuration"; }
+  }
   for (const [service, [allowPath, denyPath]] of Object.entries(files) as Array<[string, [string, string]]>) {
     let allow: string | null;
     let deny: string | null;
@@ -182,6 +189,11 @@ export function schedulerProblem(users: readonly string[], files: { cron: [strin
     const ambiguous = (text: string | null, u: string) => lines(text).some((l) => l !== u && l.trim() === u);
     const listed = (text: string | null, u: string) => lines(text).includes(u);
     for (const u of users) {
+      if (service === "fcron") {
+        try { if (fcronDenied(u, allow, deny)) continue; }
+        catch { return "can't verify fcron's allow/deny files"; }
+        return `${u} may schedule jobs with fcron: deny it explicitly before any all entry in ${denyPath}`;
+      }
       if (ambiguous(allow, u) || ambiguous(deny, u)) return `${service}'s allow/deny files list ${u} with extra spaces or a CR: fix the entry (exactly "${u}")`;
       const denied = allow !== null ? !listed(allow, u) : listed(deny, u);
       if (!denied) return `${u} may schedule jobs with ${service}, which would run after its seat ended: list it in ${denyPath} (walkie seats setup-user --apply does)`;
@@ -357,7 +369,7 @@ function runtimeWarning(name: string, codexReleaseTried: boolean): string {
 /** The sudoers file for `daemonUser`; `requiretty` false leaves out the two lines sudo-rs refuses. */
 function seatSudoers(daemonUser: string, requiretty: boolean): string {
   return [
-    `# Walkie (walkie seats setup-user): ${daemonUser}'s daemon may make a fresh user for each seat, run the seat as it, and destroy it.`,
+    `# Sqwakie (walkie seats setup-user): ${daemonUser}'s daemon may make a fresh user for each seat, run the seat as it, and destroy it.`,
     `Cmnd_Alias WALKIE_TALKIE_REPAIR = ${DEFAULT_ADMIN} seat-admin talkie-repair *`,
     // The command-specific default discards a cached sudo timestamp even for a direct helper invocation.
     "Defaults!WALKIE_TALKIE_REPAIR timestamp_timeout=0",
@@ -410,9 +422,9 @@ export function seatUserPlan(o: {
   /** A file holding the daemon user's name: installed as SEAT_OWNER_FILE (one person per machine). */
   ownerTmp?: string;
   /**
-   * WALK-103: a file holding the record of the Walkie these seat users are set up for (instance.ts
+   * WALK-103: a file holding the record of the Sqwakie these seat users are set up for (instance.ts
    * seatRegistrationText), installed root-owned as SEAT_INSTANCE_FILE before the helper copy; `instanceHome` names
-   * that Walkie's home in the plan.
+   * that Sqwakie's home in the plan.
    */
   instanceTmp?: string;
   instanceHome?: string;
@@ -438,9 +450,9 @@ export function seatUserPlan(o: {
     { what: "owned by root", argv: ["chown", "-R", `root:${rootGroup}`, RUNNER_DIR], sudo: true },
     { what: "writable by root only", argv: ["chmod", "755", RUNNER_DIR, RUNTIMES_DIR], sudo: true },
   );
-  // Before the helper copy: a helper of this version lists, makes and removes seat users only for the recorded Walkie.
+  // Before the helper copy: a helper of this version lists, makes and removes seat users only for the recorded Sqwakie.
   if (o.instanceTmp) {
-    steps.push({ what: `which Walkie owns this machine's seat users (${o.instanceHome ?? "this one"}): the helper lists, makes and removes them for it only`,
+    steps.push({ what: `which Sqwakie owns this machine's seat users (${o.instanceHome ?? "this one"}): the helper lists, makes and removes them for it only`,
       argv: ["install", "-m", "0644", "-o", "root", "-g", rootGroup, o.instanceTmp, SEAT_INSTANCE_FILE], sudo: true });
   }
   steps.push(
@@ -472,7 +484,7 @@ export function seatUserPlan(o: {
     { what: "install the sudo rules", argv: ["install", "-m", "0440", "-o", "root", "-g", rootGroup, o.sudoersTmp, sudoersPath], sudo: true },
     { what: "check the installed sudo rules", argv: ["visudo", "-c", "-f", sudoersPath], sudo: true },
     { what: "create or verify the dedicated user lock", argv: [DEFAULT_ADMIN, "seat-admin", "talkie-lock-init"], sudo: true },
-    { what: "keep the Walkie home private", argv: ["chmod", "700", o.walkieHome], sudo: false },
+    { what: "keep the Sqwakie home private", argv: ["chmod", "700", o.walkieHome], sudo: false },
   );
   const warnings: string[] = [];
   for (const name of skippedRuntimes) warnings.push(runtimeWarning(name, o.codexReleaseTried === true));

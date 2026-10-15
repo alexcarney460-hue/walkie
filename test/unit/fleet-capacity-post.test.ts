@@ -55,7 +55,7 @@ function setup() {
     const event = JSON.parse(row.json) as { body?: { text?: string; seat?: unknown }; author?: { agent?: string } };
     return typeof event.body?.text === "string" ? [{ text: event.body.text, agent: event.author?.agent, seat: event.body.seat }] : [];
   });
-  const summaries = () => posts(SCHEDULE_CHANNEL).filter((p) => p.text.startsWith("WalkieTalkie fleet capacity"));
+  const summaries = () => posts(SCHEDULE_CHANNEL).filter((p) => p.text.startsWith("Talkie fleet capacity"));
   return { t, fleet, deps, run, events, posts, summaries };
 }
 
@@ -71,11 +71,11 @@ test("the poll posts the summary when no orchestrator is eligible, and the post 
   expect((r as { skip: string }).skip).toContain(POSTED);
   expect((r as { skip: string }).skip).toContain("1 machine (3 free seats)");
   expect(events()).toBe(before + 2);
-  expect(posts("general").filter((p) => p.text.includes("WalkieTalkie fleet capacity"))).toEqual([]);
+  expect(posts("general").filter((p) => p.text.includes("Talkie fleet capacity"))).toEqual([]);
   const summary = summaries();
   expect(summary).toHaveLength(1);
   expect(summary[0]?.agent).toBeUndefined();
-  expect(summary[0]?.text).toContain("WalkieTalkie fleet capacity:");
+  expect(summary[0]?.text).toContain("Talkie fleet capacity:");
   expect(summary[0]?.text).toContain("mac-a:");
   expect(summary[0]?.text).not.toContain("127.0.0.1");
   expect(summary[0]?.text).not.toContain("maren:claude");
@@ -95,7 +95,7 @@ test("a seat change inside the hour is not posted again, and the same picture is
   const firstRun = await run();
   expect((firstRun as { skip: string }).skip).toContain(POSTED);
   expect(summaries()).toHaveLength(1);
-  expect(posts("general").filter((p) => p.text.includes("WalkieTalkie fleet capacity"))).toEqual([]);
+  expect(posts("general").filter((p) => p.text.includes("Talkie fleet capacity"))).toEqual([]);
   const before = events();
   const first = postsOf(t);
   fleet.hosts = [host({ availability: { state: "available", max: 1, running: 0 } })];
@@ -131,7 +131,7 @@ test("a real change posts once the hour has passed, still with nobody eligible f
   expect((r as { skip: string }).skip).toContain(POSTED);
   const text = summaries().map((p) => p.text).join("\n");
   expect(text).toContain("5 free");
-  expect(posts("general").filter((p) => p.text.includes("WalkieTalkie fleet capacity"))).toEqual([]);
+  expect(posts("general").filter((p) => p.text.includes("Talkie fleet capacity"))).toEqual([]);
 });
 
 test("CPU chatter around the busy line does not post again; dropping clearly below it does", async () => {
@@ -209,7 +209,7 @@ test("a member outside the schedule channel and the host's seats channel receive
     ines.core.ingest(hidden ? stubOf(ev) : ev, "remote");
   }
   const stored = ines.core.store.db.query<{ json: string }, []>("SELECT json FROM events").all().map((row) => row.json).join("\n");
-  expect(stored).not.toContain("WalkieTalkie fleet capacity");
+  expect(stored).not.toContain("Talkie fleet capacity");
   expect(stored).not.toContain("free_slots");
   expect(stored).not.toContain("limited by");
   const stubs = ines.core.store.db.query<{ n: number }, [string]>(
@@ -234,11 +234,11 @@ test("one seat flapping for 24 hours posts at most a few summaries", async () =>
     await run();
     t.tick(SUMMARY_COOLDOWN_MS - 5 * 60_000);
   }
-  const texts = [...summaries(), ...posts("general")].map((p) => p.text).filter((text) => text.startsWith("WalkieTalkie fleet capacity"));
+  const texts = [...summaries(), ...posts("general")].map((p) => p.text).filter((text) => text.startsWith("Talkie fleet capacity"));
   // 3 free (score 100) and 2 free (score 67) are one picture, so the day is a single post.
   expect(texts.length).toBe(1);
   expect(texts.join("\n")).toMatch(/\d free/);
-  expect(posts("general").filter((p) => p.text.includes("WalkieTalkie fleet capacity"))).toEqual([]);
+  expect(posts("general").filter((p) => p.text.includes("Talkie fleet capacity"))).toEqual([]);
 });
 
 test("the posted picture is the newer of the local copy and one prefix-filtered marker query", () => {
@@ -394,10 +394,10 @@ test("a one-seat flap posts at most a few summaries in a day, for the probe and 
           t.tick(5 * 60_000);
         }
       }
-      const n = [...summaries(), ...posts("general")].filter((p) => p.text.startsWith("WalkieTalkie fleet capacity")).length;
+      const n = [...summaries(), ...posts("general")].filter((p) => p.text.startsWith("Talkie fleet capacity")).length;
       expect(n, `${cfg.name} ${pattern}`).toBeGreaterThan(0);
       expect(n, `${cfg.name} ${pattern} posted ${n}`).toBeLessThanOrEqual(3);
-      expect(posts("general").filter((p) => p.text.includes("WalkieTalkie fleet capacity"))).toEqual([]);
+      expect(posts("general").filter((p) => p.text.includes("Talkie fleet capacity"))).toEqual([]);
     }
   }
 }, 120_000);
@@ -410,7 +410,7 @@ test("a host whose seats channel the lead is not on is listed as seats hidden, w
   expect(line).toBe("mac-a: seats hidden");
   expect(line).not.toContain("score");
   expect(line).not.toContain("free");
-  expect(posts("general").filter((p) => p.text.includes("WalkieTalkie fleet capacity"))).toEqual([]);
+  expect(posts("general").filter((p) => p.text.includes("Talkie fleet capacity"))).toEqual([]);
 });
 
 function hostLine(texts: readonly { text: string }[]): string | undefined {
@@ -553,14 +553,14 @@ test("an unreadable newer marker does not make a lead with no local copy post th
   olive.mirror();
   const before = olive.core.store.queryEvents({ channel: SCHEDULE_CHANNEL, kinds: ["msg.post"], limit: 50 }).flatMap((row) => {
     const text = (JSON.parse(row.json) as { body?: { text?: string } }).body?.text;
-    return typeof text === "string" && text.startsWith("WalkieTalkie fleet capacity") ? [text] : [];
+    return typeof text === "string" && text.startsWith("Talkie fleet capacity") ? [text] : [];
   }).length;
   expect(before).toBe(1);
   t.tick(2 * H);
   await prepareOrchestrationPoll({ ...deps, core: olive.core, idx: olive.idx }, () => true);
   const after = olive.core.store.queryEvents({ channel: SCHEDULE_CHANNEL, kinds: ["msg.post"], limit: 50 }).flatMap((row) => {
     const text = (JSON.parse(row.json) as { body?: { text?: string } }).body?.text;
-    return typeof text === "string" && text.startsWith("WalkieTalkie fleet capacity") ? [text] : [];
+    return typeof text === "string" && text.startsWith("Talkie fleet capacity") ? [text] : [];
   }).length;
   expect(after).toBe(before);
 });
@@ -591,7 +591,7 @@ function summariesOn(core: Core): number {
     "SELECT json FROM events WHERE channel = ? AND kind = 'msg.post' AND redacted = 0 AND status = 'ok'").all(SCHEDULE_CHANNEL);
   return rows.flatMap((row) => {
     const text = (JSON.parse(row.json) as { body?: { text?: string } }).body?.text;
-    return typeof text === "string" && text.startsWith("WalkieTalkie fleet capacity") ? [text] : [];
+    return typeof text === "string" && text.startsWith("Talkie fleet capacity") ? [text] : [];
   }).length;
 }
 

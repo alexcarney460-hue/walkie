@@ -184,6 +184,21 @@ test('rejecting an equal-chain legacy proposal does not reject the shared genesi
   expect(await w.store.tx((tx: any) => rejectedHandoverDigest(tx, t.team, root))).toBeNull();
 });
 
+test('a drained bind refusing a conflicting branch still raises the fork alert, through the store-less alert path', async () => {
+  const previous = globalThis.fetch, write = process.stderr.write.bind(process.stderr), lines: string[] = [];
+  globalThis.fetch = (async () => { throw Error('unexpected network request'); }) as unknown as typeof fetch;
+  process.stderr.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  try {
+    const w = C.world(), t = team('rent21-fork-drained'), g = C.generateKeys(), h = C.generateKeys();
+    const kept = step(t.f, g, t.team, 2), candidate = step(t.f, h, t.team, 20);
+    await w.store.tx((tx: any) => tx.setControl(`enrollment-chain:${t.team}`, chainOf(t.team, t.genesis, [kept])));
+    const lic = licenseFixture(w, t.team, ("sub_" + 'RENT21_FORK_DRAIN'), boundTo(t.team, g.pubkey, chainOf(t.team, t.genesis, [kept])), false);
+    expect((await lic.submit(h, t.genesis, [candidate])).status).toBe(403);
+    expect(lines.filter(line => line.startsWith('compute alert_authority_fork '))).toEqual([`compute alert_authority_fork ${JSON.stringify({ team: t.team })}\n`]);
+    expect(await ctl(w, `enrollment-fork:${t.team}`)).toBeUndefined(); // drain still writes no fork controls
+  } finally { globalThis.fetch = previous; process.stderr.write = write; }
+});
+
 test('disabled compute refuses a fork without writing fork controls', async () => {
   const previous = globalThis.fetch;
   globalThis.fetch = (async () => { throw Error('unexpected network request'); }) as unknown as typeof fetch;

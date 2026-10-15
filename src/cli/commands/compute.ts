@@ -6,9 +6,10 @@ import { requireAdmin, adminCtx } from "../admin-gate.ts";
 import { bool, int, str, UsageError } from "../args.ts";
 import { EXIT, type Ctx } from "../context.ts";
 import { ago, c, safeTerm } from "../format.ts";
+import { WalkieError } from "../../client/index.ts";
 import {
-  COMPUTE_ALERT_TEXT, CREDIT_BLOCKS, IDLE_MINUTES_MAX, IDLE_MINUTES_MIN, parseMachineAsks, usd, type CreditBlock, type LocalComputeState,
-  type Quotes, type RentalView, type RentResult,
+  COMPUTE_ALERT_TEXT, CREDIT_BLOCKS, CREDIT_LIFETIME_DAYS, CREDIT_TERMS, expiresInText, expiryText, IDLE_MINUTES_MAX, IDLE_MINUTES_MIN,
+  parseMachineAsks, usd, type CreditBlock, type CreditLot, type LocalComputeState, type Quotes, type RentalView, type RentResult,
 } from "../../protocol/compute.ts";
 
 const USAGE = "walkie compute quotes | rent <tier>[=count] … [--idle <minutes>] [--yes] | list | stop <id|all> [--yes] | credit [buy 50|200|1000] | handover object";
@@ -23,7 +24,15 @@ export function quotesText(q: Quotes): string {
     `${c.bold(t.id.padEnd(9))} ${t.name.padEnd(13)} ${usd(t.price_per_hour_micros).padStart(7)}/h  ${c.dim(`${usd(t.price_per_month_micros)}/month`)}` +
     `${t.min_minutes > 1 ? c.dim(` · ${t.min_minutes}-minute minimum`) : ""}\n` +
     `          ${c.dim(safeTerm(t.specs))}${t.good_for ? `\n          ${c.dim(safeTerm(t.good_for))}` : ""}`);
-  return `${rows.join("\n")}\n${c.dim(egressText(q))}\n${c.dim(`Prepaid credit (${q.credit_blocks.map((b) => `$${b}`).join(" / ")}), used per minute; each machine needs its first hour covered to start. Rent: walkie compute rent agent=2 gpu-20`)}`;
+  if (!q.tiers.length) return c.dim("No machines are for rent right now.");
+  return `${rows.join("\n")}\n${c.dim(egressText(q))}\n${c.dim(`Prepaid credit (${q.credit_blocks.map((b) => `$${b}`).join(" / ")}), used per minute; each machine needs its first hour covered to start. Credit is non-refundable and expires ${CREDIT_LIFETIME_DAYS} days after purchase. ${rentHint(q)}`)}`;
+}
+
+/** The example rent line: a tier the site has on sale (a CPU one when there is one), or why there is none. */
+function rentHint(q: Quotes): string {
+  if (q.available === false) return "Renting is not available right now.";
+  const tier = q.tiers.find((t) => t.gpu === null) ?? q.tiers[0]!;
+  return `Rent: walkie compute rent ${tier.id}=2`;
 }
 
 function rentalLine(r: RentalView): string {
@@ -33,7 +42,13 @@ function rentalLine(r: RentalView): string {
   return `${c.bold(r.id)}  ${safeTerm(r.name).padEnd(20)} ${r.tier.padEnd(9)} ${state}  ${usd(r.price_per_hour_micros)}/h · used ${usd(r.spent_micros)}${c.dim(since)}`;
 }
 
-export function listText(s: LocalComputeState): string {
+/** "$20.00 left of $50.00 · expires 2026-12-07 14:03 UTC (in 3 days)": a lot within 7 days is flagged (yellow). */
+function lotLine(l: CreditLot, now: number): string {
+  const line = `${usd(l.remaining_micros)} left of ${usd(l.purchased_micros)} · expires ${expiryText(l.expires_at)}`;
+  return l.expiring_soon ? c.yellow(`${line} (${expiresInText(l.expires_at, now)})`) : line;
+}
+
+export function listText(s: LocalComputeState, now = Date.now()): string {
   if (s.account_id === null) return s.handover_pending_until
     ? `compute handover pending until ${new Date(s.handover_pending_until).toISOString()}`
     : c.dim("nothing rented yet — see prices: walkie compute quotes");
@@ -43,10 +58,12 @@ export function listText(s: LocalComputeState): string {
   const head = active.length ? active.map(rentalLine).join("\n") : c.dim("no rented machines running or queued");
   const done = s.rentals.length - active.length;
   const alerts = (s.alerts ?? []).map((a) => `\n${c.yellow(COMPUTE_ALERT_TEXT[a])}`).join("");
-  return accounts + (done ? `${head}\n${c.dim(`${done} ended (walkie compute list --json for all)`)}` : head) + alerts;
+  const soon = (s.credit_lots ?? []).filter((l) => l.expiring_soon)
+    .map((l) => `\n${c.yellow(`${usd(l.remaining_micros)} of credit expires ${expiryText(l.expires_at)} (${expiresInText(l.expires_at, now)}): walkie compute credit`)}`).join("");
+  return accounts + (done ? `${head}\n${c.dim(`${done} ended (walkie compute list --json for all)`)}` : head) + soon + alerts;
 }
 
-export function creditText(s: LocalComputeState): string {
+export function creditText(s: LocalComputeState, now = Date.now()): string {
   if (s.account_id === null) return s.handover_pending_until
     ? `compute handover pending until ${new Date(s.handover_pending_until).toISOString()}; credit purchases wait`
     : `balance ${usd(0)} — buy credit: walkie compute credit buy ${CREDIT_BLOCKS.join("|")}`;
@@ -54,7 +71,10 @@ export function creditText(s: LocalComputeState): string {
   const burn = s.burn_per_hour_micros > 0
     ? `using ${usd(s.burn_per_hour_micros)}/h · ${s.hours_left === null ? "" : `${s.hours_left.toFixed(1)} h left`}`
     : c.dim("nothing running");
-  return `balance ${c.bold(usd(s.balance_micros))} · ${burn}${frozen}`;
+  const lots = s.credit_lots ?? [];
+  const listed = lots.length
+    ? `\n${lots.map((l) => `  ${lotLine(l, now)}`).join("\n")}${s.next_expiry_at ? `\nsoonest expiry ${expiryText(s.next_expiry_at)}` : ""}` : "";
+  return `balance ${c.bold(usd(s.balance_micros))} · ${burn}${frozen}${listed}\n${c.dim(CREDIT_TERMS)}`;
 }
 
 export function rentText(r: RentResult): string {
@@ -75,7 +95,29 @@ function openForPerson(ctx: Ctx, url: string): void {
   if (Bun.which(opener)) Bun.spawn([opener, url], { stdout: "ignore", stderr: "ignore" });
 }
 
+/**
+ * The Sqwakie site's retryable refusals, which the daemon passes on as "the Sqwakie site refused: <code>": what each
+ * means for the person at the terminal (lane C round 14). The site's licence checks answer these while they wait or tidy.
+ */
+const RETRY_HINTS: Readonly<Record<string, string>> = {
+  licence_record_pruning: "the Sqwakie site is clearing ended licences from this team's record; this is temporary: run the command again",
+  licence_backfill_pending: "the Sqwakie site is still preparing rental compute for existing licences; this is temporary: run the command again later",
+  license_verification_unavailable: "the Sqwakie site couldn't check this team's licence just now; this is temporary: run the command again in a minute",
+  compute_state_unavailable: "the Sqwakie site's compute service is briefly unavailable; this is temporary: run the command again in a minute",
+};
+
+/** A site refusal with a retry hint keeps its code and status and gets the hint as its message. */
+function withRetryHint(err: unknown): unknown {
+  const hint = err instanceof WalkieError ? RETRY_HINTS[err.code] : undefined;
+  return hint && err instanceof WalkieError ? new WalkieError(err.code, hint, err.status, err.details) : err;
+}
+
 export async function compute(ctx: Ctx): Promise<number> {
+  try { return await computeCommand(ctx); }
+  catch (err) { throw withRetryHint(err); }
+}
+
+async function computeCommand(ctx: Ctx): Promise<number> {
   const sub = ctx.args.pos[0] ?? "list";
   const print = (v: unknown, text: string) => ctx.out(ctx.json ? JSON.stringify(v) : text);
   switch (sub) {
@@ -105,7 +147,8 @@ export async function compute(ctx: Ctx): Promise<number> {
       }
       if (ctx.args.pos[1] !== undefined) throw new UsageError(USAGE);
       const s = await ctx.client().computeState();
-      print({ balance_micros: s.balance_micros, burn_per_hour_micros: s.burn_per_hour_micros, hours_left: s.hours_left, status: s.status }, creditText(s));
+      print({ balance_micros: s.balance_micros, burn_per_hour_micros: s.burn_per_hour_micros, hours_left: s.hours_left, status: s.status,
+        ...(s.account_id !== null && s.credit_lots ? { credit_lots: s.credit_lots, next_expiry_at: s.next_expiry_at ?? null } : {}) }, creditText(s));
       return EXIT.ok;
     }
     case "rent": {
@@ -127,7 +170,7 @@ export async function compute(ctx: Ctx): Promise<number> {
       const account_id = str(ctx.args, 'account');
       const r = await client.computeStop(target === "all" ? { all: true, ...(account_id ? { account_id } : {}) }
         : { rental_id: target, ...(account_id ? { account_id } : {}) });
-      print(r, `stopped ${r.stopped} (their disks are wiped; unused credit stays on the account)`);
+      print(r, `stopped ${r.stopped} (their disks are wiped; unused credit stays on the account until it expires)`);
       return EXIT.ok;
     }
     default:

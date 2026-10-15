@@ -73,7 +73,7 @@ function sysFor(m: MockMachine): NonNullable<MachineStats["sys"]> {
   const cores = isMac ? (m.mem[0] >= 64 ? 12 : 10) : m.hostname === "atlas" ? 32 : 12;
   return {
     os: isMac ? "darwin" : "linux", arch: isMac ? "arm64" : "x64",
-    version: m.hostname === "sol-x1" ? "0.2.0-pre.1" : "0.2.0-pre.2",
+    version: process.env.WALKIE_MOCK_CAPTURE === "1" ? "0.2.0-pre.15" : m.hostname === "sol-x1" ? "0.2.0-pre.1" : "0.2.0-pre.2",
     cpus: cores, load1: Math.round(cores * (m.mem[1] / m.mem[0]) * 55) / 100,
   };
 }

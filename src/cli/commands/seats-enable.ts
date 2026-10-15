@@ -1,5 +1,5 @@
 // "This should all be handled by the sign-up link" (Alex, SEATS product requirement): once a teammate joins and says
-// yes to "let your team start agents on this machine", the team can start agents there over Walkie alone, on the
+// yes to "let your team start agents on this machine", the team can start agents there over Sqwakie alone, on the
 // machine's own Claude/Codex sign-in. Three commands for that:
 //   walkie seats enable [--yes] [--seat-users|--same-user] [--launchers …] [--max n]
 //       one command: company same-user seats by default, or explicit seat-user hardening, then doctor;
@@ -116,7 +116,7 @@ export async function enableSeats(ctx: Ctx, o: EnableOptions = {}): Promise<Seat
       return null;
     }
     await client.seatsToken(token);
-    did.push("a Claude token for seats only is set (0600 in the Walkie home; never echoed)");
+    did.push("a Claude token for seats only is set (0600 in the Sqwakie home; never echoed)");
   }
   const res = await client.seatsConfig({
     allow: true, ...(o.sameUser || o.seatUsers ? { mode: seatUsers ? "seat_users" as const : "same_user" as const } : {}), same_user: !seatUsers, ephemeral: seatUsers,
@@ -221,7 +221,7 @@ async function enable(ctx: Ctx): Promise<number> {
     const before = (await ctx.client().seats()).local;
     ctx.out(enableConsentLine());
     const ownUser = sameUser || (!seatUsers && !before.ephemeral);
-    ctx.out(ownUser ? "as your own OS user, with access to your files, keys and Walkie daemon." : "each as a fresh OS user of its own, removed after it. Turn it off any time: walkie seats deny.");
+    ctx.out(ownUser ? "as your own OS user, with access to your files, keys and Sqwakie daemon." : "each as a fresh OS user of its own, removed after it. Turn it off any time: walkie seats deny.");
     if (ownUser) ctx.out("Only allow trusted launchers: Grok path and output checks cannot restrict your user's file access.");
     ctx.out(before.claude_login === "dedicated"
       ? "Claude seats use the token set for seats only; a running seat can read it."

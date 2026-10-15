@@ -1,4 +1,4 @@
-// Walkie on your phone (WALKIE-PWA-1). The phone app is a static page on the Walkie site; it reaches this daemon
+// Sqwakie on your phone (WALKIE-PWA-1). The phone app is a static page on the Sqwakie site; it reaches this daemon
 // through a relay that forwards end-to-end encrypted frames (src/relay/server.ts, src/mobile/crypto.ts). Off by
 // default: the daemon connects to the relay only while a phone is paired or a pairing is in progress, and no local
 // listener is added or exposed.
@@ -31,9 +31,9 @@ import { TunnelSession, type DeviceUsage, type ServeAs } from "./tunnel.ts";
 import type { BucketSpec } from "../ratelimit.ts";
 import { MAX_FRAME, MAX_PHONES_PER_ROOM, MAX_SLOTS } from "../../mobile/wire.ts";
 
-/** The relay Walkie runs (Fly app `walkie-relay`). */
+/** The relay Sqwakie runs (Fly app `walkie-relay`). */
 export const RELAY_URL = "wss://walkie-relay.fly.dev";
-/** The phone app (a static page on the Walkie site). */
+/** The phone app (a static page on the Sqwakie site). */
 export const APP_URL = `${SITE_ORIGIN}/m`;
 const SWEEP_MS = 30_000;
 /** Bytes of phone frames queued across every connection before the relay link counts as abusive. */
@@ -122,7 +122,7 @@ export class MobileManager {
         this.idle();
       },
       down: () => { for (const s of this.sessions.values()) s.dispose(); this.sessions.clear(); },
-      incompatible: (message) => { this.notice = `Walkie on your phone is unavailable: ${message}.`; },
+      incompatible: (message) => { this.notice = `Sqwakie on your phone is unavailable: ${message}.`; },
     }, d.log, { ...(opts.stallMs ? { stallMs: opts.stallMs } : {}) });
   }
 
@@ -166,7 +166,7 @@ export class MobileManager {
     if (!(await this.link.opened(p.room, 5_000))) {
       this.pairing.drop(p.room);
       this.idle();
-      throw new HttpError(503, "relay_unavailable", "the Walkie relay is unreachable or refused the pairing; try again in a moment");
+      throw new HttpError(503, "relay_unavailable", "the Sqwakie relay is unreachable or refused the pairing; try again in a moment");
     }
     // A development relay rides along in the fragment; the phone app accepts it only when served from loopback.
     const dev = this.relayUrl !== RELAY_URL ? `&relay=${encodeURIComponent(this.relayUrl)}` : "";

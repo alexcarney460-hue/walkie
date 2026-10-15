@@ -1,4 +1,4 @@
-// Where an incoming Walkie Direct handshake comes from, before any handshake work (PROTOCOL §4 "Connection budget").
+// Where an incoming Sqwakie Direct handshake comes from, before any handshake work (PROTOCOL §4 "Connection budget").
 // iroh names the source of an `Incoming` without a handshake: a UDP address on the direct path, or, on the relay
 // path, the relay URL plus the sender's endpoint id (which the relay authenticated when the sender connected to it).
 // The server budgets pending handshakes per source, so one host can't take the whole table, and per network prefix

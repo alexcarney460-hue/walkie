@@ -1,4 +1,4 @@
-// Walkie on your phone (WALKIE-PWA-1): the phone app. A static page (site/m.html); everything private travels over
+// Sqwakie on your phone (WALKIE-PWA-1): the phone app. A static page (site/m.html); everything private travels over
 // the end-to-end encrypted link to the owner's computer (src/mobile/client.ts). Pairing: the QR code opens
 // /m#pair=<room>.<secret> (the pairing code); it is read from the fragment (never sent to a server) and removed from
 // the address bar.
@@ -54,18 +54,18 @@ function installBanner(): HTMLElement | null {
     banner.remove();
   } }, "Not now");
   const banner: HTMLElement = isIOS()
-    ? h("aside", { class: "banner" }, h("p", {}, "Add Walkie to your Home Screen: tap ", h("strong", {}, "Share"), ", then ", h("strong", {}, "Add to Home Screen"), "."), close)
+    ? h("aside", { class: "banner" }, h("p", {}, "Add Sqwakie to your Home Screen: tap ", h("strong", {}, "Share"), ", then ", h("strong", {}, "Add to Home Screen"), "."), close)
     : installPrompt
-      ? h("aside", { class: "banner" }, h("p", {}, "Install Walkie on this phone."),
+      ? h("aside", { class: "banner" }, h("p", {}, "Install Sqwakie on this phone."),
         h("button", { type: "button", class: "btn small", onclick: async () => { await installPrompt?.prompt(); installPrompt = null; banner.remove(); } }, "Install"), close)
-      : h("aside", { class: "banner" }, h("p", {}, "Install Walkie: open the browser menu and choose ", h("strong", {}, "Install app"), " or ", h("strong", {}, "Add to Home screen"), "."), close);
+      : h("aside", { class: "banner" }, h("p", {}, "Install Sqwakie: open the browser menu and choose ", h("strong", {}, "Install app"), " or ", h("strong", {}, "Add to Home screen"), "."), close);
   return banner;
 }
 
 // ---- screens -----------------------------------------------------------------------------------------------------
 
 function screen(title: string, ...body: (Node | string | null)[]): void {
-  replace(root, h("main", { class: "screen" }, h("div", { class: "brand" }, h("span", { class: "logo", "aria-hidden": "true" }), "Walkie"), h("h1", {}, title), ...body));
+  replace(root, h("main", { class: "screen" }, h("div", { class: "brand" }, h("span", { class: "logo", "aria-hidden": "true" }), "Sqwakie"), h("h1", {}, title), ...body));
 }
 
 function busy(text: string): void {
@@ -85,7 +85,7 @@ function pairForm(message?: string, relay = RELAY): void {
   screen("Pair this phone",
     message ? h("p", { class: "alert", role: "alert" }, message) : null,
     h("p", { class: "lede" }, "On your computer, run ", h("code", {}, "walkie mobile pair"), " (or open the dashboard: Team → Devices → Pair a phone), then scan the QR code with this phone's camera."),
-    h("p", { class: "lede" }, "Opened Walkie from your Home Screen? Paste the pairing code shown under the QR code:"),
+    h("p", { class: "lede" }, "Opened Sqwakie from your Home Screen? Paste the pairing code shown under the QR code:"),
     h("form", { class: "stack", onsubmit: (e: Event) => { e.preventDefault(); go(); } }, input, h("button", { class: "btn", type: "submit" }, "Pair")),
     h("p", { class: "muted small" }, "The code works once, for 10 minutes. The link to your computer is end-to-end encrypted: the relay in between can't read it."),
   );
@@ -97,14 +97,14 @@ function installFirst(secret: string, relay: string): void {
   const copy = h("button", { type: "button", class: "btn-ghost", onclick: async () => {
     try { await navigator.clipboard.writeText(secret); copy.textContent = "Copied"; } catch { copy.textContent = "Select and copy the code"; }
   } }, "Copy code");
-  screen("Put Walkie on your Home Screen",
+  screen("Put Sqwakie on your Home Screen",
     h("ol", { class: "steps" },
       h("li", {}, "Copy this pairing code: ", code, " ", copy),
       h("li", {}, "Tap ", h("strong", {}, "Share"), ", then ", h("strong", {}, "Add to Home Screen"), "."),
-      h("li", {}, "Open Walkie from your Home Screen and paste the code."),
+      h("li", {}, "Open Sqwakie from your Home Screen and paste the code."),
     ),
     h("p", { class: "muted small" }, "The code works once, for 10 minutes."),
-    h("button", { type: "button", class: "btn-ghost", onclick: () => void loadDevice().then((current) => pair(secret, relay, current)) }, "Use Walkie in Safari instead"),
+    h("button", { type: "button", class: "btn-ghost", onclick: () => void loadDevice().then((current) => pair(secret, relay, current)) }, "Use Sqwakie in Safari instead"),
   );
 }
 
@@ -123,7 +123,7 @@ function offline(message: string, device: StoredDevice, code: number | null = nu
     maybeUnpaired
       ? h("p", { class: "alert", role: "alert" }, "This phone may have been signed out on your computer (a phone signed out while it was away can't be told). If so, tap Unpair and pair it again.")
       : null,
-    h("p", { class: "muted small" }, `Trying again in ${wait} s. Walkie on your phone works while your computer is on, awake and online.`),
+    h("p", { class: "muted small" }, `Trying again in ${wait} s. Sqwakie on your phone works while your computer is on, awake and online.`),
     h("div", { class: "row" },
       h("button", { type: "button", class: "btn", onclick: () => void connect(device) }, "Try now"),
       h("button", { type: "button", class: "btn-ghost", onclick: () => void unpair(null) }, "Unpair this phone"),

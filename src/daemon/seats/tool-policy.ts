@@ -161,7 +161,7 @@ const GROK_READ_ONLY = ["read_file", "grep", "list_dir"] as const;
 /**
  * Grok `--tools` ids verified on the releases in {@link GROK_VERIFIED_VERSIONS} to narrow the tool set.
  * Any other id (`run_terminal_command`, `spawn_subagent`, `write`, `terminal`, an unknown name) is treated as
- * every tool, so Walkie never emits it. `search_replace` narrows only together with `read_file` (alone, grok
+ * every tool, so Sqwakie never emits it. `search_replace` narrows only together with `read_file` (alone, grok
  * exits 1: "requires a Read tool"). `web_search` leaves the MCP meta-tools, which `--deny MCPTool` still names.
  */
 export const GROK_VERIFIED_TOOLS = ["read_file", "grep", "list_dir", "search_replace", "web_search"] as const;
@@ -216,7 +216,7 @@ function boundReason(body: string, hint: string): string {
 }
 
 /**
- * Why this probe cannot carry a tool policy, or null when the version is one Walkie has checked. A launch refusal
+ * Why this probe cannot carry a tool policy, or null when the version is one Sqwakie has checked. A launch refusal
  * points a retry at `walkie seats doctor`. The doctor's own row passes `doctor: true` and says only "Retry.", so it
  * never tells the user to run the command they are already running.
  */
@@ -232,7 +232,7 @@ export function grokVersionPolicyRefusal(probe: GrokVersionProbe, opts?: { docto
   const hint = probe.kind === "timeout" || probe.kind === "failed" || probe.kind === "missing"
     ? (opts?.doctor ? " Retry." : " Retry, or run `walkie seats doctor`.")
     : "";
-  const body = `this Grok seat's tool policy cannot be enforced on grok ${found} (Walkie verified tool ids only on ${grokVerifiedLabel()}), so the launch is refused.`;
+  const body = `this Grok seat's tool policy cannot be enforced on grok ${found} (Sqwakie verified tool ids only on ${grokVerifiedLabel()}), so the launch is refused.`;
   return boundReason(body, hint);
 }
 
@@ -514,7 +514,7 @@ function grokAllowRefusal(mode: SeatMode, allow: readonly string[]): string | nu
  * set, because Grok's `--tools` leaves that meta-tool in place. A deny name is emitted only as a deny-rule name
  * (`run_terminal_command` becomes `Bash`). An unmapped deny name is left out of the argv; the refusal path rejects
  * the launch. `--no-subagents` is still passed. On grok 1.0.46 it does not remove `spawn_subagent`: the tool is
- * still offered, and a subagent inherits the parent's deny rules (including Bash). Walkie does not rely on `--no-subagents`
+ * still offered, and a subagent inherits the parent's deny rules (including Bash). Sqwakie does not rely on `--no-subagents`
  * to keep a subagent inside the policy. Credential-path denies stay with the caller.
  */
 export function grokToolFlags(mode: SeatMode, policy: SeatToolPolicy | undefined): string[] {

@@ -47,13 +47,19 @@ export interface WebhookEventLite {
 /** Subscriptions that bill, or will bill again once payment is fixed: a second checkout for one is a mistake (FINAL Codex 1). */
 export const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "paused"]);
 
+/** Per-request bounds: the SDK aborts the HTTP request after `timeout` ms. */
+export interface ReadOptions { readonly timeout?: number; readonly maxNetworkRetries?: number }
+
 export interface StripeLike {
   createCheckoutSession(p: CheckoutCreate): Promise<{ url: string | null }>;
   /** null when Stripe has no such session. */
   getCheckoutSession(id: string): Promise<CheckoutSessionLite | null>;
   /** With the customer expanded; null when Stripe has no such subscription. */
-  getSubscription(id: string): Promise<SubscriptionLite | null>;
-  listSubscriptionsByTeam(team: string): Promise<SubscriptionLite[]>;
+  getSubscription(id: string, options?: ReadOptions): Promise<SubscriptionLite | null>;
+  /** Metadata search: eventually consistent, so it can miss a fresh bind. `timeout` bounds the whole search. */
+  listSubscriptionsByTeam(team: string, options?: ReadOptions): Promise<SubscriptionLite[]>;
+  /** One page of every subscription (the list API, strongly consistent), for the licence backfill. */
+  listSubscriptionsPage(startingAfter: string | undefined, options?: ReadOptions): Promise<{ data: SubscriptionLite[]; hasMore: boolean }>;
   setSubscriptionMetadata(id: string, metadata: Record<string, string>,
     options?: { idempotencyKey?: string; timeout?: number; maxNetworkRetries?: number }): Promise<void>;
 }
@@ -80,24 +86,31 @@ export function realStripe(secretKey: string): StripeLike {
         allow_promotion_codes: true,
         metadata: { walkie_plan: p.plan, walkie_interval: p.interval },
         subscription_data: { metadata: { walkie_plan: p.plan, walkie_interval: p.interval } },
-        // The Stripe account's public name predates Walkie; say plainly what is being bought.
-        custom_text: { submit: { message: "You're subscribing to Walkie, the live network for your team's AI agents. Card statements show WALKIE." } },
+        // The Stripe account's public name predates Sqwakie; say plainly what is being bought.
+        custom_text: { submit: { message: "You're subscribing to Sqwakie, the live network for your team's AI agents. Card statements show WALKIE." } },
       });
       return { url: session.url };
     },
     async getCheckoutSession(id) {
       return (await orNull(s.checkout.sessions.retrieve(id))) as unknown as CheckoutSessionLite | null;
     },
-    async getSubscription(id) {
-      return (await orNull(s.subscriptions.retrieve(id, { expand: ["customer"] }))) as unknown as SubscriptionLite | null;
+    async getSubscription(id, options) {
+      return (await orNull(s.subscriptions.retrieve(id, { expand: ["customer"] }, { ...options }))) as unknown as SubscriptionLite | null;
     },
-    async listSubscriptionsByTeam(team) {
-      const found: SubscriptionLite[] = [];
+    async listSubscriptionsByTeam(team, options) {
       if (!/^[0-9a-f]{16}$/.test(team)) throw new Error('invalid_team_id');
-      for await (const sub of s.subscriptions.search({ query: `metadata['${TEAM_META}']:'${team}'`, limit: 100 })) {
-        if (sub.metadata[TEAM_META] === team) found.push(sub as unknown as SubscriptionLite);
-      }
-      return found;
+      // `timeout` bounds the whole search, every page included (round 11); without one, the client's own timeout per page.
+      const found = await searchAllPages(async (page, timeout) => {
+        const res = await s.subscriptions.search({ query: `metadata['${TEAM_META}']:'${team}'`, limit: 100, ...(page ? { page } : {}) },
+          { timeout, maxNetworkRetries: options?.maxNetworkRetries ?? 0 });
+        return { data: res.data as unknown as SubscriptionLite[], nextPage: res.has_more ? res.next_page ?? null : null };
+      }, options?.timeout ?? 8_000);
+      return found.filter(sub => sub.metadata[TEAM_META] === team);
+    },
+    async listSubscriptionsPage(startingAfter, options) {
+      const page = await s.subscriptions.list({ status: 'all', limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) },
+        { ...options });
+      return { data: page.data as unknown as SubscriptionLite[], hasMore: page.has_more };
     },
     async setSubscriptionMetadata(id, metadata, options) {
       await s.subscriptions.update(id, { metadata }, options);
@@ -116,4 +129,27 @@ export async function verifyWebhook(rawBody: string, header: string, secret: str
 export function idOf(ref: string | { id: string } | null | undefined): string | null {
   if (!ref) return null;
   return typeof ref === "string" ? ref : ref.id;
+}
+
+/**
+ * Every page of a search under ONE deadline (lane C round 11): each page request gets the time that remains as its own
+ * timeout (the SDK aborts it), the wait is cut at the deadline too, and no page is requested once it has passed.
+ */
+export async function searchAllPages(fetchPage: (page: string | undefined, timeout: number) =>
+  Promise<{ data: SubscriptionLite[]; nextPage: string | null }>, budgetMs: number): Promise<SubscriptionLite[]> {
+  const deadline = Date.now() + budgetMs, found: SubscriptionLite[] = [];
+  let page: string | undefined;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('licence_search_deadline');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([fetchPage(page, remaining), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('licence_search_deadline')), remaining);
+      })]);
+      found.push(...result.data);
+      if (!result.nextPage) return found;
+      page = result.nextPage;
+    } finally { clearTimeout(timer); }
+  }
 }

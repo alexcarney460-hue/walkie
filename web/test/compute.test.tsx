@@ -234,15 +234,15 @@ test("Machines (owner): alerts say what is wrong, including an ended rental's ma
   const out = render(state("owner", "maren"), <mod.Team />);
   expect(out).toContain("Compute monitoring is delayed. New rentals are paused.");
   expect(out).toContain("Shutdown is delayed. Billing continues until deletion is confirmed.");
-  expect(out).toContain("A rented machine is still on the team after its rental ended. Walkie removes it as soon as the team&#x27;s roster authority is reachable.");
+  expect(out).toContain("A rented machine is still on the team after its rental ended. Sqwakie removes it as soon as the team&#x27;s roster authority is reachable.");
   expect(out).toContain("A rented machine is still on the team after its rental ended and couldn&#x27;t be removed automatically. The reason is posted in #general.");
   expect(out).toContain("An ended rental can&#x27;t be closed yet: this machine hasn&#x27;t been able to sync with the team&#x27;s roster authority");
-  expect(out).toContain("Walkie can&#x27;t read its record of rented machines, so ended rentals aren&#x27;t being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Walkie never overwrites it.");
+  expect(out).toContain("Sqwakie can&#x27;t read its record of rented machines, so ended rentals aren&#x27;t being removed from the team (revocations are paused). Inspect or restore ~/.walkie/compute-rentals.json; Sqwakie never overwrites it.");
   expect(out.match(/role="alert"/g)).toHaveLength(6);
   seed();
 });
 
-test("Mission Control (owner): WalkieTalkie, Add compute, and the rented machine render together", () => {
+test("Mission Control (owner): Talkie, Add compute, and the rented machine render together", () => {
   seed();
   go("#/mission");
   const working = {
@@ -328,4 +328,163 @@ test('disabled compute still lets an owner stop each unjoined rental', () => {
   const html = render(state('owner', 'maren'), <mod.Team />);
   expect(html.includes(`aria-label="Stop ${QUEUED.name}"`)).toBe(true);
   expect(html.includes('Add compute')).toBe(false);
+});
+
+// Go-live lane D (REVIEW-codex P2-5, REVIEW-opus P1-4 / P3-16): an owner on a machine that is not the roster authority
+// can't open a compute account there, so the dashboard says where renting happens instead of offering a rent that
+// fails; and the dialog shows only the tiers the site has on sale.
+const AWAY_NODES = [node("maren-mbp", "maren", "n1"), node("studio-mac", "maren", "n3")];
+const awayState = (): State => ({ ...state("owner", "maren"), team: { ...TEAM, authority: "n3", nodes: AWAY_NODES }, nodes: AWAY_NODES });
+
+test("an owner on a machine that isn't the roster authority is told where to rent, not offered Add compute", () => {
+  mod.api.computeStore.seed({ status: "ready", state: mod.api.emptyState(), quotes: QUOTES, error: null, authorityRequired: true });
+  go("#/team");
+  const team = render(awayState(), <mod.Team />);
+  expect(team).not.toContain("Add compute");
+  expect(team).toContain('data-testid="ac-on-authority"');
+  expect(team).toContain("Rent compute from studio-mac, the team&#x27;s roster authority");
+  go("#/mission");
+  const mission = render(awayState(), <mod.MissionControl />);
+  expect(mission).not.toContain("Add compute");
+  expect(mission).toContain("Rent compute from studio-mac");
+  seed();
+});
+
+test("the daemon's authority_required reaches the snapshot; the authority itself keeps Add compute", async () => {
+  globalThis.fetch = (async (url: string) => {
+    if (url.endsWith("/quotes")) return Response.json({ ...QUOTES, available: false });
+    return Response.json({ account_id: null, team_id: "7c1e4a90b25fd318", status: "none", balance_micros: 0, burn_per_hour_micros: 0,
+      hours_left: null, rentals: [], authority_required: true });
+  }) as typeof fetch;
+  const release = mod.api.computeStore.retain();
+  try {
+    await Bun.sleep(20);
+    expect(mod.api.computeStore.get()).toMatchObject({ status: "ready", authorityRequired: true });
+    expect(mod.api.computeStore.get().state?.rentals).toEqual([]);
+  } finally { release(); }
+  seed();
+  go("#/team");
+  expect(render(state("owner", "maren"), <mod.Team />)).toContain("Add compute");
+});
+
+test("the dialog lists only the tiers on sale (CPU-only while the GPU quota is 0)", () => {
+  const cpu = { ...QUOTES, tiers: QUOTES.tiers.filter((t) => t.gpu === null) };
+  const out = view({ quotes: cpu });
+  expect(out).toContain('data-testid="ac-tier-agent"');
+  expect(out).toContain('data-testid="ac-tier-agent-xl"');
+  for (const id of ["gpu-20", "gpu-48", "gpu-80"]) expect(out).not.toContain(`data-testid="ac-tier-${id}"`);
+  expect(out).not.toContain("NVIDIA");
+});
+
+// Round 2 (lanes/REVIEW-D-codex.md P4, REVIEW-D-opus.md P3-10).
+test("the authority host is the team's authority node, even when another node still carries a stale authority flag", async () => {
+  const { authorityHost } = await import("../src/views/compute/AddComputeSheet.tsx");
+  const stale = [{ ...node("maren-mbp", "maren", "n1"), authority: true }, node("studio-mac", "maren", "n3")];
+  expect(authorityHost(stale, "n3")).toBe("studio-mac");
+  expect(authorityHost([{ ...node("studio-mac", "maren", "n3"), authority: true }], null)).toBe("studio-mac");
+  expect(authorityHost(stale, "missing")).toBe("maren-mbp");
+});
+
+test("the where-to-rent note says in visible text that rented machines are seen and stopped there too", () => {
+  mod.api.computeStore.seed({ status: "ready", state: mod.api.emptyState(), quotes: QUOTES, error: null, authorityRequired: true });
+  go("#/team");
+  const visible = render(awayState(), <mod.Team />).replace(/<[^>]+>/g, " ");
+  expect(visible).toContain("Rent compute from studio-mac, the team&#x27;s roster authority");
+  expect(visible).toContain("seen and stopped there");
+  seed();
+});
+
+// Lane H (Alex 2026-10-09: credit is non-refundable and expires 60 days after purchase): the credit box lists each lot
+// with what is left and its expiry, names the soonest expiry, and highlights a lot that expires within 7 days.
+test("the credit box lists each lot with its expiry, the soonest expiry, and highlights a lot expiring within 7 days", async () => {
+  const { expiryText } = await import("../../src/protocol/compute.ts");
+  const soon = { purchased_micros: 50_000_000, remaining_micros: 20_000_000, purchased_at: NOW - 57 * 86_400_000,
+    expires_at: NOW + 3 * 86_400_000 + 3_600_000, expiring_soon: true };
+  const later = { purchased_micros: 200_000_000, remaining_micros: 123_200_000, purchased_at: NOW - 20 * 86_400_000,
+    expires_at: NOW + 40 * 86_400_000, expiring_soon: false };
+  const out = view({ state: { ...STATE, credit_lots: [soon, later], next_expiry_at: soon.expires_at } });
+  expect(out).toContain('data-testid="ac-lots"');
+  expect(out).toMatch(/class="ac-lot is-soon"[^>]*>.*\$20\.00 left of \$50\.00/);
+  expect(out).toContain(`expires ${expiryText(soon.expires_at)}`);
+  expect(out).toContain("in 3 days");
+  expect(out).toMatch(/class="ac-lot"[^>]*>.*\$123\.20 left of \$200\.00/);
+  expect(out).toContain(`expires ${expiryText(later.expires_at)}`);
+  expect(out).not.toContain("in 40 days");
+  expect(out).toContain(`Soonest expiry: ${expiryText(soon.expires_at)}`);
+  expect(out).toContain("Credit is non-refundable and expires 60 days after purchase; the credit that expires soonest is used first.");
+  expect(out).toContain("unused credit stays on the account until it expires");
+  expect(out).not.toContain("unused credit stays on the account.");
+  // No lots (nothing bought, or an older site): no list.
+  expect(view()).not.toContain('data-testid="ac-lots"');
+});
+
+test("with several accounts the credit box shows the selected account's lots; Stop's confirmation states the expiry", async () => {
+  const lotOf = (remaining: number, days: number) => ({ purchased_micros: 50_000_000, remaining_micros: remaining,
+    purchased_at: NOW - 10 * 86_400_000, expires_at: NOW + days * 86_400_000, expiring_soon: days <= 7 });
+  mod.api.computeStore.seed({ status: "ready", quotes: QUOTES, error: null, state: { ...STATE,
+    credit_lots: [lotOf(11_000_000, 2), lotOf(22_000_000, 30)], next_expiry_at: NOW + 2 * 86_400_000,
+    accounts: [{ account_id: STATE.account_id, status: "active", balance_micros: 22_000_000, burn_per_hour_micros: 0, hours_left: null,
+      credit_lots: [lotOf(22_000_000, 30)], next_expiry_at: NOW + 30 * 86_400_000 },
+    { account_id: "ca_0123456789abcdef", status: "active", balance_micros: 11_000_000, burn_per_hour_micros: 0, hours_left: null,
+      credit_lots: [lotOf(11_000_000, 2)], next_expiry_at: NOW + 2 * 86_400_000 }] } });
+  const html = renderToStaticMarkup(<mod.AddComputeSheet onClose={noop} />);
+  expect(html).toContain("$22.00 left of $50.00");
+  expect(html).not.toContain("$11.00 left of $50.00");
+  seed();
+  globalThis.fetch = (async () => new Response(JSON.stringify({ stopped: 1, rentals: [] }), { status: 200 })) as unknown as typeof fetch;
+  let asked = "";
+  await mod.api.stopRental(RUNNING.id, RUNNING.name, (m) => { asked = m; return true; });
+  expect(asked).toContain("Unused credit stays on the account until it expires.");
+  seed();
+});
+
+// Lane H round 2 (pre.17 reviews: Opus P3-1, P3-2).
+const lotIn = (remaining: number, ms: number, purchased = 50_000_000) => ({ purchased_micros: purchased, remaining_micros: remaining,
+  purchased_at: NOW + ms - 60 * 86_400_000, expires_at: NOW + ms, expiring_soon: ms <= 7 * 86_400_000 });
+
+test("rentals unavailable (drained, or a stale tick): the credit box still lists the lots and their expiry, with no Buy credit", () => {
+  const lots = [lotIn(20_000_000, 3 * 86_400_000), lotIn(123_200_000, 40 * 86_400_000, 200_000_000)];
+  const quotes = { ...QUOTES, available: false };
+  const out = view({ quotes, state: { ...STATE, credit_lots: lots, next_expiry_at: lots[0]!.expires_at } });
+  expect(out).toContain("Rented machines are currently unavailable");
+  expect(out).toContain('data-testid="ac-lots"');
+  expect(out).toContain("$20.00 left of $50.00");
+  expect(out).toContain("$123.20 left of $200.00");
+  expect(out).toContain("Soonest expiry:");
+  expect(out).toContain("<b class=\"tnum\">$143.20</b>");
+  expect(out).not.toContain("Buy credit");
+  // No account (or a site that lists no lots): nothing but the notice.
+  expect(view({ quotes, state: mod.api.emptyState() })).not.toContain("ac-credit");
+});
+
+test("rentals unavailable: owners with credit lots get a Compute credit button that opens the lots; without lots, nothing", () => {
+  const lots = [lotIn(20_000_000, 3 * 86_400_000)];
+  mod.api.computeStore.seed({ status: "ready", state: { ...STATE, credit_lots: lots, next_expiry_at: lots[0]!.expires_at },
+    quotes: { ...QUOTES, available: false }, error: null });
+  go("#/team");
+  const team = render(state("owner", "maren"), <mod.Team />);
+  expect(team).toContain("Compute credit");
+  expect(team).not.toContain("Add compute");
+  go("#/mission");
+  expect(render(state("owner", "maren"), <mod.MissionControl />)).toContain("Compute credit");
+  const sheet = renderToStaticMarkup(<mod.AddComputeSheet onClose={noop} />);
+  expect(sheet).toContain("$20.00 left of $50.00");
+  expect(sheet).not.toContain("Buy credit");
+  mod.api.computeStore.seed({ status: "ready", state: STATE, quotes: { ...QUOTES, available: false }, error: null });
+  go("#/team");
+  expect(render(state("owner", "maren"), <mod.Team />)).not.toContain("Compute credit");
+  seed();
+});
+
+test("credit that expires within the hour cannot cover a first hour: the hint says so and Rent is disabled; a 402 says why", async () => {
+  const lots = [lotIn(50_000_000, 30 * 60_000)];
+  const out = view({ counts: { agent: 1 }, state: { ...STATE, balance_micros: 50_000_000, credit_lots: lots, next_expiry_at: lots[0]!.expires_at } });
+  expect(out).toContain("Needs $0.75 of credit for the first hour; the balance is $50.00, and $50.00 of it expires within the hour.");
+  expect(out).toMatch(/class="btn btn-primary" disabled="">Rent</);
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: { code: "insufficient_credit", message: "x", needed_micros: 750_000,
+    balance_micros: 0, expiring_micros: 50_000_000 } }), { status: 402 })) as unknown as typeof fetch;
+  const err = await mod.api.computeApi.rent([{ tier: "agent", count: 1 }]).catch((e: unknown) => e);
+  expect((err as InstanceType<ComputeMod["ComputeError"]>).expiringMicros).toBe(50_000_000);
+  const { computeErrorText } = await import("../src/views/compute/AddComputeSheet.tsx");
+  expect(computeErrorText(err)).toContain("$50.00 of the credit expires within the hour, so it can't cover a machine's first hour.");
 });

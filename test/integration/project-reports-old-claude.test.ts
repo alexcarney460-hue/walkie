@@ -57,7 +57,7 @@ async function answered(text: string): Promise<string> {
 }
 const notGivenUp = async () => {
   const v = await view();
-  expect([v.running, v.state === "failed", v.last_error ?? ""]).toEqual([true, false, expect.not.stringContaining("too old for WalkieTalkie")]);
+  expect([v.running, v.state === "failed", v.last_error ?? ""]).toEqual([true, false, expect.not.stringContaining("too old for Talkie")]);
   const saved = JSON.parse(readFileSync(join(alex.home, "orchestrator.json"), "utf8")) as { gave_up?: boolean };
   expect(saved.gave_up ?? false).toBe(false);
 };

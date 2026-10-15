@@ -90,7 +90,7 @@ function assertPacketUsable(core: Core, packet: OwnerSshGrant, owner: { pubkey: 
 
 /**
  * What a failure before or during the install means to the caller. The root marker is the person's to install or repair, and
- * each of its two problems has its own code and message (a marker that is not what Walkie installed used to be reported as
+ * each of its two problems has its own code and message (a marker that is not what Sqwakie installed used to be reported as
  * a key failure). Only what is left, inside an owner-SSH install, is an owner key that could not be installed; its message
  * carries the real reason.
  */
@@ -102,7 +102,7 @@ function installRefusal(error: unknown, ssh: boolean, home: string): unknown {
   }
   if (error instanceof RootMarkerInvalid) {
     const path = enrollmentPath(home);
-    return new HttpError(409, "root_marker_invalid", `the root enrollment marker ${path} is not what Walkie installed (${message}): have an administrator `
+    return new HttpError(409, "root_marker_invalid", `the root enrollment marker ${path} is not what Sqwakie installed (${message}): have an administrator `
       + `fix or remove it, then run the same command again; the same link still works`);
   }
   return ssh ? new HttpError(409, "owner_key_install_failed", `owner key could not be installed: ${message}`) : error;

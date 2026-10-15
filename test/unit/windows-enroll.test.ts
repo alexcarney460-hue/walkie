@@ -100,7 +100,7 @@ describe("Windows enrollment policy", () => {
     expect(guard).toContain("$observed.me.team.id -cne $journal.team");
   });
 
-  test("existing Ubuntu and Walkie state are refused before host mutations", () => {
+  test("existing Ubuntu and Sqwakie state are refused before host mutations", () => {
     const bootstrap = readFileSync(join(windows, "bootstrap.ps1"), "utf8");
     const preflight = bootstrap.indexOf("Assert-ExistingUbuntuTeam $journal");
     expect(preflight).toBeGreaterThan(-1);
@@ -110,7 +110,7 @@ describe("Windows enrollment policy", () => {
     const guard = /function Assert-ExistingUbuntuTeam\(\$journal\) \{([\s\S]*?)\n\}/.exec(bootstrap)?.[1] ?? "";
     expect(guard).toContain("walkie.db");
     expect(guard).toContain("$observed.me.team.id -cne $journal.team");
-    expect(guard).toContain("already contains Walkie state");
+    expect(guard).toContain("already contains Sqwakie state");
   });
 
   test("standard Windows accounts stop before consent and journal creation", () => {

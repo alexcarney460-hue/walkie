@@ -8,7 +8,7 @@ export const SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["g", "r"], label: "Updates (project status reports)" },
   { keys: ["g", "p"], label: "Projects" },
   { keys: ["g", "n"], label: "Simple" },
-  { keys: ["g", "o"], label: "WalkieTalkie" },
+  { keys: ["g", "o"], label: "Talkie" },
   { keys: ["g", "b"], label: "Channels" },
   { keys: ["g", "a"], label: "Asks" },
   { keys: ["g", "f"], label: "Artifacts" },

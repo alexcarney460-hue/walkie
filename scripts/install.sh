@@ -2,9 +2,10 @@
 # Walkie installer: downloads the right walkie binary from GitHub Releases, verifies the release
 # signature over the checksums, the release version and the binary's checksum, puts it on PATH and
 # runs `walkie setup`.
-#   curl -fsSL https://getwalkie.vercel.app/install.sh | sh
+#   curl -fsSL https://sqwakie.si/install.sh | sh
 #   … | sh -s -- --invite wk1… --company-machine  (company enrollment; setup asks once)
 #   … | sh -s -- --invite wk1… --company-machine --owner-ssh <packet>   (the owner's SSH access, in that same consent)
+#   … | sh -s -- --join-link wl1…              (a fleet link: one link for many machines; setup asks nothing)
 #   … | sh -s -- --join <teammate-machine>     (a Tailscale team: join through a teammate's machine)
 #   … | sh -s -- --invite wk1… --allow-team-agents   (and let the team start agents here: walkie seats enable)
 # Env: WALKIE_VERSION (default: DEFAULT_VERSION below; "latest" = GitHub's latest release), WALKIE_REPO (default below),
@@ -30,7 +31,7 @@ REPO="${WALKIE_REPO:-alexcarney460-hue/walkie-releases}"
 BIN_DIR="${WALKIE_BIN_DIR:-$HOME/.local/bin}"
 # The release a plain `curl … | sh` installs. Bump this one line when a new release should be what new machines get;
 # site/build.py reads it for the landing page's footer, so the page and the installer can't drift apart.
-DEFAULT_VERSION="v0.2.0-pre.13"
+DEFAULT_VERSION="v0.2.0-pre.18"
 VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"
 if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -n "${WALKIE_BASE_URL:-}" ]; then VERSION="$WALKIE_MIN_VERSION"; fi
 # The Walkie release-signing public key (EC P-256). Not the license key. Rotated only by a new installer.
@@ -173,7 +174,7 @@ for dir in "$BIN_DIR" "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin $PATH;
   case "$dir" in /*) ;; *) continue ;; esac
   [ -x "$dir/walkie" ] || continue
   found=$("$dir/walkie" version 2>/dev/null | awk '$1 == "walkie" { print $2; exit }' || true)
-  [ -n "$found" ] || die "cannot read the installed Walkie version at $dir/walkie"
+  [ -n "$found" ] || die "cannot read the installed Sqwakie version at $dir/walkie"
   if semver_lt "${signed#v}" "$found"; then
     [ "${WALKIE_ALLOW_DOWNGRADE:-}" = 1 ] || die "release $signed is older than $dir/walkie ($found): refusing to downgrade (set WALKIE_ALLOW_DOWNGRADE=1 to replace it anyway)"
   fi
@@ -202,12 +203,12 @@ case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Note: add $BIN_DIR to your PATH." ;
 
 # Tailscale is optional: Walkie Direct connects machines without it.
 command -v tailscale >/dev/null 2>&1 || [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] \
-  || say "Walkie connects with Walkie Direct (nothing else to install). Tailscale is optional: a team on a tailnet can use it instead."
+  || say "Sqwakie connects with Sqwakie Direct (nothing else to install). Tailscale is optional: a team on a tailnet can use it instead."
 
 # AGENT-ADMIN-1: said plainly before anything joins.
 say "Company enrollment requires your one explicit consent in setup. Same-user seats let named launchers run code as you,"
-say "read and change your files and keys, use your Walkie daemon, and use owner-leased subscription logins for a run."
-say "Walkie records the actor. Revoke seats: walkie seats deny; remote setup: walkie admin remote off and walkie agents admin off."
+say "read and change your files and keys, use your Sqwakie daemon, and use owner-leased subscription logins for a run."
+say "Sqwakie records the actor. Revoke seats: walkie seats deny; remote setup: walkie admin remote off and walkie agents admin off."
 say "Terminal fallback warning: an invite passed as --invite appears on the command line and may remain in shell history or process listings;"
 say "so does an owner SSH authorization passed as --owner-ssh. It works once, only for the machine the invite admits, and setup never prints it."
 

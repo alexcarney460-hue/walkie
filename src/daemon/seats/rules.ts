@@ -1,7 +1,7 @@
 // Which seat requests a host acts on (PROTOCOL §11, SECURITY.md threat 13). Pure: no I/O.
 import type { Event } from "../../protocol/schemas.ts";
 import {
-  isSeatAgent, parseLauncher, seatOf, seatsChannel, type LauncherEntry, type SeatRun, type SeatRuntime, type SeatStop,
+  isSeatAgent, parseLauncher, seatOf, seatsChannel, type LauncherEntry, type AnySeatRun, type SeatRuntime, type SeatStop,
 } from "../../protocol/seats.ts";
 import { nodeMember, type ChannelRec, type Roster } from "../roster.ts";
 
@@ -14,7 +14,7 @@ export interface SeatsPolicy {
 }
 
 export type Refusal = { ok: false; reason: string; /** Posting the refusal back is safe (the channel is private). */ answer: boolean };
-export type RunDecision = { ok: true; run: SeatRun; launcher: string } | Refusal;
+export type RunDecision = { ok: true; run: AnySeatRun; launcher: string } | Refusal;
 /** `hostPerson`: the host machine's own person, in person (who may stop any seat there; others only their own). */
 export type StopDecision = { ok: true; stop: SeatStop; launcher: string; hostPerson: boolean } | Refusal;
 
@@ -164,7 +164,8 @@ export function decideRun(ev: Event, ctx: DecideCtx): RunDecision | null {
   const c = common(ev, ctx);
   if (c === null || c === "stop") return null;
   if (c !== "run") return c;
-  const run = seatOf(ev.body) as SeatRun;
+  const run = seatOf(ev.body) as AnySeatRun;
+  if (run.v === 2 && run.control) return refuse("turn_control_unverified");
   if (!ctx.policy.runtimes.includes(run.runtime)) return refuse("runtime_not_allowed");
   return { ok: true, run, launcher: ev.author.handle };
 }

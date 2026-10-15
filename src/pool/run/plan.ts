@@ -2,7 +2,7 @@
 import { machineCapacity, runtimeBackend, serveBudget } from "../capacity.ts";
 import { CATALOG, memoryNeeded, type CatalogModel, type Quant } from "../catalog.ts";
 import { canServe, capped, headFirst } from "../combined.ts";
-import type { GroupInput } from "../group.ts";
+import { groupMachines, type GroupInput } from "../group.ts";
 import { candidates, deviceSlot, place, singleSpeed, speedClass, type SpeedClass } from "../suggest.ts";
 export { deviceSlot } from "../suggest.ts";
 
@@ -53,7 +53,7 @@ function usableOf(n: GroupInput): number | null {
 /**
  * Named machines (`--machines a,b`): exactly those plus this machine (the head), each holding a share in proportion
  * to the memory it has free (equal shares where a machine reported none). Unnamed: this machine and every machine
- * that shares, filled largest-first like the suggestion (so a model that fits here stays here).
+ * that shares in this machine's low-latency group, filled largest-first like the suggestion (so a model that fits here stays here).
  */
 export function planRun(nodes: readonly GroupInput[], need: number, names?: readonly string[]): Plan {
   const self = nodes.find((n) => n.self);
@@ -86,7 +86,8 @@ export function planRun(nodes: readonly GroupInput[], need: number, names?: read
     });
     return { need, stages };
   }
-  const pool = [...(cpuOnly(self) ? [] : [self]), ...nodes.filter((n) => !n.self && n.online && canServe(n))];
+  const localIds = new Set(groupMachines(nodes).groups.find((g) => g.kind === "local")?.machines.map((m) => m.node_id) ?? []);
+  const pool = [...(cpuOnly(self) ? [] : [self]), ...nodes.filter((n) => !n.self && localIds.has(n.node_id) && canServe(n))];
   const caps = headFirst(pool.flatMap((n) => { const c = machineCapacity(n); return c ? [n.self ? c : capped(c, n.pool?.cap ?? null)] : []; }), self.node_id);
   if (!caps.length) {
     if (cpuOnly(self)) throw new PlanError("no_memory", "the pinned runtime cannot place layers on this head; name a sharing worker");
@@ -119,7 +120,7 @@ export function serveHosts(nodes: readonly GroupInput[], need: number): ServeHos
   for (const n of nodes) {
     if (!n.online && !n.self) continue;
     if (!n.self && !canServe(n)) continue;
-    // An older Walkie shares for split runs but has no serve API (p8 review): never picked to serve.
+    // An older Sqwakie shares for split runs but has no serve API (p8 review): never picked to serve.
     if (!n.self && n.pool?.serve !== true) continue;
     const c = machineCapacity(n);
     if (!c) continue;

@@ -1,5 +1,5 @@
 // Is the root-owned seat runner/helper (walkie seats setup-user --apply: copies of the walkie binary in
-// /usr/local/libexec/walkie) from this Walkie? `walkie update` replaces the person's walkie, never those copies, so
+// /usr/local/libexec/walkie) from this Sqwakie? `walkie update` replaces the person's walkie, never those copies, so
 // after an update a fix in the helper (e.g. pre.5's macOS seat users) isn't there until setup-user runs again.
 // Read-only: each copy is installed 0755, so the person can run `<copy> version` without sudo. It is run only once its
 // path is root's and nobody else's to write (runnerPathProblem), with an empty environment, from /, with a timeout.
@@ -68,7 +68,7 @@ export interface HelperVersionDeps {
 function copyOf(path: string, bad: string | null, out: string | null): HelperCopy {
   if (bad) return { path, version: null, why: bad };
   const version = parseVersionLine(out);
-  return version ? { path, version } : { path, version: null, why: `${path} version didn't report a Walkie version` };
+  return version ? { path, version } : { path, version: null, why: `${path} version didn't report a Sqwakie version` };
 }
 
 function summarize(copies: HelperCopy[], want: string): HelperVersion {
@@ -113,7 +113,7 @@ export function helperVersionProblem(v: HelperVersion): string | null {
   }
   const other = v.copies.find((c) => c.version !== v.want)?.version ?? "";
   const age = olderThan(other, v.want) === false ? "a newer" : "an older";
-  return `the seat helper is from ${age} Walkie (${found}; this walkie is ${v.want})`;
+  return `the seat helper is from ${age} Sqwakie (${found}; this walkie is ${v.want})`;
 }
 
 /** A copy's identity for the cache: it changes when the copy is reinstalled. */

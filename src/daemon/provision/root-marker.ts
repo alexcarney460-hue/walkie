@@ -25,7 +25,7 @@ export function secureMarkerMetadata(stat: { uid: number; mode: number; isFile()
 }
 /** There is no root-owned enrollment marker (yet): the enrollment's administrator step installs it. */
 export class RootMarkerRequired extends Error {}
-/** A marker is there but is not what Walkie installed: not root-owned with mode 0644, its content changed, or its directory is not protected. */
+/** A marker is there but is not what Sqwakie installed: not root-owned with mode 0644, its content changed, or its directory is not protected. */
 export class RootMarkerInvalid extends Error {}
 
 export function requireEnrollmentRoot(home: string): void {

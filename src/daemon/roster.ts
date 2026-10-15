@@ -17,16 +17,28 @@ export interface MemberRec {
   readonly login: string; readonly handle: string; readonly role: Role | "removed"; readonly display_name?: string;
   /**
    * Chain position (entry index) of the member's last removing `team.member` (every replica derives the same value
-   * from the chain). Kept when the member is re-admitted: a Walkie Direct invite minted before it can't bring them
+   * from the chain). Kept when the member is re-admitted: a Sqwakie Direct invite minted before it can't bring them
    * back (invite.ts), whatever their role is now.
    */
   readonly removed_pos?: number;
+  /**
+   * Chain position (entry index) of the member's newest `team.member` entry, a removal included (every replica derives
+   * the same value from the chain). A queued role request signed at or before it did not see that entry, so the authority
+   * refuses it (requests.ts, WALK-109). Absent for a member no `team.member` entry has named (the founder).
+   */
+  readonly changed_pos?: number;
+  /** Latest actual role transition; preserved on restoration (fleet-link lifetime, not cosmetic restates). */
+  readonly role_changed_pos?: number;
+  /** Latest loss of owner status; unlike demoted_ts this survives promotion back to owner. */
+  readonly owner_lost_pos?: number;
   /**
    * When this member last stopped being an owner (the demoting event's `ts`). Local, derived from the chain: a
    * member or observer may mark an invite used only within an hour of it. Absent for someone who was never demoted
    * from owner, and cleared again on promotion back to owner.
    */
   readonly demoted_ts?: number;
+  /** Latest role lowering position, retained across later promotions for legacy request safety. */
+  readonly demoted_pos?: number;
   /** Invite-spend restates applied since `demoted_ts` (that demotion's budget). Owners are not counted. */
   readonly invite_spends?: number;
 }
@@ -42,12 +54,14 @@ export interface NodeRec {
   readonly ip: string; readonly port: number; readonly revoked: boolean;
   /** Revoked implicitly by the member's removal (a fresh `walkie join` may re-admit it after a re-invite). */
   readonly revoked_by_removal?: boolean;
+  /** Latest explicit revocation in roster position, retained after re-admission. */
+  readonly revoked_pos?: number;
   readonly peer_sig_v1?: true;
   /** v0.2: transports the node serves (known ones only); absent = tailscale only (v0.1). */
   readonly transports?: readonly TransportKind[];
 }
 
-/** Whether a node serves Walkie Direct (iroh), dialed by its pubkey. */
+/** Whether a node serves Sqwakie Direct (iroh), dialed by its pubkey. */
 export function servesDirect(n: Pick<NodeRec, "transports">): boolean {
   return n.transports?.includes("direct") ?? false;
 }
@@ -59,7 +73,7 @@ export function transportsOf(n: Pick<NodeRec, "transports">): TransportKind[] {
 
 /**
  * The transports a node can be reached over (PROTOCOL §4 "Mixed teams"): Tailscale only with a pinned address
- * (a Direct-only machine has none), Walkie Direct when its record says it serves it.
+ * (a Direct-only machine has none), Sqwakie Direct when its record says it serves it.
  */
 export function reachableOver(n: Pick<NodeRec, "transports" | "ip">): TransportKind[] {
   return transportsOf(n).filter((t) => t !== "tailscale" || n.ip !== "");
@@ -67,7 +81,7 @@ export function reachableOver(n: Pick<NodeRec, "transports" | "ip">): TransportK
 
 /**
  * How two nodes talk: a transport both serve, Tailscale first (it needs no relay and is what v0.1 nodes speak),
- * else Walkie Direct; null when they share none (a Tailscale-only and a Direct-only machine), in which case their
+ * else Sqwakie Direct; null when they share none (a Tailscale-only and a Direct-only machine), in which case their
  * events travel through machines that serve both (sync pulls every origin from any peer that has it).
  */
 export function pickTransport(a: Pick<NodeRec, "transports" | "ip">, b: Pick<NodeRec, "transports" | "ip">): TransportKind | null {
@@ -93,6 +107,10 @@ export interface ChannelRec {
   readonly name: string; readonly topic?: string; readonly members?: readonly string[]; readonly archived?: boolean;
   /** Marked as a machine's seats channel by an upsert carrying `seats: true` (sticky; PRE4 RC Codex 5). */
   readonly seats?: true;
+  /** Latest chain position where this channel's access list changed. Derived locally. */
+  readonly membership_pos?: number;
+  /** True after a channel access list changes following its creation. */
+  readonly membership_changed?: true;
 }
 export interface TeamRec { readonly id: string; readonly name: string; readonly founder: string; readonly create_id: string; readonly created_ts: number }
 export interface Roster {
@@ -104,10 +122,12 @@ export interface Roster {
   readonly license?: LicenseState;
   /** Connector id → nodes it is enabled on (`team.integration`, F3). Plays no part in any validity rule. */
   readonly integrations?: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Walkie Direct invites already used (`team.node.invite`, PROTOCOL §4): each admits one machine, once. */
+  /** Sqwakie Direct invites already used (`team.node.invite`, PROTOCOL §4): each admits one machine, once. */
   readonly invites?: ReadonlySet<string>;
   /** Chain entries folded into this roster (the chain length at this point; absent = 0). Local, never on the wire. */
   readonly pos?: number;
+  /** Latest authority transfer's chain index. Local only; rebuilt from the signed log on startup. */
+  readonly authority_pos?: number;
   /** Handle → its invite cut-off (the latest removal of a member holding it). Local, derived from the chain. */
   readonly voids?: ReadonlyMap<string, VoidBefore>;
   readonly peer_sig_strict?: boolean;
@@ -162,6 +182,11 @@ export const ROLE_RANK: Readonly<Record<Role | "removed", number>> = { removed: 
  */
 export const MAX_NODES_PER_LOGIN = 16;
 export const MAX_NODES_PER_TEAM = 1024;
+/**
+ * FLEET-LINK-1: a machine admitted by a fleet link counts against this per-member limit instead (an owner sized the
+ * link on purpose for a business's machines); the team-wide limit is the same.
+ */
+export const MAX_FLEET_NODES_PER_LOGIN = 256;
 
 const OK: Verdict = { status: "ok" };
 const pending = (reason: string): Verdict => ({ status: "pending", reason });
@@ -192,7 +217,7 @@ export function nodeMemberByKey(r: Roster, pubkey: string): MemberRec | null {
 }
 
 /**
- * The Walkie Direct gate (PROTOCOL §4): the current member owning the admitted, non-revoked node whose key is exactly
+ * The Sqwakie Direct gate (PROTOCOL §4): the current member owning the admitted, non-revoked node whose key is exactly
  * `pubkey` AND whose record serves Direct. A Tailscale-only machine's key is not let in over Direct: a Tailscale join
  * never proved the joiner holds its key, so that key only gets Direct access after the machine proves it over QUIC
  * (a Direct `/join` from that key, which adds "direct" to its record: PROTOCOL §4 "Mixed teams").
@@ -258,13 +283,13 @@ export function integrationInUse(r: Roster, connector: string): boolean {
  * Revoking, re-pinning an active node, and any non-node roster change are never limited, so an authority
  * at capacity can still revoke, remove and transfer.
  */
-export function nodeCapacity(r: Roster, nodeId: string, login: string, revoked: boolean): Verdict {
+export function nodeCapacity(r: Roster, nodeId: string, login: string, revoked: boolean, perLogin = MAX_NODES_PER_LOGIN): Verdict {
   const existing = r.nodes.get(nodeId);
   if (!existing && r.nodes.size >= MAX_NODES_PER_TEAM) return reject("node_limit");
   if (revoked || (existing && !existing.revoked)) return OK;
   let active = 0;
   for (const n of r.nodes.values()) if (n.login === login && !n.revoked) active++;
-  return active >= MAX_NODES_PER_LOGIN ? reject("node_limit") : OK;
+  return active >= perLogin ? reject("node_limit") : OK;
 }
 
 // ---- validation ----------------------------------------------------------------
@@ -643,11 +668,13 @@ export function memberRecOf(b: BodyOf<"team.member">): MemberRec {
   return { login: b.login, handle: b.handle, role: b.role, ...(b.display_name ? { display_name: b.display_name } : {}) };
 }
 
-export function nodeRecOf(b: BodyOf<"team.node">, previous?: NodeRec): NodeRec {
+export function nodeRecOf(b: BodyOf<"team.node">, previous: NodeRec | undefined, pos: number): NodeRec {
   const transports = knownTransports(b.transports);
+  const revokedPos = b.revoked === true && !previous?.revoked ? pos : previous?.revoked_pos;
   return {
     node_id: b.node_id, login: b.login, hostname: b.hostname, pubkey: b.pubkey, ip: b.ip,
     port: b.port ?? DEFAULT_PEER_PORT, revoked: b.revoked === true, ...(transports ? { transports } : {}),
+    ...(revokedPos !== undefined ? { revoked_pos: revokedPos } : {}),
     ...(b.peer_sig_v1 === true || previous?.peer_sig_v1 ? { peer_sig_v1: true as const } : {}),
   };
 }
@@ -827,8 +854,9 @@ export function applyRosterEvent(r: Roster, ev: Event): Roster {
 
 /**
  * A member record after `team.member`: a removal records its cut-off; a re-admission keeps the previous one.
- * Leaving owner records `ts` (that demotion's invite-spend window). A later non-owner role keeps the window and
- * the spend count. Promotion back to owner clears both, so the next demotion starts a new budget.
+ * Every entry records its own position (`changed_pos`). Leaving owner records `ts` (that demotion's invite-spend
+ * window). A later non-owner role keeps the window and the spend count. Promotion back to owner clears both, so the
+ * next demotion starts a new budget.
  */
 function memberAfter(prev: MemberRec | undefined, b: BodyOf<"team.member">, pos: number, ts: number): MemberRec {
   const rec = memberRecOf(b);
@@ -840,11 +868,19 @@ function memberAfter(prev: MemberRec | undefined, b: BodyOf<"team.member">, pos:
     : b.role !== "owner" && prev?.demoted_ts !== undefined
       ? { demoted_ts: prev.demoted_ts, ...(prev.invite_spends ? { invite_spends: prev.invite_spends } : {}) }
       : {};
-  return { ...rec, ...removed, ...demoted };
+  const roleChanged = prev && prev.role !== b.role ? pos : prev?.role_changed_pos;
+  const ownerLost = prev?.role === "owner" && b.role !== "owner" ? pos : prev?.owner_lost_pos;
+  return { ...rec, ...removed, ...demoted, changed_pos: pos,
+    ...(prev && ROLE_RANK[b.role] < ROLE_RANK[prev.role] ? { demoted_pos: pos } : prev?.demoted_pos !== undefined ? { demoted_pos: prev.demoted_pos } : {}),
+    ...(roleChanged !== undefined ? { role_changed_pos: roleChanged } : {}),
+    ...(ownerLost !== undefined ? { owner_lost_pos: ownerLost } : {}),
+  };
 }
 
 function applyKind(r: Roster, ev: Event): Roster {
   switch (ev.kind) {
+    case "team.authority":
+      return { ...r, authority_pos: r.pos ?? 0 };
     case "team.create": {
       const { member, node } = founderRecs(ev);
       const b = ev.body as BodyOf<"team.create">;
@@ -877,7 +913,7 @@ function applyKind(r: Roster, ev: Event): Roster {
       // An explicit owner waiver admits a legacy machine. Consume the waiver in the signed chain so
       // automatic strict mode resumes when that machine later proves possession of its key.
       const legacyAdmitted = r.peer_sig_strict === false && (!prior || prior.revoked) && !b.peer_sig_v1;
-      const nodes = new Map(r.nodes).set(b.node_id, nodeRecOf(b, prior));
+      const nodes = new Map(r.nodes).set(b.node_id, nodeRecOf(b, prior, r.pos ?? 0));
       let members = r.members;
       const by = typeof b.requested_by === "string" ? memberByHandle(r, b.requested_by) : undefined;
       if (by && by.role !== "owner" && by.demoted_ts !== undefined && typeof b.invite === "string"
@@ -891,7 +927,16 @@ function applyKind(r: Roster, ev: Event): Roster {
     }
     case "channel.upsert": {
       const b = ev.body as BodyOf<"channel.upsert">;
-      return { ...r, channels: new Map(r.channels).set(b.name, applyChannel(r.channels.get(b.name), b)) };
+      const previous = r.channels.get(b.name);
+      const next = applyChannel(previous, b);
+      const before = previous?.members;
+      const after = next.members;
+      const changed = !previous || (before === undefined) !== (after === undefined)
+        || (before !== undefined && after !== undefined && (before.length !== after.length || before.some((member, index) => member !== after[index])));
+      return { ...r, channels: new Map(r.channels).set(b.name, {
+        ...next, ...(changed ? { membership_pos: r.pos ?? 0 } : previous?.membership_pos !== undefined ? { membership_pos: previous.membership_pos } : {}),
+        ...(previous?.membership_changed || (previous && changed) ? { membership_changed: true as const } : {}),
+      }) };
     }
     case "team.license": {
       // Validated (signature included) before it joined the chain; decoding can't fail here.

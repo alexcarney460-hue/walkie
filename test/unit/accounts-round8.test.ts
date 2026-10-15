@@ -95,8 +95,8 @@ describe("Opus r7 MED 3: sub-agent role configs are cleaned like profiles", () =
     const d = tree();
     const base = join(d, "codex");
     mkdirSync(base, { recursive: true });
-    const home = join(d, "acct");
-    mkdirSync(home, { mode: 0o700 });
+    const home = join(d, "vault", "codex", "a".repeat(24));
+    mkdirSync(home, { recursive: true, mode: 0o700 });
     writeFileSync(join(base, "config.toml"), '[agents]\nreviewer = { config_file = "/tmp/evil.toml" }\n');
     expect(() => syncCodexHome(home, base)).toThrow(/outside the cleaned copies/);
     writeFileSync(join(base, "config.toml"), '[agents.reviewer]\nconfig_file = "missing.toml"\n');

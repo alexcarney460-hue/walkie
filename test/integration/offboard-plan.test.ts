@@ -84,6 +84,10 @@ function memberRoles(node: TestNode, handle: string): string[] {
   return memberEvents(node, handle).map((e) => `${(e.body as { role?: string }).role}@${e.seq}`);
 }
 
+function queuedRoleRequests(node: TestNode) {
+  return node.d.core.store.queuedRequests().filter((row) => (JSON.parse(row.json) as { kind?: string }).kind === "team.member");
+}
+
 /** True when an observer role is signed after the first removal. A catch-up that already shows removed must not do that. */
 function observerAfterRemoved(node: TestNode, handle: string): boolean {
   const roles = memberRoles(node, handle);
@@ -483,12 +487,12 @@ describe("offboard does not queue a role change while the authority is down", ()
       status: 409, code: "offboard_unreachable",
       message: expect.stringMatching(/was not changed by this step[\s\S]*nothing was signed or queued[\s\S]*re-running walkie team offboard is safe/i),
     });
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
     expect(olive.d.core.roster.members.get("noor@example.com")?.role).toBe("member");
     await authority.start();
     authority.d.core.emit("team.member", { login: "noor@example.com", handle: "noor", role: "removed" });
     await waitFor(() => olive.d.core.roster.members.get("noor@example.com")?.role === "removed", { what: "removal synced", timeoutMs: 20_000 });
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
     expect(authority.d.core.roster.members.get("noor@example.com")?.role).toBe("removed");
     const after = (node: TestNode) => {
       const events = memberEvents(node, "noor");
@@ -528,7 +532,7 @@ describe("a roster send that fails after it was attempted", () => {
       status: 409, code: "offboard_unreachable",
       message: expect.stringMatching(/may or may not have been applied[\s\S]*re-running walkie team offboard is safe/i),
     });
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
     expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("member");
     expect(memberRoles(alex, "noor").some((row) => row.startsWith("observer@"))).toBe(false);
   }, 30_000);
@@ -616,7 +620,7 @@ describe("offboard catches up a removed member and drops this machine's queued r
     });
     expect(alex.d.core.roster.members.get("alex@example.com")?.role).toBe("owner");
     expect(memberRoles(alex, "alex")).toEqual(before);
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
   }, 30_000);
 
   test("a stale follower roster does not sign observer for someone the authority already removed", async () => {
@@ -632,7 +636,7 @@ describe("offboard catches up a removed member and drops this machine's queued r
     expect(applied.steps.map((s) => `${s.step}:${s.status}`)).toContain("remove:skipped");
     expect(observerAfterRemoved(alex, "noor")).toBe(false);
     expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("removed");
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
     expect(applied.steps.find((s) => s.detail.includes("dropped 0 queued role change(s) for @noor"))).toBeDefined();
   }, 30_000);
 
@@ -650,7 +654,7 @@ describe("offboard catches up a removed member and drops this machine's queued r
     expect(applied.steps.find((s) => s.step === "remove")?.detail).toMatch(/already removed/);
     expect(alex.d.core.roster.members.get("bea@example.com")?.role).toBe("removed");
     expect(observerAfterRemoved(alex, "bea")).toBe(false);
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
   }, 30_000);
 });
 
@@ -687,17 +691,17 @@ describe("offboard drops a role change this machine queued before the authority 
     const queuedBea = await olive.client().request<{ queued?: boolean }>("POST", "/v1/team/member", { handle: "bea", role: "observer" });
     expect(queuedNoor.queued).toBe(true);
     expect(queuedBea.queued).toBe(true);
-    expect(olive.d.core.store.queuedRequests().length).toBe(2);
+    expect(queuedRoleRequests(olive).length).toBe(2);
     olive.d.sync.stop();
     await alex.start();
     const applied = await olive.client().request<Applied>("POST", "/v1/team/offboard", { handle: "noor" }, 30_000);
     expect(applied.steps.find((s) => s.detail === "dropped 1 queued role change(s) for @noor")).toBeDefined();
     expect(applied.role).toBe("removed");
-    const left = olive.d.core.store.queuedRequests();
+    const left = queuedRoleRequests(olive);
     expect(left.length).toBe(1);
     expect((JSON.parse(left[0]?.json ?? "{}") as { body?: { login?: string } }).body?.login).toBe("bea@example.com");
     await flushRequests(olive.d.core, olive.d.client, olive.d.sync.requestCatchUp);
-    expect(olive.d.core.store.queuedRequests()).toEqual([]);
+    expect(queuedRoleRequests(olive)).toEqual([]);
     expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("removed");
     expect(observerAfterRemoved(alex, "noor")).toBe(false);
     expect(memberRoles(alex, "noor").at(-1)).toMatch(/^removed@/);
@@ -822,7 +826,7 @@ describe("a removal that arrives after offboard has read the roster", () => {
 
   afterAll(async () => { await cluster?.close(); });
 
-  test("both writes succeed, so the person ends removed", async () => {
+  test("the authority refuses the observer write as stale, so the person ends removed and never observer again", async () => {
     const client = olive.d.client as unknown as { vv: (addr: unknown, pubkey?: string) => Promise<unknown> };
     const orig = client.vv.bind(client);
     let once = true;
@@ -834,11 +838,62 @@ describe("a removal that arrives after offboard has read the roster", () => {
     };
     const applied = await olive.client().request<Applied>("POST", "/v1/team/offboard", { handle: "noor" }, 30_000);
     expect(applied.role).toBe("removed");
+    expect(applied.steps.find((s) => s.step === "suspend")).toEqual({
+      step: "suspend", status: "skipped",
+      detail: "the roster authority changed their membership after this command read the roster, so they were not set to observer",
+    });
     expect(applied.steps.find((s) => s.step === "remove")?.status).toBe("done");
     expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("removed");
     expect(memberRoles(alex, "noor").at(-1)).toMatch(/^removed@/);
-    // The observer write still follows the other owner's removal. The removal after it is what makes the end state removed.
-    expect(observerAfterRemoved(alex, "noor")).toBe(true);
+    // The observer write was signed on a roster from before the other owner's removal (WALK-109), so the authority refused it.
+    expect(observerAfterRemoved(alex, "noor")).toBe(false);
+  }, 30_000);
+});
+
+describe("a role change that arrives after offboard has read the roster", () => {
+  let cluster: Cluster;
+  let alex: TestNode;
+  let olive: TestNode;
+
+  beforeAll(async () => {
+    cluster = new Cluster();
+    alex = await cluster.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });
+    const noor = await cluster.add({ name: "noor", login: "noor@example.com", hostname: "noor-mbp" });
+    olive = await cluster.add({ name: "olive", login: "olive@example.com", hostname: "olive-mbp" });
+    await alex.client().init("acme", "alex");
+    await alex.client().invite("noor@example.com", "noor", "member");
+    await alex.client().invite("olive@example.com", "olive", "owner");
+    expect((await noor.client().join(alex.peerAddr)).admitted).toBe(true);
+    expect((await olive.client().join(alex.peerAddr)).admitted).toBe(true);
+    await waitFor(() => olive.d.core.roster.members.get("noor@example.com")?.role === "member"
+      && olive.d.core.me()?.role === "owner" && !olive.d.core.isAuthority(), { what: "olive synced" });
+    alex.d.sync.stop();
+    olive.d.sync.stop();
+  }, 60_000);
+
+  afterAll(async () => { await cluster?.close(); });
+
+  test("the authority refuses the observer write as stale, so the person is still removed and never set to observer", async () => {
+    const client = olive.d.client as unknown as { vv: (addr: unknown, pubkey?: string) => Promise<unknown> };
+    const orig = client.vv.bind(client);
+    let once = true;
+    client.vv = async (addr, pubkey) => {
+      const res = await orig(addr, pubkey);
+      // After the version vector this command reads, the other owner promotes them. That event is not in the snapshot.
+      if (once) { once = false; alex.d.core.emit("team.member", { login: "noor@example.com", handle: "noor", role: "owner" }); }
+      return res;
+    };
+    const applied = await olive.client().request<Applied>("POST", "/v1/team/offboard", { handle: "noor" }, 30_000);
+    expect(applied.role).toBe("removed");
+    expect(applied.steps.find((s) => s.step === "suspend")).toEqual({
+      step: "suspend", status: "skipped",
+      detail: "the roster authority changed their membership after this command read the roster, so they were not set to observer",
+    });
+    expect(applied.steps.find((s) => s.step === "remove")?.status).toBe("done");
+    expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("removed");
+    const roles = memberRoles(alex, "noor").map((r) => r.split("@")[0]);
+    expect(roles.slice(-2)).toEqual(["owner", "removed"]);
+    expect(roles).not.toContain("observer");
   }, 30_000);
 });
 
@@ -975,14 +1030,24 @@ describe("offboard apply client timeout", () => {
   });
 });
 
-describe("offboard docs match the race they still allow", () => {
-  test("protocol and security do not claim offboard's own writes can never restore observer", () => {
+describe("offboard docs match the stale-request check", () => {
+  test("protocol and security say the authority refuses offboard's observer write after a removal", () => {
     const protocol = readFileSync(join(import.meta.dir, "../../docs/PROTOCOL.md"), "utf8");
     const security = readFileSync(join(import.meta.dir, "../../docs/SECURITY.md"), "utf8");
     const changelog = readFileSync(join(import.meta.dir, "../../CHANGELOG.md"), "utf8");
-    const claim = "A removal that arrives after that read can still be followed by offboard's observer write until the authority checks a precondition (tracked on WALK-109).";
+    const claim = "A removal that arrives after that read makes the authority refuse offboard's observer write as stale (`409 stale_request`, WALK-109): that step is skipped.";
     expect(protocol).toContain(claim);
     expect(security).toContain(claim);
+    expect(protocol).not.toContain("until the authority checks a precondition");
+    expect(security).not.toContain("until the authority checks a precondition");
+    // Everything above the pre.13 section: the heading over the WALK-109 note is "## Unreleased" now and a release number later.
+    for (const heading of ["## Unreleased", "## v0.2.0-pre.14"]) {
+      const releaseChangelog = changelog.replace("## Unreleased", heading);
+      const previousRelease = releaseChangelog.indexOf("## v0.2.0-pre.13");
+      expect(previousRelease).toBeGreaterThan(0);
+      const walk109Notes = releaseChangelog.slice(0, previousRelease);
+      expect(walk109Notes).toContain("the authority refuses the observer write as stale");
+    }
     expect(protocol).not.toContain("Offboard's own writes never set a removed member back to observer");
     expect(security).not.toContain("offboard's own writes never set a removed member back to observer");
     expect(protocol).toContain("no key line for that person was installed here");
@@ -1129,7 +1194,9 @@ describe("a send of this person's row that outlasts the flush wait is named", ()
       await held.flushing.catch(() => undefined);
     }
     await Bun.sleep(200);
-    expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("observer");
+    // The released send was signed before offboard removed noor. It still lands, and the authority refuses it as stale.
+    expect(alex.d.core.roster.members.get("noor@example.com")?.role).toBe("removed");
+    expect(observerAfterRemoved(alex, "noor")).toBe(false);
   }, 90_000);
 });
 

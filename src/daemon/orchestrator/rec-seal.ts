@@ -6,10 +6,10 @@
 // dismissal of the old key would not hold the new one back. The first run (no key and no stamp) creates one. After
 // that, `rec-seal.stamp` records that a key existed. `walkie doctor` reports a later loss, and it reports a key other
 // people can read as its own failure: chmod 600, never deletion. The daemon sets the mode to 0600 when it reads the
-// key. There is no `walkie doctor --fix`. To mint a new secret on purpose, stop Walkie and delete both rec-seal.key
+// key. There is no `walkie doctor --fix`. To mint a new secret on purpose, stop Sqwakie and delete both rec-seal.key
 // and rec-seal.stamp.
 //
-// The secret is per daemon. When WalkieTalkie leadership moves to another owner's machine, that machine has its own
+// The secret is per daemon. When Talkie leadership moves to another owner's machine, that machine has its own
 // secret, so the same private create can be open once more under a different key, and dismissing one does not hold
 // the other back.
 import { randomBytes } from "node:crypto";
@@ -20,7 +20,7 @@ const FILE = "rec-seal.key";
 const STAMP = "rec-seal.stamp";
 const HEX = /^[0-9a-f]{64}$/i;
 
-export const REC_SEAL_REFUSE = "rec-seal.key is missing or unreadable. Walkie will not write a new one. To mint a new secret, stop Walkie and delete both rec-seal.key and rec-seal.stamp, then start Walkie again. Open private creates then get new keys, and dismissing one does not hold the other back. The same happens when WalkieTalkie leadership moves to another owner's machine, which has its own secret. There is no walkie doctor --fix.";
+export const REC_SEAL_REFUSE = "rec-seal.key is missing or unreadable. Sqwakie will not write a new one. To mint a new secret, stop Sqwakie and delete both rec-seal.key and rec-seal.stamp, then start Sqwakie again. Open private creates then get new keys, and dismissing one does not hold the other back. The same happens when Talkie leadership moves to another owner's machine, which has its own secret. There is no walkie doctor --fix.";
 
 export class RecSealError extends Error {
   constructor(message = REC_SEAL_REFUSE) {
@@ -157,7 +157,7 @@ export interface RecSealCheck { level: "ok" | "warn" | "fail"; name: string; det
 
 /** A key others can read. Says to chmod it. Never says to delete it: deleting would mint a new secret. */
 function chmodAdvice(path: string, mode: number): string {
-  return `rec-seal.key is mode ${(mode & 0o777).toString(8)}, not 0600. Run chmod 600 ${path}. Walkie will not write a new secret. The daemon sets the file to mode 0600 when it reads the key.`;
+  return `rec-seal.key is mode ${(mode & 0o777).toString(8)}, not 0600. Run chmod 600 ${path}. Sqwakie will not write a new secret. The daemon sets the file to mode 0600 when it reads the key.`;
 }
 
 /**

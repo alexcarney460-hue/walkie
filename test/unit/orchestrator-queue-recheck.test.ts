@@ -1,4 +1,4 @@
-// WALK-74 (ASYNC-PERMS-1): a message queued for WalkieTalkie is authorised again when its turn comes. A person made an
+// WALK-74 (ASYNC-PERMS-1): a message queued for Talkie is authorised again when its turn comes. A person made an
 // observer while their message waited gets it refused (observers can't run an orchestrator), never sent to Claude; a
 // duty's turn refused there gets the plain reason as its run's result instead of a 10-minute timeout. The control: the
 // same queued message from a person who is still a member goes on to be sent.
@@ -41,7 +41,7 @@ test("a person made an observer while their message waited: refused when its tur
 test("a duty's turn refused at its turn: the run's result is the plain reason, not a timeout", () => {
   const h = host("observer", "schedule");
   pump.call(h.fake);
-  expect(h.replies.get("om_1")).toEqual({ text: "Not run: WalkieTalkie's person is now an observer, and observers can't run WalkieTalkie", ok: false });
+  expect(h.replies.get("om_1")).toEqual({ text: "Not run: Talkie's person is now an observer, and observers can't run Talkie", ok: false });
   expect(h.spawned()).toBe(0);
 });
 

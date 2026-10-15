@@ -1,4 +1,4 @@
-# Contributing to Walkie
+# Contributing to Sqwakie
 
 Thanks for helping. Bug reports, fixes, docs and small features are all welcome.
 
@@ -9,7 +9,7 @@ Thanks for helping. Bug reports, fixes, docs and small features are all welcome.
 
 ## The Contributor License Agreement
 
-Walkie is made by RC Studios and published under the [Functional Source License](LICENSE) (FSL-1.1-ALv2). Every
+Sqwakie is made by RC Studios and published under the [Functional Source License](LICENSE) (FSL-1.1-ALv2). Every
 contributor signs the [Contributor License Agreement](CLA.md) once. It keeps your copyright with you, and gives
 RC Studios the right to use, license and relicense your contribution, for example under Apache-2.0 when a version
 converts or under other terms.

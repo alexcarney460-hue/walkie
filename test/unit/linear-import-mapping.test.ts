@@ -257,6 +257,6 @@ describe("sync decisions", () => {
   test("the conflict note names both values and the winner", () => {
     const note = conflictNote("WR-3", [{ field: "place", linear: "review", walkie: "active", winner: "linear" }], { linear: Date.parse("2026-09-27T10:00:00Z"), walkie: Date.parse("2026-09-27T09:00:00Z") });
     expect(note).toContain("WR-3 changed on both sides");
-    expect(note).toContain(`place: Linear "review", Walkie "active" → kept Linear's`);
+    expect(note).toContain(`place: Linear "review", Sqwakie "active" → kept Linear's`);
   });
 });

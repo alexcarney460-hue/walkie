@@ -61,8 +61,11 @@ export interface CardEvidence {
   readonly branchesComplete?: boolean;
   /** The card's Linear issue as the integration last read it, or null. */
   readonly linear: { readonly key: string; readonly state: string; readonly state_type: string } | null;
-  readonly timeline: readonly TimelineEntry[];
+  readonly timeline: readonly StewardTimelineEntry[];
 }
+
+/** Original signed text is used for decisions; this copy is safe to quote on the target board. */
+export interface StewardTimelineEntry extends TimelineEntry { readonly evidence_text?: string }
 
 export interface StewardInput {
   readonly now: number;
@@ -160,9 +163,11 @@ function isRestore(e: TimelineEntry): boolean {
 export interface History {
   /** The latest applied move op. */
   readonly last: TimelineEntry | null;
+  /** Multiple moves cannot be ordered from the fold or their event IDs. */
+  readonly moveOrderUnknown: boolean;
   readonly inColumnSince: number;
-  /** The latest comment whose author's word counts on this card (trustedAuthor). */
-  readonly lastComment: TimelineEntry | null;
+  /** The latest trusted comment since the last person-authored card edit. */
+  readonly lastComment: StewardTimelineEntry | null;
   readonly lastActivity: number;
   /** A person's move is the latest one and it came after a steward move: the person overrode the steward. */
   readonly overridden: boolean;
@@ -185,13 +190,41 @@ function titleWriterTrusted(sorted: readonly TimelineEntry[], card: StewardCard,
   return !author.agent || owners.includes(author.handle);
 }
 
-export function history(tl: readonly TimelineEntry[], card: StewardCard, owners: readonly string[]): History {
+function laterOnSameOrigin(comment: TimelineEntry, edit: TimelineEntry): boolean {
+  const c = /^([0-9a-f]{16}):([1-9][0-9]*)$/.exec(comment.id);
+  const e = /^([0-9a-f]{16}):([1-9][0-9]*)$/.exec(edit.id);
+  return !!c && !!e && c[1] === e[1] && BigInt(c[2] as string) > BigInt(e[2] as string);
+}
+
+function moveOrder(a: TimelineEntry, b: TimelineEntry): number | null {
+  const ar = a.effective_rev;
+  const br = b.effective_rev;
+  if (Number.isSafeInteger(ar) && Number.isSafeInteger(br)) {
+    if (ar !== br) return (ar as number) - (br as number);
+  } else if (ar !== undefined || br !== undefined) return null;
+  const ai = /^([0-9a-f]{16}):([1-9][0-9]*)$/.exec(a.id);
+  const bi = /^([0-9a-f]{16}):([1-9][0-9]*)$/.exec(b.id);
+  if (!ai || !bi || (ar === undefined && ai[1] !== bi[1])) return null;
+  if (ai[1] !== bi[1]) return (ai[1] as string) < (bi[1] as string) ? -1 : 1;
+  const as = BigInt(ai[2] as string);
+  const bs = BigInt(bi[2] as string);
+  return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
+export function history(tl: readonly StewardTimelineEntry[], card: StewardCard, owners: readonly string[]): History {
   const sorted = [...tl].sort((a, b) => a.ts - b.ts);
   const moves = sorted.filter(isMove);
-  const last = moves[moves.length - 1] ?? null;
-  const comments = sorted.filter((e) => e.kind === "comment" && typeof e.text === "string" && trustedAuthor(e.author, card, owners));
+  const moveOrderUnknown = moves.some((a, i) => moves.slice(i + 1).some((b) => moveOrder(a, b) === null));
+  const last = moveOrderUnknown ? null : [...moves].sort((a, b) => moveOrder(a, b) ?? 0).at(-1) ?? null;
+  const personEdits = sorted.filter((e) => e.kind === "op" && !e.ignored && !e.author.agent);
+  // Event IDs establish order within one origin. Across origins the timeline's timestamps may be skewed, so a
+  // comment cannot be proved newer than a person's edit and must not authorize a move.
+  const comments = sorted.filter((e) => e.kind === "comment" &&
+    personEdits.every((edit) => laterOnSameOrigin(e, edit)) &&
+    typeof e.text === "string" && trustedAuthor(e.author, card, owners));
+  const lastComment = comments.find((e) => comments.every((other) => e === other || laterOnSameOrigin(e, other))) ?? null;
   return {
-    last, inColumnSince: last?.ts ?? card.created_at, lastComment: comments[comments.length - 1] ?? null,
+    last, moveOrderUnknown, inColumnSince: last?.ts ?? card.created_at, lastComment,
     lastActivity: Math.max(card.created_at, ...sorted.map((e) => e.ts)),
     overridden: !!last && !last.author.agent && moves.some((m) => m.author.agent === STEWARD_AGENT),
     restoredByPerson: sorted.some(isRestore),
@@ -200,8 +233,13 @@ export function history(tl: readonly TimelineEntry[], card: StewardCard, owners:
   };
 }
 
+export function commentEvidenceText(entry: StewardTimelineEntry): string {
+  return entry.evidence_text ?? entry.text ?? "";
+}
+
 /** Why the steward leaves a card alone now, whoever moved it last: null = it may act. */
 export function holdReason(h: History, now: number): string | null {
+  if (h.moveOrderUnknown) return "card moves have no established order; the steward leaves it";
   const last = h.last;
   if (!last) return null;
   if (h.overridden) return `a person moved it after the steward did (${hoursAgo(now, last.ts)}); the steward leaves it`;

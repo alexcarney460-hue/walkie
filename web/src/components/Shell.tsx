@@ -27,7 +27,7 @@ const NAV: Array<{ view: View; label: string; short: string; key: string; icon: 
   { view: "projects", label: "Projects", short: "Projects", key: "p", icon: FolderKanban },
   // Plain-language board (WALK-75). Not a phone tab: the six tabs stay Agents, Projects, Talkie, Channels, Asks, Team.
   { view: "simple", label: "Simple", short: "Simple", key: "n", icon: ListChecks, tab: false },
-  { view: "orchestrator", label: "WalkieTalkie", short: "Talkie", key: "o", icon: Sparkles },
+  { view: "orchestrator", label: "Talkie", short: "Talkie", key: "o", icon: Sparkles },
   { view: "board", label: "Channels", short: "Channels", key: "b", icon: MessagesSquare },
   { view: "asks", label: "Asks", short: "Asks", key: "a", icon: CircleHelp },
   // Not in the phone tab bar (six tabs fit: Agents · Projects · Chat · Channels · Asks · Team).
@@ -148,7 +148,7 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
       <div className="rail-brand">
         <Logo />
         <div className="rail-brand-text">
-          <span className="rail-team truncate">{me?.team?.name ?? "Walkie"}</span>
+          <span className="rail-team truncate">{me?.team?.name ?? "Sqwakie"}</span>
           <span className="rail-me mono truncate">{me?.handle ?? "?"} · {me?.node.hostname}</span>
         </div>
       </div>
@@ -191,7 +191,7 @@ export function MobileBar({ onSearch }: { onSearch: () => void }) {
   return (
     <header className="mobilebar">
       <Logo size={20} />
-      <span className="mobilebar-team truncate">{me?.team?.name ?? "Walkie"}</span>
+      <span className="mobilebar-team truncate">{me?.team?.name ?? "Sqwakie"}</span>
       <a href={hrefFor({ view: "simple" })} className="mobile-simple" aria-current={route.view === "simple" ? "page" : undefined}>Simple</a>
       <ConnectionIndicator compact />
       <span className="mobilebar-spacer" />

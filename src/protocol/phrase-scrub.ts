@@ -4,10 +4,9 @@
 //
 // A phrase and the text are normalised the same way: Unicode NFKC, combining marks and format characters dropped,
 // common Cyrillic and Greek look-alike letters mapped to Latin, then lower case. A run of punctuation, underscores
-// or whitespace is one gap. The phrase matches as a whole run of those tokens, and, when it has more than one token,
-// also as those tokens joined ("Northwind Vault" matches "NorthwindVault"). A fragment inside a longer token is left
-// ("seeding", "keys2"). The matcher is a token trie: each step is one normalised token, and a match is a path that
-// ends on a phrase.
+// or whitespace is one gap. The phrase matches as a whole run of those tokens. Long names also match with gaps added
+// or removed. A script change bounds Latin words in unspaced running text; names in unspaced scripts also match
+// inside running text. Non-ASCII symbol-only names match literally. A fragment inside a longer Latin token is left.
 
 /** Cyrillic and Greek letters that look like Latin ones. The value is already lower case. */
 const LOOKALIKE = new Map<number, string>([
@@ -33,7 +32,10 @@ function normalizeCodePoint(cp: number): string {
   if (cp < 128) return cp >= 65 && cp <= 90 ? String.fromCharCode(cp + 32) : String.fromCharCode(cp);
   const direct = LOOKALIKE.get(cp);
   if (direct) return direct;
-  const s = String.fromCodePoint(cp).normalize("NFKC").normalize("NFD").replace(/\p{M}|\p{Cf}/gu, "");
+  const compatible = String.fromCodePoint(cp).normalize("NFKC");
+  // NFD splits a Hangul syllable into jamo; that would let one syllable match inside another.
+  const s = (/\p{Script=Hangul}/u.test(compatible) ? compatible : compatible.normalize("NFD"))
+    .replace(/\p{M}|\p{Cf}/gu, "");
   let out = "";
   for (const ch of s) {
     const c = ch.codePointAt(0)!;
@@ -110,6 +112,7 @@ function unicodeToks(text: string): Tok[] {
   let buf = "";
   let start = -1;
   let end = -1;
+  let unspaced = false;
   const flush = (): void => {
     if (!buf) return;
     out.push({ text: buf, start, end });
@@ -123,9 +126,12 @@ function unicodeToks(text: string): Tok[] {
     if (piece.length === 0) {
       if (start >= 0) end = i + len;
     } else if (isWordPiece(piece)) {
+      const nextUnspaced = UNSPACED_SCRIPT.test(String.fromCodePoint(cp));
+      if (start >= 0 && unspaced !== nextUnspaced) flush();
       if (start < 0) start = i;
       buf += piece;
       end = i + len;
+      unspaced = nextUnspaced;
     } else flush();
     i += len;
   }
@@ -162,24 +168,60 @@ function add(root: Node, parts: readonly string[]): void {
   cur.term = true;
 }
 
-interface Matcher { root: Node }
+interface Matcher { root: Node; joined: Set<string>; maxJoined: number; running: string[]; literal: string[] }
+
+const UNSPACED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Hangul}]/u;
+
+/** Keep original UTF-16 offsets while normalising a running-script sentence. */
+function normalisedSpans(text: string): { value: string; starts: number[]; ends: number[] } {
+  let value = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (let i = 0; i < text.length;) {
+    const cp = text.codePointAt(i)!;
+    const end = i + (cp > 0xffff ? 2 : 1);
+    const piece = normalizeCodePoint(cp);
+    if (!isWordPiece(piece)) { i = end; continue; }
+    for (let k = 0; k < piece.length; k++) {
+      value += piece[k];
+      starts.push(i);
+      ends.push(end);
+    }
+    i = end;
+  }
+  return { value, starts, ends };
+}
 
 function compile(phrases: readonly string[]): Matcher {
   const root: Node = { next: null, term: false };
+  const joined = new Set<string>();
+  const running: string[] = [];
+  const literal: string[] = [];
+  let maxJoined = 0;
   for (const raw of phrases) {
     const phrase = raw.trim();
     if (!phrase) continue;
     const parts = partsOf(phrase);
-    if (parts.length === 0) continue;
+    if (parts.length === 0) {
+      if (!/^[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e\s]+$/u.test(phrase)) literal.push(phrase);
+      continue;
+    }
     add(root, parts);
     if (parts.length > 1) add(root, [parts.join("")]);
+    const whole = parts.join("");
+    if (UNSPACED_SCRIPT.test(phrase)) running.push(whole);
+    // A short one-token name must not redact ordinary syllables split by punctuation.
+    if (whole.length >= 6) {
+      joined.add(whole);
+      maxJoined = Math.max(maxJoined, whole.length);
+    }
   }
-  return { root };
+  return { root, joined, maxJoined, running, literal };
 }
 
 function find(matcher: Matcher, text: string): Array<{ start: number; end: number }> {
   const root = matcher.root;
-  if (root.next === null) return [];
+  if (root.next === null && matcher.literal.length === 0) return [];
   const toks = tokens(text);
   const hits: Array<{ start: number; end: number }> = [];
   for (let i = 0; i < toks.length; i++) {
@@ -191,6 +233,38 @@ function find(matcher: Matcher, text: string): Array<{ start: number; end: numbe
       if (cur.term) best = j;
     }
     if (best >= 0) hits.push({ start: toks[i]!.start, end: toks[best]!.end });
+    let joined = toks[i]!.text;
+    for (let j = i + 1; j < toks.length && joined.length < matcher.maxJoined; j++) {
+      joined += toks[j]!.text;
+      if (matcher.joined.has(joined)) hits.push({ start: toks[i]!.start, end: toks[j]!.end });
+    }
+  }
+  if (matcher.running.length) {
+    const norm = normalisedSpans(text);
+    for (const phrase of matcher.running) {
+      let at = norm.value.indexOf(phrase);
+      while (at >= 0) {
+        const end = at + phrase.length;
+        const before = norm.value[at - 1];
+        const after = norm.value[end];
+        const leftLatin = /^[a-z0-9]/.test(phrase);
+        const rightLatin = /[a-z0-9]$/.test(phrase);
+        const touchesBefore = at > 0 && norm.ends[at - 1] === norm.starts[at];
+        const touchesAfter = end < norm.value.length && norm.ends[end - 1] === norm.starts[end];
+        if ((!leftLatin || !touchesBefore || !before || !/[a-z0-9]/.test(before)) &&
+            (!rightLatin || !touchesAfter || !after || !/[a-z0-9]/.test(after))) {
+          hits.push({ start: norm.starts[at]!, end: norm.ends[end - 1]! });
+        }
+        at = norm.value.indexOf(phrase, at + 1);
+      }
+    }
+  }
+  for (const phrase of matcher.literal) {
+    let at = text.indexOf(phrase);
+    while (at >= 0) {
+      hits.push({ start: at, end: at + phrase.length });
+      at = text.indexOf(phrase, at + 1);
+    }
   }
   hits.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
   const taken: Array<{ start: number; end: number }> = [];

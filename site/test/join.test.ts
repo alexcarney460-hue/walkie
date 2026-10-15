@@ -11,8 +11,6 @@ import { createInvite } from "../../src/daemon/invite.ts";
 import { generateKeys } from "../../src/daemon/keys.ts";
 import { encodeOwnerSshGrant, mintOwnerSshGrant } from "../../src/daemon/ssh/grant.ts";
 import { addMachineCommand, addMachineLink, INSTALL_URL } from "../../src/protocol/add-machine.ts";
-/** The release the site installs (scripts/install.sh DEFAULT_VERSION), which build.py links the package to. */
-const INSTALLER_VERSION = readFileSync(join(import.meta.dir, "../../scripts/install.sh"), "utf8").match(/DEFAULT_VERSION="(v[^"]+)"/)![1];
 
 interface JoinApi {
   handoff(code: string, yes: boolean, max: number, tag?: string | null, ssh?: string | null): string;
@@ -553,9 +551,10 @@ describe("the owner's SSH authorization (WALK-67 lane 8)", () => {
     expect(html).toMatch(/<p class="welcome-note" data-ssh-consent hidden>/);
     expect(html).toMatch(/<p class="welcome-note" data-ssh-damaged hidden>/);
     expect(html).toMatch(/<p class="welcome-note" data-ssh-command-note hidden>/);
-    expect(html).toContain("may sign in to this computer over SSH as your user, through Walkie");
-    // What is true on all three platforms: Walkie's own service, this machine only, key logins only (any key authorized for the person's account works on loopback); Remote Login never asked for.
-    expect(html).toContain("using a Walkie SSH service that listens only on this computer and accepts only key logins");
+    expect(html).toContain("everyday agents and Talkie may sign in to this computer over SSH as your user");
+    expect(html).toContain("may sign in to this computer over SSH as your user, through Sqwakie");
+    // What is true on all three platforms: Sqwakie's own service, this machine only, key logins only (any key authorized for the person's account works on loopback); Remote Login never asked for.
+    expect(html).toContain("using a Sqwakie SSH service that listens only on this computer and accepts only key logins");
     expect(html).not.toMatch(/Remote Login/i);
     expect(html).toContain("<code>walkie ssh revoke</code>");
     expect(html).toContain("--owner-ssh");
@@ -583,12 +582,15 @@ describe("the code never leaves the page", () => {
   test("the page loads only its own scripts, none inline, and no third-party resource", () => {
     expect(html).not.toMatch(/<script(?![^>]*\bsrc="\/assets\/[a-z]+\.js")[^>]*>/);
     expect(html.match(/https?:\/\/[^" ]+/g)?.sort()).toEqual([
-      "https://getwalkie.vercel.app/install.sh",
-      `https://github.com/alexcarney460-hue/walkie-releases/releases/download/${INSTALLER_VERSION}/Walkie.pkg`,
+      "https://sqwakie.si/assets/img/og.jpg",
+      "https://sqwakie.si/assets/img/og.jpg",
+      "https://sqwakie.si/install.sh",
+      "https://sqwakie.si/join",
+      "https://sqwakie.si/join",
     ]);
     expect(html).toContain('<meta name="referrer" content="no-referrer">');
-    expect(html).toContain('data-install="https://getwalkie.vercel.app/install.sh"');
-    expect(html).toContain('Download and run Walkie');
+    expect(html).toContain('data-install="https://sqwakie.si/install.sh"');
+    expect(html).toContain('Download and run Sqwakie');
     expect(html).toContain('data-join-package');
     expect(html).toContain('target="_blank" rel="noopener noreferrer"');
     expect(html).toContain("puts the private invite code on your command line");

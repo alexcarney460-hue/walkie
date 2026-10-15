@@ -9,13 +9,13 @@ type Key = "agent_admin" | "remote_admin";
 
 const LABEL: Record<Key, { title: string; on: string; off: string }> = {
   agent_admin: {
-    title: "Agents set up Walkie here",
-    on: "Agents on this machine may do its Walkie setup for you (seats, accounts, hooks, pool, WalkieTalkie, invites). Each action is posted to #general, naming the agent.",
-    off: "Agents on this machine are refused Walkie setup. Only you can turn this back on.",
+    title: "Agents set up Sqwakie here",
+    on: "Agents on this machine may do its Sqwakie setup for you (seats, accounts, hooks, pool, Talkie, invites). Each action is posted to #general, naming the agent.",
+    off: "Agents on this machine are refused Sqwakie setup. Only you can turn this back on.",
   },
   remote_admin: {
-    title: "Owners set up Walkie here remotely",
-    on: "Team owners (and your own other machines) may run allow-listed walkie setup commands on this machine over Walkie, never a shell. You are mentioned on each one.",
+    title: "Owners set up Sqwakie here remotely",
+    on: "Team owners (and your own other machines) may run allow-listed walkie setup commands on this machine over Sqwakie, never a shell. You are mentioned on each one.",
     off: "Nobody can administer this machine remotely. Only you can turn this back on.",
   },
 };

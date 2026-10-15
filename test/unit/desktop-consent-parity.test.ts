@@ -43,11 +43,11 @@ describe("the macOS app's consent text is the daemon's, byte for byte", () => {
     for (const [owner, max] of [["alex", 4], ["boss", 7]] as const) {
       expect(rustConsent(owner, max, true)).toBe(consentText(owner, [`@${owner}`], max, [profile], undefined, packet as never));
     }
-    expect(rustConsent("boss", 4, true)).toContain("may sign in to this machine over SSH as your user, through Walkie");
+    expect(rustConsent("boss", 4, true)).toContain("may sign in to this machine over SSH as your user, through Sqwakie");
   });
   test("item 8: the SSH sentence says what is true on all three platforms, and mentions Remote Login nowhere", () => {
     const text = consentText("boss", ["@boss"], 4, [profile], undefined, packet as never);
-    expect(text).toContain("through Walkie, using a Walkie SSH service that listens only on this machine and accepts only key logins.");
+    expect(text).toContain("through Sqwakie, using a Sqwakie SSH service that listens only on this machine and accepts only key logins.");
     expect(text).not.toMatch(/Remote Login/i);
     expect(rustConsent("boss", 4, true)).toBe(text);
     expect(consentText("boss", ["@boss"], 4, [profile])).not.toContain("SSH");
@@ -75,9 +75,9 @@ describe("the SSH door is described in the same words in every copy of the conse
     }
   });
   test("the daemon's text and the Rust constant are the same sentence, to the byte", () => {
-    const sentence = (text: string): string => /using a Walkie SSH service[^.]*\./.exec(text)?.[0] ?? "";
+    const sentence = (text: string): string => /using a Sqwakie SSH service[^.]*\./.exec(text)?.[0] ?? "";
     expect(sentence(constant("CONSENT_SSH"))).toBe(sentence(consentText("boss", ["@boss"], 4, [profile], undefined, packet as never)));
-    expect(sentence(constant("CONSENT_SSH"))).toBe("using a Walkie SSH service that listens only on this machine and accepts only key logins.");
+    expect(sentence(constant("CONSENT_SSH"))).toBe("using a Sqwakie SSH service that listens only on this machine and accepts only key logins.");
   });
   test("what is said before the administrator prompt, and in the app's own window, says it too (no copy still promises the owner's key alone)", () => {
     for (const need of [{ marker: true, sshLinux: true, sshMacos: false }, { marker: false, sshLinux: false, sshMacos: true }]) {

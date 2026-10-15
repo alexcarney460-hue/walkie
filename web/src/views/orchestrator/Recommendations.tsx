@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, friendlyError } from "../../api/client.ts";
 import type { Recommendation, RecommendationDecision } from "../../api/types.ts";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 
 const GROUPS = [
   ["work", "Work to start"], ["moves", "Cards to move"], ["reviews", "Reviews waiting"],
@@ -30,12 +31,12 @@ export function RecommendationItems({ recs, rows = {}, loading = false, more = 0
           <h4>{rec.summary}</h4>
           <p>{rec.reason}</p>
           {rec.context && <blockquote className="orch-rec-context">
-            <p className="orch-rec-label">WalkieTalkie wrote this (it is not sent)</p>
+            <p className="orch-rec-label">Talkie wrote this (it is not sent)</p>
             <p className="orch-rec-message">“{rec.context}”</p>
           </blockquote>}
           {rec.status === "pending" && (rec.outgoing ? <div className="orch-rec-outgoing">
             <p className="orch-rec-label">Approving does this in your name</p>
-            <p className="orch-rec-message">{rec.outgoing}</p>
+            <p className="orch-rec-message">{displayStoredText(rec.outgoing)}</p>
           </div> : rec.outgoing === null ? <p>Its card is gone, so approving it will be refused.</p> : null)}
           <details><summary>Evidence ({rec.evidence.length})</summary>
             {rec.evidence.length ? <ul>{rec.evidence.map((line, i) => <li key={i}>{line}</li>)}</ul> : <p>No additional evidence.</p>}

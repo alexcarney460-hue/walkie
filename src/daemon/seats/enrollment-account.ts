@@ -1,11 +1,12 @@
 import type { AccountView, TeamPolicy } from "../../protocol/accounts.ts";
 import type { AnySeatRun } from "../../protocol/seats.ts";
-import { isV2 } from "../../protocol/seats.ts";
+import { isV2, isLocalOss } from "../../protocol/seats.ts";
 import type { Grant } from "../provision/grant.ts";
 import { planSeatAccount } from "./account.ts";
 
 /** A company enrollment never inherits the recipient's provider login. */
 export function requiredWorkerAccount(grant: Grant | null, run: AnySeatRun, now = Date.now(), enrolled = true): string | null {
+  if (isLocalOss(run) && (grant || enrolled)) return "local OSS is incompatible with enrollment requiring owner accounts";
   if (!grant) return enrolled ? "enrollment grant is missing: restore it through local consent or explicitly un-enroll" : null;
   if (!enrolled) return "root enrollment marker is missing: this grant cannot authorize company seats";
   if (grant.revoked_at) return "enrollment grant revoked: owner account seats are stopped";
@@ -19,6 +20,7 @@ export function requiredWorkerAccount(grant: Grant | null, run: AnySeatRun, now 
 }
 
 export function bindWorkerAccount(grant: Grant | null, run: AnySeatRun): AnySeatRun {
+  if (isLocalOss(run)) return run; // no implicit account binding for local mode
   if (!grant || (grant.owner_ssh && grant.ssh_state !== "active") || !isV2(run) || run.runtime === "kimi" || run.runtime === "grok" || run.account) return run;
   const account = grant.worker_accounts?.[run.runtime];
   return account ? { ...run, account } : run;

@@ -69,6 +69,7 @@ describe("Codex 2 (HIGH) over a cluster: a failed integration post on the author
     }, { durable: true })).toThrow("ledger write failed");
     expect(core.store.allocatedSelfSeq(core.nodeId)).toBe(seqBefore);
     const ch = await alex.client().channel({ name: "after-rollback" });
+    if (!("event" in ch)) throw new Error("channel create was queued");
     expect(ch.event.seq).toBe(seqBefore + 1);
     expect(core.roster.channels.has("after-rollback")).toBe(true);
     expect(core.store.getRow(ch.event.id)?.status).toBe("ok");

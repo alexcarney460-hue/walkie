@@ -1,5 +1,5 @@
 // The Linear import (LINEAR-IMPORT-1): plans (dry runs), import jobs, sync passes and the sync schedule. Runs in the
-// person's daemon. Every Walkie write goes through the board ops batch (src/daemon/projects/batch.ts: one transaction
+// person's daemon. Every Sqwakie write goes through the board ops batch (src/daemon/projects/batch.ts: one transaction
 // per batch, the import budget); every Linear call through api.ts (validated, byte-capped, key-scrubbed). The Linear
 // key is held in memory for the operation only; a schedule keeps a key FILE PATH (or uses the integration's key).
 import { randomBytes } from "node:crypto";
@@ -195,7 +195,7 @@ export class LinearImportService {
     return err instanceof HttpError ? err : new HttpError(502, "upstream", err instanceof ExternalError ? this.safe(err, k) : `linear: ${this.safe(err, k)}`);
   }
 
-  // ---- what Walkie already has --------------------------------------------------------------------------------------
+  // ---- what Sqwakie already has --------------------------------------------------------------------------------------
 
   private members(): Member[] {
     return [...this.d.core.roster.members.values()].filter((m) => m.role !== "removed")
@@ -203,7 +203,7 @@ export class LinearImportService {
   }
 
   /**
-   * The Walkie side of a plan or run: visible projects, and what this person imported before (the map, then the signed
+   * The Sqwakie side of a plan or run: visible projects, and what this person imported before (the map, then the signed
    * log's `ext` on their own roots), and cards of earlier imports matched by `[ALE-12]` titles (their own cards only).
    */
   private walkieSide(): WalkieSide {
@@ -423,9 +423,9 @@ export class LinearImportService {
   }
 
   /**
-   * The Walkie writes for a set of issues of one project: new cards (with their digest comment), updates of imported
+   * The Sqwakie writes for a set of issues of one project: new cards (with their digest comment), updates of imported
    * ones (the sync rule), conflict notes; sent in batches of RUN_BATCH_OPS, the map saved after each. Two-way: the
-   * Linear writes, after the Walkie ones.
+   * Linear writes, after the Sqwakie ones.
    */
   private async applyIssues(
     where: { channel: string; projectKey: string; teamId: string },
@@ -507,7 +507,7 @@ export class LinearImportService {
         // or the next two-way pass would take the fallback for a person's move and write it to Linear.
         const snapNext = t.place !== undefined ? { ...dec.next, w: { ...dec.next.w, place: appliedPlace(board, t.place) } } : dec.next;
         const next: CardEntry = { card: card.id, channel: card.channel, key: card.key, ident: issue.identifier, project: where.projectKey, team_id: where.teamId, snap: snapNext };
-        // A pending Linear write must leave BOTH old snapshots intact, including after a successful Walkie batch.
+        // A pending Linear write must leave BOTH old snapshots intact, including after a successful Sqwakie batch.
         // Otherwise a capped, cancelled, unmappable or failed write disappears from the next pass's changed cards.
         const commit = () => {
           if (dec.toLinear) linearWrites.push({ issue, role: dec.toLinear, next });
@@ -598,7 +598,7 @@ export class LinearImportService {
 
   /**
    * One sync pass: issues of imported projects updated since the watermark (minus an overlap) and imported cards
-   * changed in Walkie are compared with what the last pass recorded (sync.ts); new issues become cards; two-way writes
+   * changed in Sqwakie are compared with what the last pass recorded (sync.ts); new issues become cards; two-way writes
    * card moves back as the issue's state.
    */
   async syncOnce(o: { two_way?: boolean }, keyReq?: KeyReq): Promise<SyncResult> {
@@ -638,7 +638,7 @@ export class LinearImportService {
       const fetched = new Set(changed.map((i) => i.id));
       const again = [...retryBefore].filter((id) => !fetched.has(id));
       for (const c of chunks(again, ID_CHUNK)) changed.push(...await L.issues(api, { ids: c, includeClosed: true }, { full: true }));
-      // Cards changed in Walkie whose issue Linear didn't report: read those issues too.
+      // Cards changed in Sqwakie whose issue Linear didn't report: read those issues too.
       const seen = new Set(changed.map((i) => i.id));
       const moved: string[] = [];
       for (const [id, e] of Object.entries(this.st.cards)) {

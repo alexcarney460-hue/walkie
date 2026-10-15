@@ -4,7 +4,7 @@
 // and runs this, as the Ubuntu user, with ONE JSON object on stdin. It posts the same POST /v1/provision/grant the
 // terminal and the desktop app post (surface "windows"), with `consentText(..., owner_ssh)` and the packet in that one
 // request. A packet is dropped, said plainly, when it is damaged or when this Ubuntu already runs an SSH server that is not
-// Walkie's (src/cli/ssh-foreign.ts): the consent recorded then leaves SSH out. Not for terminals: a person at a terminal
+// Sqwakie's (src/cli/ssh-foreign.ts): the consent recorded then leaves SSH out. Not for terminals: a person at a terminal
 // uses `walkie provision grant` and types their own yes.
 import { z } from "zod";
 import { WalkieError } from "../../client/index.ts";
@@ -34,7 +34,7 @@ export interface BootstrapGrantDeps {
   isWsl(): Promise<boolean>;
   markerPresent(): boolean;
   now(): number;
-  /** The SSH status and unit hints of this Ubuntu: to see whether an SSH server that is not Walkie's already answers on 22. Absent: not looked at. */
+  /** The SSH status and unit hints of this Ubuntu: to see whether an SSH server that is not Sqwakie's already answers on 22. Absent: not looked at. */
   ssh?: SshStepDeps;
 }
 
@@ -55,7 +55,7 @@ export async function grantFromBootstrap(ctx: Ctx, raw: string, deps: BootstrapG
   const ssh = readOwnerSsh(parsed.owner_ssh, { teamId: me.team.id, handle: me.handle, ownerNode: ownerNode.node_id,
     ownerHandle: owner.handle, inviteId: parsed.invite_id, now: deps.now() });
   if (ssh.state === "damaged") ctx.err(c.yellow(OWNER_SSH_DAMAGED.replace(" The consent below leaves SSH out.", " The enrollment continues without SSH.")));
-  // The consent PowerShell showed could not know whether this Ubuntu already runs its own SSH server. Walkie does not use one
+  // The consent PowerShell showed could not know whether this Ubuntu already runs its own SSH server. Sqwakie does not use one
   // that is not its own: owner SSH stays off, the consent recorded is the one without SSH, and the reason is said here.
   const ownerSsh = await ownerSshUnlessForeign(ssh.state === "carried" ? ssh.packet : undefined, deps.ssh, (line) => ctx.err(c.yellow(line)), FOREIGN_SSH_CONTINUES);
   const profiles = [{ id: parsed.profile, version: builtInProfile(parsed.profile)?.version ?? 1 }];

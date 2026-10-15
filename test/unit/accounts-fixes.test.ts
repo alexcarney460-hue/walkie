@@ -415,6 +415,30 @@ describe("Codex MED 3 / Opus MED 1: readings stay per reporting node and member"
     expect(new Set(list.map((a) => a.key)).size).toBe(list.length);
   });
 
+  test("a fresh valid reading on another owner machine outranks a newer re-login reading", () => {
+    const valid = usage(NOW - 60_000, 7);
+    const expired = usage(NOW - 1_000, 0, { state: "relogin", reason: "login_expired", source: "none", windows: [] });
+    const list = view({ a1: [summary(valid)], a2: [summary(expired)] });
+    const alice = list.find((a) => a.owners[0] === "alice")!;
+    expect(alice.usage).toEqual(valid);
+    expect(alice.usage_host).toBe("alice-mbp");
+    expect(alice.machines.find((m) => m.hostname === "alice-studio")?.usage?.state).toBe("relogin");
+    const reversed = view({ a1: [summary(expired)], a2: [summary(valid)] }).find((a) => a.owners[0] === "alice")!;
+    expect(reversed.usage).toEqual(valid);
+    expect(reversed.usage_host).toBe("alice-studio");
+    const stale = view({ a1: [summary(usage(NOW - 20 * 60_000, 7))], a2: [summary(expired)] }).find((a) => a.owners[0] === "alice")!;
+    expect(stale.usage?.state).toBe("relogin");
+  });
+
+  test("an unknown reading never hides another machine's re-login reading", () => {
+    const expired = usage(NOW - 2 * 3_600_000, 0, { state: "relogin", reason: "login_expired", source: "none", windows: [] });
+    const unknown = usage(NOW, 0, { state: "unknown", reason: "no_token", source: "none", windows: [] });
+    for (const peers of [{ a1: [summary(expired)], a2: [summary(unknown)] }, { a1: [summary(unknown)], a2: [summary(expired)] }]) {
+      const alice = view(peers).find((a) => a.owners[0] === "alice")!;
+      expect(alice.usage?.state).toBe("relogin");
+    }
+  });
+
   test("a peer reading dated beyond the allowed skew is rejected (not clamped to now); resets are capped at at + 8 days", () => {
     const list = view({ a1: [summary(usage(2 ** 45, 99))], m1: [summary(usage(NOW - 60_000, 5, { until: NOW + 386_503 * 86_400_000, state: "exhausted", reason: "limit_reached" }))] });
     const alice = list.find((a) => a.owners[0] === "alice")!;

@@ -9,7 +9,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "../../src/cli/args.ts";
 import { CLI_BOOLEANS } from "../../src/cli/booleans.ts";
-import { assetName, update, type Fetcher } from "../../src/cli/commands/update.ts";
+import { advertisedTag, assetName, update, type Fetcher } from "../../src/cli/commands/update.ts";
 import type { Ctx } from "../../src/cli/context.ts";
 import type { ServicePlan } from "../../src/daemon/service.ts";
 import { INSTALL_URL } from "../../src/protocol/add-machine.ts";
@@ -232,7 +232,7 @@ describe("what the site's installer says is checked before anything is downloade
       expect(r.err).toContain(why);
       expect(r.err).toContain("nothing changed");
       expect(r.err).toContain(INSTALLER_COMMAND);
-      expect(w.requests).toEqual([INSTALL_URL]);
+      expect(w.requests).toEqual(Array(name === "the site is unreachable" || name === "the site answers 500" ? 3 : 1).fill(INSTALL_URL));
       expect(r.now).toBe(r.was);
     });
   }
@@ -254,7 +254,7 @@ describe("every check `walkie update` makes still holds for the release the site
     const w = web({ site, releases: { "v0.2.0-pre.11": release("v0.2.0-pre.11", { signWith: stranger.priv }) } });
     const r = await run({ installed: "0.2.0-pre.9.1", web: w });
     expect(r.code).toBe(1);
-    expect(r.err).toContain("not signed by the Walkie release key; nothing changed");
+    expect(r.err).toContain("not signed by the Sqwakie release key; nothing changed");
     expect(r.now).toBe(r.was);
   });
 
@@ -293,7 +293,7 @@ describe("a stable install, a mirror and WALKIE_REPO behave as before", () => {
     const w = web({ site: new Error("the site must not be asked"), latest: "v0.3.0", releases: { "v0.3.0": release("v0.3.0") } });
     const r = await run({ installed: "0.2.0", web: w });
     expect([r.code, r.now]).toEqual([0, "walkie 0.3.0"]);
-    expect(w.asked("getwalkie")).toBe(false);
+    expect(w.asked("sqwakie.si")).toBe(false);
     expect(w.requests[0]).toBe(`https://api.github.com/repos/${REPO}/releases/latest`);
     expect(w.downloads().sort()).toEqual(files("v0.3.0"));
   });
@@ -340,5 +340,76 @@ describe("a stable install, a mirror and WALKIE_REPO behave as before", () => {
     expect(refused.code).toBe(1);
     expect(refused.err).toContain("a downgrade needs --allow-downgrade");
     expect(refused.now).toBe(refused.was);
+  });
+});
+
+describe("transient update fetch failures", () => {
+  test("a fetcher that ignores abort still gives up within the site deadline", async () => {
+    const stalled: Fetcher = () => new Promise<Response>(() => {});
+    const result = await advertisedTag(stalled, 60);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("timed out");
+  });
+
+  test("site lookup retries transport, timeout and HTTP 5xx, then uses the advertised release", async () => {
+    for (const failure of [new TypeError("fetch failed"), new DOMException("timed out", "TimeoutError"), 503]) {
+      const w = web({ site: advertising("v0.2.0-pre.11"), releases: { "v0.2.0-pre.11": release("v0.2.0-pre.11") } });
+      const original = w.fetch;
+      let attempts = 0;
+      w.fetch = (url, init) => {
+        if (url === INSTALL_URL && attempts++ < 2) {
+          w.requests.push(url);
+          return typeof failure === "number" ? Promise.resolve(new Response("unavailable", { status: failure })) : Promise.reject(failure);
+        }
+        return original(url, init);
+      };
+      const r = await run({ installed: "0.2.0-pre.9.1", web: w });
+      expect([r.code, r.now, attempts]).toEqual([0, "walkie 0.2.0-pre.11", 3]);
+    }
+  });
+
+  test("stable GitHub lookup retries 5xx but never retries a 4xx", async () => {
+    const w = web({ latest: "v0.3.0" });
+    const original = w.fetch;
+    let attempts = 0;
+    w.fetch = (url, init) => {
+      if (url.includes("/releases/latest") && attempts++ < 2) return Promise.resolve(new Response("unavailable", { status: 502 }));
+      return original(url, init);
+    };
+    const r = await run({ installed: "0.2.0", web: w, argv: ["--check"] });
+    expect([r.code, attempts]).toEqual([0, 3]);
+
+    const refused = web({ latest: { status: 429 } });
+    await expect(run({ installed: "0.2.0", web: refused })).rejects.toThrow(/HTTP 429/);
+    expect(refused.requests).toHaveLength(1);
+  });
+
+  test("each release asset retries a failed body or HTTP 5xx independently", async () => {
+    const tag = "v0.2.0-pre.11";
+    const w = web({ site: advertising(tag), releases: { [tag]: release(tag) } });
+    const original = w.fetch;
+    const attempts = new Map<string, number>();
+    w.fetch = async (url, init) => {
+      if (!url.includes("/releases/download/")) return original(url, init);
+      const count = (attempts.get(url) ?? 0) + 1;
+      attempts.set(url, count);
+      if (count === 1) return new Response("unavailable", { status: 503 });
+      if (count === 2) return new Response(new ReadableStream({ pull(controller) { controller.error(new TypeError("body disconnected")); } }));
+      return original(url, init);
+    };
+    const r = await run({ installed: "0.2.0-pre.9.1", web: w });
+    expect([r.code, r.now]).toEqual([0, "walkie 0.2.0-pre.11"]);
+    expect([...attempts.values()]).toEqual([3, 3, 3]);
+  });
+
+  test("checksum and signature failures stop after one download of each asset", async () => {
+    const tag = "v0.2.0-pre.11";
+    for (const broken of [{ checksum: "0".repeat(64) }, { signWith: stranger.priv }]) {
+      const w = web({ site: advertising(tag), releases: { [tag]: release(tag, broken) } });
+      const r = await run({ installed: "0.2.0-pre.9.1", web: w });
+      expect(r.code).toBe(1);
+      expect(r.now).toBe(r.was);
+      expect(w.downloads()).toHaveLength(3);
+    }
   });
 });

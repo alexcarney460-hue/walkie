@@ -1,5 +1,5 @@
 // Reset attempts (WALKIE-ACCOUNTS-RESET-2/3): the daemon mints each attempt when the confirmation sheet opens and
-// binds it to the account the person is confirming: the Walkie account id, the ChatGPT account id and the login
+// binds it to the account the person is confirming: the Sqwakie account id, the ChatGPT account id and the login
 // directory, from ONE read of that login (codexAuthSnapshot). An email or sign-in-mode change with the same account id
 // is the same account (RESET-3). The binding is kept for the attempt's whole life, final or not, so an id can never be
 // used for another account. An unconfirmed attempt (the use was SENT, no answer) is kept per account, persisted in

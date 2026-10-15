@@ -17,6 +17,7 @@ import { seatsFor } from "../../src/daemon/seats/host.ts";
 import { doctorChecks } from "../../src/daemon/seats/doctor.ts";
 import { doctorLines } from "../../src/cli/commands/seats-enable.ts";
 import { consentText } from "../../src/daemon/provision/consent.ts";
+import { Vault } from "../../src/accounts/vault/vault.ts";
 import { PROFILES } from "../../src/daemon/provision/profiles.ts";
 
 const CLI = join(import.meta.dir, "../../src/cli/main.ts");
@@ -250,6 +251,22 @@ describe("v2 seats", () => {
     // Neither the request post nor any post in the channel carries the brief.
     const posts = await alex.client().events({ channel: seatsChannel(arvid.d.nodeId), limit: 200 });
     expect(JSON.stringify(posts)).not.toContain("7c1f");
+  }, 40_000);
+
+  test("a named local Kimi vault account reaches a same-machine seat through KIMI_CODE_HOME", async () => {
+    const id = "e".repeat(24);
+    const home = join(arvid.home, "vault", "kimi", id);
+    mkdirSync(join(home, "credentials"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(home, "credentials", "kimi-code-env-0123456789abcdef.json"), JSON.stringify({ access_token: "fake-seat-token" }), { mode: 0o600 });
+    const vault = Vault.open(arvid.home);
+    try { vault.addKimi({ id, label: "Kimi account", plan: null, home }); } finally { vault.close(); }
+    const brief = "use the named vault Kimi account";
+    const res = await v2(brief, { account: `arvid:${id}` });
+    const s = await ended(res.seat);
+    expect(s.state).toBe("done");
+    const run = await launchOf(brief);
+    expect(run.kimi_home).toBe(home);
+    expect(run.env).toContain("KIMI_CODE_HOME");
   }, 40_000);
 
   test("a build lane: .worktrees/<label> on lane/<label> in arvid's clone, its commit returned, the brief not committed", async () => {

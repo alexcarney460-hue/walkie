@@ -3,6 +3,7 @@ import {
   IDEMPOTENCY_KEY, IDLE_MINUTES_MAX, IDLE_MINUTES_MIN, isTierId, JOIN_CODE, MAX_MACHINES_PER_REQUEST, NODE_ID,
   RELEASE_TAG, RENTAL_ID, TEAM_ID, TIER_IDS, TOKEN, type MachineAsk, type RentReq, type TierId,
 } from "./types.js";
+import { rentableRelease } from "./releases.js";
 
 type Obj = Record<string, unknown>;
 export type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -37,15 +38,25 @@ export function checkRent(o: Obj): Checked<RentReq> {
   const codes = o.codes as unknown[];
   if (!codes.every((c) => typeof c === "string" && JOIN_CODE.test(c))) return bad("invalid_code");
   if (new Set(codes).size !== codes.length) return bad("duplicate_code");
-  if (typeof o.walkie_version !== "string" || !RELEASE_TAG.test(o.walkie_version)) return bad("invalid_walkie_version");
+  const version = checkWalkieVersion(o.walkie_version);
+  if (version) return bad(version);
   if (o.idle_minutes !== undefined && !isInt(o.idle_minutes, IDLE_MINUTES_MIN, IDLE_MINUTES_MAX)) return bad("invalid_idle_minutes");
   return {
     ok: true,
     value: {
-      idempotency_key: o.idempotency_key, machines, codes: codes as string[], walkie_version: o.walkie_version,
+      idempotency_key: o.idempotency_key, machines, codes: codes as string[], walkie_version: o.walkie_version as string,
       ...(o.idle_minutes !== undefined ? { idle_minutes: o.idle_minutes as number } : {}),
     },
   };
+}
+
+/**
+ * The release a rented machine installs: a release tag (else invalid_walkie_version) that the site knows was
+ * published (else unsupported_walkie_version, releases.ts). Null when it may be used.
+ */
+export function checkWalkieVersion(v: unknown): string | null {
+  if (typeof v !== "string" || !RELEASE_TAG.test(v)) return "invalid_walkie_version";
+  return rentableRelease(v) ? null : "unsupported_walkie_version";
 }
 
 export function checkStart(o: Obj): Checked<{ rental_id: string; code: string }> {

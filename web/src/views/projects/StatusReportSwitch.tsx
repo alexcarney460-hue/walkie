@@ -1,6 +1,6 @@
 // The "Hourly status report" switch of a project (PROJECT-REPORTS-1): a labelled checkbox with the switch role, so it is a real
 // control a keyboard operates (Space) and a screen reader announces with its state; for people who may not change it, a
-// small read-only marker on a project that has it on. An archived project is not reported on, so it shows neither.
+// small read-only state with a reason. An archived project is not reported on, so it shows neither.
 import { useState } from "react";
 import { api } from "../../api/client.ts";
 import type { ProjectView } from "../../api/types.ts";
@@ -8,13 +8,16 @@ import { canSetStatusReport, reportMode, toggleStatusReport } from "../../lib/st
 import { projectsStore } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
 
-export function StatusReportSwitch({ project, canSet, busy, error, onToggle }: {
-  project: ProjectView; canSet: boolean; busy: boolean; error: string | null; onToggle: (on: boolean) => void;
+export function StatusReportSwitch({ project, canSet, reason, busy, error, onToggle }: {
+  project: ProjectView; canSet: boolean; reason?: string; busy: boolean; error: string | null; onToggle: (on: boolean) => void;
 }) {
   const on = reportMode(project) === "hourly";
   if (project.state !== "active") return null;
   if (!canSet) {
-    return on ? <span className="chip project-report-marker" title="WalkieTalkie writes a plain-English status report for this project each hour something changes">Reported hourly</span> : null;
+    return <div className="project-report-readonly">
+      {on ? <span className="chip project-report-marker" title="Talkie writes a plain-English status report for this project each hour something changes">Reported hourly</span> : <span className="project-report-off">Off</span>}
+      <span className="muted project-report-reason">{reason ?? "Only the creator or an owner can change this."}</span>
+    </div>;
   }
   return (
     <div className="project-report-switch">
@@ -37,8 +40,9 @@ export function ProjectReportToggle({ project }: { project: ProjectView }) {
   const change = async (on: boolean) => {
     setBusy(true);
     setError(null);
-    setError(await toggleStatusReport(api, projectsStore, project.channel, on));
+    setError(await toggleStatusReport(api, projectsStore, project.channel, on, () => setError(null)));
     setBusy(false);
   };
-  return <StatusReportSwitch project={project} canSet={canSetStatusReport(me, project)} busy={busy} error={error} onToggle={(on) => void change(on)} />;
+  const reason = !me?.handle ? "Sign in to change this." : me.role === "observer" ? "Observers can't change this." : "Only the creator or an owner can change this.";
+  return <StatusReportSwitch project={project} canSet={canSetStatusReport(me, project)} reason={reason} busy={busy} error={error} onToggle={(on) => void change(on)} />;
 }

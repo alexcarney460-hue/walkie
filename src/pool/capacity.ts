@@ -197,7 +197,7 @@ function nvidia(accel: MachineAccel, mem: MachineMem, gpuFree: readonly number[]
   return assemble(base, `${name} · ${gbText(vram)} VRAM + ${gbText(mem.total)} RAM`, [gpu, cpuBackend(mem)], [note]);
 }
 
-/** The machine's capacity, or null when it reported no memory (stats off, an older Walkie, or no reading). */
+/** The machine's capacity, or null when it reported no memory (stats off, an older Sqwakie, or no reading). */
 export function machineCapacity(n: CapacityInput): MachineCapacity | null {
   const mem = n.stats?.mem;
   if (!mem || !(mem.total > 0)) return null;
@@ -242,7 +242,7 @@ export function machineCapacity(n: CapacityInput): MachineCapacity | null {
       accel.gpu_limit ? [`GPU memory limit set to ${gbText(accel.gpu_limit)} (iogpu.wired_limit_mb)`] : []));
   }
   return actual(assemble(base, `${accel?.chip ? `${accel.chip} · ` : ""}CPU only · ${gbText(mem.total)}`, [cpuBackend(mem)],
-    accel ? ["No GPU found: the model would run on the CPU (slow)"] : ["Hardware not reported (an older Walkie): counted as CPU only"]));
+    accel ? ["No GPU found: the model would run on the CPU (slow)"] : ["Hardware not reported (an older Sqwakie): counted as CPU only"]));
 }
 
 /** Effective pinned-runtime backend, kept separate from generic hardware capability. */

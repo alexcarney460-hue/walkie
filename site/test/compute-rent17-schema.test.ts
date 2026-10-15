@@ -17,14 +17,15 @@ test('migration 4 store blocks bind and createAccount with a state alert', async
   const response = await bind(new Request('https://site.test/api/license/bind', { method: 'POST',
     body: JSON.stringify({ code, team_id: team.team }) }));
   expect(response.status).toBe(503);
-  expect(await response.json()).toEqual({ error: 'compute_state_unavailable' });
+  expect(await response.json()).toEqual({ error: 'licence_store_required' }); // lane C round 12: bind cannot record
   expect(stripe.subs.get(lic)!.metadata[TEAM_META]).toBeUndefined();
   expect(await C.err(createAccount({ ...w.d, store }, team.team,
     C.proof(team.f, team.team, w.clock.now, team.genesis)))).toBe('compute_state_unavailable');
   expect(w.logs).toContain('alert_compute_state_unavailable');
 });
 
-test('version zero permits proof-less legacy bind only when all compute tables are proven empty', async () => {
+// Lane C round 12: the drained bind's empty-store escape is gone. Version zero is refused, empty tables or not.
+test('version zero refuses a proof-less bind whether or not the compute tables are empty', async () => {
   for (const empty of [false, true]) {
     const w = C.world(), team = C.mkTeam(`rent18-schema-${empty}`);
     const signer = C.LH.testKeypair(), stripe = new C.LH.MockStripe(), lic = `sub_RENT18_${empty}`;
@@ -39,7 +40,7 @@ test('version zero permits proof-less legacy bind only when all compute tables a
     const bind = makeBind({ ...C.LH.deps(stripe, C.LH.fullEnv(signer.pem)), computeStore: () => store });
     const response = await bind(new Request('https://site.test/api/license/bind', { method: 'POST',
       body: JSON.stringify({ code, team_id: team.team }) }));
-    expect(response.status).toBe(empty ? 200 : 503);
-    expect(stripe.subs.get(lic)!.metadata[TEAM_META]).toBe(empty ? team.team : undefined);
+    expect([response.status, await response.json()]).toEqual([503, { error: 'licence_store_required' }]);
+    expect(stripe.subs.get(lic)!.metadata[TEAM_META]).toBeUndefined();
   }
 });

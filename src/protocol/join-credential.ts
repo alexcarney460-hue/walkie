@@ -1,16 +1,26 @@
-// Walkie Direct invites and add-machine links carry the same wk1 bearer code.
+// Sqwakie Direct invites carry wk1 bearer codes; reusable fleet links carry wl1 bearer tokens.
 // The join page reads it from /join#wk1...; installers and `walkie join` use the bare code.
 // Best-effort content defense. The boundary is private delivery at mint time: content filtering cannot catch
-// arbitrary encodings or pieces spread over separate writes. Walkie identifiers use other prefixes (event ids are
+// arbitrary encodings or pieces spread over separate writes. Sqwakie identifiers use other prefixes (event ids are
 // hex:sequence, projects p-..., agents named by their caller); wk1_ is a possible bearer-code prefix.
-const CODE = /wk1[A-Za-z0-9_-]{38,}/;
-const STRIP = /[\s\u200B-\u200D\u2060\uFEFF]/g;
+const CODE = /w[kl]1[A-Za-z0-9_-]{38,}/;
+const STRIP = /[\s\p{Default_Ignorable_Code_Point}]/gu;
 
 export function containsJoinCredential(text: string): boolean {
-  if (CODE.test(text)) return true;
-  let decoded = text;
-  try { decoded = decodeURIComponent(text); } catch { /* malformed escapes: still scan raw and stripped */ }
-  return CODE.test(decoded.replace(STRIP, "")) || CODE.test(text.replace(STRIP, ""));
+  if (CODE.test(text) || CODE.test(text.replace(STRIP, ""))) return true;
+  // Detection only: preserve authored text, but recognize compatible spellings such as full-width ASCII.
+  const normalized = text.normalize("NFKC");
+  if (CODE.test(normalized.replace(STRIP, ""))) return true;
+  // Normalization can turn unrelated compatible percent punctuation into an invalid escape.
+  // Keep the original decoding path as well, so a new spelling cannot suppress an existing match.
+  for (const candidate of normalized === text ? [text] : [text, normalized]) {
+    try {
+      const decoded = decodeURIComponent(candidate);
+      // Canonical composition may change an ASCII match; normalized scans are strictly additive.
+      if (CODE.test(decoded.replace(STRIP, "")) || CODE.test(decoded.normalize("NFKC").replace(STRIP, ""))) return true;
+    } catch { /* the other spelling and the undecoded text are checked independently */ }
+  }
+  return false;
 }
 
 export function containsJoinCredentialBytes(bytes: Uint8Array): boolean {

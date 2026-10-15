@@ -1,4 +1,4 @@
-// Linear → Walkie mapping (pure): columns by state type, labels, assignees, card bodies cut to the board-op cap, the
+// Linear → Sqwakie mapping (pure): columns by state type, labels, assignees, card bodies cut to the board-op cap, the
 // history digest, prefixes, title similarity and durations. Everything here is deterministic.
 import { DEFAULT_COLUMNS, MAX_BOARD_OP_BYTES, MAX_LABELS, type Column, type ColumnRole } from "../../protocol/projects/schema.ts";
 import type { LIssue, LState } from "./schemas.ts";
@@ -24,7 +24,7 @@ export function placeOf(state: { type: string; name: string }): Place {
 }
 
 /**
- * The Linear workflow state for a Walkie column role (two-way sync), among the team's states: backlog → backlog,
+ * The Linear workflow state for a Sqwakie column role (two-way sync), among the team's states: backlog → backlog,
  * todo → unstarted, active → a started state not named "…review…", review → a started state named "…review…" (else
  * the first started), done → completed, cancelled → canceled. First by position; null when the team has none.
  */
@@ -135,7 +135,7 @@ export function cutJson(text: string, max: number): string {
 const day = (iso: string | null | undefined) => (iso ? iso.slice(0, 10) : "");
 
 /**
- * The card body: identifier, link, state, priority, the Linear assignee when no member matches, the parent (its Walkie
+ * The card body: identifier, link, state, priority, the Linear assignee when no member matches, the parent (its Sqwakie
  * reference once imported), creator and date, then the description. Cut by bytes to the board-op cap with a pointer
  * back to Linear.
  */

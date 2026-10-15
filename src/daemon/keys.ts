@@ -10,7 +10,7 @@ export interface NodeKeys {
   readonly nodeId: string;
   readonly pubkey: string; // base64 raw 32 bytes
   sign(data: string): string;
-  /** The raw 32-byte ed25519 seed: Walkie Direct runs its iroh endpoint on the node key (endpoint id = pubkey). */
+  /** The raw 32-byte ed25519 seed: Sqwakie Direct runs its iroh endpoint on the node key (endpoint id = pubkey). */
   secretSeed(): Uint8Array;
 }
 

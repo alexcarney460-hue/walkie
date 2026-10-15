@@ -21,6 +21,9 @@ import "../../src/daemon/memory/routes.ts";
 import type { Core } from "../../src/daemon/core.ts";
 import { remoteArgvProblem } from "../../src/protocol/admin.ts";
 import { defang } from "../../src/protocol/safety.ts";
+import { applyRosterEvent, EMPTY_ROSTER } from "../../src/daemon/roster.ts";
+import { createTeam, tnode } from "../helpers/events.ts";
+import { personKey } from "../../src/daemon/memory/ownership.ts";
 
 const SECRET = `sk-ant-${"A".repeat(24)}`;
 const JOIN = `wk1${"Ab3_".repeat(12)}`;
@@ -33,8 +36,11 @@ interface Api {
 }
 
 function mockCore(home: string, emits: unknown[]): Core {
+  const node = tnode("alex");
+  const { create } = createTeam(node);
   return {
     paths: { home },
+    teamId: create.team, nodeId: node.keys.nodeId, roster: applyRosterEvent(EMPTY_ROSTER, create),
     // Off on purpose: personal memory redacts even when post redaction is disabled.
     config: { redact: false },
     limits: DEFAULT_LIMITS,
@@ -85,14 +91,14 @@ function memId(n: number): string {
 }
 
 /** Rows inserted past the write path, so a cap can be reached without thousands of store transactions. */
-function seedRows(home: string, rows: { id: string; body: string }[]): void {
+function seedRows(home: string, rows: { id: string; body: string }[], owner = "alex"): void {
   const db = new Database(join(home, MEMORY_FILE));
   const insert = db.query(
-    `INSERT INTO memory (id, kind, body, sources, created_at, retracted, retracted_at, actor, redactions)
-     VALUES (?, 'fact', ?, '[]', ?, 0, NULL, 'person', '[]')`,
+    `INSERT INTO memory (id, kind, body, sources, created_at, retracted, retracted_at, actor, redactions, owner)
+     VALUES (?, 'fact', ?, '[]', ?, 0, NULL, 'person', '[]', ?)`,
   );
   db.transaction(() => {
-    rows.forEach((row, i) => insert.run(row.id, row.body, 1_000 + i));
+    rows.forEach((row, i) => insert.run(row.id, row.body, 1_000 + i, owner));
   })();
   db.close();
 }
@@ -123,7 +129,7 @@ describe("personal memory store", () => {
     const prev = process.umask(0);
     try {
       const store = MemoryStore.open(home);
-      const added = store.add({ kind: "fact", text: "the onboarding checklist lives in the repo", actor: "person" });
+      const added = store.add({ kind: "fact", text: "the onboarding checklist lives in the repo", actor: "person", owner: "alex" });
       store.close();
       const path = join(home, MEMORY_FILE);
       expect(added.id).toMatch(/^m-[0-9a-f]{32}$/);
@@ -164,7 +170,7 @@ describe("personal memory store", () => {
         kind: "fact",
         text: `the handbook says ${SECRET} and then the onboarding checklist`,
         sources: ["room:handbook", SECRET],
-        actor: "person",
+        actor: "person", owner: "alex",
       });
       expect(saved.text).not.toContain(SECRET);
       expect(saved.text).toContain("onboarding checklist");
@@ -172,12 +178,12 @@ describe("personal memory store", () => {
       expect(saved.redactions.length).toBeGreaterThan(0);
       expect(saved.sources).toEqual(["room:handbook"]);
       expect(dbText(home)).not.toContain(SECRET);
-      expect(store.search("handbook", 10).map((e) => e.id)).toEqual([saved.id]);
-      expect(store.search("board", 10).map((e) => e.id)).toEqual([saved.id]); // substring, LIKE fallback
-      expect(() => store.add({ kind: "warning", text: `do not share ${JOIN}`, actor: "person" })).toThrow(/join code/);
+      expect(store.search("handbook", 10, "alex").map((e) => e.id)).toEqual([saved.id]);
+      expect(store.search("board", 10, "alex").map((e) => e.id)).toEqual([saved.id]); // substring, LIKE fallback
+      expect(() => store.add({ kind: "warning", text: `do not share ${JOIN}`, actor: "person", owner: "alex" })).toThrow(/join code/);
       expect(dbText(home)).not.toContain(JOIN);
       expect(dbText(home)).not.toContain("wk1");
-      const week = store.add({ kind: "fact", text: WEEK, actor: "person" });
+      const week = store.add({ kind: "fact", text: WEEK, actor: "person", owner: "alex" });
       expect(week.text).toContain("launch plan");
       store.close();
     } finally {
@@ -194,14 +200,14 @@ describe("personal memory store", () => {
         store.close();
         return; // this SQLite has no FTS5; the LIKE test above covers search
       }
-      const saved = store.add({ kind: "procedure", text: "the onboarding checklist lives in the repo", actor: "claude", sources: ["room:handbook"] });
-      expect(store.search("onboarding", 10).map((e) => e.id)).toEqual([saved.id]);
-      expect(store.search("handbook", 10).map((e) => e.id)).toEqual([saved.id]);
-      expect(store.search("board", 10)).toEqual([]);
-      store.retract(saved.id);
-      expect(store.search("onboarding", 10)).toEqual([]);
-      expect(store.list({ limit: 10, includeRetracted: false })).toEqual([]);
-      const kept = store.list({ limit: 10, includeRetracted: true });
+      const saved = store.add({ kind: "procedure", text: "the onboarding checklist lives in the repo", actor: "claude", owner: "alex", sources: ["room:handbook"] });
+      expect(store.search("onboarding", 10, "alex").map((e) => e.id)).toEqual([saved.id]);
+      expect(store.search("handbook", 10, "alex").map((e) => e.id)).toEqual([saved.id]);
+      expect(store.search("board", 10, "alex")).toEqual([]);
+      store.retract(saved.id, "alex");
+      expect(store.search("onboarding", 10, "alex")).toEqual([]);
+      expect(store.list({ limit: 10, includeRetracted: false, owner: "alex" })).toEqual([]);
+      const kept = store.list({ limit: 10, includeRetracted: true, owner: "alex" });
       expect(kept).toHaveLength(1);
       expect(kept[0]?.retracted).toBe(true);
       expect(kept[0]?.text).toBe("(retracted)");
@@ -248,23 +254,23 @@ describe("personal memory store", () => {
       const kept = off.add({
         kind: "fact",
         text: "the onboarding checklist lives in the repo",
-        actor: "person",
+        actor: "person", owner: "alex",
         sources: ["room:handbook"],
       });
-      const dropped = off.add({ kind: "fact", text: "a retracted onboarding note stays out of search", actor: "person" });
-      off.retract(dropped.id);
+      const dropped = off.add({ kind: "fact", text: "a retracted onboarding note stays out of search", actor: "person", owner: "alex" });
+      off.retract(dropped.id, "alex");
       off.close();
       const on = MemoryStore.open(home);
       if (!on.fts) {
         on.close();
         return;
       }
-      expect(on.search("onboarding", 10).map((e) => e.id)).toEqual([kept.id]);
-      expect(on.search("handbook", 10).map((e) => e.id)).toEqual([kept.id]);
+      expect(on.search("onboarding", 10, "alex").map((e) => e.id)).toEqual([kept.id]);
+      expect(on.search("handbook", 10, "alex").map((e) => e.id)).toEqual([kept.id]);
       on.close();
       const again = MemoryStore.open(home);
       try {
-        expect(again.search("onboarding", 10).map((e) => e.id)).toEqual([kept.id]);
+        expect(again.search("onboarding", 10, "alex").map((e) => e.id)).toEqual([kept.id]);
       } finally {
         again.close();
       }
@@ -277,10 +283,10 @@ describe("personal memory store", () => {
     const home = mkdtempSync(join(tmpdir(), "walkie-mem-"));
     try {
       const store = MemoryStore.open(home);
-      store.add({ kind: "fact", text: "the onboarding checklist lives in the repo", actor: "person" });
-      expect(() => store.search("\0", 10)).toThrow(/NUL/);
-      expect(() => store.search("on\0boarding", 10)).toThrow(/NUL/);
-      expect(store.search("onboarding", 10)).toHaveLength(1);
+      store.add({ kind: "fact", text: "the onboarding checklist lives in the repo", actor: "person", owner: "alex" });
+      expect(() => store.search("\0", 10, "alex")).toThrow(/NUL/);
+      expect(() => store.search("on\0boarding", 10, "alex")).toThrow(/NUL/);
+      expect(store.search("onboarding", 10, "alex")).toHaveLength(1);
       store.close();
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -295,14 +301,14 @@ describe("personal memory store", () => {
       prepared.close();
       seedRows(rowsHome, Array.from({ length: MEMORY_ROWS_MAX }, (_, i) => ({ id: memId(i), body: "n" })));
       const full = MemoryStore.open(rowsHome, { fts: false });
-      expect(() => full.add({ text: "one past the row cap", actor: "person" })).toThrow(MemoryError);
-      try { full.add({ text: "one past the row cap", actor: "person" }); }
+      expect(() => full.add({ text: "one past the row cap", actor: "person", owner: "alex" })).toThrow(MemoryError);
+      try { full.add({ text: "one past the row cap", actor: "person", owner: "alex" }); }
       catch (err) {
         expect(err).toBeInstanceOf(MemoryError);
         expect((err as MemoryError).code).toBe("full");
         expect((err as MemoryError).message).toMatch(/Retract old notes/);
       }
-      full.retract(memId(0));
+      full.retract(memId(0), "alex");
       full.close();
       const keptDb = new Database(join(rowsHome, MEMORY_FILE), { readonly: true });
       const kept = keptDb.query<{ body: string; retracted: number }, [string]>("SELECT body, retracted FROM memory WHERE id = ?").get(memId(0));
@@ -310,7 +316,7 @@ describe("personal memory store", () => {
       expect(kept?.retracted).toBe(1);
       expect(kept?.body).toBe("");
       const freed = MemoryStore.open(rowsHome, { fts: false });
-      expect(freed.add({ text: "a note after a retract", actor: "person" }).text).toContain("after a retract");
+      expect(freed.add({ text: "a note after a retract", actor: "person", owner: "alex" }).text).toContain("after a retract");
       freed.close();
 
       const opened = MemoryStore.open(bytesHome, { fts: false });
@@ -320,14 +326,14 @@ describe("personal memory store", () => {
       const bodyLen = MEMORY_BYTES_MAX - incoming - "[]".length;
       seedRows(bytesHome, [{ id: memId(1), body: "b".repeat(bodyLen) }]);
       const bytes = MemoryStore.open(bytesHome, { fts: false });
-      expect(bytes.add({ text: marker, actor: "person" }).text).toBe(marker);
-      expect(() => bytes.add({ text: "x", actor: "person" })).toThrow(MemoryError);
-      bytes.retract(memId(1));
-      const still = bytes.list({ limit: 10, includeRetracted: true }).find((e) => e.id === memId(1));
+      expect(bytes.add({ text: marker, actor: "person", owner: "alex" }).text).toBe(marker);
+      expect(() => bytes.add({ text: "x", actor: "person", owner: "alex" })).toThrow(MemoryError);
+      bytes.retract(memId(1), "alex");
+      const still = bytes.list({ limit: 10, includeRetracted: true, owner: "alex" }).find((e) => e.id === memId(1));
       expect(still?.retracted).toBe(true);
       expect(still?.text).toBe("(retracted)");
       expect(still?.sources).toEqual([]);
-      expect(bytes.add({ text: "room again", actor: "person" }).text).toBe("room again");
+      expect(bytes.add({ text: "room again", actor: "person", owner: "alex" }).text).toBe("room again");
       bytes.close();
     } finally {
       rmSync(rowsHome, { recursive: true, force: true });
@@ -343,12 +349,12 @@ describe("personal memory store", () => {
         kind: "decision",
         text: "the quillwort shelf holds the onboarding checklist",
         sources: ["room:quillwort-shelf"],
-        actor: "maren",
+        actor: "maren", owner: "alex",
       });
-      expect(store.search("quillwort", 10).map((e) => e.id)).toEqual([saved.id]);
-      expect(store.search("onboarding", 10).map((e) => e.id)).toEqual([saved.id]);
+      expect(store.search("quillwort", 10, "alex").map((e) => e.id)).toEqual([saved.id]);
+      expect(store.search("onboarding", 10, "alex").map((e) => e.id)).toEqual([saved.id]);
       const before = storedTextBytes(home);
-      const retracted = store.retract(saved.id);
+      const retracted = store.retract(saved.id, "alex");
       expect(retracted.id).toBe(saved.id);
       expect(retracted.kind).toBe("decision");
       expect(retracted.actor).toBe("maren");
@@ -364,9 +370,9 @@ describe("personal memory store", () => {
       expect(row?.actor).toBe("maren");
       expect(row?.retracted).toBe(1);
       expect(storedTextBytes(home)).toBeLessThan(before);
-      expect(store.search("quillwort", 10)).toEqual([]);
-      expect(store.search("onboarding", 10)).toEqual([]);
-      expect(store.search("shelf", 10)).toEqual([]);
+      expect(store.search("quillwort", 10, "alex")).toEqual([]);
+      expect(store.search("onboarding", 10, "alex")).toEqual([]);
+      expect(store.search("shelf", 10, "alex")).toEqual([]);
       if (store.fts) {
         const db = new Database(join(home, MEMORY_FILE), { readonly: true });
         try {
@@ -374,11 +380,11 @@ describe("personal memory store", () => {
           expect(Number(left?.n ?? 0)).toBe(0);
         } finally { db.close(); }
       }
-      const listed = store.list({ limit: 10, includeRetracted: true });
+      const listed = store.list({ limit: 10, includeRetracted: true, owner: "alex" });
       expect(listed).toHaveLength(1);
       expect(listed[0]?.text).toBe("(retracted)");
       expect(listed[0]?.sources).toEqual([]);
-      const again = store.retract(saved.id);
+      const again = store.retract(saved.id, "alex");
       expect(again.retracted_at).toBe(retracted.retracted_at);
       expect(storedRow(home, saved.id)?.body).toBe("");
       store.close();
@@ -389,19 +395,19 @@ describe("personal memory store", () => {
       const oldId = memId(4);
       const db = new Database(join(home, MEMORY_FILE));
       db.query(
-        `INSERT INTO memory (id, kind, body, sources, created_at, retracted, retracted_at, actor, redactions)
-         VALUES (?, 'warning', ?, ?, 40, 1, 70, 'olive', '[]')`,
+        `INSERT INTO memory (id, kind, body, sources, created_at, retracted, retracted_at, actor, redactions, owner)
+         VALUES (?, 'warning', ?, ?, 40, 1, 70, 'olive', '[]', 'alex')`,
       ).run(oldId, "olive left the quillwort note in place", "[\"room:old-shelf\"]");
       db.close();
       const heal = MemoryStore.open(home, { fts: false });
-      const healed = heal.retract(oldId);
+      const healed = heal.retract(oldId, "alex");
       expect(healed.retracted_at).toBe(70);
       expect(healed.text).toBe("(retracted)");
       expect(healed.sources).toEqual([]);
       expect(healed.actor).toBe("olive");
       expect(storedRow(home, oldId)?.body).toBe("");
       expect(storedRow(home, oldId)?.sources).toBe("[]");
-      expect(heal.search("quillwort", 10)).toEqual([]);
+      expect(heal.search("quillwort", 10, "alex")).toEqual([]);
       heal.close();
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -426,8 +432,8 @@ describe("personal memory store", () => {
       prepared.close();
       seedRows(overHome, [{ id: memId(2), body: overBody }]);
       const store = MemoryStore.open(overHome, { fts: false });
-      expect(() => store.add({ text: mark, actor: "person" })).toThrow(MemoryError);
-      try { store.add({ text: mark, actor: "person" }); }
+      expect(() => store.add({ text: mark, actor: "person", owner: "alex" })).toThrow(MemoryError);
+      try { store.add({ text: mark, actor: "person", owner: "alex" }); }
       catch (err) {
         expect(err).toBeInstanceOf(MemoryError);
         expect((err as MemoryError).code).toBe("full");
@@ -446,8 +452,8 @@ describe("personal memory store", () => {
       prepared.close();
       seedRows(exactHome, [{ id: memId(3), body: exactBody }]);
       const store = MemoryStore.open(exactHome, { fts: false });
-      expect(store.add({ text: mark, actor: "person" }).text).toBe(mark);
-      expect(() => store.add({ text: "x", actor: "person" })).toThrow(MemoryError);
+      expect(store.add({ text: mark, actor: "person", owner: "alex" }).text).toBe(mark);
+      expect(() => store.add({ text: "x", actor: "person", owner: "alex" })).toThrow(MemoryError);
       store.close();
     } finally {
       rmSync(exactHome, { recursive: true, force: true });
@@ -504,7 +510,7 @@ describe("personal memory store", () => {
     const path = join(home, MEMORY_FILE);
     try {
       const ready = MemoryStore.open(home);
-      const kept = ready.add({ text: "indexedzz original words", sources: ["room:indexedsrc"], actor: "maren" });
+      const kept = ready.add({ text: "indexedzz original words", sources: ["room:indexedsrc"], actor: "maren", owner: "alex" });
       expect(ready.fts).toBe(true);
       ready.close();
       const holder = new Database(path);
@@ -524,9 +530,9 @@ describe("personal memory store", () => {
         holder.close();
       }
       if (!opened) throw new Error("open did not return");
-      const added = opened.add({ text: "divergentzz newer words", actor: "olive" });
-      expect(opened.search("divergentzz", 10).map((e) => e.id)).toEqual([added.id]);
-      opened.retract(kept.id);
+      const added = opened.add({ text: "divergentzz newer words", actor: "olive", owner: "alex" });
+      expect(opened.search("divergentzz", 10, "alex").map((e) => e.id)).toEqual([added.id]);
+      opened.retract(kept.id, "alex");
       const db = new Database(path, { readonly: true });
       try {
         const keptRows = db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM memory_fts WHERE id = ?").get(kept.id);
@@ -534,7 +540,7 @@ describe("personal memory store", () => {
         expect(Number(keptRows?.n ?? 0)).toBe(0);
         expect(Number(addedRows?.n ?? 0)).toBe(1);
       } finally { db.close(); }
-      expect(opened.search("indexedzz", 10)).toEqual([]);
+      expect(opened.search("indexedzz", 10, "alex")).toEqual([]);
       opened.close();
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -546,7 +552,7 @@ describe("personal memory store", () => {
     const path = join(home, MEMORY_FILE);
     try {
       const first = MemoryStore.open(home);
-      const prior = first.add({ text: "the earlier onboarding note", actor: "olive" });
+      const prior = first.add({ text: "the earlier onboarding note", actor: "olive", owner: "alex" });
       first.close();
       const holder = new Database(path);
       holder.exec("DROP TABLE memory_fts");
@@ -564,16 +570,16 @@ describe("personal memory store", () => {
       if (!held) throw new Error("open did not return");
       const maker = MemoryStore.open(home);
       expect(maker.fts).toBe(true);
-      expect(maker.search("onboarding", 10).map((e) => e.id)).toEqual([prior.id]);
-      const added = held.add({ text: "a later quillwort note", actor: "bea" });
+      expect(maker.search("onboarding", 10, "alex").map((e) => e.id)).toEqual([prior.id]);
+      const added = held.add({ text: "a later quillwort note", actor: "bea", owner: "alex" });
       expect(held.fts).toBe(true);
       const db = new Database(path, { readonly: true });
       try {
         const rows = db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM memory_fts WHERE id = ?").get(added.id);
         expect(Number(rows?.n ?? 0)).toBe(1);
       } finally { db.close(); }
-      expect(maker.search("quillwort", 10).map((e) => e.id)).toEqual([added.id]);
-      held.retract(added.id);
+      expect(maker.search("quillwort", 10, "alex").map((e) => e.id)).toEqual([added.id]);
+      held.retract(added.id, "alex");
       const after = new Database(path, { readonly: true });
       try {
         const rows = after.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM memory_fts WHERE id = ?").get(added.id);
@@ -593,11 +599,11 @@ describe("personal memory store", () => {
     const source = "room:zqsourceone";
     try {
       const store = MemoryStore.open(home);
-      const saved = store.add({ kind: "decision", text, sources: [source], actor: "maren" });
+      const saved = store.add({ kind: "decision", text, sources: [source], actor: "maren", owner: "alex" });
       const before = readFileSync(path);
       expect(before.includes(Buffer.from(text))).toBe(true);
       expect(before.includes(Buffer.from(source))).toBe(true);
-      store.retract(saved.id);
+      store.retract(saved.id, "alex");
       store.close();
       for (const name of readdirSync(home)) {
         const raw = readFileSync(join(home, name));
@@ -627,8 +633,8 @@ describe("personal memory store", () => {
       seedRows(overHome, [{ id: memId(7), body: "x".repeat(overBodyBytes) }]);
       const store = MemoryStore.open(overHome, { fts: false });
       expect(storedTextBytes(overHome) + storedIncoming).toBe(MEMORY_BYTES_MAX + 1);
-      expect(() => store.add({ text: lone, actor: "person" })).toThrow(MemoryError);
-      try { store.add({ text: lone, actor: "person" }); }
+      expect(() => store.add({ text: lone, actor: "person", owner: "alex" })).toThrow(MemoryError);
+      try { store.add({ text: lone, actor: "person", owner: "alex" }); }
       catch (err) {
         expect(err).toBeInstanceOf(MemoryError);
         expect((err as MemoryError).code).toBe("full");
@@ -646,7 +652,7 @@ describe("personal memory store", () => {
       const exactBodyBytes = MEMORY_BYTES_MAX - sourceBytes - storedIncoming;
       seedRows(exactHome, [{ id: memId(8), body: "x".repeat(exactBodyBytes) }]);
       const store = MemoryStore.open(exactHome, { fts: false });
-      const saved = store.add({ text: lone, actor: "person" });
+      const saved = store.add({ text: lone, actor: "person", owner: "alex" });
       expect(saved.text).toBe(well);
       expect(storedTextBytes(exactHome)).toBe(MEMORY_BYTES_MAX);
       const db = new Database(join(exactHome, MEMORY_FILE), { readonly: true });
@@ -654,7 +660,7 @@ describe("personal memory store", () => {
         const row = db.query<{ n: number }, [string]>("SELECT length(CAST(body AS BLOB)) AS n FROM memory WHERE id = ?").get(saved.id);
         expect(Number(row?.n ?? 0)).toBe(Buffer.byteLength(saved.text));
       } finally { db.close(); }
-      expect(() => store.add({ text: "x", actor: "person" })).toThrow(MemoryError);
+      expect(() => store.add({ text: "x", actor: "person", owner: "alex" })).toThrow(MemoryError);
       store.close();
     } finally {
       rmSync(exactHome, { recursive: true, force: true });
@@ -673,8 +679,8 @@ describe("personal memory store", () => {
       for (let i = 1; i < token.length; i++) {
         const disguised = token.slice(0, i) + "\uD800" + token.slice(i);
         const saved = where === "text"
-          ? store.add({ text: `note ${disguised} end`, actor: "person" })
-          : store.add({ text: "the checklist stays local", sources: [`room:${disguised}`], actor: "person" });
+          ? store.add({ text: `note ${disguised} end`, actor: "person", owner: "alex" })
+          : store.add({ text: "the checklist stays local", sources: [`room:${disguised}`], actor: "person", owner: "alex" });
         const stored = `${saved.text}\n${saved.sources.join("\n")}`.replaceAll("\uFFFD", "");
         const marked = where === "text" ? saved.text.includes(`[REDACTED:${type}]`) : saved.sources.some((s) => s.includes(`[REDACTED:${type}]`));
         if (!saved.redactions.includes(type) || stored.includes(token) || !marked) misses.push(`${label} ${where}@${i}`);
@@ -692,8 +698,8 @@ describe("personal memory store", () => {
           const disguised = code.slice(0, i) + "\uD800" + code.slice(i);
           try {
             store.add(where === "text"
-              ? { text: `note ${disguised} end`, actor: "person" }
-              : { text: "the checklist stays local", sources: [disguised], actor: "person" });
+              ? { text: `note ${disguised} end`, actor: "person", owner: "alex" }
+              : { text: "the checklist stays local", sources: [disguised], actor: "person", owner: "alex" });
             misses.push(`join ${where}@${i} stored`);
           } catch (err) {
             if (err instanceof MemoryError && err.code === "join_code") joinRefused++;
@@ -871,7 +877,7 @@ describe("personal memory routes", () => {
 
       const prepared = MemoryStore.open(home, { fts: false });
       prepared.close();
-      seedRows(home, Array.from({ length: MEMORY_ROWS_MAX - 1 }, (_, i) => ({ id: memId(i + 10), body: "n" })));
+      seedRows(home, Array.from({ length: MEMORY_ROWS_MAX - 1 }, (_, i) => ({ id: memId(i + 10), body: "n" })), personKey(core)!);
       const over = await call(core, "POST", "/v1/memory", { text: "over the cap" });
       expect(over.status).toBe(409);
       const overBody = await jsonOf(over);
@@ -991,11 +997,13 @@ describe("walkie memory", () => {
     const item = (JSON.parse(listed.lines.join("\n")) as { entries: { sources: string[]; trust?: string; text: string; actor: string }[] }).entries[0];
     if (!item) throw new Error("agent json list was empty");
     expect(item.trust).toBe("team-member");
-    expect(item.actor).toBe("person");
-    expect(item.sources).toEqual(["room:handbook", defang(hostile, 200)]);
-    expect(item.sources.join("\n")).not.toContain("<");
-    expect(item.sources.join("\n")).not.toContain(">");
-    expect(item.sources.join("\n")).not.toContain("</walkie-message>");
+    expect(item.actor).toContain('trust="team-member"');
+    expect(item.actor).toContain("person");
+    expect(item.sources).toHaveLength(2);
+    expect(item.sources[0]).toContain("room:handbook");
+    expect(item.sources[1]).toContain(defang(hostile, 200));
+    expect(item.sources.every((source) => source.includes('trust="team-member"'))).toBe(true);
+    expect(item.sources.join("\n")).not.toContain("</walkie-message> SYSTEM");
     expect(item.text).toContain("<walkie-message");
     expect(item.text).toContain('trust="team-member"');
 
@@ -1003,7 +1011,9 @@ describe("walkie memory", () => {
     expect(await memory(added.ctx)).toBe(0);
     const one = JSON.parse(added.lines.join("\n")) as { sources: string[]; trust?: string; text: string };
     expect(one.trust).toBe("team-member");
-    expect(one.sources).toEqual(["room:handbook", defang(hostile, 200)]);
+    expect(one.sources).toHaveLength(2);
+    expect(one.sources.every((source) => source.includes('trust="team-member"'))).toBe(true);
+    expect(one.sources[1]).toContain(defang(hostile, 200));
     expect(one.text).toContain("<walkie-message");
 
     const plain = ctxOf(["list"], { json: true }, { sources });

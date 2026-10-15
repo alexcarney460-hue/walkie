@@ -30,7 +30,7 @@ const builder = (title: string): LiveAgent => ({ address: "@kira/kiras-mbp/codex
 const auditor = (title: string): LiveAgent => ({ address: "@alex/atlas/cc-2", handle: "alex", agent: "cc-2", text: title, auditor: true });
 const bobAgent = (title: string, auditorToo = false): LiveAgent => ({ address: "@bob/bobs-mbp/bob-x", handle: "bob", agent: "bob-x", text: title, auditor: auditorToo });
 const branch = (name: string, own: number, at: number | null, merged: string | null = null): BranchEvidence => ({ repo: "/r", branch: name, own_commits: own, last_commit_at: at, merged_into: merged });
-const cmt = (text: string, ts: number, agent = "cc-orch", handle = "alex"): TimelineEntry => ({ id: `c${ts}${handle}`, ts, author: { handle, node: "n", agent }, kind: "comment", text });
+const cmt = (text: string, ts: number, agent = "cc-orch", handle = "alex"): TimelineEntry => ({ id: `a000000000000001:${ts}`, ts, author: { handle, node: "n", agent }, kind: "comment", text });
 const move = (column: string, ts: number, agent?: string): TimelineEntry => ({
   id: `m${ts}`, ts, author: { handle: "alex", node: "n", ...(agent ? { agent } : {}) }, kind: "op", changes: { column, pos: "i" },
 });
@@ -131,7 +131,7 @@ describe("rules", () => {
       [forked.id]: { branches: [branch("lane/sec-6", 0, null, null)] },
     }));
     expect(p.moves.map((m) => [m.key, m.rule, m.to])).toEqual([[merged.key, "done", "done"], [linear.key, "done", "done"], [said.key, "done", "done"]]);
-    expect(p.moves[0]?.evidence[0]).toContain("merged into main");
+    expect(p.moves[0]?.evidence[0]).toContain("merged into a release ref");
     expect(p.moves[1]?.evidence[0]).toBe("Linear ALE-1 is Done");
     expect(p.ambiguous.map((a) => a.key)).toEqual([busy.key]);
   });
@@ -252,7 +252,10 @@ describe("rules", () => {
     const p = planSteward(input([pinned, expired, undone, agentMoved, stewardMoved], {
       [pinned.id]: { ...agents("pin-1"), timeline: [move("todo", NOW - 2 * H)] },
       [expired.id]: { ...agents("pin-2"), timeline: [move("todo", NOW - PIN_MS - H)] },
-      [undone.id]: { ...agents("pin-3"), timeline: [move("doing", NOW - 50 * H, STEWARD_AGENT), move("todo", NOW - 30 * H)] },
+      [undone.id]: { ...agents("pin-3"), timeline: [
+        { ...move("doing", NOW - 50 * H, STEWARD_AGENT), id: "a000000000000001:10", effective_rev: 1 },
+        { ...move("todo", NOW - 30 * H), id: "b000000000000002:11", effective_rev: 2 },
+      ] },
       [agentMoved.id]: { ...agents("pin-4"), timeline: [move("todo", NOW - AGENT_GRACE_MS / 2, "cc-orch")] },
       // Another machine's steward moved it back 2 h ago (different evidence): no flip-flop within the cooldown.
       [stewardMoved.id]: { ...agents("pin-5"), timeline: [move("todo", NOW - 2 * H, STEWARD_AGENT)] },
@@ -345,11 +348,10 @@ describe("older machines (round 3)", () => {
   test("only machines seen in the last 24 h (or online) hold moves back, with a readable reason", () => {
     expect(blockingPeer([peer("old-laptop", "0.2.0-pre.5", false, 72)], T)).toBeNull();
     expect(blockingPeer([peer("never-seen", undefined, false, null)], T)).toBeNull();
-    expect(blockingPeer([peer("kiras-mbp", "0.2.0-pre.5", false, 3)], T)).toBe("waiting for kiras-mbp to upgrade (it runs Walkie 0.2.0-pre.5; this needs 0.2.0-pre.8)");
-    expect(blockingPeer([peer("hestia", undefined, true, 0)], T)).toBe("waiting for hestia to report its Walkie version");
+    expect(blockingPeer([peer("kiras-mbp", "0.2.0-pre.5", false, 3)], T)).toBe("waiting for kiras-mbp to upgrade (it runs Sqwakie 0.2.0-pre.5; this needs 0.2.0-pre.8)");
+    expect(blockingPeer([peer("hestia", undefined, true, 0)], T)).toBe("waiting for hestia to report its Sqwakie version");
     expect(blockingPeer([peer("atlas", "0.2.0-pre.9", true, 0), peer("rel", "0.2.0", true, 0)], T)).toBeNull();
     // Fail closed (Codex r2 HIGH 1): a peer on this build's own (older) version doesn't pass by being equal to it.
-    expect(blockingPeer([peer("twin", "0.2.0-pre.5", true, 0)], T)).toBe("waiting for twin to upgrade (it runs Walkie 0.2.0-pre.5; this needs 0.2.0-pre.8)");
+    expect(blockingPeer([peer("twin", "0.2.0-pre.5", true, 0)], T)).toBe("waiting for twin to upgrade (it runs Sqwakie 0.2.0-pre.5; this needs 0.2.0-pre.8)");
   });
 });
-

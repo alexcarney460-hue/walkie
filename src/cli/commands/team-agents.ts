@@ -16,7 +16,7 @@
 // Owner SSH (WALK-67 lane 8): the add-machine command's `--owner-ssh <packet>` rides in that SAME consent. The packet
 // is decoded and checked against the invite before the question is shown (a damaged one is dropped, said plainly, and
 // the consent shown leaves SSH out; so is one on a Linux or WSL machine whose own SSH server already answers on 22, which
-// Walkie never uses: src/cli/ssh-foreign.ts), the text asked is `consentText(..., owner_ssh)`, and the packet goes into the one
+// Sqwakie never uses: src/cli/ssh-foreign.ts), the text asked is `consentText(..., owner_ssh)`, and the packet goes into the one
 // POST /v1/provision/grant that records the person's typed yes. The seats-only question above never carries it.
 // SSH is reported ready only from GET /v1/ssh/status (src/cli/ssh-ready.ts), never from having asked for it.
 import { agentAdminOn } from "../admin-gate.ts";
@@ -39,13 +39,13 @@ import { FOREIGN_SSH_AFTER_CONSENT, FOREIGN_SSH_NOTE, ownerSshUnlessForeign, wal
 import type { SshFinal } from "../ssh-ready.ts";
 import { enableSeats } from "./seats-enable.ts";
 
-export const TEAM_AGENTS_QUESTION = "Let your team start agents on this company machine as your OS user? They can read and change your files and keys, reach your Walkie daemon, and use this machine's "
+export const TEAM_AGENTS_QUESTION = "Let your team start agents on this company machine as your OS user? They can read and change your files and keys, reach your Sqwakie daemon, and use this machine's "
   + "own Claude/Codex login. "
   + "You can turn it off any time with walkie seats deny.";
 export function teamAgentsQuestion(claudeLogin: SeatsLocal["claude_login"], seatUsers = false): string {
   if (seatUsers) return "Let your team start agents on this machine as separate OS users? They use this machine's Claude/Codex login. You can turn seats off any time with walkie seats deny.";
   return claudeLogin === "dedicated"
-    ? "Let your team start agents on this company machine as your OS user? They can read and change your files and keys and reach your Walkie daemon. Claude seats use the token set for seats only; a running seat can read it. You can turn seats off any time with walkie seats deny."
+    ? "Let your team start agents on this company machine as your OS user? They can read and change your files and keys and reach your Sqwakie daemon. Claude seats use the token set for seats only; a running seat can read it. You can turn seats off any time with walkie seats deny."
     : TEAM_AGENTS_QUESTION;
 }
 
@@ -68,6 +68,8 @@ export interface RuntimeCheck { installed: boolean; loggedIn: boolean | null }
 export interface TeamAgentsDeps {
   /** Whether the person can be asked (stdin is a terminal). */
   interactive: boolean;
+  /** Why not, when it isn't "no terminal" (a fleet link's setup asks nothing: FLEET-LINK-1). */
+  notAsked?: string;
   ask(question: string): Promise<string>;
   /** Is `claude` / `codex` installed, and signed in for this person (null: can't tell)? */
   checkRuntime(name: "claude" | "codex"): Promise<RuntimeCheck>;
@@ -78,7 +80,7 @@ export interface TeamAgentsDeps {
   installSeatUsers(o?: { codexRelease?: boolean }): Promise<boolean>;
   /** Read the daemon's private local receipt after grant_exists; overridden by isolated tests. */
   readGrant?: () => Promise<unknown>;
-  /** The company flow's ONE administrator step (root marker, and Walkie's SSH service when owner SSH is carried). Absent: no elevation is attempted. */
+  /** The company flow's ONE administrator step (root marker, and Sqwakie's SSH service when owner SSH is carried). Absent: no elevation is attempted. */
   root?: RootBatchDeps;
   /** Owner SSH after the grant: the status read and the wait. Absent: SSH is carried but never watched or reported. */
   ssh?: SshStepDeps;
@@ -165,7 +167,7 @@ async function companyTeamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
   });
   let ownerSsh = ssh.state === "carried" ? ssh.packet : undefined;
   if (ssh.state === "damaged") ctx.out(c.yellow(`   ${OWNER_SSH_DAMAGED}`));
-  // Linux and WSL: an SSH server that is not Walkie's already answers on 22. Walkie does not use it: owner SSH stays off in
+  // Linux and WSL: an SSH server that is not Sqwakie's already answers on 22. Sqwakie does not use it: owner SSH stays off in
   // this release, the reason is said now, and the consent below, the grant and the administrator step all leave SSH out.
   ownerSsh = await ownerSshUnlessForeign(ownerSsh, deps.ssh, (line) => ctx.out(c.yellow(`   ${line}`)), FOREIGN_SSH_NOTE);
   // The daemon checks the packet (without spending it) BEFORE the question and before any administrator step: one it would
@@ -211,7 +213,7 @@ async function companyTeamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
       ctx.out(c.yellow(`   company seats stay off: ${grantRefusalLine(error.code, error.message)}`));
       return isLocalRefusal(error.code) ? "incomplete" : "refused";
     } else {
-      ctx.out(c.yellow("   local provisioning grant is pending; company seats stay off until Walkie supports the grant"));
+      ctx.out(c.yellow("   local provisioning grant is pending; company seats stay off until Sqwakie supports the grant"));
       return "incomplete";
     }
   }
@@ -242,7 +244,7 @@ export async function teamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
   if (seatUsers && flag !== "yes") throw new UsageError("--seat-users requires --allow-team-agents (or --allow-seats)");
   if (seatUsers && bool(ctx.args, "same-user")) throw new UsageError("choose --same-user or --seat-users");
   if (!(await seatsSupported(client))) {
-    if (flag === "yes") { heading(); ctx.out(c.dim("   this version of Walkie can't host team agents yet: --allow-team-agents ignored")); }
+    if (flag === "yes") { heading(); ctx.out(c.dim("   this version of Sqwakie can't host team agents yet: --allow-team-agents ignored")); }
     return "unsupported";
   }
   heading();
@@ -262,7 +264,7 @@ export async function teamAgentsStep(ctx: Ctx, client: WalkieClient, deps: TeamA
     ? teamAgentsQuestion(before.claude_login, seatUsers || before.ephemeral === true) : TEAM_AGENTS_QUESTION;
   const answer = flag ?? (deps.interactive && !agent ? (isYes(await deps.ask(`${question} (y/N)`)) ? "yes" : "no") : "no");
   if (answer === "no") {
-    ctx.out(`   ${c.dim(`team agents off${flag || deps.interactive ? "" : " (no terminal to ask; --allow-team-agents turns them on)"}. Later: walkie seats enable`)}`);
+    ctx.out(`   ${c.dim(`team agents off${flag || deps.interactive ? "" : ` (${deps.notAsked ?? "no terminal to ask"}; --allow-team-agents turns them on)`}. Later: walkie seats enable`)}`);
     return "declined";
   }
 

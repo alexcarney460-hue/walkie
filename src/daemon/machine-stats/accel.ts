@@ -155,7 +155,7 @@ export async function readGpuNow(gpus: number, deps: Pick<AccelDeps, "run" | "ex
   return parseGpuNow(await (deps.run ?? defaultRun)([bin, "--query-gpu=memory.free,temperature.gpu", "--format=csv,noheader,nounits"]), gpus);
 }
 
-/** This machine's accelerator facts, or null on a platform Walkie doesn't read (Windows outside WSL). */
+/** This machine's accelerator facts, or null on a platform Sqwakie doesn't read (Windows outside WSL). */
 export async function readAccel(deps: AccelDeps = {}): Promise<MachineAccel | null> {
   const platform = deps.platform ?? process.platform;
   const run = deps.run ?? defaultRun;

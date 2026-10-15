@@ -1,8 +1,8 @@
 // The product website: the single place its origin is written (checkout, portal, renewal URLs).
-// Production domain: getwalkie.vercel.app (Vercel project alex-carneys-projects/walkie).
+// Production domain: sqwakie.si (Vercel project alex-carneys-projects/walkie).
 import type { LicenseInterval, LicensePlan } from "./format.ts";
 
-export const SITE_ORIGIN = "https://getwalkie.vercel.app";
+export const SITE_ORIGIN = "https://sqwakie.si";
 
 /** `licId` (a team's existing license) lets the site refuse a second subscription for it (FINAL Codex 1). */
 export function checkoutUrl(plan: LicensePlan, interval: LicenseInterval, seats: number, licId?: string): string {

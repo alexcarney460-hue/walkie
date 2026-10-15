@@ -249,7 +249,7 @@ export function fleetSummaryText(rows: readonly FleetSummaryRow[]): string {
   const open = usable.filter((row) => row.score > 0);
   const free = open.reduce((sum, row) => sum + Math.max(0, row.free_slots), 0);
   const machines = usable.length;
-  const headline = `WalkieTalkie fleet capacity: ${free} free seat${free === 1 ? "" : "s"} on ${open.length} of ${machines} machine${machines === 1 ? "" : "s"}.`;
+  const headline = `Talkie fleet capacity: ${free} free seat${free === 1 ? "" : "s"} on ${open.length} of ${machines} machine${machines === 1 ? "" : "s"}.`;
   const sorted = [...usable].sort((a, b) => {
     const ah = hostLabel(a.hostname);
     const bh = hostLabel(b.hostname);

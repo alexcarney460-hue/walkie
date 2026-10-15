@@ -1,4 +1,4 @@
-// What the local API says about Walkie on your phone (GET /v1/mobile, POST /v1/mobile/pair). Types only, shared with
+// What the local API says about Sqwakie on your phone (GET /v1/mobile, POST /v1/mobile/pair). Types only, shared with
 // the dashboard (web/src/api/types.ts), so nothing here may import node modules.
 
 /** A paired phone as the dashboard and the CLI see it: never its key. */

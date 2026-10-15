@@ -8,12 +8,13 @@
 // signed body), so older nodes store and relay these posts like any other message.
 import { z } from "zod";
 import { BlobHash, EventId, Handle, NodeId } from "./schemas.ts";
+import { SeatControlLaunch, SeatControlIntent, SeatControlReceipt, parseControlPost } from "./seat-turn-control.ts";
 
 /** Prefix of a host machine's seats channel: `seats-<node id>`. */
 export const SEATS_PREFIX = "seats-";
 /** Agent name of the host daemon's posts and status in the seats channel. */
 export const SEATS_AGENT = "seats";
-/** A running seat's agent name (`seat-<short id>`): its WALKIE_AGENT, so its own Walkie calls are an agent's. */
+/** A running seat's agent name (`seat-<short id>`): its WALKIE_AGENT, so its own Sqwakie calls are an agent's. */
 export const SEAT_AGENT_PREFIX = "seat-";
 
 /** Every runtime a host may allow. Kimi and Grok run only in v2; v1 keeps claude|codex. */
@@ -63,7 +64,7 @@ export const SeatRun = z.object({
   model: SeatModel.optional(),
   permission_mode: z.enum(SEAT_MODES).optional(),
   prompt: z.string().min(1).max(MAX_SEAT_PROMPT),
-  /** A shell-capable WalkieTalkie requested this seat; the host must use a fresh seat user. */
+  /** A shell-capable Talkie requested this seat; the host must use a fresh seat user. */
   shell_user: z.literal(true).optional(),
   /** A git bundle shared as an artifact in the same channel: cloned into the seat's directory. */
   bundle: BlobHash.optional(),
@@ -79,6 +80,12 @@ export type SeatRun = z.infer<typeof SeatRun>;
 
 /** The capability a host's daemon announces (MachineSys.caps) when it runs v2 seat requests. */
 export const SEATS_V2_CAP = "seats_v2";
+/** Protocol support only; native local inference remains unverified. */
+export const SEATS_CODEX_OSS_CAP = "seats_codex_oss_v1";
+export const SeatLocalModel = SeatModel.refine((m) => /^[A-Za-z0-9]/.test(m), "local model must start with an alphanumeric character");
+export function localRequestValid(r: { local_provider?: string; runtime: string; model?: string; account?: string; shell_user?: boolean }): boolean {
+  return r.local_provider === undefined || (r.local_provider === "ollama" && r.runtime === "codex" && SeatLocalModel.safeParse(r.model).success && !r.account && !r.shell_user);
+}
 /** Where the brief lands in the seat's work tree, and the fixed prompt that points at it (the only argv text). */
 export const SEAT_TASK_FILE = "TASK.md";
 export const SEAT_TASK_PROMPT = "Read ./TASK.md and do it";
@@ -101,7 +108,7 @@ export const SeatRef = z.string().min(1).max(200)
   .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9._/-]*)$/)
   .refine((s) => !s.includes("..") && !s.includes("//") && !s.endsWith("/") && !s.endsWith(".lock") && !s.endsWith("."), "not a ref name");
 /**
- * A branch for a build worktree (default `lane/<label>`): only in Walkie's own namespaces (`lane/…`, `walkie/…`), so a
+ * A branch for a build worktree (default `lane/<label>`): only in Sqwakie's own namespaces (`lane/…`, `walkie/…`), so a
  * seat never takes over one of the person's branches (FO-2 r1 HIGH 1). The host also refuses a branch of that name it
  * didn't create itself (its ownership record, v2.ts).
  */
@@ -128,10 +135,12 @@ export const SeatRunV2 = z.object({
   v: z.literal(2),
   runtime: z.enum(SEAT_RUNTIMES),
   model: SeatModel.optional(),
+  local_provider: z.literal("ollama").optional(),
+  control: SeatControlLaunch.optional(),
   permission_mode: z.enum(SEAT_MODES).optional(),
   /** The brief, a blob (UTF-8 text, at most MAX_SEAT_BRIEF bytes) the request references like a v1 bundle. */
   brief: BlobHash,
-  /** A shell-capable WalkieTalkie requested this seat; the host must use a fresh seat user. */
+  /** A shell-capable Talkie requested this seat; the host must use a fresh seat user. */
   shell_user: z.literal(true).optional(),
   label: SeatLabel.optional(),
   workspace: SeatWorkspace.optional(),
@@ -139,10 +148,11 @@ export const SeatRunV2 = z.object({
   result_file: SeatResultFile.optional(),
   timeout_s: z.number().int().min(MIN_SEAT_TIMEOUT_S).max(MAX_SEAT_TIMEOUT_S),
   max_concurrent: z.number().int().min(1).max(MAX_CONCURRENT_LIMIT),
-}).strict().refine((r) => !r.workspace || r.workspace.mode === "fresh" || r.label !== undefined, { message: "a branch or detached workspace needs a label" });
+}).strict().refine((r) => !r.control || (r.runtime === "codex" && r.local_provider === undefined), { message: "turn control requires authenticated Codex without a local provider" }).refine(localRequestValid, { message: "local Ollama needs Codex v2, an explicit non-optionlike model, no account and no shell user" }).refine((r) => !r.workspace || r.workspace.mode === "fresh" || r.label !== undefined, { message: "a branch or detached workspace needs a label" });
 export type SeatRunV2 = z.infer<typeof SeatRunV2>;
 /** Either request version. */
 export type AnySeatRun = SeatRun | SeatRunV2;
+export function isLocalOss(run: AnySeatRun): run is SeatRunV2 & { local_provider: "ollama" } { return run.v === 2 && run.local_provider === "ollama"; }
 export function isV2(run: AnySeatRun): run is SeatRunV2 { return run.v === 2; }
 
 /** A stop request (by a launcher): `seat` = the launch request's event id. */
@@ -215,7 +225,7 @@ export const SeatOutput = z.object({
 }).strict();
 export type SeatOutput = z.infer<typeof SeatOutput>;
 
-export type SeatBody = AnySeatRun | SeatStop | SeatState | SeatOutput | SeatHost;
+export type SeatBody = AnySeatRun | SeatStop | SeatState | SeatOutput | SeatHost | SeatControlIntent | SeatControlReceipt;
 
 /** The `seat` field of a post, validated (null for an ordinary post or a malformed one). */
 export function seatOf(body: unknown): SeatBody | null {
@@ -224,7 +234,7 @@ export function seatOf(body: unknown): SeatBody | null {
   const op = (raw as { op?: unknown }).op;
   const v = (raw as { v?: unknown }).v;
   const schema = op === "run" ? (v === 2 ? SeatRunV2 : SeatRun) : op === "stop" ? SeatStop : op === "state" ? SeatState : op === "output" ? SeatOutput
-    : op === "host" ? SeatHost : null;
+    : op === "host" ? SeatHost : op === "control" ? SeatControlIntent : op === "control_result" ? SeatControlReceipt : null;
   const res = schema?.safeParse(raw);
   return res?.success ? (res.data as SeatBody) : null;
 }
@@ -260,7 +270,7 @@ export function seatsChannelContent(ev: { kind: string; origin: string; channel?
   if (!node) return null;
   if (ev.kind === "ask" || ev.kind === "answer") return "seats_channel_protocol_only";
   if (ev.origin === node && isSeatAgent(ev.author.agent)) return null;
-  if (ev.kind === "msg.post" && seatRequestText(ev.body)) return null;
+  if (ev.kind === "msg.post" && (seatRequestText(ev.body) || parseControlPost(ev.body))) return null;
   return "seats_channel_protocol_only";
 }
 
@@ -278,6 +288,7 @@ export function seatRequestText(body: unknown): boolean {
   if (!s || typeof body !== "object" || body === null) return false;
   const b = body as Record<string, unknown>;
   const keys = Object.keys(b).sort().join(",");
+  if (s.op === "control") return parseControlPost(body) !== null;
   if (s.op === "stop") return keys === "seat,text,thread" && b.thread === s.seat && b.text === `Stop seat ${s.seat}`;
   if (s.op !== "run" || keys !== "seat,text" || typeof b.text !== "string") return false;
   const full = s.v === 2 ? runTextV2(s, "\u0000") : runText(s, "\u0000");
@@ -340,7 +351,7 @@ export function runText(run: SeatRun, hostname: string): string {
 export function runTextV2(run: SeatRunV2, hostname: string): string {
   const ws = run.workspace ? ` · ${run.workspace.mode} workspace in repo ${run.workspace.repo}${run.workspace.bundle ? " (+ delta bundle)" : ""}` : "";
   return `Seat request (v2): ${run.runtime}${run.model ? ` (${run.model})` : ""} on ${hostname} · ${run.permission_mode ?? DEFAULT_SEAT_MODE}`
-    + `${run.label ? ` · lane ${run.label}` : ""}${ws}${run.account ? " · on a named account" : ""}${run.result_file ? ` · returns ${run.result_file}` : ""}`
+    + `${run.local_provider ? " · local Ollama (native held)" : ""}${run.label ? ` · lane ${run.label}` : ""}${ws}${run.account ? " · on a named account" : ""}${run.result_file ? ` · returns ${run.result_file}` : ""}`
     + ` · limit ${Math.round(run.timeout_s / 60)} min · brief ${run.brief.slice(0, 12)}`;
 }
 
@@ -384,7 +395,7 @@ export interface SeatView {
   /** v1: the prompt; v2: "" (the brief is the `brief` blob). */
   prompt: string; bundle?: string; timeout_s: number; max_concurrent: number;
   /** v2 only (FO-2). */
-  v?: 2; brief?: string; label?: string; workspace?: SeatWorkspace; account?: string; result_file?: string;
+  v?: 2; local_provider?: "ollama"; brief?: string; label?: string; workspace?: SeatWorkspace; account?: string; result_file?: string;
   requested_at: number;
   /** "requested" until the host answers. */
   state: SeatStateName | "requested";
@@ -412,7 +423,15 @@ export interface SeatHostView {
   availability?: HostAvailability;
 }
 
+export interface OssReadiness {
+  protocol: "supported"; consent: "off" | "consented"; policy: "held" | "eligible";
+  runtime: "unknown" | "supported"; config: "unknown" | "clean"; service: "unknown" | "available";
+  model: "unknown" | "available"; resources: "unknown" | "admitted";
+  native: "UNVERIFIED"; ready: false; reason: string;
+}
+
 export interface SeatsLocalView {
+  codex_oss?: OssReadiness;
   allow: boolean;
   /**
    * Something of the pool is on here (compute sharing, a stage, a run), so seats can't be allowed (or, allowed, don't
@@ -468,13 +487,13 @@ export interface SeatsLocalView {
   /** Why new seat users wait: the helper's pending ids couldn't be listed at start (retried every 30 s). */
   reconcile_error?: string;
   /**
-   * WALK-103: this machine's seat users belong to another Walkie on it (`other`: this one never asks the helper), or
-   * their setup predates the record of which Walkie owns them (`legacy`: only seat users this one made are removed).
-   * Absent when they are this Walkie's, or seat users aren't set up here.
+   * WALK-103: this machine's seat users belong to another Sqwakie on it (`other`: this one never asks the helper), or
+   * their setup predates the record of which Sqwakie owns them (`legacy`: only seat users this one made are removed).
+   * Absent when they are this Sqwakie's, or seat users aren't set up here.
    */
   seat_scope?: { state: "other" | "legacy"; why: string };
   /**
-   * WALK-103 review: seat users this Walkie knows of but didn't make (named in a copied seats.json or one from before
+   * WALK-103 review: seat users this Sqwakie knows of but didn't make (named in a copied seats.json or one from before
    * this update, or, without the record, found in the helper's list): it never removes them or stops their processes.
    */
   foreign_users?: string[];
@@ -502,7 +521,7 @@ export interface SeatsLocalView {
   /** `busy` while this machine's person uses it (`walkie seats busy`), else `available`. */
   availability: HostAvailability;
   /**
-   * The installed root-owned runner and user helper against this daemon's Walkie (release builds, once seat users are
+   * The installed root-owned runner and user helper against this daemon's Sqwakie (release builds, once seat users are
    * set up): `stale` after a `walkie update` until `walkie seats setup-user --apply` reinstalls them; `unknown` when a
    * copy's version couldn't be read (never shown as current).
    */

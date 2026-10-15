@@ -89,12 +89,12 @@ const READY: JoinStatusFacts = {
 
 describe("joinStatusText", () => {
   test("everything ready: the exact target shape", () => {
-    expect(joinStatusText(READY)).toBe("Ready: @kira's kiras-mbp, Walkie 0.2.0-pre.8, seats 0/3, Claude/Codex ready");
+    expect(joinStatusText(READY)).toBe("Ready: @kira's kiras-mbp, Sqwakie 0.2.0-pre.8, seats 0/3, Claude/Codex ready");
   });
 
   test("Claude missing: a specific partial status naming it", () => {
     const text = joinStatusText({ ...READY, claude: { ready: false, why: "Claude Code not installed" } });
-    expect(text).toBe("Partial: @kira's kiras-mbp, Walkie 0.2.0-pre.8, seats 0/3 — missing: Claude Code not installed");
+    expect(text).toBe("Partial: @kira's kiras-mbp, Sqwakie 0.2.0-pre.8, seats 0/3 — missing: Claude Code not installed");
     expect(text.startsWith("Ready:")).toBe(false);
   });
 
@@ -117,7 +117,7 @@ describe("joinStatusText", () => {
       health: { ok: false, why: "the local database failed its integrity check" },
     });
     expect(text).toBe(
-      "Partial: @kira's kiras-mbp, Walkie 0.2.0-pre.8, seats 0/3 — missing: the local database failed its "
+      "Partial: @kira's kiras-mbp, Sqwakie 0.2.0-pre.8, seats 0/3 — missing: the local database failed its "
       + "integrity check; Claude Code not installed; Codex not installed",
     );
   });

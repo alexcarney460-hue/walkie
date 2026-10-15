@@ -19,7 +19,7 @@ export interface JobView {
   /** While waiting for the import budget: when it continues. */
   waiting_until: number | null;
   errors: ImportError[];
-  /** Walkie projects this run created or wrote into. */
+  /** Sqwakie projects this run created or wrote into. */
   projects: Array<{ key: string; channel: string; prefix: string; name: string; created: boolean }>;
 }
 

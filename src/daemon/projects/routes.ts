@@ -19,7 +19,7 @@ import { applyBatch, importBudgetKey } from "./batch.ts";
 import { cardFiles } from "./room.ts";
 import { reportMode, splitReport, type StatusReportPayload } from "../../protocol/projects/status-report-setting.ts";
 import { latestStatusReport } from "./status-report.ts";
-import { adminGate, agentCaller } from "../admin/gate.ts";
+import { adminGate, admit, agentCaller, localActor } from "../admin/gate.ts";
 import {
   automation, cardAction, comment, createBoard, createCard, createProject, findCard, findProject, requirePerson,
   updateBoard, updateCard, updateProject, visibleProject, visibleProjects, type WriteCtx,
@@ -129,21 +129,34 @@ route("POST", /^\/v1\/projects\/(p-[0-9a-f]{8})$/, async (c, [channel]) => {
   const b = parseWith(UpdateProjectReq, await readJson(c.req, LOCAL_BODY_MAX));
   refuseAgentJoinContent(c, b);
   // FO-6 (pre.8 merge): the board steward's switch and lease stay a person's, even under agent admin (an agent may
-  // only dry-run the steward); other settings follow AGENT-ADMIN-1's audited gate. So does the status report's switch
-  // (PROJECT-REPORTS-1): a report goes to the project's members under WalkieTalkie's name, and a person decides that.
+  // only dry-run the steward); other settings follow AGENT-ADMIN-1's audited gate.
   if ((b.steward !== undefined || b.steward_node !== undefined) && agentCaller(c)) requirePerson(w(c), "the board steward's switch and lease");
-  if (b.status_report !== undefined && agentCaller(c)) requirePerson(w(c), "the project's status report switch");
   // WALK-73: the same person-only lock. agent admin would otherwise sign this as the person (agent_admin defaults on).
   if (b.escalation_contact !== undefined && agentCaller(c)) requirePerson(w(c), "the project's escalation contact");
-  const ctx = adminW(c, `changed project ${channel}: ${Object.keys(b).join(", ") || "nothing"}`);
+  const reportAgent = b.status_report !== undefined && agentCaller(c);
+  const admission = reportAgent ? admit(c, `changed project ${channel}: ${Object.keys(b).join(", ")}`) : null;
+  const ctx = reportAgent ? (() => { const { agent: _agent, underAgent: _under, ...person } = w(c); return person; })()
+    : adminW(c, `changed project ${channel}: ${Object.keys(b).join(", ") || "nothing"}`);
   limitWrite(c);
   c.noTimeout();
-  return json({ project: await updateProject(ctx, channel as string, b) });
+  try {
+    if (reportAgent) {
+      const member = c.core.me();
+      const handle = c.core.myHandle();
+      if (!member || !handle || member.handle !== handle) throw new HttpError(403, "forbidden", "only the project's creator or an owner, or their agent, can turn its status report on or off");
+    }
+    const project = await updateProject(ctx, channel as string, b, reportAgent ? localActor(c) : undefined);
+    admission?.record();
+    return json({ project });
+  } catch (err) {
+    if (err instanceof HttpError) admission?.refuse(err.code);
+    throw err;
+  }
 });
 
 /**
- * WalkieTalkie's latest status report for a project (PROJECT-REPORTS-1), for the dashboard: the newest report post an
- * owner's WalkieTalkie wrote in its channel, split into its header line and the report, and whether the project has
+ * Talkie's latest status report for a project (PROJECT-REPORTS-1), for the dashboard: the newest report post an
+ * owner's Talkie wrote in its channel, split into its header line and the report, and whether the project has
  * reports on. Visible exactly as the project is.
  */
 route("GET", /^\/v1\/projects\/(p-[0-9a-f]{8})\/status-report$/, (c, [channel]) => {

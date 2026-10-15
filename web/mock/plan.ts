@@ -7,7 +7,7 @@ export type MockPlanMode = "free" | "trial" | "team" | "business" | "grace";
 export const MOCK_PLAN_MODES: readonly MockPlanMode[] = ["free", "trial", "team", "business", "grace"];
 
 const DAY = 24 * 60 * 60_000;
-const SITE = "https://getwalkie.vercel.app";
+const SITE = "https://sqwakie.si";
 
 export interface MockLicense {
   lic_id: string; plan: "team" | "business"; seats: number; email: string;

@@ -93,8 +93,8 @@ test("a fresh-home daemon never asks the helper to list or remove the registered
   expect(helper.calls).toEqual([]);
   const local = (await fresh.client().seats()).local;
   expect(local.foreign_users).toEqual(["walkie-s7"]);
-  expect(local.reconcile_error).toContain("managed by another Walkie");
-  expect(local.seat_scope).toMatchObject({ state: "other", why: expect.stringContaining("managed by another Walkie") });
+  expect(local.reconcile_error).toContain("managed by another Sqwakie");
+  expect(local.seat_scope).toMatchObject({ state: "other", why: expect.stringContaining("managed by another Sqwakie") });
   const after = new Ledger(ledger);
   try { expect(after.pending(ME)).toEqual([5, 6, 7]); } finally { after.close(); }
 }, 60_000);
@@ -160,7 +160,7 @@ test("a leftover the helper won't remove while it runs is shown as such and keep
     if (verb === "destroy") {
       helper.calls.push({ verb, n, idle: o?.idle === true });
       return o?.idle
-        ? { ok: false, code: "running", processesGone: false, name: `walkie-s${n}`, why: `walkie-s${n} still has 1 running process and isn't one of this Walkie's current seats: not removed while it runs (checked again later)` }
+        ? { ok: false, code: "running", processesGone: false, name: `walkie-s${n}`, why: `walkie-s${n} still has 1 running process and isn't one of this Sqwakie's current seats: not removed while it runs (checked again later)` }
         : { ok: false, name: `walkie-s${n}`, why: "services: launchctl bootout failed" };
     }
     return helper.admin(verb, n, o);
@@ -228,7 +228,7 @@ test("an unstamped running seat from the first upgrade is kept, and ended once o
     }
     if (verb === "destroy" && n === 7 && userBusy) {
       helper.calls.push({ verb, n, idle: o?.idle === true });
-      return { ok: false, code: "running", processesGone: false, name: "walkie-s7", why: "walkie-s7 still has 1 running process and isn't one of this Walkie's current seats: not removed while it runs (checked again later)" };
+      return { ok: false, code: "running", processesGone: false, name: "walkie-s7", why: "walkie-s7 still has 1 running process and isn't one of this Sqwakie's current seats: not removed while it runs (checked again later)" };
     }
     return helper.admin(verb, n, o);
   };

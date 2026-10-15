@@ -327,7 +327,7 @@ describe("SEATS-FIX-5: ephemeral seat users", () => {
     await waitFor(() => !alive(pid) && !alive(w), { what: "its user destroyed at start", timeoutMs: 15_000 });
     const s = await ended(id);
     expect(s.state).toBe("failed");
-    expect(s.reason).toBe("the host's Walkie daemon restarted while it ran (its processes were stopped)");
+    expect(s.reason).toBe("the host's Sqwakie daemon restarted while it ran (its processes were stopped)");
     await person(arvid).seatsResume();
     expect((await ended(await launch("after the crash"))).state).toBe("done");
     const last = world.created[world.created.length - 1] as string;

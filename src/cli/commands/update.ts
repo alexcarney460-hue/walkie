@@ -183,15 +183,56 @@ function excerpt(text: string, max: number): string {
   return text.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
-async function fetchOk(doFetch: Fetcher, url: string, what: string): Promise<Response> {
-  const res = await doFetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
-  if (!res.ok) throw new Error(`${what}: HTTP ${res.status} from ${excerpt(url, 200)}`);
-  return res;
+const FETCH_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 150;
+const DOWNLOAD_MS = 120_000;
+const RELEASE_LOOKUP_MS = 20_000;
+
+function networkFailure(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")) return true;
+  const code = (err as { code?: unknown; cause?: { code?: unknown } } | null)?.code ??
+    (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return typeof code === "string" && /^(?:EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|ENOTFOUND|ETIMEDOUT)$/.test(code);
+}
+
+/** One deadline covers all attempts, including response bodies and backoff. Only transport errors and HTTP 5xx retry. */
+async function fetchWithRetry<T>(doFetch: Fetcher, url: string, what: string, timeoutMs: number, read: (res: Response) => Promise<T>): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`${what}: timed out from ${excerpt(url, 200)}`);
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new DOMException("timed out", "TimeoutError");
+        controller.abort(error);
+        reject(error);
+      }, Math.max(1, Math.floor(remaining / (FETCH_ATTEMPTS - attempt + 1))));
+    });
+    try {
+      const res = await Promise.race([doFetch(url, { redirect: "follow", signal: controller.signal }), timeout]);
+      if (!res.ok) {
+        const error = new Error(`${what}: HTTP ${res.status} from ${excerpt(url, 200)}`);
+        if (res.status < 500 || res.status > 599 || attempt === FETCH_ATTEMPTS) throw error;
+      } else {
+        return await Promise.race([read(res), timeout]);
+      }
+    } catch (err) {
+      if (!networkFailure(err) || attempt === FETCH_ATTEMPTS) throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    const delay = Math.min(RETRY_BACKOFF_MS * attempt, Math.max(0, deadline - Date.now()));
+    if (delay > 0) await Bun.sleep(delay);
+  }
+  throw new Error(`${what}: timed out from ${excerpt(url, 200)}`);
 }
 
 async function latestTag(doFetch: Fetcher, repo: string): Promise<string> {
-  const res = await fetchOk(doFetch, `https://api.github.com/repos/${repo}/releases/latest`, "release lookup");
-  const tag = ((await res.json()) as { tag_name?: string }).tag_name;
+  const tag = (await fetchWithRetry(doFetch, `https://api.github.com/repos/${repo}/releases/latest`, "release lookup", RELEASE_LOOKUP_MS,
+    (res) => res.json() as Promise<{ tag_name?: string }>)).tag_name;
   if (!tag || !/^v\d+\.\d+\.\d+/.test(tag)) throw new Error("release lookup returned no release tag");
   return tag;
 }
@@ -256,9 +297,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
 export async function advertisedTag(doFetch: Fetcher, timeoutMs = SITE_LOOKUP_MS): Promise<Advertised> {
   let text: string;
   try {
-    const res = await doFetch(INSTALL_URL, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    text = await readCapped(res, MAX_INSTALLER_BYTES);
+    text = await fetchWithRetry(doFetch, INSTALL_URL, "installer lookup", timeoutMs, (res) => readCapped(res, MAX_INSTALLER_BYTES));
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
     return { ok: false, reason: `could not read the version the site's installer offers (${INSTALL_URL}: ${excerpt(why, 120)})` };
@@ -364,11 +403,11 @@ export async function update(ctx: Ctx, deps: UpdateDeps = {}): Promise<number> {
   const base = mirror ?? `https://github.com/${repo}/releases/download/${tag}`;
   ctx.out(`downloading ${asset} (${tag ?? "mirror"})…`);
   const [bin, sumsBytes, sig] = await Promise.all([
-    fetchOk(doFetch, `${base}/${asset}`, "binary download").then((r) => r.arrayBuffer()),
-    fetchOk(doFetch, `${base}/SHA256SUMS`, "checksum download").then((r) => r.arrayBuffer()),
-    fetchOk(doFetch, `${base}/SHA256SUMS.sig`, "signature download").then((r) => r.arrayBuffer()),
+    fetchWithRetry(doFetch, `${base}/${asset}`, "binary download", DOWNLOAD_MS, (r) => r.arrayBuffer()),
+    fetchWithRetry(doFetch, `${base}/SHA256SUMS`, "checksum download", DOWNLOAD_MS, (r) => r.arrayBuffer()),
+    fetchWithRetry(doFetch, `${base}/SHA256SUMS.sig`, "signature download", DOWNLOAD_MS, (r) => r.arrayBuffer()),
   ]);
-  if (!verifyRelease(new Uint8Array(sumsBytes), new Uint8Array(sig), deps.releaseKeyPem)) { ctx.err(c.red("SHA256SUMS is not signed by the Walkie release key; nothing changed")); return EXIT.error; }
+  if (!verifyRelease(new Uint8Array(sumsBytes), new Uint8Array(sig), deps.releaseKeyPem)) { ctx.err(c.red("SHA256SUMS is not signed by the Sqwakie release key; nothing changed")); return EXIT.error; }
   const sums = new TextDecoder().decode(sumsBytes);
   const bound = checkSignedVersion(sums, { tag, installed, allowDowngrade });
   if (!bound.ok) {

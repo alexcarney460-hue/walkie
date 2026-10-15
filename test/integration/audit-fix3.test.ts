@@ -61,6 +61,7 @@ describe("F4 (E3): a topic-only update keeps a restricted channel restricted", (
     const { event } = await alex.client().post({ channel: "vault", text: "restricted history" });
     await waitFor(() => mem.d.core.store.getRow(event.id)?.redacted === 1, { what: "mem holds a stub" });
     const up = await alex.client().channel({ name: "vault", topic: "renamed topic" });
+    if (!("event" in up)) throw new Error("channel upsert was queued");
     expect((up.event.body as { members?: string[] }).members).toEqual(["alex", "kira"]);
     await waitFor(() => mem.d.core.roster.channels.get("vault")?.topic === "renamed topic", { what: "topic replicated" });
     expect(mem.d.core.roster.channels.get("vault")?.members).toEqual(["alex", "kira"]);

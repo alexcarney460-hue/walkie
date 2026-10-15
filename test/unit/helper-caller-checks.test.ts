@@ -146,7 +146,7 @@ test("macOS lsof branch: a same-user process that only opens the lock file is no
   expect(holdsSeatInstanceLock(daemon.pid, ME, socket, "darwin")).toBe(true);
 }, 20_000);
 
-test("WalkieTalkie: an accepted connection does not hide the listening socket", async () => {
+test("Talkie: an accepted connection does not hide the listening socket", async () => {
   const socket = join(tmp(), "walkie.sock");
   const instance = createHash("sha256").update(socket).digest("hex");
   const daemon = spawnEval(LISTEN_AND_LOCK, [socket, LOCK_MOD]);
@@ -157,7 +157,7 @@ test("WalkieTalkie: an accepted connection does not hide the listening socket", 
   } finally { client.end(); }
 }, 20_000);
 
-test("WalkieTalkie: an unlinked file the daemon still has open does not fail the check", async () => {
+test("Talkie: an unlinked file the daemon still has open does not fail the check", async () => {
   const dir = tmp();
   const socket = join(dir, "walkie.sock");
   const instance = createHash("sha256").update(socket).digest("hex");
@@ -167,7 +167,7 @@ test("WalkieTalkie: an unlinked file the daemon still has open does not fail the
   expect(callingTalkieDaemon(ME, instance, daemon.pid).pid).toBe(daemon.pid);
 }, 20_000);
 
-test("WalkieTalkie: a nearer same-user process cannot borrow an ancestor that holds the socket", async () => {
+test("Talkie: a nearer same-user process cannot borrow an ancestor that holds the socket", async () => {
   const socket = join(tmp(), "walkie.sock");
   const instance = createHash("sha256").update(socket).digest("hex");
   const daemon = spawnEval(LISTEN_LOCK_AND_CHILD, [socket, LOCK_MOD]);
@@ -229,7 +229,7 @@ test.skipIf(process.platform !== "linux")("linux: a 130-byte socket path is stil
   const daemon = spawnEval(LISTEN_AND_LOCK, [socket, LOCK_MOD]);
   expect(await firstChunk(daemon)).toBe("ready");
   // Bun binds this through /proc/self/fd/<n>/walkie.sock and closes <n>. /proc/net/unix lists that
-  // string. The holder was refused ("managed by another Walkie") for every seat create.
+  // string. The holder was refused ("managed by another Sqwakie") for every seat create.
   expect(holdsSeatInstanceLock(daemon.pid, ME, socket)).toBe(true);
   const instance = createHash("sha256").update(socket).digest("hex");
   const client = await Bun.connect({ unix: socket, socket: { data() {} } });
@@ -255,7 +255,7 @@ test.skipIf(process.platform !== "linux")("linux: a long socket whose directory 
   expect(holdsSeatInstanceLock(other.pid, ME, real)).toBe(false);
   expect(holdsSeatInstanceLock(listener.pid, ME, real)).toBe(false);
   // No diag handler: these two keep their directory fd, so the text table can still decide. The holder is the
-  // daemon, and the one bound in another directory is another Walkie (false, not "could not be checked").
+  // daemon, and the one bound in another directory is another Sqwakie (false, not "could not be checked").
   setUnixDiagErrnoForTest(-2);
   expect(holdsSeatInstanceLock(holder.pid, ME, socket)).toBe(true);
   expect(holdsSeatInstanceLock(other.pid, ME, real)).toBe(false);
@@ -272,7 +272,7 @@ test.skipIf(process.platform !== "linux")("linux: a socket path with two spaces 
   expect(holdsSeatInstanceLock(daemon.pid, ME, socket)).toBe(true);
 }, 20_000);
 
-test.skipIf(process.platform !== "linux")("linux: WalkieTalkie recognises a socket path that contains a space", async () => {
+test.skipIf(process.platform !== "linux")("linux: Talkie recognises a socket path that contains a space", async () => {
   const dir = join(tmp(), "a b");
   mkdirSync(dir);
   const socket = join(dir, "walkie.sock");
@@ -379,7 +379,7 @@ test.skipIf(process.platform !== "linux")("linux: another process's sockets cann
   expect(holdsSeatInstanceLock(daemon.pid, ME, socket)).toBe(true);
 }, 90_000);
 
-test("a first WalkieTalkie claim follows the seat record when one exists, and the caller's hash when it doesn't", async () => {
+test("a first Talkie claim follows the seat record when one exists, and the caller's hash when it doesn't", async () => {
   const dir = tmp();
   const socket = join(dir, "walkie.sock");
   const other = join(dir, "other.sock");
@@ -394,7 +394,7 @@ test("a first WalkieTalkie claim follows the seat record when one exists, and th
   writeFileSync(path, seatRegistrationText({ v: 1, user: "olive", uid: ME, home: "/home/olive/.walkie", socket: other }));
   expect(() => callingTalkieClaimDaemon(ME, instance, daemon.pid, path, false)).toThrow("could not be identified");
   writeFileSync(path, seatRegistrationText({ v: 1, user: "maren", uid: ME + 1, home: "/home/maren/.walkie", socket }));
-  expect(() => callingTalkieClaimDaemon(ME, instance, daemon.pid, path, false)).toThrow("another Walkie daemon owns shell access");
+  expect(() => callingTalkieClaimDaemon(ME, instance, daemon.pid, path, false)).toThrow("another Sqwakie daemon owns shell access");
   writeFileSync(path, "{");
   expect(() => callingTalkieClaimDaemon(ME, instance, daemon.pid, path, false)).toThrow("can't be trusted");
 }, 20_000);
@@ -412,7 +412,7 @@ const LISTEN_LOCK_AND_TCP = `
   lock.release();
 `;
 
-/** registered = accepted, unchecked = busy (ask again), anything else = another Walkie. */
+/** registered = accepted, unchecked = busy (ask again), anything else = another Sqwakie. */
 function seatVerdict(pid: number, socket: string, dir: string): "accepted" | "busy" | "other" {
   const path = record(dir, socket);
   const result = checkSeatInstance(ME, path, (owner, sock) => callingSeatDaemon(owner, sock, pid), false);
@@ -421,7 +421,7 @@ function seatVerdict(pid: number, socket: string, dir: string): "accepted" | "bu
   return "other";
 }
 
-test.skipIf(process.platform !== "linux")("linux: a kernel with no unix diag handler accepts a short path and does not call a long path another Walkie", async () => {
+test.skipIf(process.platform !== "linux")("linux: a kernel with no unix diag handler accepts a short path and does not call a long path another Sqwakie", async () => {
   const shortDir = tmp();
   const short = socketOfLength(shortDir, 34);
   expect(Buffer.byteLength(short)).toBe(34);
@@ -442,7 +442,7 @@ test.skipIf(process.platform !== "linux")("linux: a kernel with no unix diag han
   expect(shortVerdict).toBe("accepted");
   // Bun closes the directory fd. The text table only has /proc/self/fd/<n>/walkie.sock and no file identity.
   expect(longVerdict).toBe("busy");
-  // WalkieTalkie: the short daemon is identified, the long one is "could not be checked", never "could not be identified".
+  // Talkie: the short daemon is identified, the long one is "could not be checked", never "could not be identified".
   const shortInstance = createHash("sha256").update(short).digest("hex");
   const longInstance = createHash("sha256").update(long).digest("hex");
   expect(callingTalkieDaemon(ME, shortInstance, shortDaemon.pid).pid).toBe(shortDaemon.pid);
@@ -499,7 +499,7 @@ const LISTEN_LOCK_AND_LONG_OTHER = `
   lock.release();
 `;
 
-test.skipIf(process.platform !== "linux")("linux: with no diag handler, another long listener of the daemon's does not make the WalkieTalkie check busy", async () => {
+test.skipIf(process.platform !== "linux")("linux: with no diag handler, another long listener of the daemon's does not make the Talkie check busy", async () => {
   const dir = tmp();
   const socket = join(dir, "walkie.sock");
   const instance = createHash("sha256").update(socket).digest("hex");
@@ -591,7 +591,7 @@ test.skipIf(process.platform !== "linux")("linux: the diag reply's uid has to be
   expect(callingTalkieDaemon(ME, instance, daemon.pid).pid).toBe(daemon.pid);
 }, 20_000);
 
-test.skipIf(process.platform !== "linux")("linux: WalkieTalkie finds other lock holders from /proc and does not run lsof -u", async () => {
+test.skipIf(process.platform !== "linux")("linux: Talkie finds other lock holders from /proc and does not run lsof -u", async () => {
   const socket = join(tmp(), "walkie.sock");
   const instance = createHash("sha256").update(socket).digest("hex");
   const daemon = spawnEval(LISTEN_AND_LOCK, [socket, LOCK_MOD]);

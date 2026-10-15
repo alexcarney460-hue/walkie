@@ -118,7 +118,7 @@ test("an attempt interrupted before anything was sent says so", () => {
     .toContain("The last try stopped before anything was sent to Codex. Nothing was used.");
 });
 
-test("the same login on another machine is called out (Walkie can't coordinate the two)", () => {
+test("the same login on another machine is called out (Sqwakie can't coordinate the two)", () => {
   const two = acct({ machines: [
     { node_id: "a1b2c3d4e5f60718", hostname: "maren-mbp", handle: "maren", online: true, self: true, agents: [], usage: null },
     { node_id: "b1b2c3d4e5f60718", hostname: "atlas", handle: "maren", online: true, self: false, agents: [], usage: null },

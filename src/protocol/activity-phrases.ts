@@ -1,11 +1,11 @@
-// Walkie's fixed status phrases (split out of status-projection.ts so the dashboard can import them without Node).
+// Sqwakie's fixed status phrases (split out of status-projection.ts so the dashboard can import them without Node).
 import type { AgentState } from "./schemas.ts";
 
 export const STATE_PHRASE: Readonly<Record<AgentState, string>> = {
   working: "Working", idle: "Idle", waiting: "Waiting for you", blocked: "Stuck", offline: "Offline",
 };
 
-/** Every fixed activity phrase Walkie writes (hooks, discovery, MCP): shareable whatever the policy. */
+/** Every fixed activity phrase Sqwakie writes (hooks, discovery, MCP): shareable whatever the policy. */
 export const ACTIVITY_PHRASES: ReadonlySet<string> = new Set([
   ...Object.values(STATE_PHRASE),
   // hooks (src/hooks/claude.ts, codex.ts) and the MCP server

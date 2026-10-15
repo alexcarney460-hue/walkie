@@ -5,7 +5,7 @@ import type { Catalog } from "../catalog.ts";
 export interface ModelsView {
   catalog: Catalog;
   source: "huggingface" | "built-in";
-  /** "fresh": read within a day; "stale": an older Hugging Face list kept; "built-in": the list shipped with Walkie. */
+  /** "fresh": read within a day; "stale": an older Hugging Face list kept; "built-in": the list shipped with Sqwakie. */
   state: "fresh" | "stale" | "built-in";
   /** When the Hugging Face list was read (ms epoch); null for the built-in list. */
   checkedAt: number | null;

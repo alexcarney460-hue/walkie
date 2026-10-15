@@ -1,9 +1,12 @@
 // One usage poll for one account on the machine that holds its login. Reads the CLI's CURRENT access token
 // read-only, never refreshes it (an expiring token is skipped: the CLI refreshes it the next time it runs), and asks
 // only the allow-listed usage endpoints (http.ts). Returns the reading and when to poll next.
+import { lstatSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { join } from "node:path";
 import type { AccountProvider } from "../protocol/accounts.ts";
 import { fetchClaudeUsage, readClaudeToken, type KeychainReader } from "./adapters/claude.ts";
 import { fetchCodexUsage, passiveCodexReading, readCodexToken } from "./adapters/codex.ts";
+import { wasCodexSessionsShared } from "./vault/codex-shared.ts";
 import { grokReading, identifyGrok } from "./adapters/grok.ts";
 import { fetchKimiIdentity, fetchKimiUsage, readKimiToken } from "./adapters/kimi.ts";
 import { errorName, UsageHttpError, type FetchLike } from "./http.ts";
@@ -29,6 +32,10 @@ export interface PollDeps {
   tokenSkips?: number;
   /** ACCOUNTS-2: a vault Claude account's setup-token (read for this one request). */
   vaultToken?: { read: () => Promise<string>; expiresAt: number | null };
+  /** This machine's Codex vault root; even an unreadable vault index may leave shared sessions links here. */
+  codexVaultRoot?: string;
+  /** This login's sessions folder was shared before; its unlabelled rollout files remain unsafe to attribute. */
+  passiveBlocked?: boolean;
 }
 
 /** A vault setup-token the usage endpoint will not meter is asked again this rarely. */
@@ -47,6 +54,8 @@ export interface PollResult {
   error?: string;
   /** This poll was skipped for an expiring token. */
   skipped?: true;
+  /** Positive evidence that the local Codex sessions folder is or was shared; persist the passive-reading fence. */
+  passiveShared?: true;
 }
 
 export function cadence(r: Reading): number {
@@ -132,22 +141,59 @@ function keepResets(r: Reading | null, prev: Reading | null): Reading | null {
   return r && !r.resets && prev?.resets ? { ...r, resets: prev.resets } : r;
 }
 
+type ShareState = "shared" | "unshared" | "unknown";
+
+export function sharesCodexSessions(login: Login, vaultRoot?: string): ShareState {
+  if (!vaultRoot) return "unshared";
+  let sessions: string;
+  try { sessions = realpathSync(join(login.dir, "sessions")); } catch { return "unknown"; }
+  const marked = wasCodexSessionsShared(vaultRoot, sessions);
+  if (marked === "shared") return "shared";
+  let homes: Dirent[];
+  try { homes = readdirSync(vaultRoot, { withFileTypes: true }); }
+  catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT" ? marked : "unknown"; }
+  let uncertain = marked === "unknown";
+  for (const home of homes) {
+    const homePath = join(vaultRoot, home.name);
+    if (!home.isDirectory()) {
+      if (!home.isSymbolicLink()) continue;
+      try { if (!statSync(homePath).isDirectory()) continue; }
+      catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") uncertain = true;
+        continue;
+      }
+    }
+    const link = join(vaultRoot, home.name, "sessions");
+    try {
+      if (!lstatSync(link).isSymbolicLink()) continue;
+      if (realpathSync(link) === sessions) return "shared";
+    } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") uncertain = true; }
+  }
+  return uncertain ? "unknown" : "unshared";
+}
+
 async function pollCodex(login: Login, prev: Reading | null, backoffMs: number, d: PollDeps): Promise<PollResult> {
   // A session file says nothing about limit resets: the last API reading's count is carried over (RESET-1).
   // A vault account home shares sessions/ with the user's own CODEX_HOME: its session files are not this login's.
-  const passive = login.vault ? null : (() => { try { return keepResets(passiveCodexReading(login, d.now), prev); } catch { return null; } })();
-  const t = readCodexToken(login);
-  if (t === "none") return passive ? { reading: passive, nextInMs: cadence(passive), backoffMs: 0 } : { reading: unknownReading(d.now, "no_token"), nextInMs: POLL_MS, backoffMs: 0 };
-  if (t.apiKey) return { reading: unknownReading(d.now, "api_key_login"), nextInMs: 60 * 60_000, backoffMs: 0 };
-  const gate = tokenGate(t, prev, d.now, d.tokenSkips ?? 0);
-  if (gate) return passive && gate.reading?.state !== "relogin" ? { ...gate, reading: passive } : gate;
+  const sharing = login.vault ? "unshared" : sharesCodexSessions(login, d.codexVaultRoot);
+  const shared = sharing === "shared";
+  const safePrev = (sharing !== "unshared" || d.passiveBlocked) && prev?.source === "session" ? null : prev;
+  const passive = login.vault || sharing !== "unshared" || d.passiveBlocked
+    ? null : (() => { try { return keepResets(passiveCodexReading(login, d.now), safePrev); } catch { return null; } })();
+  const finish = (result: PollResult): PollResult => shared ? { ...result, passiveShared: true } : result;
+  let credentialIssue: string | undefined;
+  const t = readCodexToken(login, (reason) => { credentialIssue = reason; });
+  if (t === "none") return finish(passive ? { reading: passive, nextInMs: cadence(passive), backoffMs: 0 } : { reading: unknownReading(d.now, "no_token"), nextInMs: POLL_MS, backoffMs: 0, ...(credentialIssue ? { error: credentialIssue } : {}) });
+  if (t.apiKey) return finish({ reading: unknownReading(d.now, "api_key_login"), nextInMs: 60 * 60_000, backoffMs: 0 });
+  const gate = tokenGate(t, safePrev, d.now, d.tokenSkips ?? 0);
+  if (gate) return finish(passive && gate.reading?.state !== "relogin" ? { ...gate, reading: passive } : gate);
   try {
     const r = await fetchCodexUsage(d.fetch, t, d.now);
-    return { reading: r, nextInMs: cadence(r), backoffMs: 0 };
+    return finish({ reading: r, nextInMs: cadence(r), backoffMs: 0 });
   } catch (err) {
-    const f = failed(err, prev, backoffMs, d.now);
+    const f = failed(err, safePrev, backoffMs, d.now);
     // A session file's reading is better than none (or than a stale API reading) while the endpoint fails.
-    return passive && f.reading?.state !== "relogin" && (!prev || passive.at > prev.at) ? { ...f, reading: passive } : f;
+    return finish(passive && f.reading?.state !== "relogin" && (!safePrev || passive.at > safePrev.at) ? { ...f, reading: passive } : f);
   }
 }
 
@@ -156,8 +202,9 @@ async function pollCodex(login: Login, prev: Reading | null, backoffMs: number, 
  * attributed to the account that token belongs to (a login change moves it; Codex MED 5). No answer, no reading.
  */
 async function pollKimi(login: Login, prev: Reading | null, backoffMs: number, d: PollDeps): Promise<PollResult> {
-  const t = readKimiToken(login);
-  if (t === "none") return { reading: unknownReading(d.now, "no_token"), nextInMs: POLL_MS, backoffMs: 0 };
+  let credentialIssue: string | undefined;
+  const t = readKimiToken(login, (reason) => { credentialIssue = reason; });
+  if (t === "none") return { reading: unknownReading(d.now, "no_token"), nextInMs: POLL_MS, backoffMs: 0, ...(credentialIssue ? { error: credentialIssue } : {}) };
   const gate = tokenGate(t, prev, d.now, d.tokenSkips ?? 0);
   if (gate) return gate;
   try {

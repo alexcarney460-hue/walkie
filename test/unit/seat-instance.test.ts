@@ -1,4 +1,4 @@
-// WALK-103: only the Walkie that `walkie seats setup-user --apply` registered lists, makes or removes this machine's
+// WALK-103: only the Sqwakie that `walkie seats setup-user --apply` registered lists, makes or removes this machine's
 // seat users. The record (instance.ts), the root helper's refusal (admin.ts runSeatAdmin), and root's binding of the
 // daemon that ran sudo to the registered socket's instance lock (admin-sys.ts), the last one with real processes.
 import { afterEach, expect, spyOn, test } from "bun:test";
@@ -64,7 +64,7 @@ test("the record: exactly one plain registration, root's alone when read for rea
   if (ME !== 0) expect(readSeatRegistration(path, true)).toMatchObject({ state: "invalid", why: expect.stringContaining("not owned by root") });
 });
 
-test("the daemon's side: its own socket and uid only; a record of another Walkie or none never counts as its own", () => {
+test("the daemon's side: its own socket and uid only; a record of another Sqwakie or none never counts as its own", () => {
   const dir = tmp();
   const mine = join(dir, "a", "walkie.sock");
   mkdirSync(join(dir, "a"));
@@ -73,7 +73,7 @@ test("the daemon's side: its own socket and uid only; a record of another Walkie
   const other = seatScopeFor(present(reg(canonicalPath(join(dir, "b", "walkie.sock")), { home: "/home/arvid/.walkie" })), mine, ME);
   // (Read before toMatchObject: Bun 1.3 writes its asymmetric matchers into the received object.)
   expect(other.state === "other" && other.why).toContain("/home/arvid/.walkie");
-  expect(other).toMatchObject({ state: "other", why: expect.stringContaining("managed by another Walkie") });
+  expect(other).toMatchObject({ state: "other", why: expect.stringContaining("managed by another Sqwakie") });
   expect(seatScopeFor(present(reg(canonicalPath(mine), { uid: ME + 1 })), mine, ME).state).toBe("other");
   expect(seatScopeFor({ state: "absent" }, mine, ME)).toEqual({ state: "legacy", why: LEGACY_SCOPE_WHY });
   expect(seatScopeFor({ state: "invalid", why: "x is not a regular file" }, mine, ME).state).toBe("other");
@@ -81,12 +81,12 @@ test("the daemon's side: its own socket and uid only; a record of another Walkie
 
 test("the helper refuses a daemon that isn't the registered one before it reads or touches anything", async () => {
   for (const state of ["other", "unregistered", "unchecked"] as const) {
-    const code = state === "unchecked" ? "busy" : "refused"; // a check that couldn't run now: asked again, not "another Walkie"
+    const code = state === "unchecked" ? "busy" : "refused"; // a check that couldn't run now: asked again, not "another Sqwakie"
     for (const argv of [["destroy", "3"], ["destroy", "3", "idle"], ["create", "4"]]) {
-      const sys = only({ caller: () => ME, seatInstance: () => ({ state, why: `not the registered Walkie (${state})` }) });
+      const sys = only({ caller: () => ME, seatInstance: () => ({ state, why: `not the registered Sqwakie (${state})` }) });
       const { code: exit, answer } = await admin(argv, sys);
       expect(exit).toBe(1);
-      expect(answer).toEqual({ ok: false, code, scope: state, why: `not the registered Walkie (${state})` });
+      expect(answer).toEqual({ ok: false, code, scope: state, why: `not the registered Sqwakie (${state})` });
     }
     // `pending` (the doctor's and setup's probe): whether the ledger reads, never what it holds.
     const listed = only({ caller: () => ME, seatInstance: () => ({ state, why: "no" }), pendingReadOnly: () => ({ ids: [5, 6, 7], summary: { homes: 0, vaults: 0, knownBytes: 0 } }) });
@@ -128,11 +128,11 @@ test("the real check: unregistered without a record, another person's record, a 
   writeFileSync(path, seatRegistrationText(reg(socket)));
   expect(checkSeatInstance(ME, path, bind, false)).toEqual({ state: "registered" });
   expect(bound).toEqual([socket]);
-  expect(checkSeatInstance(ME, path, () => { throw new SeatCallerMismatch("the Walkie that asked doesn't hold the registered Walkie's socket"); }, false))
-    .toMatchObject({ state: "other", why: expect.stringContaining("doesn't hold the registered Walkie's socket") });
-  // ps or lsof failing for a moment is not "another Walkie": asked again later.
+  expect(checkSeatInstance(ME, path, () => { throw new SeatCallerMismatch("the Sqwakie that asked doesn't hold the registered Sqwakie's socket"); }, false))
+    .toMatchObject({ state: "other", why: expect.stringContaining("doesn't hold the registered Sqwakie's socket") });
+  // ps or lsof failing for a moment is not "another Sqwakie": asked again later.
   expect(checkSeatInstance(ME, path, () => { throw new Error("the invoking daemon's process chain could not be checked"); }, false))
-    .toMatchObject({ state: "unchecked", why: expect.stringContaining("couldn't check which Walkie asked right now") });
+    .toMatchObject({ state: "unchecked", why: expect.stringContaining("couldn't check which Sqwakie asked right now") });
   writeFileSync(path, "{");
   expect(checkSeatInstance(ME, path, bind, false).state).toBe("other");
 });
@@ -165,7 +165,7 @@ test("root's binding, for real: the daemon that ran the helper must itself hold 
     // A daemon whose home is elsewhere (it holds only its own socket): refused, though the registered one runs.
     const freshAnswer = await fixture(["nest", fresh, String(ME), registered]);
     expect(freshAnswer.ok).toBe(false);
-    expect(freshAnswer.why).toContain("doesn't hold the registered Walkie's socket");
+    expect(freshAnswer.why).toContain("doesn't hold the registered Sqwakie's socket");
     // And the registered socket nobody here holds: refused.
     const elsewhere = join(dir, "fresh", "other.sock");
     const releaseOther = holdDaemonSocket(elsewhere);
@@ -174,7 +174,7 @@ test("root's binding, for real: the daemon that ran the helper must itself hold 
   } finally { release(); }
 }, 30_000);
 
-test("setup-user records the Walkie before it copies the helper; the doctor's own probe still counts as answered", () => {
+test("setup-user records the Sqwakie before it copies the helper; the doctor's own probe still counts as answered", () => {
   const p = seatUserPlan({
     platform: "linux", daemonUser: "arvid", source: "/usr/local/bin/walkie", groupId: 0, walkieHome: "/home/arvid/.walkie",
     sudoersTmp: "/tmp/x/walkie-seats", home: "/home/arvid", homeProblem: null, runtimes: {}, instanceTmp: "/tmp/x/seat-instance", instanceHome: "/home/arvid/.walkie",
@@ -196,25 +196,25 @@ test("setup-user records the Walkie before it copies the helper; the doctor's ow
   expect(pendingProbeProblem("sudo: a password is required")).toBe("no answer");
 });
 
-test("the doctor names a record of another Walkie as a failure and a missing one as a warning", () => {
+test("the doctor names a record of another Sqwakie as a failure and a missing one as a warning", () => {
   const facts = { team: "t", release: false, runnerProblem: null, helper: "ok", rootsFile: "ok", runtimes: { claude: "/c", codex: "/x" } };
   const base = { allow: true, ephemeral: true, channel_ok: true, claude_login: "machine", codex_login: "machine" };
-  const other = doctorChecks({ ...base, seat_scope: { state: "other", why: "seat users on this machine are managed by another Walkie (x)" } } as SeatsLocalView, facts);
-  expect(other.find((c) => c.what.includes("managed by another Walkie"))?.ok).toBe(false);
+  const other = doctorChecks({ ...base, seat_scope: { state: "other", why: "seat users on this machine are managed by another Sqwakie (x)" } } as SeatsLocalView, facts);
+  expect(other.find((c) => c.what.includes("managed by another Sqwakie"))?.ok).toBe(false);
   const legacy = doctorChecks({ ...base, seat_scope: { state: "legacy", why: LEGACY_SCOPE_WHY } } as SeatsLocalView, facts);
   expect(legacy.find((c) => c.what === LEGACY_SCOPE_WHY)?.ok).toBe("warn");
-  expect(doctorChecks(base as SeatsLocalView, facts).some((c) => c.what.includes("another Walkie") || c.what === LEGACY_SCOPE_WHY)).toBe(false);
+  expect(doctorChecks(base as SeatsLocalView, facts).some((c) => c.what.includes("another Sqwakie") || c.what === LEGACY_SCOPE_WHY)).toBe(false);
   const left = doctorChecks({ ...base, seat_scope: { state: "legacy", why: LEGACY_SCOPE_WHY }, foreign_users: ["walkie-s6", "walkie-s7"],
     leftovers_running: ["walkie-s3"] } as SeatsLocalView, facts);
-  const foreign = left.find((c) => c.what.startsWith("2 seat users here aren't this Walkie's to remove (walkie-s6, walkie-s7)"));
+  const foreign = left.find((c) => c.what.startsWith("2 seat users here aren't this Sqwakie's to remove (walkie-s6, walkie-s7)"));
   expect(foreign?.ok).toBe("warn");
   expect(foreign?.fix).toContain("setup-user --apply, then restart");
   expect(foreign?.fix).toContain("ends a seat card left running from before the update");
-  const otherForeign = doctorChecks({ ...base, seat_scope: { state: "other", why: "seat users on this machine are managed by another Walkie (x)" }, foreign_users: ["walkie-s6"] } as SeatsLocalView, facts);
-  expect(otherForeign.find((c) => c.what.includes("isn't this Walkie's"))?.fix).toBe("the Walkie that owns this machine's seat users removes them");
+  const otherForeign = doctorChecks({ ...base, seat_scope: { state: "other", why: "seat users on this machine are managed by another Sqwakie (x)" }, foreign_users: ["walkie-s6"] } as SeatsLocalView, facts);
+  expect(otherForeign.find((c) => c.what.includes("isn't this Sqwakie's"))?.fix).toBe("the Sqwakie that owns this machine's seat users removes them");
   const running = left.find((c) => c.what.startsWith("walkie-s3 is a leftover seat user that still runs processes"));
-  expect(running?.what).toContain("it holds a seat slot until those processes end, then Walkie removes it");
-  expect(running?.fix).toBe("to end it now: sudo pkill -KILL -u walkie-s3 (Walkie removes the user at its next retry)");
+  expect(running?.what).toContain("it holds a seat slot until those processes end, then Sqwakie removes it");
+  expect(running?.fix).toBe("to end it now: sudo pkill -KILL -u walkie-s3 (Sqwakie removes the user at its next retry)");
 });
 
 test("fdinfo: only a lock taken through that very open file, by the asking process, counts; never a waiter or a global line", () => {
@@ -240,7 +240,7 @@ test.skipIf(process.platform === "darwin")("root's binding, for real: a second d
   try {
     const answer = await fixture(["nest", join(dir, "fresh", "walkie.sock"), String(ME), registered, "open"]);
     expect(answer.ok).toBe(false);
-    expect(answer.why).toContain("doesn't hold the registered Walkie's socket");
+    expect(answer.why).toContain("doesn't hold the registered Sqwakie's socket");
   } finally { release(); }
 }, 30_000);
 
@@ -292,7 +292,7 @@ test("the daemon's instance lock is close-on-exec: nothing it starts inherits it
   } finally { lock.release(); }
 });
 
-test("root reads the WalkieTalkie daemon's executable only as the inode it checked, never through a link or a FIFO", () => {
+test("root reads the Talkie daemon's executable only as the inode it checked, never through a link or a FIFO", () => {
   const dir = tmp();
   const exe = join(dir, "walkie");
   writeFileSync(exe, "binary");

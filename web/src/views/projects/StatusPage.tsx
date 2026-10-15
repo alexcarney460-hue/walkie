@@ -1,5 +1,5 @@
 // A project's status page (PROJECT-PAGES-1): the page the project's non-technical teammates read. A headline and two plain
-// sentences from WalkieTalkie's hourly report, a strip of facts (what the team and its agents set, then what Walkie counts
+// sentences from Talkie's hourly report, a strip of facts (what the team and its agents set, then what Sqwakie counts
 // itself), what is live and what lands next, and the project's screens grouped by who uses them. It is a view over what the
 // daemon folds from the signed log (GET /v1/projects/:channel/page); the terminal and the agents write it, this page only reads.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,9 +18,9 @@ export type StatusPageState = { status: "loading" } | { status: "error"; message
 /** The page is not announced by the board's own stream alone (a report is an ordinary post): it looks again now and then. */
 const REFRESH_MS = 120_000;
 
-const WAITING = "WalkieTalkie writes the headline and the two lists below each hour something changes in the project, so the first ones appear within the hour. The facts and the screens are live.";
+const WAITING = "Talkie writes the headline and the two lists below each hour something changes in the project, so the first ones appear within the hour. The facts and the screens are live.";
 /** Said instead of WAITING once reports have been on for over two hours, the project has cards, and still no story has come. */
-const OVERDUE = "No summary has arrived yet. WalkieTalkie writes it within an hour of a change on the board, on the team's main machine (the one that keeps the member list), and that machine has to be running the latest Walkie to do it. If this stays empty, ask whoever looks after the team's Walkie to update it. The facts and the screens below are live.";
+const OVERDUE = "No summary has arrived yet. Talkie writes it within an hour of a change on the board, on the team's main machine (the one that keeps the member list), and that machine has to be running the latest Sqwakie to do it. If this stays empty, ask whoever looks after the team's Sqwakie to update it. The facts and the screens below are live.";
 
 function RefreshNotice({ data, onRetry }: { data: StatusPagePayload; onRetry: () => void }) {
   return (
@@ -72,7 +72,7 @@ export function StatusPageView({ project, state, group, onRetry }: { project: Pr
     );
   }
   const story = data.story;
-  // The story is WalkieTalkie's and is only as new as its last report; the page's own "updated" time moves with any fact or screen.
+  // The story is Talkie's and is only as new as its last report; the page's own "updated" time moves with any fact or screen.
   // It is flagged when the numbers beside it have moved on from the ones it was written against (lib/status-page.ts).
   const written = story && Number.isFinite(story.at) ? story.at : null;
   const outOfDate = story !== null && storyOutOfDate(story, data.facts.computed, data.generated_at);
@@ -84,7 +84,7 @@ export function StatusPageView({ project, state, group, onRetry }: { project: Pr
         <h2 id="spage-headline" className="spage-headline">{story?.headline ?? project.name}</h2>
         <p className="spage-when">
           {data.updated_at !== null ? <>Page updated <PlainTime ts={data.updated_at} /></> : "Nothing added yet"}
-          {written !== null && <> · Summary written by WalkieTalkie <PlainTime ts={written} /></>}
+          {written !== null && <> · Summary written by Talkie <PlainTime ts={written} /></>}
         </p>
         {outOfDate && written !== null && (
           <p className="spage-notice" role="note">
@@ -104,7 +104,7 @@ export function StatusPageView({ project, state, group, onRetry }: { project: Pr
       <ScreensSection channel={project.channel} prefix={project.prefix} screens={data.screens} group={group} note={story?.screens_note} />
       <footer className="spage-foot">
         {data.updated_at !== null ? <p>Updated <time dateTime={new Date(data.updated_at).toISOString()}>{fullTime(data.updated_at)}</time>.</p> : <p>Nothing has been added to this page yet.</p>}
-        <p>The headline and the two lists are written by WalkieTalkie each hour something changes in the project. The counts come from the project's board (cards marked confidential are never counted). The other facts and the screens are added by the team and its agents, who are named under each one.</p>
+        <p>The headline and the two lists are written by Talkie each hour something changes in the project. The counts come from the project's board (cards marked confidential are never counted). The other facts and the screens are added by the team and its agents, who are named under each one.</p>
       </footer>
     </article>
   );

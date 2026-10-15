@@ -1,7 +1,7 @@
 // The model list the local-model suggestions rank from (LOCAL-MODELS-HF-1). The daemon reads Hugging Face when a person
 // opens a dashboard page that shows the suggestions (Mission Control, the Team page or a machine page: the first one to mount
 // starts this store) and the list is missing or over a day old (never on a timer); until it has, and when it cannot,
-// this is the list built into Walkie, with the reason. One shared store, so the Mission Control card, the Team page and a
+// this is the list built into Sqwakie, with the reason. One shared store, so the Mission Control card, the Team page and a
 // machine page share one request. The browser never talks to Hugging Face: only the daemon does.
 import { useEffect, useSyncExternalStore } from "react";
 import { CATALOG, type Catalog } from "../../../src/pool/catalog.ts";

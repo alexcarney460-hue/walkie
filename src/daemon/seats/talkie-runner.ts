@@ -1,5 +1,5 @@
-// Fixed sudo target for the dedicated WalkieTalkie user. The daemon sends one bounded JSON header on stdin,
-// then Claude's stream-json input. The runner never reads the person's Walkie home or credentials.
+// Fixed sudo target for the dedicated Talkie user. The daemon sends one bounded JSON header on stdin,
+// then Claude's stream-json input. The runner never reads the person's Sqwakie home or credentials.
 import { z } from "zod";
 import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

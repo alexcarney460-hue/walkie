@@ -235,7 +235,7 @@ describe("the local orchestrator (ORCH-FIX-11)", () => {
     // on kiras-mbp it is in the local store only, never an event
     expect((kira.d.core.store.db.query("SELECT count(*) AS n FROM events WHERE json LIKE ?").get(`%${MARK}%`) as { n: number }).n).toBe(0);
     // kira2 (kira's own login) talks to its own host only: none runs there
-    await expect(person(kira2).orchestratorSay("from the studio")).rejects.toThrow(/WalkieTalkie isn.t running/);
+    await expect(person(kira2).orchestratorSay("from the studio")).rejects.toThrow(/^Talkie isn.t running/);
     await expect(person(kira2).orchestratorSay("into kira's thread", first)).rejects.toThrow();
     // and the peer API has no orchestrator route at all
     const res = await signedPeerFetch(kira2, kira, "/peer/v1/orchestrator/messages");
@@ -255,14 +255,21 @@ describe("the local orchestrator (ORCH-FIX-11)", () => {
   }, 30_000);
 
   test("the stop button interrupts the reply in progress", async () => {
+    const started = turns().length;
     const { message } = await person(kira).orchestratorSay("count slow please");
     await waitFor(async () => (await kira.client().orchestrator()).local.working_thread === message.thread, { what: "working" });
+    // the stop should land mid-count, so wait for the turn to begin, then for a few words (the pre.17 gate on a Spark,
+    // 2026-10-09: a slowly starting Claude got the stop before its first word)
+    await waitFor(async () => turns().length > started, { what: "the count started" });
     await Bun.sleep(300);
     expect((await person(kira).orchestratorStopReply(message.thread)).stopped).toBe(true);
-    const [reply] = await replies(kira, message.thread, message.id, 1, 8_000);
-    expect(reply?.text).toContain("(stopped)");
+    // The stop lands mid-count ("1 2 … _(stopped)_") or, when Claude stalls between starting the turn and its first word,
+    // before it ("_Stopped._"). Either proves the interrupt: a full reply is 300 words with no marker. 8 s overran at 8.3 s
+    // on a loaded 10-core Mac in the pre.16 gate (2026-10-08)
+    const [reply] = await replies(kira, message.thread, message.id, 1, 20_000);
+    expect(reply?.text).toMatch(/_\(stopped\)_$|^_Stopped\._$/);
     expect(reply?.text.split(" ").length).toBeLessThan(250);
-  }, 30_000);
+  }, 45_000); // up to 10 s for "working" + 10 s for the count to start + 0.3 s + 20 s for the reply
 
   test("a queued dashboard message whose session signed out before it ran is refused, never sent to Claude", async () => {
     const h = await session(kira);
@@ -471,6 +478,6 @@ describe("the local orchestrator (ORCH-FIX-11)", () => {
     const res = await person(kira).orchestratorStop();
     expect(res.stopped).toBe("local");
     expect((await kira.client().orchestrator()).local.running).toBe(false);
-    await expect(person(kira).orchestratorSay("anyone?")).rejects.toThrow(/WalkieTalkie isn.t running/);
+    await expect(person(kira).orchestratorSay("anyone?")).rejects.toThrow(/^Talkie isn.t running/);
   }, 60_000);
 });

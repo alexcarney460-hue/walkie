@@ -11,6 +11,7 @@ import { CopyCommand, ErrorState, RuntimeBadge, SkeletonRows, StatePill } from "
 import { TaskDetail } from "./TaskChip.tsx";
 import { subagentLabel } from "../../../src/protocol/subagents.ts";
 import { isCloudAgent } from "../../../src/protocol/guest-cloud.ts";
+import { displayStoredText } from "../../../src/protocol/display-text.ts";
 
 interface Step { id: string; ts: number; state: StatusBody["state"]; title?: string; actions: number; lastActivity?: string }
 
@@ -72,10 +73,10 @@ function useAgentHistory(agent: AgentView | undefined) {
 }
 
 function postLine(e: Event): string {
-  if (e.kind === "ask") return `Asked ${askBody(e).to}: ${plainPreview(askBody(e).text, 100)}`;
-  if (e.kind === "answer") return (e.body as { declined?: boolean }).declined ? "Declined an ask" : `Answered: ${plainPreview(String((e.body as { text: string }).text), 100)}`;
+  if (e.kind === "ask") return `Asked ${askBody(e).to}: ${plainPreview(displayStoredText(askBody(e).text), 100)}`;
+  if (e.kind === "answer") return (e.body as { declined?: boolean }).declined ? "Declined an ask" : `Answered: ${plainPreview(displayStoredText(String((e.body as { text: string }).text)), 100)}`;
   if (e.kind === "artifact.share") return `Shared ${(e.body as { name: string }).name}`;
-  return plainPreview(String((e.body as { text: string }).text), 140);
+  return plainPreview(displayStoredText(String((e.body as { text: string }).text)), 140);
 }
 
 export function AgentDrawer({ id }: { id: string }) {
@@ -133,8 +134,8 @@ export function AgentDrawer({ id }: { id: string }) {
               <StatePill state={agent.effective_state} />
               <span className="muted tnum">updated {ago(agent.updated_at, now)} ago</span>
             </div>
-            <p className="drawer-status-title">{s.title ?? (s.parent ? subagentLabel(s.subagent_type) : hermesViewOnly ? "View only" : "No status title")}</p>
-            {s.activity && <p className="drawer-activity mono">{s.activity}</p>}
+            <p className="drawer-status-title">{s.title ? displayStoredText(s.title) : (s.parent ? subagentLabel(s.subagent_type) : hermesViewOnly ? "View only" : "No status title")}</p>
+            {s.activity && <p className="drawer-activity mono">{displayStoredText(s.activity)}</p>}
 
             <dl className="facts">
               <dt>Owner</dt><dd>{displayName(team?.members, agent.handle)} <span className="muted mono">@{agent.handle}</span></dd>
@@ -152,11 +153,11 @@ export function AgentDrawer({ id }: { id: string }) {
             {cloud && (
               <div className="drawer-section">
                 <h3 className="drawer-h">Cloud access</h3>
-                <p className="muted">Walkie receives this agent's reports. Start, pause and stop are controlled in its own platform.</p>
+                <p className="muted">Sqwakie receives this agent's reports. Start, pause and stop are controlled in its own platform.</p>
                 {me?.node.id === agent.node && me.handle === agent.handle && (
                   <button type="button" className="btn btn-sm" disabled={revoked} onClick={() => {
                     void api.revokeGuest(agent.agent).then(() => setRevoked(true)).catch((error) => setRevokeError(friendlyError(error)));
-                  }}>{revoked ? "Walkie access revoked" : "Revoke Walkie access"}</button>
+                  }}>{revoked ? "Sqwakie access revoked" : "Revoke Sqwakie access"}</button>
                 )}
                 {revokeError && <p role="alert">{revokeError}</p>}
               </div>
@@ -187,8 +188,8 @@ export function AgentDrawer({ id }: { id: string }) {
                           <span className="tl-state">{STATE_LABEL[step.state]}</span>
                           <span className="tl-time tnum muted" title={fullTime(step.ts)}>{clock(step.ts)}</span>
                         </div>
-                        {step.title && <p className="tl-title">{step.title}</p>}
-                        {step.actions > 0 && <p className="tl-actions muted tnum">{step.actions} tool action{step.actions === 1 ? "" : "s"}{step.lastActivity ? <>, last <span className="mono">{step.lastActivity}</span></> : null}</p>}
+                        {step.title && <p className="tl-title">{displayStoredText(step.title)}</p>}
+                        {step.actions > 0 && <p className="tl-actions muted tnum">{step.actions} tool action{step.actions === 1 ? "" : "s"}{step.lastActivity ? <>, last <span className="mono">{displayStoredText(step.lastActivity)}</span></> : null}</p>}
                       </div>
                     </li>
                   ))}

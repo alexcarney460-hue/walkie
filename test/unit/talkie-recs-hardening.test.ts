@@ -1,8 +1,8 @@
 // TALKIE-OPS-1 review fixes (the adversarial review's probes, kept as tests): nothing a model wrote is sent in a person's name and
 // the person sees word for word what an approval sends; every open recommendation is listed before any history; a seat is not
 // started for a card that stopped being one for a seat, its machine is chosen when it is approved, and a run neither churns it nor
-// remakes it while an approval is in flight; cooldowns hold however busy a channel gets; full-access WalkieTalkie can record and
-// list through its proxy but never answer; and WalkieTalkie's child, once held to a scheduled turn's limits, creates no channel.
+// remakes it while an approval is in flight; cooldowns hold however busy a channel gets; full-access Talkie can record and
+// list through its proxy but never answer; and Talkie's child, once held to a scheduled turn's limits, creates no channel.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import "../../src/daemon/projects/routes.ts";
 import { overrideCall, overrideFleet, overrideSeats, type FleetNow } from "../../src/daemon/orchestrator/rec-act.ts";
@@ -36,7 +36,7 @@ const recEvents = (t: World, channel: string) =>
 const fakeCard = (n: number, title = `Card ${n}`): CardView => ({ id: `${"c".repeat(16)}:${n}`, column: "todo", title }) as CardView;
 
 describe("what an approval sends in a person's name", () => {
-  test("a model's ask is quoted as WalkieTalkie's and never sent: the person sees, and approving sends, exactly the template message", async () => {
+  test("a model's ask is quoted as Talkie's and never sent: the person sees, and approving sends, exactly the template message", async () => {
     const t = recsWorld(cleanups);
     host(t, { scheduledTurnActive: () => true });
     const p = await t.project("Website", "WEB", { off: true });
@@ -52,7 +52,7 @@ describe("what an approval sends in a person's name", () => {
     expect(v.context).toContain("Nothing has changed for 2 days.");
     expect(v.context).toContain("piped to sh"); // shown, quoted, for the person to judge
     expect(v.context).not.toContain("https://evil.example"); // links are withheld even there
-    expect(v.outgoing).toBe(`[WalkieTalkie recommendation ${v.short}]\nHow is card ${card.ref} going? Please post an update on the card.\nCard ${card.ref}: Fix the login page\n(Sent by @alex on WalkieTalkie's recommendation.)`);
+    expect(v.outgoing).toBe(`[WalkieTalkie recommendation ${v.short}]\nHow is card ${card.ref} going? Please post an update on the card.\nCard ${card.ref}: Fix the login page\n(Sent by @alex on Talkie's recommendation.)`);
     let sent = "";
     overrideCall((_m, path, body) => { if (path === "/v1/ask") { sent = (body as { text: string }).text; return Promise.resolve({ event: {} }); } return undefined; });
     const r = await outcome(requester(t)("POST", `/v1/talkie/recs/${v.short}/approve`, { seen: v.outgoing }));
@@ -239,7 +239,7 @@ describe("no churn, and nothing remade under an approval", () => {
   });
 });
 
-describe("full-access WalkieTalkie's proxy", () => {
+describe("full-access Talkie's proxy", () => {
   const bytes = (v: unknown): ArrayBuffer => new TextEncoder().encode(typeof v === "string" ? v : JSON.stringify(v)).buffer as ArrayBuffer;
 
   test("lets it list and record recommendations, with a body the daemon would accept, and never approve or dismiss", () => {

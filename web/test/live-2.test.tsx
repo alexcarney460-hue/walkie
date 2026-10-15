@@ -109,6 +109,15 @@ const ev = (ts: number, agentName: string, state: AgentState, extra: Record<stri
 } as unknown as Event);
 const feed = (chronological: Event[], limit?: number) => mod.buildActivity([...chronological].reverse(), NODES, TEAM.members, limit);
 
+test("retained status titles show Sqwakie while fixed activity phrases stay out of the step list", () => {
+  const t = NOW - 10 * MIN;
+  const raw = ev(t + 1_000, "a", "waiting", { title: "Walkie access revoked", activity: "Connected to Walkie" });
+  const items = feed([ev(t, "a", "idle"), raw]);
+  expect(items.find((item) => item.kind === "state")?.text).toBe("Sqwakie access revoked");
+  expect(items.some((item) => item.kind === "step")).toBe(false);
+  expect((raw.body as { title: string }).title).toBe("Walkie access revoked");
+});
+
 test("flapping: Working → Idle → Working within 60 s is one entry", () => {
   const t = NOW - 10 * MIN;
   const items = feed([ev(t, "a", "idle"), ev(t + 1_000, "a", "working"), ev(t + 20_000, "a", "idle"), ev(t + 40_000, "a", "working"), ev(t + 70_000, "a", "idle"), ev(t + 90_000, "a", "working")]);
@@ -131,7 +140,7 @@ test("churn: sessions that come and go on one machine are one grouped entry per 
   expect(items.some((i) => i.kind === "state" && i.who.startsWith("long") && i.state === "offline")).toBe(true); // a real exit stays
 });
 
-test("tool-level lines appear when shared (not Walkie's fixed phrases); an agent's steps within a minute are one entry", () => {
+test("tool-level lines appear when shared (not Sqwakie's fixed phrases); an agent's steps within a minute are one entry", () => {
   const t = NOW - 10 * MIN;
   const items = feed([
     ev(t, "a", "working"), ev(t + 1_000, "a", "working", { activity: "Edit web/src/views/mission/AgentCard.tsx" }),
@@ -180,7 +189,7 @@ test("a 401 shows 'Signed out', not 'Can't reach the daemon'", () => {
   expect(out).toContain("Signed out of this dashboard");
   expect(out).toContain("walkie dashboard");
   expect(out).not.toContain("reach the");
-  expect(render(state({}), <mod.BootError message="x" />)).toContain("reach the Walkie daemon");
+  expect(render(state({}), <mod.BootError message="x" />)).toContain("reach the Sqwakie daemon");
 });
 
 // ---- LIVE-3 (Opus r1 UX) ------------------------------------------------------------------------------------------

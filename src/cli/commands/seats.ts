@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import type { WalkieClient } from "../../client/index.ts";
 import { wrapForModel } from "../../protocol/safety.ts";
 import {
-  DEFAULT_SEAT_MODE, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, SEAT_MODES, SEAT_RUNTIMES, SEAT_WORKSPACE_MODES, TERMINAL_STATES, busyDetail, launcherPolicyLabel, parseLauncher, seatsChannel,
+  DEFAULT_SEAT_MODE, MAX_BUSY_S, MAX_CONCURRENT_LIMIT, SEAT_MODES, SeatLocalModel, SEAT_RUNTIMES, SEAT_WORKSPACE_MODES, TERMINAL_STATES, busyDetail, launcherPolicyLabel, parseLauncher, seatsChannel,
   type HostAvailability, type SeatMode, type SeatRuntime, type SeatView, type SeatWorkspace, type SeatsLocalView,
 } from "../../protocol/seats.ts";
 import { parseDuration } from "../../daemon/seats/busy.ts";
@@ -24,13 +24,30 @@ const SEATS_USAGE = "seats [list] | seats enable [--yes] [--same-user|--seat-use
   + " [--accept-readable-home] [--inherit-person-config] [--launchers @a,@a/machine,@a/machine/agent] [--max n]"
   + " [--runtimes claude,codex,kimi,grok] [--dir path] [--env NAME,NAME]"
   + " [--allowed-tools Read,Grep] [--disallowed-tools WebFetch] [--clear-tool-policy]"
-  + " | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
+  + " | seats codex-oss on --yes|off | seats doctor --local-provider ollama | seats deny | seats busy [--max 1] [--for 2h] | seats resume"
   + " | seats repo [list] | seats repo add <id> <path> | seats repo rm <id>";
-const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi|grok] [--model m] [--permission-mode default|acceptEdits|bypassPermissions]"
+const SEAT_USAGE = "seat run --machine <host> [--runtime claude|codex|kimi|grok] [--model m] [--local-provider ollama] [--permission-mode default|acceptEdits|bypassPermissions]"
   + " [--repo <bundle|git dir|artifact hash>] [--timeout 3600] [--max-concurrent 9] [--wait] -- <prompt…|->"
   + " | seat run --machine <host> --brief-file <file|-> [--label x] [--repo-id id --ref <sha|branch> --mode branch|detached|fresh"
   + " [--branch b] [--delta <bundle file>]] [--account <owner>:<id>] [--result-file rel/path] (v2: hosts announcing seats_v2)"
   + " | seat stop <id> | seat show <id> [--follow] | seat fetch <id> [-o file.bundle] [--save] [--file=true (deprecated)]";
+
+async function ossConsent(ctx: Ctx): Promise<number> {
+  const action = ctx.args.pos[1];
+  if (action !== "on" && action !== "off") throw new UsageError("seats codex-oss on|off");
+  if (action === "on" && !bool(ctx.args, "yes")) throw new UsageError("same-user OSS can read your files and accessible accounts; shared model resources are not isolated. Accept with seats codex-oss on --yes. Native execution remains held.");
+  if (action === "on") ctx.out("Same-user OSS tools retain access to your files and accounts. Shared model resources are not isolated; native execution remains held.");
+  await requirePerson(ctx, "change local Codex OSS consent", "change local OSS");
+  const result = await ctx.client().seatsCodexOss(action === "on");
+  ctx.out(ctx.json ? JSON.stringify(result) : `Local Ollama consent ${action}; native validation UNVERIFIED. Existing seat policy is unchanged.`);
+  return EXIT.ok;
+}
+async function ossDoctor(ctx: Ctx): Promise<number> {
+  if (str(ctx.args, "local-provider") !== "ollama") throw new UsageError("only --local-provider ollama is supported");
+  const result = await ctx.client().seatsDoctor("ollama");
+  ctx.out(ctx.json ? JSON.stringify(result) : JSON.stringify(result.local.codex_oss));
+  return EXIT.error;
+}
 
 export async function seats(ctx: Ctx): Promise<number> {
   const sub = ctx.args.pos[0];
@@ -41,7 +58,8 @@ export async function seats(ctx: Ctx): Promise<number> {
     // or without --yes: adminCtx hands a person the plain context, so a flag cannot be a way past it.
     case "allow": return configure(adminCtx(ctx, "allow seats here"), true);
     case "enable": return enableCommand(adminCtx(ctx, "enable seats here"));
-    case "doctor": return doctorCommand(ctx);
+    case "doctor": return str(ctx.args, "local-provider") ? ossDoctor(ctx) : doctorCommand(ctx);
+    case "codex-oss": return ossConsent(ctx);
     case "cleanup-root": return cleanupRoot(ctx);
     case "migration-preflight": return migrationPreflight(ctx);
     case "migrate": return migrate(ctx);
@@ -126,7 +144,7 @@ export function quarantineLines(l: SeatsLocalView): string[] {
 export function retiredResidueLine(l: SeatsLocalView): string | null {
   const r = l.retired_residue;
   if (!r || (!r.homes && !r.vaults)) return null;
-  return `${r.homes} retired seat home${r.homes === 1 ? "" : "s"} hold protected macOS files; Walkie cannot read them. `
+  return `${r.homes} retired seat home${r.homes === 1 ? "" : "s"} hold protected macOS files; Sqwakie cannot read them. `
     + `${r.vaults} Apple cache vault entr${r.vaults === 1 ? "y" : "ies"} remain; known entry size ${r.knownBytes} B (opaque contents cannot be measured).`;
 }
 
@@ -135,7 +153,7 @@ export function isolationLines(l: SeatsLocalView): string[] {
   if (l.disabled_reason) return [c.red(`Seats are allowed but don't run: ${l.disabled_reason}`), ...q];
   if (l.ephemeral) {
     return [
-      c.dim("Every seat runs as a fresh OS user made for it and destroyed after it (never reused): a seat can't reach your Walkie,"),
+      c.dim("Every seat runs as a fresh OS user made for it and destroyed after it (never reused): a seat can't reach your Sqwakie,"),
       c.dim(l.readable_home
         ? "another seat or a later one; stop, deny and busy act on every process of its user."
         : "your home (closed to other users), another seat or a later one; stop, deny and busy act on every process of its user."),
@@ -145,7 +163,7 @@ export function isolationLines(l: SeatsLocalView): string[] {
     ];
   }
   return [
-    c.yellow("Seats run as YOUR OS user: a seat can reach your Walkie (and act as you on this team) and read or change everything your user can."),
+    c.yellow("Seats run as YOUR OS user: a seat can reach your Sqwakie (and act as you on this team) and read or change everything your user can."),
     c.dim("Private worker directories organize each run; they do not restrict its OS access."),
     c.yellow("Only allow trusted launchers. Grok credential path denies and output checks cannot remove that file access."),
     c.yellow("Give them users of their own: walkie seats setup-user --apply (see INSTALL.md, \"Remote seats\")."),
@@ -316,7 +334,7 @@ async function configure(ctx: Ctx, allow: boolean): Promise<number> {
     // A person confirms (or passes --yes) before seats run as their own OS user; an agent of theirs goes ahead with the
     // flags it gave (AGENT-ADMIN-1: adminCtx checked agent admin is on, and its requests are marked, so the daemon audits).
     if (!before.allow && !before.ephemeral && adminCaller(ctx).kind === "person" && !bool(ctx.args, "yes")) {
-      await requirePerson(ctx, "let the team run agents as your OS user with access to your files, keys and Walkie daemon", "yes");
+      await requirePerson(ctx, "let the team run agents as your OS user with access to your files, keys and Sqwakie daemon", "yes");
     }
     const acceptReadableHome = bool(ctx.args, "accept-readable-home");
     const clearTools = bool(ctx.args, "clear-tool-policy");
@@ -467,6 +485,15 @@ async function run(ctx: Ctx): Promise<number> {
   if (!SEAT_RUNTIMES.includes(runtime)) throw new UsageError(`--runtime must be one of ${SEAT_RUNTIMES.join(", ")}`);
   const mode = str(ctx.args, "permission-mode") as SeatMode | undefined;
   if (mode !== undefined && !SEAT_MODES.includes(mode)) throw new UsageError(`--permission-mode must be one of ${SEAT_MODES.join(", ")}`);
+  const localProvider = str(ctx.args, "local-provider");
+  if (localProvider !== undefined) {
+    const allowed = new Set(["machine", "runtime", "model", "local-provider", "permission-mode", "brief-file", "repo-id", "ref", "mode", "branch", "delta", "label", "result-file", "timeout", "max-concurrent", "wait", "wait-timeout", "json", "agent", "for-agent"]);
+    for (const flag of ctx.args.flags.keys()) if (!allowed.has(flag)) throw new UsageError(`unsupported local OSS option: --${flag}`);
+    if (localProvider !== "ollama" || runtime !== "codex" || !SeatLocalModel.safeParse(str(ctx.args, "model")).success || str(ctx.args, "account") || str(ctx.args, "repo"))
+      throw new UsageError("local OSS needs --runtime codex --local-provider ollama --model <local model>, no account or v1 repo");
+    // Before v2Fields reads a brief or uploads a delta, and before repoBundle.
+    await ctx.client().seatsOssPreflight({ machine, runtime: "codex", local_provider: "ollama", model: str(ctx.args, "model")! });
+  }
   const v2 = await v2Fields(ctx);
   const rest = ctx.args.pos.slice(1);
   const prompt = v2?.brief !== undefined && !rest.length ? "" : rest.length === 1 && rest[0] === "-" ? await readStdin() : rest.join(" ");
@@ -482,7 +509,7 @@ async function run(ctx: Ctx): Promise<number> {
   const maxConcurrent = int(ctx.args, "max-concurrent");
   const res = await client.seatRun({
     machine: node.node_id, runtime, ...(prompt.trim() ? { prompt } : {}), ...(str(ctx.args, "model") ? { model: str(ctx.args, "model") } : {}),
-    ...(mode ? { permission_mode: mode } : {}), ...(bundle ? { bundle } : {}), ...(v2 ?? {}),
+    ...(mode ? { permission_mode: mode } : {}), ...(bundle ? { bundle } : {}), ...(v2 ?? {}), ...(localProvider ? { v: 2 as const, local_provider: "ollama" as const } : {}),
     ...(timeout !== undefined ? { timeout_s: timeout } : {}), ...(maxConcurrent !== undefined ? { max_concurrent: maxConcurrent } : {}),
   });
   const a = res.host.availability;

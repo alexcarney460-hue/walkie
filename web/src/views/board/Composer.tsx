@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Bot, Laptop, User } from "lucide-react";
 import { api, friendlyError } from "../../api/client.ts";
 import { useActions, useStore } from "../../state/store.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 
 interface Suggestion { address: string; label: string; kind: "person" | "machine" | "agent" }
 
@@ -13,7 +14,7 @@ function useAddressBook(): Suggestion[] {
   return useMemo(() => {
     const people: Suggestion[] = (team?.members ?? []).map((m) => ({ address: `@${m.handle}`, label: m.display_name ?? m.handle, kind: "person" }));
     const machines: Suggestion[] = nodes.map((n) => ({ address: `@${n.handle}/${n.hostname}`, label: `any agent on ${n.hostname}`, kind: "machine" }));
-    const agentList: Suggestion[] = agents.map((a) => ({ address: `@${a.handle}/${a.hostname}/${a.agent}`, label: a.status.title ?? a.agent, kind: "agent" }));
+    const agentList: Suggestion[] = agents.map((a) => ({ address: `@${a.handle}/${a.hostname}/${a.agent}`, label: a.status.title ? displayStoredText(a.status.title) : a.agent, kind: "agent" }));
     return [...people, ...agentList, ...machines];
   }, [team?.members, nodes, agents]);
 }

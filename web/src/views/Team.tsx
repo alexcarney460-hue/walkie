@@ -12,22 +12,25 @@ import { useCoarseNow } from "../lib/time.ts";
 import { useStore } from "../state/store.tsx";
 import { BillingPanel } from "./Billing.tsx";
 import { AddMachineSheet } from "./AddMachineSheet.tsx";
+import { FleetLinkList, FleetLinkSheet } from "./FleetLinks.tsx";
 import { ChannelForm, InviteForm, PendingJoins } from "./TeamForms.tsx";
 import { PhoneDevices } from "./PhoneDevices.tsx";
 import { rentalForNode, useCompute } from "../api/compute.ts";
-import { AddComputeButton, AddComputeSheet, rentalStateLabel } from "./compute/AddComputeSheet.tsx";
+import {
+  AddComputeButton, AddComputeSheet, ComputeOnAuthority, CreditButton, authorityHost, computeAction, rentalStateLabel,
+} from "./compute/AddComputeSheet.tsx";
 import { RentedChip } from "./compute/RentedChip.tsx";
 import { ACTIVE_STATES, COMPUTE_ALERT_TEXT } from "../../../src/protocol/compute.ts";
 
 const ROLE_LABEL = { owner: "Owner", member: "Member", observer: "Observer" };
 
-/** How a machine is reached: Walkie Direct (by its key, no address to show) or its tailnet IP. */
+/** How a machine is reached: Sqwakie Direct (by its key, no address to show) or its tailnet IP. */
 function NetworkCell({ n }: { n: NodeView }) {
   if (n.transports?.includes("direct")) return <span className="chip" title="Peer-to-peer QUIC, dialed by the machine's key; encrypted relay when a direct path can't be punched">Direct</span>;
   return <span className="mono dim">{n.ip ? `Tailscale · ${n.ip}` : "Tailscale"}</span>;
 }
 
-/** Members admitted by a Walkie Direct invite have no Tailscale login. */
+/** Members admitted by a Sqwakie Direct invite have no Tailscale login. */
 function loginLabel(login: string): string {
   return login.startsWith("direct:") ? "Direct invite" : login;
 }
@@ -53,6 +56,8 @@ export function Team() {
   const closeAdding = useCallback(() => setAdding(null), []);
   const [renting, setRenting] = useState(false);
   const closeRenting = useCallback(() => setRenting(false), []);
+  const [fleet, setFleet] = useState(false);
+  const closeFleet = useCallback(() => setFleet(false), []);
   const owner = me?.role === "owner";
   const compute = useCompute(owner);
   if (!team) return null;
@@ -64,7 +69,7 @@ export function Team() {
     <div className="page">
       <PageHeader
         title={team.name}
-        meta={<>Team <span className="mono">{team.id}</span> · you are {me?.role ? ROLE_LABEL[me.role].toLowerCase() : "a guest"}{me?.transport?.mode === "direct" ? <> · Walkie Direct</> : me?.tailscale.login ? <> as <span className="mono">{me.tailscale.login}</span></> : null}</>}
+        meta={<>Team <span className="mono">{team.id}</span> · you are {me?.role ? ROLE_LABEL[me.role].toLowerCase() : "a guest"}{me?.transport?.mode === "direct" ? <> · Sqwakie Direct</> : me?.tailscale.login ? <> as <span className="mono">{me.tailscale.login}</span></> : null}</>}
       />
       <div className="team-grid">
         <div className="team-main">
@@ -107,7 +112,15 @@ export function Team() {
           </Section>
 
           <Section title="Machines" meta={`${nodes.filter((n) => n.online).length} of ${nodes.length} online`} id="machines-h"
-            actions={owner && compute.quotes?.available === true ? <AddComputeButton onOpen={() => setRenting(true)} /> : undefined}>
+            actions={owner ? <div className="flex items-center gap-2">
+              {computeAction(compute) === "rent" && (compute.authorityRequired
+                ? <ComputeOnAuthority host={authorityHost(nodes, team.authority)} />
+                : <AddComputeButton onOpen={() => setRenting(true)} />)}
+              {computeAction(compute) === "credit" && <CreditButton onOpen={() => setRenting(true)} />}
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => setFleet(true)} title="One link that adds many machines">
+                <Plus size={13} strokeWidth={2} aria-hidden="true" />Add machines
+              </button>
+            </div> : undefined}>
             {compute.state?.alerts?.map(alert => <p key={alert} role="alert">{COMPUTE_ALERT_TEXT[alert]}</p>)}
             <div className="table-wrap">
               <table className="table table-compact">
@@ -187,6 +200,11 @@ export function Team() {
             </Section>
           )}
           {owner && (
+            <Section title="Fleet links" id="fleet-h">
+              <FleetLinkList />
+            </Section>
+          )}
+          {owner && (
             <Section title="Add a teammate" id="invite-h">
               <InviteForm />
             </Section>
@@ -205,12 +223,13 @@ export function Team() {
             <p className="panel-empty">Fireflies, Wispr Flow and Linear post meeting and issue context into channels. <a className="text-link" href={hrefFor({ view: "integrations" })}>Set up integrations</a></p>
           </Section>
           {!owner && (
-            <p className="panel-empty">Only owners can add teammates, add machines or approve them: to put Walkie on another of your machines, ask {team.members.filter((m) => m.role === "owner").map((m) => m.display_name ?? m.handle).join(" or ")} for an &ldquo;Add a machine&rdquo; link.</p>
+            <p className="panel-empty">Only owners can add teammates, add machines or approve them: to put Sqwakie on another of your machines, ask {team.members.filter((m) => m.role === "owner").map((m) => m.display_name ?? m.handle).join(" or ")} for an &ldquo;Add a machine&rdquo; link (or a fleet link, for many machines).</p>
           )}
         </div>
       </div>
       {adding && <AddMachineSheet handle={adding.handle} name={adding.name} onClose={closeAdding} />}
       {renting && <AddComputeSheet onClose={closeRenting} />}
+      {fleet && <FleetLinkSheet onClose={closeFleet} />}
     </div>
   );
 }

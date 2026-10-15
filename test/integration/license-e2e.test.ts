@@ -16,6 +16,7 @@ import { makeBind } from "../../site/api/license/bind.ts";
 import { makeLicense } from "../../site/api/license/index.ts";
 import { makeRenew } from "../../site/api/license/renew.ts";
 import { fullEnv, MockStripe, subscription, testKeypair } from "../../site/test/helpers.ts";
+import { MemoryStore } from "../../site/api/_lib/compute/memory-store.ts";
 import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { runAsPerson } from "../helpers/person-cli.ts";
 
@@ -24,7 +25,11 @@ const DAY = 86_400_000;
 const kp = testKeypair();
 const verify = makeVerifier(kp.publicB64);
 const stripe = new MockStripe();
-const deps: Deps = { env: fullEnv(kp.pem), stripe: () => stripe, now: () => Date.now() };
+// The store matters only once the compute lock flips: the compute-capable bind records every binding in it and refuses
+// without one (lane C round 11). While the lock is on, the released handlers ignore it.
+const store = new MemoryStore();
+const deps: Deps & { computeStore: () => MemoryStore } = { env: fullEnv(kp.pem), stripe: () => stripe, now: () => Date.now(),
+  computeStore: () => store };
 const SUB = "sub_E2E1";
 const periodEnd = (ms: number) => Math.floor(ms / 1000);
 

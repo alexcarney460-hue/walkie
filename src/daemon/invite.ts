@@ -1,4 +1,4 @@
-// Walkie Direct invites (PROTOCOL §4 "Direct"). Without Tailscale there is no `whois` to say who a caller
+// Sqwakie Direct invites (PROTOCOL §4 "Direct"). Without Tailscale there is no `whois` to say who a caller
 // is, so an owner vouches for a new machine with a signed, single-use, expiring invite code:
 //
 //   "wk1" + base64url( v=1 | team(8) | authority pubkey(32) | issuer node id(8) | secret(16) | expiry s(u32)

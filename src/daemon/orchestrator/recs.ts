@@ -1,4 +1,4 @@
-// TALKIE-OPS-1 in the daemon: reading and writing WalkieTalkie's recommendations (protocol/talkie-recs.ts has the records and
+// TALKIE-OPS-1 in the daemon: reading and writing Talkie's recommendations (protocol/talkie-recs.ts has the records and
 // the fold). Nothing is stored beside the signed log: a list is read from the channels this member can see (a project's own
 // channel for a team recommendation, the owner-only schedule channel for an owners-only one), folded, and cut to what is
 // still relevant. `reconcile` is what the poll and the curation do each run: make what is new, keep what still holds, retire
@@ -188,7 +188,7 @@ function parseHeld(body: string | null): Held | null {
 }
 
 /**
- * The project-channel post for this recommendation, written by the same node and by WalkieTalkie. A create is read by the
+ * The project-channel post for this recommendation, written by the same node and by Talkie. A create is read by the
  * id in `action.title` (older posts have no `for`). Anything else is read by `talkie_title.for`, the recommendation's key.
  * A post a person wrote, or one from another node, is not it.
  */
@@ -207,7 +207,7 @@ function heldForRec(d: RecDeps, rec: Rec): Held | null {
     return parseHeld(row.body);
   }
   const row = d.core.store.db.query<{ body: string | null }, [string, string, string, string]>(
-    // `+author_agent`: keep SQLite on the channel's index instead of walking every WalkieTalkie post (WALK-108 r5 review).
+    // `+author_agent`: keep SQLite on the channel's index instead of walking every Talkie post (WALK-108 r5 review).
     `SELECT body FROM events WHERE channel = ? AND origin = ? AND +author_agent = ? AND +kind = 'msg.post' AND redacted = 0 AND status = 'ok'
        AND json_extract(body, '$.talkie_title.v') = 1 AND json_extract(body, '$.talkie_title.for') = ?
      ORDER BY ts DESC LIMIT 1`).get(channel, auth.origin, ORCHESTRATOR_AGENT, rec.key);
@@ -447,7 +447,7 @@ export function createRec(d: RecDeps, rec: NewRec, channel: string | null): stri
   return event.id;
 }
 
-/** WalkieTalkie retires a recommendation whose condition no longer holds (a person's answer is `answerRec`). */
+/** Talkie retires a recommendation whose condition no longer holds (a person's answer is `answerRec`). */
 export function supersedeRec(d: RecDeps, rec: Rec): void {
   emitRec(d, rec.channel, resolveText("superseded", rec.summary, d.core.myHandle() ?? "walkietalkie"), { v: 1, op: "resolve", rec: rec.id, status: "superseded", key: rec.key } satisfies RecResolveT, ORCHESTRATOR_AGENT);
   d.log?.info("talkie_rec_superseded", { rec: rec.id, kind: rec.kind });
@@ -676,7 +676,7 @@ function actionRecord(raw: string | null): { kind?: string; project?: string; ca
  * The approvals and dismissals of the last day, by recommendation key, read from the answers (each carries its
  * recommendation's key) and their recommendations alone, so a cooldown holds however many other records a busy channel has
  * seen since. A person's answer only, and only for the key its own recommendation has (a create in the same channel by an
- * owner's WalkieTalkie): an answer cannot name another recommendation's key to hold that one back.
+ * owner's Talkie): an answer cannot name another recommendation's key to hold that one back.
  */
 function recentAnswers(d: RecDeps, now: number): Map<string, { status: "approved" | "dismissed"; at: number }> {
   const out = new Map<string, { status: "approved" | "dismissed"; at: number }>();
@@ -762,7 +762,7 @@ export function recordRec(d: RecDeps, rec: NewRec, channel: string | null): Reco
  * made within the caps.
  */
 export function reconcile(d: RecDeps, o: { source: RecSource; scope: ReadonlySet<string>; desired: readonly Desired[]; canAct?: () => boolean }): ReconcileResult {
-  const fence = () => { if (o.canAct && !o.canAct()) throw new Error("WalkieTalkie lease expired"); };
+  const fence = () => { if (o.canAct && !o.canAct()) throw new Error("Talkie lease expired"); };
   const s = standing(d);
   const result: ReconcileResult = { created: 0, kept: 0, replaced: 0, superseded: 0, suppressed: 0, capped: 0 };
   const wanted = new Map<string, Desired>();

@@ -9,7 +9,7 @@ export function hiddenMachines(nodes: readonly NodeView[]): NodeView[] {
 }
 
 /**
- * This machine serves Walkie Direct and not Tailscale: `walkie direct enable` is for the other machines to run.
+ * This machine serves Sqwakie Direct and not Tailscale: `walkie direct enable` is for the other machines to run.
  * Anywhere else the fix is to run it here.
  */
 export function directOnlyHere(me: Pick<MeView, "transport"> | null): boolean {

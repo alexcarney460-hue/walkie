@@ -8,7 +8,7 @@ import { WalkieClient, WalkieError } from "../../client/index.ts";
 import { resolveAgentName } from "../../agent/identity.ts";
 import type { CardView, ProjectView, ProjectsPayload, TimelineEntry } from "../../protocol/projects/schema.ts";
 import { DEFAULT_STALE_HOURS, planSteward, type StewardPlan } from "../../protocol/projects/steward.ts";
-import { gather, type AgentRow, type StewardSource } from "../../daemon/projects/steward-gather.ts";
+import { gather, privatePhrasesFor, type AgentRow, type StewardSource } from "../../daemon/projects/steward-gather.ts";
 import type { RunResult } from "../../daemon/projects/steward-run.ts";
 import { bool, int, need, str, UsageError } from "../args.ts";
 import { agentFrom, EXIT, type Ctx } from "../context.ts";
@@ -38,6 +38,9 @@ export function apiSource(cl: WalkieClient): StewardSource {
     timeline: async (_p, card) => (await cl.request<{ timeline: TimelineEntry[] }>("GET", `/v1/tasks/${encodeURIComponent(card.id)}`)).timeline,
     agents: async () => (await cl.request<{ agents: AgentRow[] }>("GET", "/v1/agents")).agents,
     owners: async () => (await cl.team()).members.filter((m) => m.role === "owner").map((m) => m.handle),
+    privatePhrases: async (target) => privatePhrasesFor(target,
+      (await cl.request<ProjectsPayload>("GET", "/v1/projects")).projects,
+      async (p) => (await cl.request<{ tasks: CardView[] }>("GET", `/v1/tasks?project=${p.channel}&state=all&limit=500`)).tasks),
     linear: async (keys) => {
       try {
         const r = await cl.request<{ enabled: boolean; issues: Record<string, { state: string; state_type: string } | null> }>("GET", `/v1/linear/issues?keys=${keys.join(",")}`);

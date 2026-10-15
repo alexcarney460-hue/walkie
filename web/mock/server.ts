@@ -1,9 +1,9 @@
-// Mock Walkie daemon for dashboard development and product screenshots.
+// Mock Sqwakie daemon for dashboard development and product screenshots.
 //   bun mock/server.ts                 serve web/dist + the local API on 127.0.0.1:7457
 //   WALKIE_MOCK_PORT=7477                 other port (vite dev proxies to it via the same env)
 //   WALKIE_MOCK_FIRST_RUN=1               /v1/me returns team=null (first-run screen)
 //   WALKIE_MOCK_ROLE=member               view the dashboard as a non-owner
-//   WALKIE_MOCK_TRANSPORT=direct          a Walkie Direct team (invite codes, no tailnet IPs)
+//   WALKIE_MOCK_TRANSPORT=direct          a Sqwakie Direct team (invite codes, no tailnet IPs)
 //   WALKIE_MOCK_POOL=fleet                five machines shaped like our real fleet at four sites (split runs)
 //   WALKIE_MOCK_POOL_RUN=serving          a split run already serving (with WALKIE_MOCK_POOL=fleet)
 //   WALKIE_MOCK_POOL_SERVE=remote         atlas serves Qwen3 32B whole on its GPU (Connect, POOL-REAL-1)
@@ -38,6 +38,11 @@ import { CreditCheckoutReq, LocalRentReq, SiteStopReq } from "../../src/protocol
 import { TURN_SEATS_OFF } from "../../src/protocol/seats.ts";
 import { sha256Hex } from "./world.ts";
 import { addMachineCommand, addMachineLink, releaseTag } from "../../src/protocol/add-machine.ts";
+import { fleetLinkCommand, fleetLinkUrl, fleetLinkWindowsCommand } from "../../src/protocol/fleet-link.ts";
+import { CATALOG } from "../../src/pool/catalog.ts";
+
+const mockLinks: Array<{ id: string; short: string; handle: string; role: string; uses: number; used: number; pending: number;
+  expires_at: number; approve: boolean; created_at: number; created_by: string; revoked_at: number | null; state: string }> = [];
 import { VERSION } from "../../src/daemon/version.ts";
 
 const PORT = Number(process.env.WALKIE_MOCK_PORT ?? 7457);
@@ -65,7 +70,7 @@ const seats = new MockSeats(() => world.nodeViews(), () => world.me().handle, ()
 const compute = new MockCompute();
 const recommendations = new MockRecommendations();
 const phones = [{ id: "3f9a1c2b7d4e", name: "iPhone", created_at: Date.now() - 3 * 86_400_000, last_seen: Date.now() - 12 * 60_000, expires_at: Date.now() + 87 * 86_400_000 }];
-if (world.hasTeam) sim.start();
+if (world.hasTeam && process.env.WALKIE_MOCK_CAPTURE !== "1") sim.start();
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store" } });
@@ -158,9 +163,13 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (path === "/v1/peers") return json({ nodes: world.nodeViews() });
   if (path === "/v1/license" && method === "GET") return json(world.planView());
   if (path === "/v1/agents") return json(world.agentsPayload(q));
+  if (path === "/v1/guests" && method === "GET") return json({ guests: [], killed: false });
+  if (path === "/v1/orchestrator" && method === "GET") return json({ local: { running: false, state: "stopped", auto: false, restarts: 0 } });
+  if (path === "/v1/admin" && method === "GET") return json({ agent_admin: true, remote_admin: true, machine: world.meNodeHost, audit: [] });
   if (path === "/v1/accounts") return json({ accounts: world.accountViews(), pool: { policy: "company", at: Date.now() - 3_600_000, by: "maren" } });
   if (path.startsWith("/v1/compute/")) return computeRoute(req, path, method);
   if (path === "/v1/pool" && method === "GET") return json(pool.view());
+  if (path === "/v1/pool/models" && method === "GET") return json({ source: "built-in", state: "built-in", checked_at: null, note: null, refreshing: false, ...(!url.searchParams.has("brief") ? { catalog: CATALOG } : {}) });
   if (path === "/v1/pool/share" && method === "POST") {
     const b = (await body(req)) as { on?: unknown; max_gb?: unknown } | undefined;
     if (typeof b?.on !== "boolean") return fail(400, "invalid", "on: boolean");
@@ -233,12 +242,12 @@ async function api(req: Request, url: URL): Promise<Response> {
     return json(r.body, r.status);
   }
   if (path === "/v1/debug/reset-uses" && method === "GET") return json(Object.fromEntries(resetUses));
-  // Walkie on your phone (fictional device; the pairing link points at the real app URL but its secret is random).
+  // Sqwakie on your phone (fictional device; the pairing link points at the real app URL but its secret is random).
   if (path === "/v1/mobile" && method === "GET") return json({ linked: phones.length > 0, relay: "walkie-relay.fly.dev", pairing: 0, connected: 0, notice: null, devices: phones });
   if (path === "/v1/mobile/pair" && method === "POST") {
     const rand = (n: number) => Buffer.from(crypto.getRandomValues(new Uint8Array(n))).toString("base64url");
     const code = `${rand(16)}.${rand(16)}`; // fictional room id and secret
-    const link = `https://getwalkie.vercel.app/m#pair=${code}`;
+    const link = `https://sqwakie.si/m#pair=${code}`;
     return json({ url: link, code, expires_at: Date.now() + 10 * 60_000, qr: qrRows(link) });
   }
   const phone = /^\/v1\/mobile\/devices\/([0-9a-f]{12})$/.exec(path);
@@ -260,6 +269,11 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (path === "/v1/team/pending") {
     if (!isOwner()) return fail(403, "forbidden", "owners only");
     return json({ requests: world.pending });
+  }
+  // FLEET-LINK-1 (mock): the links minted below.
+  if (path === "/v1/team/links" && method === "GET") {
+    if (!isOwner()) return fail(403, "forbidden", "owner role required");
+    return json({ links: mockLinks, uses: [], authority: "maren-mbp" });
   }
 
   if (path === "/v1/events" && method === "GET") {
@@ -364,7 +378,7 @@ async function api(req: Request, url: URL): Promise<Response> {
 
   if (path === "/v1/team/invite-code") {
     const b = payload as { handle?: string; role?: string } | undefined;
-    if (world.transport !== "direct") return fail(409, "direct_unavailable", "this machine doesn't run Walkie Direct; invite Tailscale teammates by login");
+    if (world.transport !== "direct") return fail(409, "direct_unavailable", "this machine doesn't run Sqwakie Direct; invite Tailscale teammates by login");
     if (!b?.handle || !/^[a-z][a-z0-9-]{0,23}$/.test(b.handle)) return fail(400, "invalid", "handle: invalid");
     const existing = world.member(b.handle);
     const role = existing?.role ?? (b.role === "owner" || b.role === "observer" ? b.role : "member");
@@ -373,9 +387,36 @@ async function api(req: Request, url: URL): Promise<Response> {
     return json({ code, handle: b.handle, role, expires_at: Date.now() + 7 * 24 * 3600_000, existing_member: !!existing });
   }
 
+  // FLEET-LINK-1: fleet links, in memory (a fictional token of the real shape: it admits nothing in the mock).
+  if (path === "/v1/team/links") {
+    if (!isOwner()) return fail(403, "forbidden", "owner role required");
+    const b = (payload ?? {}) as { for?: string; uses?: number; expires_days?: number; approve?: boolean; owner_machines?: boolean };
+    const target = world.member(b.for ?? "maren") ?? world.member("maren");
+    if (!target) return fail(404, "not_found", "no such member");
+    if (target.role === "owner" && b.owner_machines !== true) return fail(409, "owner_target", "this link grants owner-level access; confirm the owner machines checkbox");
+    const id = sha256Hex(`link:${Date.now()}:${mockLinks.length}`).slice(0, 32);
+    const token = "wl1" + Buffer.from(sha256Hex(`token:${id}`).repeat(3), "hex").toString("base64url").slice(0, 190);
+    const tag = releaseTag(VERSION);
+    const view = {
+      id, short: id.slice(0, 8), handle: target.handle, role: target.role, uses: b.uses ?? 25, used: 0, pending: 0,
+      expires_at: Date.now() + (b.expires_days ?? 7) * 86_400_000, approve: b.approve === true, created_at: Date.now(),
+      created_by: "maren", revoked_at: null as number | null, state: "active" as string,
+    };
+    mockLinks.unshift(view);
+    return json({ ...view, token, link: fleetLinkUrl(token, tag), command: fleetLinkCommand(token, tag), windows_command: fleetLinkWindowsCommand(token, tag), version: VERSION });
+  }
+  if (path === "/v1/team/links/revoke") {
+    const id = (payload as { id?: string } | undefined)?.id ?? "";
+    const l = mockLinks.find((x) => x.id.startsWith(id));
+    if (!l) return fail(404, "not_found", `no fleet link ${id}`);
+    l.revoked_at = Date.now();
+    l.state = "revoked";
+    return json({ link: l });
+  }
+
   if (path === "/v1/team/add-machine") {
     const b = payload as { handle?: string } | undefined;
-    if (world.transport !== "direct") return fail(409, "direct_unavailable", "the team's roster authority doesn't run Walkie Direct yet");
+    if (world.transport !== "direct") return fail(409, "direct_unavailable", "the team's roster authority doesn't run Sqwakie Direct yet");
     const existing = b?.handle ? world.member(b.handle) : undefined;
     if (!existing) return fail(404, "not_found", `@${b?.handle ?? ""} isn't on the team`);
     // A fictional code of the real shape (it admits nothing: there is no peer network in the mock).

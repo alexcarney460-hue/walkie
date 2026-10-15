@@ -85,7 +85,7 @@ export function advanceJournal(j: Journal, release: string, team: string, now: n
 }
 
 export function assertExistingUbuntuTeam(j: Journal, observedTeam: string | null): void {
-  if (!j.joinStarted) throw new Error("Ubuntu already contains Walkie state");
+  if (!j.joinStarted) throw new Error("Ubuntu already contains Sqwakie state");
   if (observedTeam === null) {
     if (j.joinAdmitted || typeof j.code !== "string" || !j.code) throw new Error("join admission is unconfirmed and invite is missing");
     return;

@@ -20,7 +20,7 @@ import {
 } from "../../protocol/projects/steward.ts";
 import type { ProjectsIndex } from "./index.ts";
 import { comment, findProject, updateCard, updateProject, visibleProjects, type WriteCtx } from "./service.ts";
-import { gather, type AgentRow, type StewardSource } from "./steward-gather.ts";
+import { gather, privatePhrasesFor, type AgentRow, type StewardSource } from "./steward-gather.ts";
 
 export interface StewardDeps {
   readonly core: Core; readonly idx: ProjectsIndex; readonly sync: SyncManager; readonly client: PeerClient;
@@ -37,7 +37,7 @@ export interface RunOpts {
   readonly caller?: "person" | "agent" | "loop";
   /** A loop run: the lease (node id) it ran under, re-checked before every write (round 3, Codex r2 MED 4). */
   readonly lease?: string;
-  /** A WalkieTalkie scheduled run's renewable leadership check before each write. */
+  /** A Talkie scheduled run's renewable leadership check before each write. */
   readonly canAct?: () => boolean;
 }
 
@@ -87,7 +87,7 @@ export interface PeerVersion { hostname: string; self?: boolean; online: boolean
 
 /**
  * Why a move of a person's card must wait, or null: the first machine online now or seen in the last PEER_STALE_MS whose
- * Walkie is older than STEWARD_MIN_VERSION (the first release whose fold accepts the move) or hasn't reported a version
+ * Sqwakie is older than STEWARD_MIN_VERSION (the first release whose fold accepts the move) or hasn't reported a version
  * (fail closed). No exception for "the same version as this daemon": a development build calling itself pre.5 must not
  * pass a released pre.5 (round 3, Codex r2 HIGH 1). Machines offline for longer don't count (round 3, Opus r2 LOW).
  */
@@ -95,15 +95,15 @@ export function blockingPeer(nodes: readonly PeerVersion[], now: number): string
   for (const n of nodes) {
     if (n.self) continue;
     if (!n.online && (n.last_seen === null || now - n.last_seen > PEER_STALE_MS)) continue;
-    if (!n.version) return `waiting for ${n.hostname} to report its Walkie version`;
-    if (!versionAtLeast(n.version, STEWARD_MIN_VERSION)) return `waiting for ${n.hostname} to upgrade (it runs Walkie ${n.version}; this needs ${STEWARD_MIN_VERSION})`;
+    if (!n.version) return `waiting for ${n.hostname} to report its Sqwakie version`;
+    if (!versionAtLeast(n.version, STEWARD_MIN_VERSION)) return `waiting for ${n.hostname} to upgrade (it runs Sqwakie ${n.version}; this needs ${STEWARD_MIN_VERSION})`;
   }
   return null;
 }
 
 /** blockingPeer over this daemon's view of the machines. */
 export function peersFoldSteward(core: Core, sync: SyncManager, now = Date.now()): string | null {
-  if (!versionAtLeast(VERSION, STEWARD_MIN_VERSION)) return `this machine runs Walkie ${VERSION}; moves of a person's card need ${STEWARD_MIN_VERSION}`;
+  if (!versionAtLeast(VERSION, STEWARD_MIN_VERSION)) return `this machine runs Sqwakie ${VERSION}; moves of a person's card need ${STEWARD_MIN_VERSION}`;
   return blockingPeer(nodesView(core, sync).map((n) => ({
     hostname: n.hostname, self: n.self, online: n.online, last_seen: n.last_seen, ...(n.stats?.sys?.version ? { version: n.stats.sys.version } : {}),
   })), now);
@@ -121,6 +121,7 @@ export function daemonSource(d: StewardDeps): StewardSource {
     timeline: async (p, c) => d.idx.foldCardNow(p.channel, c.id)?.state.timeline ?? [],
     agents: async () => agentsView(d.core, d.sync) as unknown as AgentRow[],
     owners: async () => [...d.core.roster.members.values()].filter((m) => m.role === "owner").map((m) => m.handle),
+    privatePhrases: async (target) => privatePhrasesFor(target, visibleProjects(ro), async (p) => d.idx.db.cards(p.channel, { states: ["open", "archived"], limit: 20_000 })),
     linear: async (keys) => {
       if (!d.linear) return null;
       const r = await d.linear.issues(keys);
@@ -167,7 +168,7 @@ type Expected = Map<string, string>;
  * Then the op(s) and the evidence comment; a duplicate flag is a comment on both cards.
  */
 function apply(d: StewardDeps, m: StewardMove, channel: string, expected: Expected, lease: string | undefined, canAct?: () => boolean): void {
-  const fence = () => { if (canAct && !canAct()) throw new Error("WalkieTalkie lease expired"); };
+  const fence = () => { if (canAct && !canAct()) throw new Error("Talkie lease expired"); };
   fence();
   d.idx.flushAll();
   const p = d.idx.project(channel);

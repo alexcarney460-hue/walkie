@@ -26,7 +26,7 @@ import type { Author } from "../schemas.ts";
 import type { Column, ColumnRole } from "./schema.ts";
 import { commentSignal, excerpt, type CommentSignal } from "./steward-match.ts";
 import {
-  colName, commentText, firstOf, history, holdReason, hoursAgo, MAX_MOVES_PER_RUN, ownerHandle, roleOf, STEWARD_AGENT,
+  colName, commentEvidenceText, commentText, firstOf, history, holdReason, hoursAgo, MAX_MOVES_PER_RUN, ownerHandle, roleOf, STEWARD_AGENT,
   trustedAuthor, type BranchEvidence, type CardEvidence, type History, type LiveAgent, type StewardCard, type StewardInput,
   type StewardMove, type StewardPlan, type StewardSkip,
 } from "./steward-core.ts";
@@ -35,6 +35,13 @@ import { duplicates } from "./steward-dup.ts";
 export * from "./steward-core.ts";
 
 interface Ctx { readonly input: StewardInput; readonly columns: (card: StewardCard) => readonly Column[] }
+
+function commentQuote(c: NonNullable<History["lastComment"]>, max: number): string {
+  const safe = commentEvidenceText(c);
+  const short = excerpt(safe, max);
+  return safe.includes("(private name removed)") && !short.includes("(private name removed)")
+    ? `${short} (private name removed)` : short;
+}
 
 // ---- evidence per rule --------------------------------------------------------------------------------------------
 
@@ -46,7 +53,7 @@ function gitDone(branches: readonly BranchEvidence[] | null, now: number): strin
   const newestMerged = Math.max(...merged.map((b) => b.last_commit_at ?? 0));
   if (worked.some((b) => !b.merged_into && (b.last_commit_at ?? 0) > newestMerged)) return null;
   const b = [...merged].sort((x, y) => (y.last_commit_at ?? 0) - (x.last_commit_at ?? 0))[0] as BranchEvidence;
-  return `branch ${b.branch} (${b.own_commits} commit${b.own_commits === 1 ? "" : "s"}, last ${hoursAgo(now, b.last_commit_at ?? 0)}) is merged into ${b.merged_into}`;
+  return `a branch (${b.own_commits} commit${b.own_commits === 1 ? "" : "s"}, last ${hoursAgo(now, b.last_commit_at ?? 0)}) is merged into a release ref`;
 }
 
 /** Done evidence: from git / Linear (hard), and from a trusted comment (text). */
@@ -57,7 +64,7 @@ function doneEvidence(ev: CardEvidence, h: History, now: number): { hard: string
   if (ev.linear && ev.linear.state_type === "completed") hard.push(`Linear ${ev.linear.key} is ${ev.linear.state}`);
   const c = h.lastComment;
   const text = c && commentSignal(c.text as string) === "done"
-    ? [`the latest comment (${c.author.agent ?? `@${c.author.handle}`}, ${hoursAgo(now, c.ts)}) says "${excerpt(c.text as string, 80)}"`]
+    ? [`the latest comment (${c.author.agent ?? `@${c.author.handle}`}, ${hoursAgo(now, c.ts)}) says "${commentQuote(c, 80)}"`]
     : [];
   return { hard, text };
 }
@@ -68,7 +75,7 @@ function worked(ev: CardEvidence): BranchEvidence | null {
 }
 
 function agentLine(a: LiveAgent): string {
-  return `${a.auditor ? "audit agent" : "agent"} ${a.address} is working on it (status: ${excerpt(a.text, 70)})`;
+  return `${a.auditor ? "audit agent" : "agent"} ${a.address} is working on it`;
 }
 
 // ---- the plan -----------------------------------------------------------------------------------------------------
@@ -110,9 +117,9 @@ function decide(card: StewardCard, ctx: Ctx, cols: readonly Column[], role: Colu
     const col = firstOf(cols, "review");
     if (!col) return {};
     const why = [
-      `branch ${b.branch} has ${b.own_commits} commit${b.own_commits === 1 ? "" : "s"} (last ${hoursAgo(now, b.last_commit_at ?? 0)})`,
+      `a branch has ${b.own_commits} commit${b.own_commits === 1 ? "" : "s"} (last ${hoursAgo(now, b.last_commit_at ?? 0)})`,
       "no builder agent is working on it",
-      ...(signal === "review" && h.lastComment ? [`the latest comment asks for review: "${excerpt(h.lastComment.text as string, 80)}"`] : []),
+      ...(signal === "review" && h.lastComment ? [`the latest comment asks for review: "${commentQuote(h.lastComment, 80)}"`] : []),
       ...auditors.slice(0, 2).map(agentLine),
     ];
     v = { move: { rule: "review", to: col.id, evidence: why, ping: [] }, what: `moved ${card.key} from ${colName(cols, card.column)} to ${col.name}` };
@@ -142,9 +149,9 @@ function stale(card: StewardCard, ev: CardEvidence, h: History, cols: readonly C
   ];
   const sig = h.lastComment ? commentSignal(h.lastComment.text as string) : null;
   if ((sig === "error" || sig === "fail") && h.lastComment) {
-    const reason = excerpt(`stalled: ${h.lastComment.text as string}`, 300);
+    const reason = `stalled: ${commentQuote(h.lastComment, 260)}`;
     return {
-      move: { rule: "stale", blocked_reason: reason, evidence: [...evidence, `the last comment reports an error: "${excerpt(h.lastComment.text as string, 100)}"`], ping: [owner] },
+      move: { rule: "stale", blocked_reason: reason, evidence: [...evidence, `the last comment reports an error: "${commentQuote(h.lastComment, 100)}"`], ping: [owner] },
       what: `marked ${card.key} blocked with its last error`,
     };
   }

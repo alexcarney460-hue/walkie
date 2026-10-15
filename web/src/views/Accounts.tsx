@@ -36,7 +36,7 @@ export function Accounts() {
         meta={<>{accounts.length} account{accounts.length === 1 ? "" : "s"} · {accounts.filter(inUse).length} in use · usage left per window</>}
       />
       <p className="acct-intro muted">
-        Each machine reads the usage of the logins it holds and shares the numbers with the team; Walkie never refreshes a
+        Each machine reads the usage of the logins it holds and shares the numbers with the team; Sqwakie never refreshes a
         token. The one action here is using a limit reset, after you confirm, on a login this machine holds. Accounts
         marked Switchable are in their owner's vault: sessions started with <code>walkie claude</code> /
         <code>walkie codex</code> (or the shims) switch when an account hits its limit and resume on one with room.

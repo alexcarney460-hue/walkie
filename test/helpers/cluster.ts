@@ -2,7 +2,7 @@
 // Each node gets its own WALKIE_HOME under a short /tmp dir (unix socket paths are
 // limited to ~104 bytes on macOS), a random peer port on 127.0.0.1 and a
 // FakeIdentity that maps the caller's X-Walkie-Node header to its login.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WalkieClient } from "../../src/client/index.ts";
 import { FakeIdentity, type Identity, type WhoisResult } from "../../src/daemon/identity.ts";
@@ -88,7 +88,7 @@ export interface NodeSpec {
   seats?: SeatsOptions;
   /** Serve this dashboard build on the loopback port (scripts/orchestrator-demo.ts); default none. */
   webDir?: string;
-  /** RENT-2 rental compute: a fake site (base + fetch) and poll timing; false tests the release lock. */
+  /** RENT-2 rental compute: a fake site (base + fetch) and poll timing; false runs the shipped default (the real site origin). */
   compute?: ComputeOptions | false;
 }
 
@@ -171,7 +171,7 @@ export class Cluster {
   readonly identities = new Map<string, WhoisResult>();
   /** Walkie Direct: endpoint id (hex) → loopback socket addresses, filled by each Direct node as it binds. */
   readonly addressBook = new Map<string, string[]>();
-  readonly root = mkdtempSync("/tmp/walkie-");
+  readonly root = realpathSync(mkdtempSync("/tmp/walkie-"));
   readonly nodes: TestNode[] = [];
 
   async add(spec: NodeSpec): Promise<TestNode> {

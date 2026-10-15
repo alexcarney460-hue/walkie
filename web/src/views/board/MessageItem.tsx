@@ -11,6 +11,7 @@ import { SOURCES, sourceLink, sourceOf } from "../../lib/sources.ts";
 import { clock, countdown, fullTime, useNow } from "../../lib/time.ts";
 import { useStore } from "../../state/store.tsx";
 import { useMdOpts } from "../../state/useMdOpts.ts";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import type { ThreadSummary } from "./useFeed.ts";
 
 const FILE_ICON = { code: FileCode2, data: FileJson, text: FileText, image: FileIcon, archive: FileIcon, file: FileIcon };
@@ -48,7 +49,7 @@ export function AskCard({ view }: { view: AskView }) {
         <span className={`ask-state is-${state}`}>{ASK_STATE_LABEL[state]}</span>
         {state === "open" && <span className={`ask-expiry tnum ${left < 5 * 60_000 ? "is-urgent" : ""}`} title={`Expires ${fullTime(body.expires_at)}`}>expires in {countdown(left)}</span>}
       </div>
-      <Markdown text={body.text} opts={md} />
+      <Markdown text={displayStoredText(body.text)} opts={md} />
       {answer && (
         <div className="ask-answer">
           <AuthorAvatar author={answer.author} size={18} />
@@ -57,7 +58,7 @@ export function AskCard({ view }: { view: AskView }) {
               {answer.author.agent ? <span className="mono">{answer.author.agent}</span> : displayName(team?.members, answer.author.handle)}
               <span className="muted"> {(answer.body as { declined?: boolean }).declined ? "declined" : "answered"} · {clock(answer.ts)}</span>
             </span>
-            <Markdown text={String((answer.body as { text: string }).text)} opts={md} />
+            <Markdown text={displayStoredText(String((answer.body as { text: string }).text))} opts={md} />
           </div>
         </div>
       )}
@@ -111,7 +112,7 @@ function MessageItemImpl({ event, compact, thread, onOpenThread, active }: Props
       </>
     );
   } else {
-    content = <Markdown text={String((event.body as { text: string }).text)} opts={md} />;
+    content = <Markdown text={displayStoredText(String((event.body as { text: string }).text))} opts={md} />;
   }
 
   return (

@@ -58,11 +58,11 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
     if (f.release && !f.runnerProblem && f.helperVersion) {
       const v = f.helperVersion;
       const problem = helperVersionProblem(v);
-      out.push(!problem ? { ok: true, what: `the runner and user helper are this Walkie's (${v.want})` }
+      out.push(!problem ? { ok: true, what: `the runner and user helper are this Sqwakie's (${v.want})` }
         : { ok: v.state === "stale" ? false : "warn", what: problem, fix: "walkie seats setup-user --apply" });
     }
   } else if (local.same_user) {
-    out.push({ ok: "warn", what: "mode: same user (seats can reach your Walkie, files and keys)" });
+    out.push({ ok: "warn", what: "mode: same user (seats can reach your Sqwakie, files and keys)" });
   } else {
     out.push({ ok: false, what: "no seat users set up", fix: "walkie seats enable" });
   }
@@ -81,34 +81,34 @@ export function doctorChecks(local: SeatsLocalView, f: DoctorFacts): Check[] {
   out.push(!codexBin ? { ok: "warn", what: "Codex isn't installed where seats can run it (only Claude seats)", fix: local.ephemeral ? "install codex, then walkie seats setup-user --apply" : "install codex" }
     : local.codex_login === "unavailable" ? { ok: false, what: `Codex seats: ${local.codex_login_reason ?? "not signed in where seat users can use it (no ~/.codex/auth.json)"}`, fix: local.codex_login_reason ? undefined : "codex login" }
     : { ok: true, what: "Codex seats: signed in (this machine's own sign-in)" });
-  // WALK-103: the root-owned record of which Walkie on this machine owns its seat users.
-  if (local.seat_scope?.state === "other") out.push({ ok: false, what: local.seat_scope.why, fix: "walkie seats setup-user --apply, run from this Walkie, moves this machine's seat users to it" });
+  // WALK-103: the root-owned record of which Sqwakie on this machine owns its seat users.
+  if (local.seat_scope?.state === "other") out.push({ ok: false, what: local.seat_scope.why, fix: "walkie seats setup-user --apply, run from this Sqwakie, moves this machine's seat users to it" });
   if (local.seat_scope?.state === "legacy") out.push({ ok: "warn", what: local.seat_scope.why, fix: "walkie seats setup-user --apply" });
   if (local.foreign_users?.length) {
     const users = local.foreign_users;
-    out.push({ ok: "warn", what: `${users.length} seat user${users.length === 1 ? "" : "s"} here ${users.length === 1 ? "isn't" : "aren't"} this Walkie's to remove (${users.slice(0, 5).join(", ")}${users.length > 5 ? " …" : ""}): made before this update, or by another Walkie on this machine; Walkie leaves ${users.length === 1 ? "it" : "them"} and every process of ${users.length === 1 ? "it" : "them"} as they are`,
-      fix: local.seat_scope?.state === "other" ? "the Walkie that owns this machine's seat users removes them" : "walkie seats setup-user --apply, then restart the Walkie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update" });
+    out.push({ ok: "warn", what: `${users.length} seat user${users.length === 1 ? "" : "s"} here ${users.length === 1 ? "isn't" : "aren't"} this Sqwakie's to remove (${users.slice(0, 5).join(", ")}${users.length > 5 ? " …" : ""}): made before this update, or by another Sqwakie on this machine; Sqwakie leaves ${users.length === 1 ? "it" : "them"} and every process of ${users.length === 1 ? "it" : "them"} as they are`,
+      fix: local.seat_scope?.state === "other" ? "the Sqwakie that owns this machine's seat users removes them" : "walkie seats setup-user --apply, then restart the Sqwakie daemon: it removes them once nothing of them runs, and ends a seat card left running from before the update" });
   }
   for (const user of local.leftovers_running ?? []) {
-    out.push({ ok: "warn", what: `${user} is a leftover seat user that still runs processes no current seat of this Walkie started: it holds a seat slot until those processes end, then Walkie removes it`,
-      fix: `to end it now: sudo pkill -KILL -u ${user} (Walkie removes the user at its next retry)` });
+    out.push({ ok: "warn", what: `${user} is a leftover seat user that still runs processes no current seat of this Sqwakie started: it holds a seat slot until those processes end, then Sqwakie removes it`,
+      fix: `to end it now: sudo pkill -KILL -u ${user} (Sqwakie removes the user at its next retry)` });
   }
-  if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Walkie retries by itself every 30 s, no restart needed" });
+  if (local.reconcile_error) out.push({ ok: false, what: `new seats wait: the seat users the helper still holds couldn't be listed (${local.reconcile_error})`, fix: "walkie seats setup-user --apply (reinstalls the helper and its sudo rule); Sqwakie retries by itself every 30 s, no restart needed" });
   if (local.cleanup_in_flight && Date.now() - local.cleanup_in_flight.since >= 60_000) {
     const h = local.cleanup_in_flight;
     out.push({ ok: "warn", what: `walkie-s${h.user} cleanup has been running since ${new Date(h.since).toLocaleString()}` });
   }
   if (local.cleanup_helper_unfinished_since) {
     out.push({ ok: false, what: `a cleanup helper did not finish (since ${new Date(local.cleanup_helper_unfinished_since).toLocaleString()})`,
-      fix: "Walkie retries the seat user cleanup with backoff; its ledger claim remains pending" });
+      fix: "Sqwakie retries the seat user cleanup with backoff; its ledger claim remains pending" });
   }
   if (local.cleanup_helper_busy_since) {
     out.push({ ok: false, what: `a cleanup helper is still running (since ${new Date(local.cleanup_helper_busy_since).toLocaleString()})`,
-      fix: "Walkie retries the seat user cleanup with backoff" });
+      fix: "Sqwakie retries the seat user cleanup with backoff" });
   }
   if (local.retired_residue) {
     const r = local.retired_residue;
-    out.push({ ok: true, what: `${r.homes} retired seat home${r.homes === 1 ? "" : "s"} hold protected macOS files; Walkie cannot read them. `
+    out.push({ ok: true, what: `${r.homes} retired seat home${r.homes === 1 ? "" : "s"} hold protected macOS files; Sqwakie cannot read them. `
       + `${r.vaults} Apple cache vault entr${r.vaults === 1 ? "y" : "ies"} remain; known entry size ${r.knownBytes} B (opaque contents cannot be measured)` });
   }
   if (local.quarantined?.length) {
@@ -160,7 +160,7 @@ export async function doctorFacts(local: SeatsLocalView, team: string | null, ve
     const p = Bun.spawnSync(["sudo", "-n", DEFAULT_ADMIN, "seat-admin", "pending"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", cwd: "/", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
     const out = p.stdout.toString().trim();
     // This probe runs from the doctor, not from the registered daemon (WALK-103): the helper's refusal to list for it
-    // still shows sudo reaches the helper; whether this Walkie is the registered one is local.seat_scope's to say.
+    // still shows sudo reaches the helper; whether this Sqwakie is the registered one is local.seat_scope's to say.
     const problem = pendingProbeProblem(out);
     helper = problem === null ? "ok" : problem === "no answer"
       ? `sudo -n ${DEFAULT_ADMIN} seat-admin pending didn't answer (${(out || p.stderr.toString().trim()).slice(0, 160)})`

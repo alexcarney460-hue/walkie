@@ -137,7 +137,7 @@ export const resetUses = new Map<string, number>();
 export function mockPrepareReset(world: World, account: string): { status: number; body: unknown } {
   const a = world.accounts.find((x) => x.id === account && x.machines.some((m) => m.self));
   if (!a) return { status: 404, body: { error: { code: "not_found", message: "that account's login is not on this machine" } } };
-  if (a.provider !== "codex") return { status: 409, body: { error: { code: "not_supported", message: "this provider's resets are used on its own page, not through Walkie" } } };
+  if (a.provider !== "codex") return { status: 409, body: { error: { code: "not_supported", message: "this provider's resets are used on its own page, not through Sqwakie" } } };
   const open = [...prepared.entries()].find(([id, acc]) => acc === account && !attempts.has(id));
   const id = open?.[0] ?? crypto.randomUUID();
   prepared.set(id, account);
@@ -151,7 +151,7 @@ export function mockUseReset(world: World, account: string, requestId: string): 
   if (prior) return prior.account === account ? { status: 200, body: { result: prior.result } } : { status: 409, body: { error: { code: "request_reused", message: "that request id belongs to another account" } } };
   const a = world.accounts.find((x) => x.id === account && x.machines.some((m) => m.self));
   if (!a) return { status: 404, body: { error: { code: "not_found", message: "that account's login is not on this machine; use a reset from the dashboard of the machine that holds it" } } };
-  if (a.provider !== "codex") return { status: 409, body: { error: { code: "not_supported", message: "this provider's resets are used on its own page, not through Walkie" } } };
+  if (a.provider !== "codex") return { status: 409, body: { error: { code: "not_supported", message: "this provider's resets are used on its own page, not through Sqwakie" } } };
   const left = a.usage?.resets?.available ?? 0;
   const result: ResetResult = left > 0 ? { outcome: "reset", left: left - 1 } : { outcome: "none", left: 0 };
   attempts.set(requestId, { account, result });

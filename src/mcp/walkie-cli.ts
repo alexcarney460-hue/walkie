@@ -1,8 +1,8 @@
 // The walkie_cli MCP tool (ORCH-2 fix): one walkie CLI command, run as an argv array with no shell (pipes,
 // redirects, `;` and `$(…)` are plain text inside one argument), with this process's environment and identity, a
-// timeout and an output cap; its output is redacted. WalkieTalkie's platform access allows the Walkie MCP tools only,
+// timeout and an output cap; its output is redacted. Talkie's platform access allows the Sqwakie MCP tools only,
 // so this is how it runs `walkie …` without a Bash rule that shell chaining could escape. Refused: commands that run
-// another program with a credential, open credentials in plain text, replace or stop this Walkie, or read stdin.
+// another program with a credential, open credentials in plain text, replace or stop this Sqwakie, or read stdin.
 import { walkieArgv } from "../hooks/install.ts";
 import { parseArgs, UsageError } from "../cli/args.ts";
 import { CLI_BOOLEANS } from "../cli/booleans.ts";
@@ -15,15 +15,18 @@ export const CLI_MAX_OUTPUT = MAX_REMOTE_OUTPUT;
 /** Whole commands walkie_cli never runs, and why. */
 const REFUSED_COMMANDS: Readonly<Record<string, string>> = {
   claude: "runs Claude Code itself", codex: "runs Codex itself", mcp: "is the MCP server", hook: "is the hook entrypoint",
-  daemon: "starts or stops this Walkie", update: "replaces this Walkie", upgrade: "opens checkout", setup: "is the installer",
+  daemon: "starts or stops this Sqwakie", update: "replaces this Sqwakie", upgrade: "opens checkout", setup: "is the installer",
   dashboard: "prints a login link (a credential)", mobile: "pairs a phone (a credential)", token: "rotates the local token",
   init: "creates a team", join: "joins a team", license: "changes the plan",
 };
 /** Subcommands refused within an allowed command (the remote allow-list's `accounts exec` / `trust-cli`, and more). */
 const REFUSED_SUBS: Readonly<Record<string, ReadonlySet<string>>> = {
+  // `projects report` follows the daemon's project-admin gate, so an owner's or creator's agent may use it here.
   accounts: new Set(["exec", "trust-cli", "add", "shims", "allow-proxy"]),
   talkie: new Set(["start", "stop", "say", "log", "model", "access"]),
   orchestrator: new Set(["start", "stop", "say", "log", "model", "access"]),
+  channel: new Set(["archive"]),
+  team: new Set(["admit"]),
 };
 /** Options that read a terminal or stdin, or name a program to run (the remote allow-list's list). */
 const REFUSED_FLAGS = new Set(["--claude", "--claude-token-stdin", "--key", "--bin-dir", "--agent"]);
@@ -47,6 +50,9 @@ export function cliArgvProblem(args: readonly unknown[]): string | null {
     return `the arguments don't parse (${err instanceof UsageError ? err.message : "invalid"})`;
   }
   const sub = pos[0] ?? "";
+  if (cmd === "skills" && !["", "list", "show", "propose"].includes(sub))
+    return "walkie_cli runs skills list, show or propose only; a person handles approval decisions";
+  if (cmd === "team" && sub === "link" && pos[1] !== "list") return "walkie_cli doesn't run walkie team link decisions; a person runs them in their terminal";
   if (REFUSED_SUBS[cmd]?.has(sub)) return `walkie_cli doesn't run walkie ${cmd} ${sub}; a person runs it in their terminal or dashboard`;
   for (const a of argv) {
     if (REFUSED_FLAGS.has(a.split("=")[0] as string)) return `${a.split("=")[0]} can't be used here (it reads a terminal or names a program)`;

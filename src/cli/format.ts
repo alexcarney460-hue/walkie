@@ -1,5 +1,6 @@
 // Human output: ANSI colors only on a TTY with NO_COLOR unset; event/age formatting.
 import type { Event, TeamView } from "../protocol/schemas.ts";
+import { displayStoredText } from "../protocol/display-text.ts";
 
 export const color = process.stdout.isTTY === true && !process.env.NO_COLOR;
 
@@ -47,11 +48,11 @@ export function eventLine(ev: Event, hosts: HostMap): string {
   const head = `${c.gray(hhmm(ev.ts))} ${chan}${c.bold(who(ev, hosts))}`;
   let text: string;
   switch (ev.kind) {
-    case "msg.post": text = String(b.text ?? ""); break;
-    case "ask": text = `${c.yellow("ask")} → ${String(b.to)}: ${String(b.text ?? "")}  ${c.dim(`(${ev.id})`)}`; break;
-    case "answer": text = `${b.declined ? c.red("declined") : c.green("answer")} ${c.dim(`re ${String(b.ask)}`)}: ${String(b.text ?? "")}`; break;
+    case "msg.post": text = displayStoredText(String(b.text ?? "")); break;
+    case "ask": text = `${c.yellow("ask")} → ${String(b.to)}: ${displayStoredText(String(b.text ?? ""))}  ${c.dim(`(${ev.id})`)}`; break;
+    case "answer": text = `${b.declined ? c.red("declined") : c.green("answer")} ${c.dim(`re ${String(b.ask)}`)}: ${displayStoredText(String(b.text ?? ""))}`; break;
     case "artifact.share": text = `${c.magenta("shared")} ${String(b.name)} (${String(b.size)} B) ${c.dim(String(b.hash).slice(0, 12))}${b.note ? ` — ${String(b.note)}` : ""}`; break;
-    case "agent.status": text = `${c.dim("status")} ${String(b.agent)} ${String(b.state)}${b.title ? ` — ${String(b.title)}` : ""}`; break;
+    case "agent.status": text = `${c.dim("status")} ${String(b.agent)} ${String(b.state)}${b.title ? ` — ${displayStoredText(String(b.title))}` : ""}`; break;
     default: text = c.dim(ev.kind);
   }
   const indent = (b.thread as string | undefined) ? c.dim("  ↳ ") : "  ";

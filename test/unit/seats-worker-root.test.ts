@@ -20,7 +20,7 @@ test("private per-seat config and temp directories are removed without touching 
   expect(settings.hooks.SessionStart).toBeDefined();
   expect(settings.hooks.PostToolUse).toBeDefined();
   expect(readFileSync(join(root.codex, "config.toml"), "utf8")).toContain("[mcp_servers.walkie]");
-  expect(readFileSync(join(root.claude, "CLAUDE.md"), "utf8")).toContain("Walkie worker seat");
+  expect(readFileSync(join(root.claude, "CLAUDE.md"), "utf8")).toContain("Sqwakie worker seat");
   writeFileSync(join(root.claude, "session"), "transcript");
   removeWorkerRoot(home, root.key);
   expect(existsSync(root.root)).toBe(false);

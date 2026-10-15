@@ -17,10 +17,10 @@ describe("the Start dialog's access choice", () => {
     expect(input("platform")).toMatch(/type="radio"[^>]*name="orch-access"[^>]*checked=""/);
     expect(input("full")).toMatch(/type="radio"[^>]*name="orch-access"/);
     expect(input("full")).not.toContain("checked");
-    expect(out).toContain("Walkie platform");
+    expect(out).toContain("Sqwakie platform");
     expect(out).toContain("Full access");
     expect(out).toContain("bypass permissions");
-    expect(out.indexOf("orch-access")).toBeLessThan(out.indexOf("Start WalkieTalkie"));
+    expect(out.indexOf("orch-access")).toBeLessThan(out.indexOf("Start Talkie"));
   });
 
   test("the compact form (the offline bar) keeps both choices without the hints", () => {
@@ -57,7 +57,7 @@ describe("ORCH-2 model picker", () => {
   test("the Start dialog has the model picker next to the access choice, Default first", () => {
     const out = renderToStaticMarkup(<StartOrchestrator />);
     expect(out).toContain('id="orch-start-model"');
-    expect(out.indexOf("orch-model")).toBeLessThan(out.indexOf("Start WalkieTalkie"));
+    expect(out.indexOf("orch-model")).toBeLessThan(out.indexOf("Start Talkie"));
     expect(renderToStaticMarkup(<StartOrchestrator size="sm" />)).toContain('id="orch-start-model-sm"');
   });
 
@@ -75,38 +75,49 @@ describe("ORCH-2 model picker", () => {
     expect(html(orch)).toMatch(/data-testid="orchestrator-model"[^>]*>Claude · Opus</);
     expect(html(other)).not.toContain("orchestrator-model");
   });
+
+  test("retained status phrases show the new name, including accessible card text", () => {
+    const base = { id: "alex/mac/cc-1", agent: "cc-1", handle: "alex", node: "n1", hostname: "mac", updated_at: 1, machine_online: true, effective_state: "idle" as const, archived: false };
+    const render = (title: string, activity: string) => renderToStaticMarkup(<AgentCard agent={{ ...base, status: { agent: "cc-1", state: "idle", runtime: "claude-code", title, activity } } as unknown as AgentView} onOpen={() => undefined} />);
+    const connected = render("Connected to Walkie", "Connected to Walkie");
+    expect(connected).toContain("Connected to Sqwakie");
+    expect(connected).not.toContain("Connected to Walkie");
+    const revoked = render("Walkie access revoked", "Connected to Walkie");
+    expect(revoked).toContain("Sqwakie access revoked");
+    expect(revoked).not.toContain("Walkie access revoked");
+  });
 });
 
-describe("ORCH-2 WalkieTalkie in the dashboard", () => {
+describe("ORCH-2 Talkie in the dashboard", () => {
   test("standby names the lead and the takeover rule; no Start button", () => {
     const out = renderToStaticMarkup(<TalkieStateCard view={{ running: false, state: "standby", restarts: 0, lead: "alex-mbp", auto: true }} />);
-    expect(out).toContain("WalkieTalkie is on standby here");
+    expect(out).toContain("Talkie is on standby here");
     expect(out).toContain("alex-mbp");
     expect(out).toContain("offline for 5 minutes");
-    expect(out).not.toContain("Start WalkieTalkie");
+    expect(out).not.toContain("Start Talkie");
     expect(standingDown({ running: false, state: "standby", restarts: 0 })).toBe(true);
   });
 
   test("needs a model login: the reason and the one command", () => {
-    const out = renderToStaticMarkup(<TalkieStateCard view={{ running: false, state: "needs_login", restarts: 0, needs: "WalkieTalkie needs a Claude login for now (found codex; Codex/Kimi support is coming). Sign in with: claude", logins: ["codex"] }} />);
-    expect(out).toContain("WalkieTalkie needs a model login");
+    const out = renderToStaticMarkup(<TalkieStateCard view={{ running: false, state: "needs_login", restarts: 0, needs: "Talkie needs a Claude login for now (found codex; Codex/Kimi support is coming). Sign in with: claude", logins: ["codex"] }} />);
+    expect(out).toContain("Talkie needs a model login");
     expect(out).toContain("Codex/Kimi support is coming");
     expect(out).toContain("Found here: codex.");
     expect(out).toMatch(/claude/);
     expect(standingDown({ running: true, state: "idle", restarts: 0 })).toBe(false);
   });
 
-  test("the nav, the command palette and the Start button say WalkieTalkie", async () => {
+  test("the nav, the command palette and the Start button say Talkie", async () => {
     const shell = await Bun.file(new URL("../src/components/Shell.tsx", import.meta.url)).text();
-    expect(shell).toContain('label: "WalkieTalkie"');
-    expect(renderToStaticMarkup(<StartOrchestrator />)).toContain("Start WalkieTalkie");
+    expect(shell).toContain('label: "Talkie"');
+    expect(renderToStaticMarkup(<StartOrchestrator />)).toContain("Start Talkie");
     const card = renderToStaticMarkup(<AgentCard agent={{ id: "a/h/orchestrator", agent: "orchestrator", handle: "a", node: "n", hostname: "h", updated_at: 1, machine_online: true, effective_state: "idle", archived: false, status: { agent: "orchestrator", state: "idle", runtime: "claude-code" } } as unknown as AgentView} onOpen={() => undefined} />);
-    expect(card).toContain(">WalkieTalkie</span>");
+    expect(card).toContain(">Talkie</span>");
   });
 });
 
 describe("Codex RC MEDIUM 4: the header's access switch", () => {
-  test("Walkie tools / Full access, the current one selected", () => {
+  test("Sqwakie tools / Full access, the current one selected", () => {
     const out = renderToStaticMarkup(<AccessSelect value="full" onPick={() => undefined} />);
     expect(out).toMatch(/<label[^>]*for="orch-head-access"[^>]*>Access<\/label>/);
     expect([...out.matchAll(/<option[^>]*value="([^"]+)"/g)].map((m) => m[1])).toEqual(["platform", "full"]);
@@ -123,26 +134,26 @@ describe("pre.8: no Start press on the lead", () => {
   test("stopped by you: the one button is Resume (automatic)", () => {
     expect(notRunningKind(v({ stopped_by_hand: true }))).toBe("stopped_by_you");
     const out = renderToStaticMarkup(<StoppedCard kind="stopped_by_you" />);
-    expect(out).toContain("WalkieTalkie is stopped (by you)");
+    expect(out).toContain("Talkie is stopped (by you)");
     expect(out).toContain(">Resume</button>");
-    expect(out).not.toContain("Start WalkieTalkie");
+    expect(out).not.toContain("Start Talkie");
     expect(out.match(/<button/g)?.length).toBe(1);
   });
   test("not stopped by you, auto on: starting on its own, no button", () => {
     expect(notRunningKind(v({ auto: true }))).toBe("starting");
     const out = renderToStaticMarkup(<StoppedCard kind="starting" />);
-    expect(out).toContain("WalkieTalkie is starting");
+    expect(out).toContain("Talkie is starting");
     expect(out).toContain("nothing to press");
     expect(out).not.toContain("<button");
   });
   test("a capped crash loop shows its diagnostic and a deliberate restart", () => {
     const view = { running: false, state: "failed" as const, auto: true, restarts: 4,
-      last_error: "WalkieTalkie keeps failing: claude exited (code 1): unknown option" };
+      last_error: "Talkie keeps failing: claude exited (code 1): unknown option" };
     expect(notRunningKind(view)).toBe("failed");
     const out = renderToStaticMarkup(<StoppedCard kind="failed" view={view} />);
-    expect(out).toContain("WalkieTalkie keeps failing");
+    expect(out).toContain("Talkie keeps failing");
     expect(out).toContain("unknown option");
-    expect(out).toContain("Start WalkieTalkie");
+    expect(out).toContain("Start Talkie");
   });
   test("a daemon without the auto-start keeps the manual Start", () => {
     expect(notRunningKind(v({}))).toBe("manual");
@@ -154,10 +165,10 @@ describe("pre.8: no Start press on the lead", () => {
   });
 });
 
-test("the WalkieTalkie card shows one bounded cleanup pending diagnostic", () => {
+test("the Talkie card shows one bounded cleanup pending diagnostic", () => {
   const out = renderToStaticMarkup(<TalkieStateCard view={{ running: false, state: "cleanup_pending", restarts: 0,
     last_error: "helper unavailable\n" + "x".repeat(500) }} />);
-  expect(out).toContain("WalkieTalkie cleanup pending");
+  expect(out).toContain("Talkie cleanup pending");
   expect(out).toContain("helper unavailable");
   expect(out).not.toContain("Stopped");
   expect(out).not.toContain("offline");

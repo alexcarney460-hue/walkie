@@ -1,4 +1,4 @@
-// Walkie mobile link, protocol v1 (WALKIE-PWA-1): the end-to-end encryption between a paired phone and its daemon.
+// Sqwakie mobile link, protocol v1 (WALKIE-PWA-1): the end-to-end encryption between a paired phone and its daemon.
 // Shared by the daemon, the phone app and the tests; WebCrypto only (runs in Bun and in the browser alike).
 //
 // A relay forwards opaque frames between the two sides; it never holds a key. Each connection starts with a

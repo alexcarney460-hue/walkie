@@ -4,7 +4,7 @@
 // enabled config included (Codex HIGH 2); the pool plan with one user and one group per seat (Codex MEDIUM 3), the
 // installed sudoers checked (Opus INFO); uid-wide stop/cont/reap that a setsid'd process can't leave (Codex HIGH 1).
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Input } from "../../src/daemon/seats/runner-io.ts";
 import { fakePids, uidOp } from "../../src/daemon/seats/runner-uid.ts";
@@ -86,7 +86,7 @@ describe("the seats' socket directory (Opus LOW 5)", () => {
     const b = makeSeatSocketDir(root);
     expect(a).not.toBe(b);
     expect(a).toMatch(/walkie-seats-\d+-[0-9a-f]{16}$/);
-    expect(Bun.spawnSync(["stat", "-f", "%Lp", a], { stdout: "pipe" }).stdout.toString().trim()).toBe("711");
+    expect(statSync(a).mode & 0o7777).toBe(0o711);
     // A symlink where the directory should be (or anything not a plain directory of this user) is refused.
     mkdirSync(join(root, "elsewhere"));
     symlinkSync(join(root, "elsewhere"), join(root, "link"));

@@ -20,10 +20,10 @@ export function recommendationFixtures(): Recommendation[] {
     group: group as Recommendation["group"], summary: summary!, reason: reason!,
     project_name: group === "setup" ? null : "Demo project", evidence: ["Fictional fixture for dashboard previews."],
     status: "pending", can_approve: true, can_dismiss: true,
-    // The two asks show word for word what approving sends; the stalled one also quotes what WalkieTalkie wrote (never sent).
-    ...(group === "reviews" ? { outgoing: `[WalkieTalkie recommendation 0000000${i + 1}]\nPlease take the review of card DEMO-3.\nCard DEMO-3: Search improvements\n(Sent by @demo-person on WalkieTalkie's recommendation: ${reason})` } : {}),
+    // The two asks show word for word what approving sends; the stalled one also quotes what Talkie wrote (never sent).
+    ...(group === "reviews" ? { outgoing: `[WalkieTalkie recommendation 0000000${i + 1}]\nPlease take the review of card DEMO-3.\nCard DEMO-3: Search improvements\n(Sent by @demo-person on Talkie's recommendation: ${reason})` } : {}),
     ...(group === "stalled" ? { context: "Fictional fixture: the import task's agent stopped reporting.",
-      outgoing: `[WalkieTalkie recommendation 0000000${i + 1}]\nHow is card DEMO-4 going? Please post an update on the card.\nCard DEMO-4: Import task\n(Sent by @demo-person on WalkieTalkie's recommendation.)` } : {}),
+      outgoing: `[WalkieTalkie recommendation 0000000${i + 1}]\nHow is card DEMO-4 going? Please post an update on the card.\nCard DEMO-4: Import task\n(Sent by @demo-person on Talkie's recommendation.)` } : {}),
   }));
 }
 

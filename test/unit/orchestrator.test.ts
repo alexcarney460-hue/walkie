@@ -9,6 +9,7 @@ import { interruptRequest, parseClaudeLine, userMessage } from "../../src/daemon
 import { buildTranscript, capReply } from "../../src/daemon/orchestrator/host.ts";
 import { parsePs, stillOurs, type ProcRow } from "../../src/daemon/orchestrator/group-record.ts";
 import { ClaudeChild, claudeArgs, childEnv, shellChildEnv, stderrDiagnostic } from "../../src/daemon/orchestrator/process.ts";
+import { installLinuxChildSubreaper } from "../../src/daemon/adopted-zombies.ts";
 import { Store } from "../../src/daemon/store.ts";
 import { MAX_REPLY_BYTES, ORCHESTRATOR_AGENT, REPLY_TRUNCATED_MARKER } from "../../src/protocol/orchestrator.ts";
 import { redactSecrets } from "../../src/protocol/safety.ts";
@@ -16,8 +17,20 @@ import { redactSecrets } from "../../src/protocol/safety.ts";
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()?.(); });
 
+// A zombie has exited and only waits to be collected, so it is not alive. On Linux a child subreaper (the seats
+// probe, oss-runtime.ts) adopts orphans; adopted-zombies.ts collects those zombies. A leftover zombie still answers
+// signal 0, which is the v0.2.0-pre.17 gate failure on a Spark (2026-10-09, WALK-175).
 function alive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); } catch { return false; }
+  if (process.platform !== "linux") return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat[stat.lastIndexOf(")") + 2] !== "Z";
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ESRCH") return false; // it went away between the signal and the read
+    throw err;
+  }
 }
 
 function script(body: string): { bin: string; dir: string } {
@@ -144,6 +157,8 @@ describe("stderr: scrubbed whole before it is cut; nothing shown when earlier ou
 describe("Codex MEDIUM 5: closing waits for the process group, also after Claude exited on its own", () => {
   test("a TERM-ignoring descendant is dead when close() returns", async () => {
     // Claude exits only once the descendant has its TERM trap (else the reap's SIGTERM could win that race).
+    // On Linux this process is a child subreaper, so the killed descendant would stay our zombie without a reap.
+    if (process.platform === "linux") installLinuxChildSubreaper();
     const { bin, dir } = script(`d="$(dirname "$0")"\nbash -c "trap '' TERM; touch '$d/ready'; exec sleep 300" &\necho $! > "$d/pid"\nwhile [ ! -f "$d/ready" ]; do sleep 0.01; done\nexit 0`);
     const child = new ClaudeChild(bin, [], dir, { PATH: "/usr/bin:/bin" }, { onSignal: () => undefined, onExit: () => undefined });
     await child.exited;
@@ -154,6 +169,17 @@ describe("Codex MEDIUM 5: closing waits for the process group, also after Claude
     expect(alive(pid)).toBe(true);
     await child.close();
     expect(alive(pid)).toBe(false);
+    if (process.platform === "linux") {
+      let fields: string[] | null = null;
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+      const ourZombie = fields !== null && (fields[0] === "Z" || fields[0] === "X") && Number(fields[1]) === process.pid;
+      expect(ourZombie).toBe(false);
+    }
   }, 15_000);
 });
 

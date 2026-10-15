@@ -6,6 +6,7 @@ import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { StatePill } from "../../components/primitives.tsx";
 import { ago, useNow } from "../../lib/time.ts";
 import { subagentLabel } from "../../../../src/protocol/subagents.ts";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { AgentCard } from "./AgentCard.tsx";
 
 export interface AgentGroup { agent: AgentView; subs: AgentView[] }
@@ -33,7 +34,7 @@ export function shortSubName(a: AgentView): string {
 function SubagentRowImpl({ agent, onOpen }: { agent: AgentView; onOpen: (id: string) => void }) {
   const now = useNow();
   const s = agent.status;
-  const title = s.title ?? subagentLabel(s.subagent_type);
+  const title = s.title ? displayStoredText(s.title) : subagentLabel(s.subagent_type);
   const seat = s.parent === "seats";
   return (
     <li>
@@ -53,7 +54,7 @@ function SubagentRowImpl({ agent, onOpen }: { agent: AgentView; onOpen: (id: str
           <span>{shortSubName(agent)}</span>
           {seat && <span> · {s.runtime}{s.model ? ` · ${s.model}` : ""}{s.launcher ? ` · @${s.launcher}` : ""}</span>}
           {s.title && s.subagent_type && <span> · {s.subagent_type}</span>}
-          {s.activity && <span> · {s.activity}</span>}
+          {s.activity && <span> · {displayStoredText(s.activity)}</span>}
         </span>
       </button>
     </li>

@@ -26,8 +26,8 @@ const tailscaleOnly = (hostname: string, vouched: boolean) => node(hostname, {
 });
 const reached = (hostname: string, via: "tailscale" | "direct") => node(hostname, { via });
 
-const WARN_TAILSCALE = "2 machines use only Walkie Direct (atlas, hestia) and this machine can't reach them: their agents show here only while another machine that reaches them is in sync. Fix: walkie direct enable";
-const HIDDEN_TAILSCALE = "2 machines use only Walkie Direct (atlas, hestia) and this machine can't reach them: no machine that reaches them is in sync now, so their agents are hidden here (or those machines are off). Fix: walkie direct enable";
+const WARN_TAILSCALE = "2 machines use only Sqwakie Direct (atlas, hestia) and this machine can't reach them: their agents show here only while another machine that reaches them is in sync. Fix: walkie direct enable";
+const HIDDEN_TAILSCALE = "2 machines use only Sqwakie Direct (atlas, hestia) and this machine can't reach them: no machine that reaches them is in sync now, so their agents are hidden here (or those machines are off). Fix: walkie direct enable";
 
 describe("a Tailscale-only machine", () => {
   test("some of the Direct-only machines are shown through another machine: a warning with the fix", () => {
@@ -49,11 +49,11 @@ describe("a Tailscale-only machine", () => {
   test("one machine: singular wording, same level and fix", () => {
     expect(unreachedCheck(TAILSCALE, [me, directOnly("atlas", true)])).toEqual({
       level: "warn", name: "mixed transports",
-      detail: "1 machine uses only Walkie Direct (atlas) and this machine can't reach it: its agents show here only while another machine that reaches it is in sync. Fix: walkie direct enable",
+      detail: "1 machine uses only Sqwakie Direct (atlas) and this machine can't reach it: its agents show here only while another machine that reaches it is in sync. Fix: walkie direct enable",
     });
     expect(unreachedCheck(TAILSCALE, [me, directOnly("atlas", false)])).toEqual({
       level: "warn", name: "mixed transports",
-      detail: "1 machine uses only Walkie Direct (atlas) and this machine can't reach it: no machine that reaches it is in sync now, so its agents are hidden here (or that machine is off). Fix: walkie direct enable",
+      detail: "1 machine uses only Sqwakie Direct (atlas) and this machine can't reach it: no machine that reaches it is in sync now, so its agents are hidden here (or that machine is off). Fix: walkie direct enable",
     });
   });
 
@@ -103,7 +103,7 @@ describe("the names", () => {
   test("at most eight are listed, then the number left", () => {
     const many = Array.from({ length: 11 }, (_, i) => directOnly(`m${String(i).padStart(2, "0")}`, false));
     const detail = unreachedCheck(TAILSCALE, [me, ...many])?.detail;
-    expect(detail).toStartWith("11 machines use only Walkie Direct (m00, m01, m02, m03, m04, m05, m06, m07 and 3 more) and");
+    expect(detail).toStartWith("11 machines use only Sqwakie Direct (m00, m01, m02, m03, m04, m05, m06, m07 and 3 more) and");
   });
 
   test("terminal control characters in a machine name are dropped", () => {

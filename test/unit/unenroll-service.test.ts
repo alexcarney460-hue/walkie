@@ -1,4 +1,4 @@
-// WALK-67 lane 8, round 2 (item 7): un-enrolling a macOS machine, at the person's own terminal, removes Walkie's SSH service
+// WALK-67 lane 8, round 2 (item 7): un-enrolling a macOS machine, at the person's own terminal, removes Sqwakie's SSH service
 // (dev.walkie.sshd and its files) in the SAME one administrator step that removes the root marker, and says so. Revoking the
 // grant leaves the service alone (it holds no key then). Stubbed: no root, launchd or /Library.
 import { describe, expect, test } from "bun:test";
@@ -6,16 +6,16 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { unenrollMacService, unenrollServiceNote } from "../../src/cli/commands/provision.ts";
 
-describe("what un-enroll says about Walkie's macOS SSH service", () => {
+describe("what un-enroll says about Sqwakie's macOS SSH service", () => {
   test("before the sudo: the person is told it goes in the same administrator step, but only when it is installed on macOS", () => {
     const note = unenrollServiceNote("darwin", true);
-    expect(note).toContain("also removes Walkie's SSH service (dev.walkie.sshd) and its files");
+    expect(note).toContain("also removes Sqwakie's SSH service (dev.walkie.sshd) and its files");
     expect(note).toContain("same administrator step");
     expect(unenrollServiceNote("darwin", false)).toBeNull();
     expect(unenrollServiceNote("linux", true)).toBeNull();
   });
   test("in the root step: removing it is said, nothing to remove is silent, and other platforms are never asked", () => {
-    expect(unenrollMacService("darwin", () => ({ removed: true }))).toBe("removed Walkie's SSH service (dev.walkie.sshd) and its files");
+    expect(unenrollMacService("darwin", () => ({ removed: true }))).toBe("removed Sqwakie's SSH service (dev.walkie.sshd) and its files");
     expect(unenrollMacService("darwin", () => ({ removed: false }))).toBeNull();
     let asked = 0;
     expect(unenrollMacService("linux", () => { asked++; return { removed: true }; })).toBeNull();

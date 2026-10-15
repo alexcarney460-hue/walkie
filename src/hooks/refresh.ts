@@ -1,7 +1,7 @@
 // Upgrading an existing Claude hook install to this version's events (WALKIE-MISSION-SUB-1; Opus mission-sub r1 #1-4).
 // The daemon does this at start after an upgrade, so it must never damage a person's settings.json:
-//   - additive only: it adds Walkie's hook for the events this version introduced (SUBAGENT_EVENTS) that have no
-//     Walkie hook yet, as new entries. It never modifies or removes an existing entry (a person's timeout, matcher,
+//   - additive only: it adds Sqwakie's hook for the events this version introduced (SUBAGENT_EVENTS) that have no
+//     Sqwakie hook yet, as new entries. It never modifies or removes an existing entry (a person's timeout, matcher,
 //     an entry shared with their own hooks, an event they removed on purpose all stay). An event it added once is
 //     never added again (recorded in <walkie home>/hooks-refresh.json), so removing it afterwards sticks.
 //   - the real file: a symlinked settings.json (dotfiles) is resolved first; the new file is written next to the
@@ -14,7 +14,7 @@
 //     actually there are recorded as added.
 //   - the file's indentation and final newline are kept; a malformed value (an event that isn't a list, `hooks` that
 //     isn't an object) is never replaced.
-// `walkie hooks install claude` (a person asking for it) still rewrites Walkie's entries in full.
+// `walkie hooks install claude` (a person asking for it) still rewrites Sqwakie's entries in full.
 import { accessSync, chmodSync, chownSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -28,13 +28,13 @@ export const SUBAGENT_EVENTS: readonly { event: string; matcher?: string }[] = C
 const MARKER = "hooks-refresh.json";
 
 export interface HooksReport {
-  /** The command Walkie's hooks run (null: Walkie's hooks are not installed). */
+  /** The command Sqwakie's hooks run (null: Sqwakie's hooks are not installed). */
   command: string | null;
-  /** This version's events without a Walkie hook. */
+  /** This version's events without a Sqwakie hook. */
   missing: string[];
-  /** Events whose Walkie hook shares an entry with the person's own hooks. */
+  /** Events whose Sqwakie hook shares an entry with the person's own hooks. */
   mixed: string[];
-  /** Events whose Walkie entry has another matcher or timeout than Walkie installs. */
+  /** Events whose Sqwakie entry has another matcher or timeout than Sqwakie installs. */
   customised: string[];
   /** Events whose value isn't a list of entries (left alone). "hooks" when `hooks` itself isn't an object. */
   malformed: string[];
@@ -69,7 +69,7 @@ export function inspectClaudeHooks(settings: Settings): HooksReport {
   return { command: installedClaudeCommand(settings), missing, mixed: [...mixed], customised: [...customised], malformed };
 }
 
-/** Pure: the refresh. New entries for SUBAGENT_EVENTS with no Walkie hook and not added before; nothing else changes. */
+/** Pure: the refresh. New entries for SUBAGENT_EVENTS with no Sqwakie hook and not added before; nothing else changes. */
 export function withNewClaudeEvents(settings: Settings, cmd: string, addedBefore: ReadonlySet<string>): { settings: Settings; added: string[] } {
   const report = inspectClaudeHooks(settings);
   // A malformed value is never replaced (Opus mission-sub r2): only missing events whose value is absent or a list.
@@ -111,7 +111,7 @@ export interface RefreshResult { status: RefreshStatus; added: string[]; detail?
 
 export interface RefreshOptions {
   settingsPath?: string;
-  /** Walkie's home (the marker file); default ~/.walkie. */
+  /** Sqwakie's home (the marker file); default ~/.walkie. */
   home?: string;
   now?: number;
   /** Tests: runs right before the target is read again (a concurrent writer). */
@@ -182,7 +182,7 @@ export function refreshClaudeHooks(opts: RefreshOptions = {}): RefreshResult {
       const missingNow = inspectClaudeHooks(JSON.parse(readFileSync(target, "utf8")) as Settings).missing;
       landed = added.filter((e) => !missingNow.includes(e));
     } catch { /* unreadable now: nothing recorded */ }
-    if (!landed.length) return { status: "changed-underneath", added: [], detail: "settings.json was rewritten while Walkie was updating it; left as it is" };
+    if (!landed.length) return { status: "changed-underneath", added: [], detail: "settings.json was rewritten while Sqwakie was updating it; left as it is" };
     try {
       (opts.writeMarker ?? writeMarker)(home, new Set([...before, ...landed]), now);
     } catch (err) {
@@ -191,7 +191,7 @@ export function refreshClaudeHooks(opts: RefreshOptions = {}): RefreshResult {
     }
     return { status: "written", added: landed };
   }
-  return { status: "changed-underneath", added: [], detail: "settings.json changed while Walkie was updating it; left as it is" };
+  return { status: "changed-underneath", added: [], detail: "settings.json changed while Sqwakie was updating it; left as it is" };
 }
 
 export interface HooksCheck { level: "ok" | "warn"; detail: string }
@@ -218,9 +218,9 @@ export function claudeHooksDoctor(opts: { settingsPath?: string; home?: string }
     if (!writable(target)) out.push({ level: "warn", detail: `${target} is not writable: the daemon can't add them` });
     if (links > 1) out.push({ level: "warn", detail: `${target} has ${links} hard links: the daemon leaves it alone; walkie hooks install claude adds them` });
   }
-  if (removed.length) out.push({ level: "warn", detail: `removed after Walkie added them (${removed.join(", ")}): sub-agents don't show; walkie hooks install claude adds them back` });
-  if (otherMissing.length) out.push({ level: "warn", detail: `events without Walkie's hook (${otherMissing.join(", ")}): walkie hooks install claude restores them` });
-  if (report.mixed.length) out.push({ level: "warn", detail: `Walkie's hook shares an entry with your own hooks (${report.mixed.join(", ")}): left as is` });
-  if (report.customised.length) out.push({ level: "ok", detail: `your changes to Walkie's entries kept (${report.customised.join(", ")}: matcher or timeout)` });
+  if (removed.length) out.push({ level: "warn", detail: `removed after Sqwakie added them (${removed.join(", ")}): sub-agents don't show; walkie hooks install claude adds them back` });
+  if (otherMissing.length) out.push({ level: "warn", detail: `events without Sqwakie's hook (${otherMissing.join(", ")}): walkie hooks install claude restores them` });
+  if (report.mixed.length) out.push({ level: "warn", detail: `Sqwakie's hook shares an entry with your own hooks (${report.mixed.join(", ")}): left as is` });
+  if (report.customised.length) out.push({ level: "ok", detail: `your changes to Sqwakie's entries kept (${report.customised.join(", ")}: matcher or timeout)` });
   return out;
 }

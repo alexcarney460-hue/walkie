@@ -1,7 +1,7 @@
 // Start and stop this machine's orchestrator from the dashboard (POST /v1/orchestrator/start | stop). The dashboard is
 // the person at this machine (a session): the daemon lets it, and refuses agents and the paired phone (routes.ts);
 // the phone app has no Orchestrator tab. Start sends only the access and model the person picks (ORCH-2: `platform`, the default,
-// always allows the Walkie tools and CLI; `full` allows every tool); the rest is the daemon's defaults (Claude from its
+// always allows the Sqwakie tools and CLI; `full` allows every tool); the rest is the daemon's defaults (Claude from its
 // PATH or the usual install places, the home directory, default permissions). `walkie orchestrator start` sets them.
 import { useEffect, useRef, useState } from "react";
 import { Play, Square } from "lucide-react";
@@ -14,7 +14,7 @@ import { ModelPicker } from "./ModelPicker.tsx";
 const STARTED_WAIT_MS = 20_000;
 
 const ACCESS_OPTIONS: readonly { value: OrchestratorAccess; label: string; hint: string }[] = [
-  { value: "platform", label: "Walkie platform", hint: "Recommended. Runs Walkie for you (boards, agents, seats, accounts); other tools follow the default permissions, so some are refused." },
+  { value: "platform", label: "Sqwakie platform", hint: "Recommended. Runs Sqwakie for you (boards, agents, seats, accounts); other tools follow the default permissions, so some are refused." },
   { value: "full", label: "Full access", hint: "Every tool allowed on this machine without asking (Claude's bypass permissions)." },
 ];
 
@@ -56,9 +56,9 @@ export function StartOrchestrator({ size }: { size?: "sm" }) {
     setError(null);
     let started = false;
     try {
-      // ORCH-2: another machine leads the team's WalkieTalkie; starting here too means two running.
+      // ORCH-2: another machine leads the team's Talkie; starting here too means two running.
       const lead = await api.orchestrator().then((v) => (v.local.running ? undefined : v.local.lead), () => undefined);
-      if (lead && !window.confirm(`WalkieTalkie is already running on ${lead}; start here anyway?`)) return;
+      if (lead && !window.confirm(`Talkie is already running on ${lead}; start here anyway?`)) return;
       const { local } = await api.orchestratorStart(access, model);
       if (local.running) { started = true; setPhase("started"); return; }
       setError(local.last_error ? `It didn't start: ${local.last_error}` : "It didn't start. Try walkie talkie start in a terminal to see why.");
@@ -74,7 +74,7 @@ export function StartOrchestrator({ size }: { size?: "sm" }) {
       <ModelPicker value={model} onPick={setModel} disabled={phase !== "idle"} compact={size === "sm"} id={size === "sm" ? "orch-start-model-sm" : "orch-start-model"} />
       <button type="button" className={`btn btn-primary${size === "sm" ? " btn-sm" : ""}`} disabled={phase !== "idle"} aria-busy={phase !== "idle"} onClick={() => void start()}>
         <Play size={size === "sm" ? 13 : 15} strokeWidth={2} aria-hidden="true" />
-        {phase === "idle" ? "Start WalkieTalkie" : "Starting…"}
+        {phase === "idle" ? "Start Talkie" : "Starting…"}
       </button>
       {error && <ErrorState message={error} compact />}
     </div>
@@ -86,7 +86,7 @@ export function StopOrchestrator() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stop = async () => {
-    if (!window.confirm("Stop WalkieTalkie on this machine? A reply in progress ends, and it stays stopped (it no longer starts on its own) until you resume it. Your conversations stay here.")) return;
+    if (!window.confirm("Stop Talkie on this machine? A reply in progress ends, and it stays stopped (it no longer starts on its own) until you resume it. Your conversations stay here.")) return;
     setError(null);
     setBusy(true);
     try {
@@ -99,7 +99,7 @@ export function StopOrchestrator() {
   };
   return (
     <>
-      <button type="button" className="btn btn-ghost btn-sm orch-head-stop" disabled={busy} aria-busy={busy} onClick={() => void stop()} title="Stop WalkieTalkie" aria-label={busy ? "Stopping WalkieTalkie" : "Stop WalkieTalkie"}>
+      <button type="button" className="btn btn-ghost btn-sm orch-head-stop" disabled={busy} aria-busy={busy} onClick={() => void stop()} title="Stop Talkie" aria-label={busy ? "Stopping Talkie" : "Stop Talkie"}>
         <Square size={13} strokeWidth={2} aria-hidden="true" />
         <span className="orch-head-new-label">{busy ? "Stopping…" : "Stop"}</span>
       </button>

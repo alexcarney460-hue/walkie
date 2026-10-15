@@ -13,7 +13,9 @@ export type { ComputeState, Quotes, RentResult, RentalView, QuoteTier, TierId, M
 
 /** A refusal from /v1/compute/*, with the 402 insufficient_credit amounts when the daemon sent them. */
 export class ComputeError extends ApiError {
-  constructor(code: string, message: string, status: number, readonly neededMicros?: number, readonly balanceMicros?: number) {
+  /** `expiringMicros`: credit a 402 left out because it expires within the first hour (it cannot cover one). */
+  constructor(code: string, message: string, status: number, readonly neededMicros?: number, readonly balanceMicros?: number,
+    readonly expiringMicros?: number) {
     super(code, message, status);
   }
 }
@@ -40,7 +42,8 @@ async function call(method: "GET" | "POST", path: string, body?: unknown): Promi
     const inner = (typeof top.error === "object" && top.error !== null ? top.error : {}) as Record<string, unknown>;
     const code = typeof inner.code === "string" ? inner.code : typeof top.error === "string" ? top.error : `http_${res.status}`;
     const message = typeof inner.message === "string" ? inner.message : typeof top.message === "string" ? top.message : res.statusText;
-    throw new ComputeError(code, message, res.status, num(inner.needed_micros) ?? num(top.needed_micros), num(inner.balance_micros) ?? num(top.balance_micros));
+    throw new ComputeError(code, message, res.status, num(inner.needed_micros) ?? num(top.needed_micros), num(inner.balance_micros) ?? num(top.balance_micros),
+      num(inner.expiring_micros) ?? num(top.expiring_micros));
   }
   return data;
 }
@@ -72,19 +75,27 @@ export function emptyState(): ComputeState {
   return { account_id: "ca_0000000000000000", team_id: "0000000000000000", status: "active", balance_micros: 0, burn_per_hour_micros: 0, hours_left: null, rentals: [] };
 }
 
+/**
+ * The daemon's compute state, and whether renting needs the roster authority: with no compute account on this machine
+ * the daemon says status "none", plus `authority_required` when this machine isn't the authority (an account, and the
+ * team's rentals, live only there).
+ */
+async function localState(): Promise<{ state: ComputeState; authorityRequired: boolean }> {
+  try {
+    const data = await call("GET", "/v1/compute/state");
+    const o = (data ?? {}) as { status?: unknown; authority_required?: unknown };
+    if (o.status === "none") return { state: emptyState(), authorityRequired: o.authority_required === true };
+    return { state: parse(ComputeState, data, "/v1/compute/state"), authorityRequired: false };
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404 && err.code === "no_compute_account") return { state: emptyState(), authorityRequired: false };
+    throw err;
+  }
+}
+
 export const computeApi = {
   quotes: async () => parse(Quotes, await call("GET", "/v1/compute/quotes"), "/v1/compute/quotes"),
-  state: async (): Promise<ComputeState> => {
-    try {
-      const data = await call("GET", "/v1/compute/state");
-      // No compute account on this machine yet (nothing rented or bought): the daemon says status "none".
-      if ((data as { status?: unknown } | null)?.status === "none") return emptyState();
-      return parse(ComputeState, data, "/v1/compute/state");
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404 && err.code === "no_compute_account") return emptyState();
-      throw err;
-    }
-  },
+  state: async (): Promise<ComputeState> => (await localState()).state,
+  localState,
   rent: async (machines: MachineAsk[], idleMinutes?: number, accountId?: string) =>
     parse(RentResult, await call("POST", "/v1/compute/rent", { machines, ...(idleMinutes !== undefined ? { idle_minutes: idleMinutes } : {}),
       ...(accountId ? { account_id: accountId } : {}) }), "/v1/compute/rent"),
@@ -103,7 +114,7 @@ export async function buyCredit(block: CreditBlock, open: (url: string) => void 
 
 /** Stop one rented machine after the person confirms; false when they declined. */
 export async function stopRental(id: string, name: string, confirm: (msg: string) => boolean = (m) => window.confirm(m)): Promise<boolean> {
-  if (!confirm(`Stop ${name}? Stopping deletes the machine and its disk. Unused credit stays on the account.`)) return false;
+  if (!confirm(`Stop ${name}? Stopping deletes the machine and its disk. Unused credit stays on the account until it expires.`)) return false;
   await computeApi.stop({ rental_id: id });
   computeStore.refresh();
   return true;
@@ -116,6 +127,8 @@ export interface ComputeSnapshot {
   readonly state: ComputeState | null;
   readonly quotes: Quotes | null;
   readonly error: string | null;
+  /** This machine isn't the roster authority and holds no compute account: renting happens on the authority. */
+  readonly authorityRequired?: boolean;
 }
 
 const IDLE: ComputeSnapshot = { status: "idle", state: null, quotes: null, error: null };
@@ -135,10 +148,10 @@ function createComputeStore() {
     try {
       const quotes = await computeApi.quotes();
       // One state read preserves shutdown access. Disabled compute never starts a recurring poll.
-      const state = await computeApi.state();
+      const { state, authorityRequired } = await computeApi.localState();
       if (quotes.available !== true && timer) { clearInterval(timer); timer = null; }
       if (quotes.available === true && users > 0 && !timer) timer = setInterval(() => { void refresh(); }, POLL_MS);
-      if (mine === seq) set({ status: "ready", state, quotes, error: null });
+      if (mine === seq) set({ status: "ready", state, quotes, error: null, ...(authorityRequired ? { authorityRequired: true } : {}) });
     } catch (err) {
       if (mine !== seq) return;
       const message = err instanceof ApiError ? (err.code === "compute_not_configured" ? "Rented machines aren't available yet." : err.message) : "Something went wrong. Try again.";

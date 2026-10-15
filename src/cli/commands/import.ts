@@ -89,7 +89,7 @@ async function follow(ctx: Ctx, cl: WalkieClient, job: JobView): Promise<number>
   for (const p of j.projects) ctx.out(`  ${c.bold(safeTerm(p.prefix))} ${safeTerm(p.name)}${p.created ? "" : c.dim(" (existing)")}`);
   for (const e of j.errors.slice(0, 20)) ctx.out(c.red(`  error${e.project ? ` [${safeTerm(e.project)}]` : ""}${e.issue ? ` ${safeTerm(e.issue)}` : ""}: ${safeTerm(e.message)}`));
   if (j.errors.length > 20) ctx.out(c.red(`  … ${j.errors.length - 20} more errors`));
-  if (j.state === "done") ctx.out(c.dim("keep Walkie current while you switch: walkie import linear --sync (or --schedule 10m)"));
+  if (j.state === "done") ctx.out(c.dim("keep Sqwakie current while you switch: walkie import linear --sync (or --schedule 10m)"));
   return j.state === "done" ? EXIT.ok : EXIT.error;
 }
 
@@ -100,7 +100,7 @@ function readSelection(path: string): Selection {
   const asPlan = raw as Partial<Plan>;
   const sel = Array.isArray(asPlan?.projects) && asPlan.projects.some((p) => Array.isArray((p as { issues?: unknown }).issues)) ? selectionOf(asPlan as Plan) : raw;
   const parsed = Selection.safeParse(sel);
-  if (!parsed.success) throw new UsageError(`${path} is not a Walkie import plan (${parsed.error.issues[0]?.path.join(".") ?? "?"}: ${parsed.error.issues[0]?.message ?? "invalid"})`);
+  if (!parsed.success) throw new UsageError(`${path} is not a Sqwakie import plan (${parsed.error.issues[0]?.path.join(".") ?? "?"}: ${parsed.error.issues[0]?.message ?? "invalid"})`);
   return parsed.data;
 }
 
@@ -110,7 +110,7 @@ async function status(ctx: Ctx, cl: WalkieClient): Promise<number> {
   ctx.out(`${c.bold("Linear import")}: ${s.imported.projects} projects, ${s.imported.cards} cards imported on this machine${s.integration ? c.dim(" · Linear integration on") : ""}`);
   if (s.job) ctx.out(`last run ${s.job.id} ${s.job.state}: ${jobLine(s.job)}`);
   const y = s.sync;
-  ctx.out(`sync: ${y.enabled ? c.green(`every ${y.interval_min} min`) : "off"}${y.two_way ? " · two-way (card moves set the Linear state)" : " · Linear → Walkie"} · key ${y.key}${y.key_file ? ` (${safeTerm(y.key_file)})` : ""}`);
+  ctx.out(`sync: ${y.enabled ? c.green(`every ${y.interval_min} min`) : "off"}${y.two_way ? " · two-way (card moves set the Linear state)" : " · Linear → Sqwakie"} · key ${y.key}${y.key_file ? ` (${safeTerm(y.key_file)})` : ""}`);
   if (y.last_run) ctx.out(c.dim(`  last sync ${new Date(y.last_run).toISOString().slice(0, 16).replace("T", " ")} UTC: ${safeTerm(y.last_error ?? y.last_result ?? "")}`));
   return EXIT.ok;
 }
@@ -138,7 +138,7 @@ export async function importCmd(ctx: Ctx): Promise<number> {
       enabled: !off, ...(minutes !== undefined ? { interval_min: minutes } : {}), ...(bool(ctx.args, "two-way") ? { two_way: true } : bool(ctx.args, "one-way") ? { two_way: false } : {}),
       ...(k.key_file ? { key_file: k.key_file } : {}),
     });
-    ctx.out(ctx.json ? JSON.stringify({ sync }) : sync.enabled ? `${c.green("sync on")}: every ${sync.interval_min} min, ${sync.two_way ? "two-way (card moves set the Linear state)" : "Linear → Walkie"}, key: ${sync.key}` : "sync off");
+    ctx.out(ctx.json ? JSON.stringify({ sync }) : sync.enabled ? `${c.green("sync on")}: every ${sync.interval_min} min, ${sync.two_way ? "two-way (card moves set the Linear state)" : "Linear → Sqwakie"}, key: ${sync.key}` : "sync off");
     return EXIT.ok;
   }
   if (bool(ctx.args, "sync")) {
@@ -159,7 +159,7 @@ export async function importCmd(ctx: Ctx): Promise<number> {
     requirePersonHere(ctx, "import from Linear");
     const sel = readSelection(planPath);
     const n = sel.projects.filter((p) => p.include).length;
-    if (!(await confirm(ctx, `Import ${n} Linear project${n === 1 ? "" : "s"} from ${planPath} into Walkie?`))) { ctx.out("nothing was imported"); return EXIT.timeout; }
+    if (!(await confirm(ctx, `Import ${n} Linear project${n === 1 ? "" : "s"} from ${planPath} into Sqwakie?`))) { ctx.out("nothing was imported"); return EXIT.timeout; }
     const { job } = await cl.linearImportRun({ selection: sel, ...keyFields(ctx) });
     return follow(ctx, cl, job);
   }

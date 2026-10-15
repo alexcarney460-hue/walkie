@@ -9,8 +9,8 @@ const view = (agent_admin: boolean, remote_admin: boolean) => ({
 
 test("AGENT-ADMIN-1: the dashboard toggle shows both switches, on, with the audit line", () => {
   const html = renderToStaticMarkup(<AgentAdminSwitches view={view(true, true)} busy={false} error={null} onToggle={() => undefined} />);
-  expect(html).toContain("Agents set up Walkie here");
-  expect(html).toContain("Owners set up Walkie here remotely");
+  expect(html).toContain("Agents set up Sqwakie here");
+  expect(html).toContain("Owners set up Sqwakie here remotely");
   expect((html.match(/role="switch"/g) ?? []).length).toBe(2);
   expect((html.match(/aria-checked="true"/g) ?? []).length).toBe(2);
   expect(html).toContain("@alex/alex-mbp/cc-3f9a21");

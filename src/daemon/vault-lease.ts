@@ -210,6 +210,7 @@ function eligibleEntry(core: Core, d: VaultPeerDeps, caller: MemberRec, account:
   const me = core.me();
   if (!me) deny("not_ready", "this machine is not in the team", 409);
   const entry = d.vault?.list().find((e) => e.id === account);
+  if (entry?.provider === "kimi") deny("not_allowed", "Kimi rotates its token about every 15 minutes; its vault login cannot be leased to another machine", 409);
   if (!entry || (entry.provider !== "claude" && !(entry.provider === "codex" && d.vault?.codexAccess))) deny("not_found", "no such account in this machine's vault", 404);
   const e = entry as VaultEntry;
   if (e.provider === "claude" && e.expires_at !== null && e.expires_at < now + CLAUDE_ACCESS_MIN_LEFT_MS) {
@@ -373,7 +374,7 @@ function noteUnverifiedLauncher(core: Core, node: string): void {
 
 /** Requester side: asks the owner's node, opens the sealed reply. */
 export async function requestLease(
-  // `node` (pre.4 merge): the owner's roster record, so the caller can pick a transport (Walkie Direct included).
+  // `node` (pre.4 merge): the owner's roster record, so the caller can pick a transport (Sqwakie Direct included).
   core: Core, call: (addr: { ip: string; port: number }, body: PeerLeaseReq, node: NodeRec) => Promise<PeerLeaseRes>, raw: unknown, now = Date.now(),
 ): Promise<{ token?: string; codex_auth?: string; expires_at?: number | null; owner: string; grant: string; gen: string }> {
   const p = LocalLeaseReq.safeParse(raw);

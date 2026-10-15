@@ -1,7 +1,7 @@
 // WALKIE-ACCOUNTS-1 phase 1: adapters (parse fixtures), identities, the never-refresh guarantee, cadence/backoff,
 // Grok reactive marking, peer-field validation and bounds, display rules, and the recording service.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeIdentityFrom, claudeTokenFrom, parseClaudeUsage, readClaudeToken } from "../../src/accounts/adapters/claude.ts";
 import { codexIdentityFrom, parseCodexSessionTail, parseCodexUsage, passiveCodexReading } from "../../src/accounts/adapters/codex.ts";
@@ -11,6 +11,7 @@ import { getUsageJson, isAllowedUsageUrl, USAGE_URLS } from "../../src/accounts/
 import { maskEmail } from "../../src/accounts/mask.ts";
 import { FAST_POLL_MS, POLL_MS, pollAccount, type PollDeps } from "../../src/accounts/poll.ts";
 import { AccountsService, loginFor } from "../../src/accounts/service.ts";
+import { pendingCodexHome, removeCodexHome } from "../../src/accounts/vault/codex-home.ts";
 import type { Login } from "../../src/accounts/types.ts";
 import type { Logger } from "../../src/daemon/logger.ts";
 import { runtimeOf } from "../../src/daemon/discovery.ts";
@@ -90,6 +91,40 @@ describe("adapters parse the live shapes", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "rollout-2026-09-26T10-00-00-00000000-0000-4000-8000-000000000000.jsonl"), fixtureText("codex-session.jsonl"));
     expect(passiveCodexReading(login(home, "codex"), now)?.windows[0]?.used_pct).toBe(13);
+  });
+
+  test("Codex passive fallback is withheld when a vault home links to the same sessions folder", async () => {
+    const home = freshHome({ codexExpiresAt: AT + 60_000 });
+    const sessions = join(home, ".codex", "sessions");
+    const d = new Date(AT);
+    const dir = join(sessions, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-vault.jsonl"), JSON.stringify({ timestamp: new Date(AT).toISOString(), payload: { type: "token_count", rate_limits: { primary: { used_percent: 100, window_minutes: 10080, resets_in_seconds: 3600 } } } }) + "\n");
+    const vaultRoot = join(home, "vault", "codex");
+    const vaultHome = join(vaultRoot, "account");
+    mkdirSync(vaultHome, { recursive: true });
+    symlinkSync(sessions, join(vaultHome, "sessions"));
+    const otherSessions = join(home, "other-sessions");
+    const otherVaultRoot = join(home, "other-vault", "codex");
+    const otherVaultHome = join(otherVaultRoot, "other-account");
+    mkdirSync(otherSessions, { recursive: true });
+    mkdirSync(otherVaultHome, { recursive: true });
+    symlinkSync(otherSessions, join(otherVaultHome, "sessions"));
+    const f = fakeFetch();
+    const base = { fetch: f.fetch, keychain: noKeychain, now: AT, keychainBlockedUntil: 0 };
+    const identity = codexIdentityFrom(fixture("codex-auth.json"))!;
+    const unshared = await pollAccount("codex", login(home, "codex"), identity, null, 0, { ...base, codexVaultRoot: otherVaultRoot });
+    expect(unshared.reading?.source).toBe("session");
+    writeFileSync(join(otherVaultRoot, ".DS_Store"), "");
+    const withStrayFile = await pollAccount("codex", login(home, "codex"), identity, null, 0, { ...base, codexVaultRoot: otherVaultRoot });
+    expect(withStrayFile.reading?.source).toBe("session");
+    const shared = await pollAccount("codex", login(home, "codex"), identity, null, 0, { ...base, codexVaultRoot: vaultRoot });
+    expect(shared.reading?.source).not.toBe("session");
+    expect(shared.reading?.reason).toBe("token_expiring");
+    const unreadableRoot = join(home, "not-a-directory");
+    writeFileSync(unreadableRoot, "");
+    const uncertain = await pollAccount("codex", login(home, "codex"), identity, null, 0, { ...base, codexVaultRoot: unreadableRoot });
+    expect(uncertain.reading?.source).not.toBe("session");
   });
 
   test("Kimi: `usage` (weekly) and limits[] (5-hour) are trusted; the disagreeing `usages` block is ignored", () => {
@@ -356,6 +391,106 @@ describe("display rules", () => {
 });
 
 describe("recording service", () => {
+  test("a vault home created and removed between polls still fences its shared rollout", async () => {
+    const home = freshHome({ codexExpiresAt: AT + 60_000 });
+    const walkieHome = join(root, `codex-between-${n++}`);
+    mkdirSync(walkieHome, { recursive: true });
+    const baseHome = join(home, ".codex");
+    const dir = join(baseHome, "sessions", "2026", "09", "26");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-vault.jsonl"), JSON.stringify({ timestamp: new Date(AT).toISOString(), payload: { type: "token_count", rate_limits: { primary: { used_percent: 100, window_minutes: 10080 } } } }) + "\n");
+    let now = AT;
+    const svc = new AccountsService(walkieHome, log, () => undefined, { home, fetch: fakeFetch().fetch, keychain: noKeychain, clock: () => now });
+    svc.observe([{ agent: "codex-between", runtime: "codex" }]);
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).toBe("session");
+    const vaultHome = pendingCodexHome(walkieHome, baseHome);
+    removeCodexHome(vaultHome, walkieHome);
+    now += POLL_MS;
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+  });
+
+  test("removing a vault link cannot assign its retained rollout to the local Codex login", async () => {
+    const home = freshHome({ codexExpiresAt: AT + 60_000 });
+    const walkieHome = join(root, `codex-unlink-${n++}`);
+    mkdirSync(walkieHome, { recursive: true });
+    const sessions = join(home, ".codex", "sessions");
+    const dir = join(sessions, "2026", "09", "26");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-vault.jsonl"), JSON.stringify({ timestamp: new Date(AT).toISOString(), payload: { type: "token_count", rate_limits: { primary: { used_percent: 100, window_minutes: 10080 } } } }) + "\n");
+    const vaultHome = join(walkieHome, "vault", "codex", "account");
+    mkdirSync(vaultHome, { recursive: true });
+    const link = join(vaultHome, "sessions");
+    symlinkSync(sessions, link);
+    let now = AT;
+    const svc = new AccountsService(walkieHome, log, () => undefined, { home, fetch: fakeFetch().fetch, keychain: noKeychain, clock: () => now });
+    svc.observe([{ agent: "codex-unlink", runtime: "codex" }]);
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+    unlinkSync(link);
+    now += POLL_MS;
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+  });
+
+  test("a shared Codex folder clears and permanently fences its old passive reading", async () => {
+    const home = freshHome({ codexExpiresAt: AT + 60_000 });
+    const walkieHome = join(root, `codex-share-${n++}`);
+    mkdirSync(walkieHome, { recursive: true });
+    const sessions = join(home, ".codex", "sessions");
+    const day = new Date(AT);
+    const dir = join(sessions, String(day.getFullYear()), String(day.getMonth() + 1).padStart(2, "0"), String(day.getDate()).padStart(2, "0"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-shared.jsonl"), JSON.stringify({ timestamp: new Date(AT).toISOString(), payload: { type: "token_count", rate_limits: { primary: { used_percent: 100, window_minutes: 10080, resets_in_seconds: 3600 } } } }) + "\n");
+    let now = AT;
+    const f = fakeFetch();
+    const opts = { home, fetch: f.fetch, keychain: noKeychain, clock: () => now };
+    const svc = new AccountsService(walkieHome, log, () => undefined, opts);
+    svc.observe([{ agent: "codex-share", runtime: "codex" }]);
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).toBe("session");
+
+    const vaultHome = join(walkieHome, "vault", "codex", "account");
+    mkdirSync(vaultHome, { recursive: true });
+    const link = join(vaultHome, "sessions");
+    symlinkSync(sessions, link);
+    now += POLL_MS;
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+
+    unlinkSync(link);
+    now += POLL_MS;
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+    const restarted = new AccountsService(walkieHome, log, () => undefined, opts);
+    await restarted.tick();
+    expect(restarted.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+  });
+
+  test("a failed usage API cannot retain a passive reading after sharing begins", async () => {
+    const home = freshHome({ codexExpiresAt: AT + 10 * 3_600_000 });
+    const walkieHome = join(root, `codex-failed-${n++}`);
+    mkdirSync(walkieHome, { recursive: true });
+    const sessions = join(home, ".codex", "sessions");
+    const dir = join(sessions, "2026", "09", "26");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-vault.jsonl"), JSON.stringify({ timestamp: new Date(AT).toISOString(), payload: { type: "token_count", rate_limits: { primary: { used_percent: 100, window_minutes: 10080 } } } }) + "\n");
+    const f = fakeFetch();
+    f.respond.set(USAGE_URLS.codex, () => new Response("{}", { status: 503 }));
+    let now = AT;
+    const svc = new AccountsService(walkieHome, log, () => undefined, { home, fetch: f.fetch, keychain: noKeychain, clock: () => now });
+    svc.observe([{ agent: "codex-failed", runtime: "codex" }]);
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).toBe("session");
+    const vaultHome = join(walkieHome, "vault", "codex", "account");
+    mkdirSync(vaultHome, { recursive: true });
+    symlinkSync(sessions, join(vaultHome, "sessions"));
+    now += POLL_MS;
+    await svc.tick();
+    expect(svc.snapshot().accounts.find((a) => a.provider === "codex")?.usage?.source).not.toBe("session");
+  });
+
   test("records the accounts running sessions use, maps agents, persists without tokens, and forgets after 7 days", async () => {
     const home = freshHome();
     const walkieHome = join(root, "wh");
@@ -424,6 +559,15 @@ describe("walkie accounts output", () => {
     expect(relogin).toContain("needs re-login — On alex-mbp: run `codex login`");
     expect(renderAccounts([], now)).toContain("No accounts recorded yet");
     expect(renderAccounts([view({ claimed_by: ["mallory"] })], now)).toContain("also reported by mallory (unverified, listed separately)");
+  });
+  test("re-login hint names the machine that reported it", () => {
+    const expired = { at: now, state: "relogin" as const, reason: "login_expired" as const, source: "none" as const, until: null, windows: [] };
+    const out = renderAccounts([view({ provider: "codex", usage: expired, usage_host: "spark-0e86", machines: [
+      { ...view().machines[0]!, usage: null },
+      { ...view().machines[0]!, node_id: "spark", hostname: "spark-0e86", self: false, usage: expired },
+    ] })], now);
+    expect(out).toContain("needs re-login — On spark-0e86: run `codex login`");
+    expect(out).not.toContain("On alex-mbp: run `codex login`");
   });
   test("--json for a model: rebuilt from an allowlist, left_pct added, labels validated, trust + provenance", () => {
     const j = accountJson(view({ label: "de***@ex***.test" }));

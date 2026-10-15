@@ -1,6 +1,6 @@
 // `walkie claude [args…]` / `walkie codex [args…]` (ACCOUNTS-2): the real CLI on the vault account with the most
 // room; when that account hits its limit, the session resumes on an account with room (src/switch/wrapper.ts). The arguments are the CLI's own,
-// passed through unparsed by Walkie.
+// passed through unparsed by Sqwakie.
 import { walkieHomeDir } from "../../accounts/vault/vault.ts";
 import { SystemProcessProvider } from "../../daemon/procs.ts";
 import { defaultSource } from "../../switch/accounts.ts";

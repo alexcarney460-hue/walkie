@@ -4,17 +4,19 @@
 // re-linked before every launch. An entry Codex replaced with a real file is left alone (never clobbered). Removing the
 // home unlinks the symlinks; it never follows them.
 // Round 5 (Codex 1): two entries are NOT linked, because they could route the vault account's requests elsewhere:
-//   · config.toml is a Walkie-managed COPY of the user's, rewritten before every launch with every provider / base-URL
+//   · config.toml is a Sqwakie-managed COPY of the user's, rewritten before every launch with every provider / base-URL
 //     key removed (model_provider, model_providers, chatgpt_base_url, openai_base_url — at the top level and in
 //     profiles); the result is parsed and checked, and a config that cannot be cleaned means no credentials. Project
 //     trust decisions Codex writes into the copy are carried back to the user's own config.toml.
 //   · .env (Codex loads $CODEX_HOME/.env into its own environment) is never linked or copied.
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import { privateDir } from "./vault.ts";
+import { checkVaultDirectories, checkVaultHome, discardFailedVaultHome, tightenVaultDirectory, verifyPrivateVaultHome } from "./vault-path.ts";
+import { recordSharedCodexSessions } from "./codex-shared.ts";
 
 /** Names that belong to one account and are never linked. */
 const OWN = /^(?:auth\.json.*|\.credentials\.json.*)$/;
@@ -66,8 +68,23 @@ function ensureBase(baseHome: string): void {
 
 /** Links every entry of the base home that the account home does not have (except the account's own files). */
 export function syncCodexHome(accountHome: string, baseHome: string): { linked: string[]; kept: string[] } {
-  privateDir(accountHome, true);
+  const walkieHome = dirname(dirname(dirname(accountHome)));
+  checkVaultHome(walkieHome, "codex", accountHome);
+  tightenVaultDirectory(accountHome);
+  checkVaultHome(walkieHome, "codex", accountHome);
+  const auth = join(accountHome, "auth.json");
+  try { if (!lstatSync(auth).isFile()) throw new Error("Codex vault auth.json is not a regular file"); }
+  catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
   ensureBase(baseHome);
+  const sessionsLink = join(accountHome, "sessions");
+  if (isLink(sessionsLink)) {
+    try { realpathSync(sessionsLink); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      recordCodexSessionsLink(accountHome, walkieHome);
+      unlinkSync(sessionsLink);
+    }
+  }
   const linked: string[] = [];
   const kept: string[] = [];
   // Round 5: an older version's links to config.toml / .env are removed; the cleaned config is written instead.
@@ -85,6 +102,9 @@ export function syncCodexHome(accountHome: string, baseHome: string): { linked: 
     if (st && !st.isSymbolicLink()) { kept.push(name); continue; }
     if (st) continue; // already a link
     try { symlinkSync(join(baseHome, name), at); linked.push(name); } catch { /* raced: next launch */ }
+  }
+  if (isLink(sessionsLink) && realpathSync(sessionsLink) === realpathSync(join(baseHome, "sessions"))) {
+    recordSharedCodexSessions(vaultCodexRoot(walkieHome), realpathSync(sessionsLink));
   }
   return { linked, kept };
 }
@@ -312,22 +332,62 @@ export function codexSessionsDir(home: string): string {
   try { return realpathSync(join(home, "sessions")); } catch { return join(home, "sessions"); }
 }
 
+/** The link target remains useful evidence when the sessions directory has gone missing. */
+function canonicalMissingTarget(path: string): string {
+  try { return realpathSync(path); }
+  catch {
+    const parent = dirname(path);
+    return parent === path ? path : resolve(canonicalMissingTarget(parent), basename(path));
+  }
+}
+
+function sessionsLinkTarget(link: string): string {
+  try { return realpathSync(link); }
+  catch { return canonicalMissingTarget(resolve(dirname(link), readlinkSync(link))); }
+}
+
+/** Preserve the target of an old sessions link before any vault or lease home drops it. */
+export function recordCodexSessionsLink(dir: string, walkieHome: string): void {
+  const link = join(dir, "sessions");
+  if (isLink(link)) recordSharedCodexSessions(vaultCodexRoot(walkieHome), sessionsLinkTarget(link));
+}
+
+/** One startup migration pass for vault homes made before shared-session markers existed. */
+export function sweepSharedCodexSessions(walkieHome: string, onError: (home: string, err: unknown) => void): void {
+  const root = vaultCodexRoot(walkieHome);
+  let homes: string[];
+  try { homes = readdirSync(root); }
+  catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") onError(root, err); return; }
+  for (const name of homes) {
+    const home = join(root, name);
+    try {
+      if (!statSync(home).isDirectory()) continue;
+      const link = join(home, "sessions");
+      if (isLink(link)) recordSharedCodexSessions(root, sessionsLinkTarget(link), (message) => onError(home, new Error(message)));
+    } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") onError(home, err); }
+  }
+}
+
 /** A fresh account home for `codex login` (renamed to the account id once the login is identified). */
 export function pendingCodexHome(walkieHome: string, baseHome: string): string {
   const root = vaultCodexRoot(walkieHome);
-  privateDir(join(walkieHome, "vault"), true);
-  privateDir(root, true);
+  checkVaultDirectories(walkieHome, root, { create: true });
   const dir = join(root, `pending-${randomBytes(6).toString("hex")}`);
   mkdirSync(dir, { mode: 0o700 });
+  checkVaultHome(walkieHome, "codex", dir);
   syncCodexHome(dir, baseHome);
   return dir;
 }
 
 export function finalCodexHome(pending: string, walkieHome: string, id: string): string {
-  if (!/^[0-9a-f]{24}$/.test(id)) throw new Error("invalid account id");
+  if (!/^[0-9a-f]{24}$/.test(id) || resolve(dirname(pending)) !== resolve(vaultCodexRoot(walkieHome)) || !/^pending-[0-9a-f]{12}$/.test(pending.split(sep).at(-1) ?? "")) throw new Error("invalid account id");
+  verifyPrivateVaultHome(walkieHome, "codex", pending);
   const dest = join(vaultCodexRoot(walkieHome), id);
-  if (existsSync(dest)) throw new Error("that account is already in the vault");
+  try { lstatSync(dest); throw new Error("that account is already in the vault"); }
+  catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
   renameSync(pending, dest);
+  try { verifyPrivateVaultHome(walkieHome, "codex", dest); }
+  catch (err) { discardFailedVaultHome(walkieHome, "codex", dest); throw err; }
   return dest;
 }
 
@@ -338,9 +398,12 @@ export function finalCodexHome(pending: string, walkieHome: string, id: string):
  */
 export function removeCodexHome(dir: string, walkieHome: string, opts: { move?: boolean; baseHome?: string } = {}): { moved: string[] } {
   if (!isVaultCodexHome(dir, walkieHome)) throw new Error("refusing to delete a directory outside the vault");
-  if (!existsSync(dir)) return { moved: [] };
+  if (!checkVaultHome(walkieHome, "codex", dir, { missingOk: true })) return { moved: [] };
   const names = readdirSync(dir);
-  // Walkie's own cleaned copies (config files, the agents directory, role configs) are deleted with the home.
+  for (const name of names.filter((n) => OWN.test(n))) {
+    if (!lstatSync(join(dir, name)).isFile()) throw new Error("Codex vault credential is not a regular file");
+  }
+  // Sqwakie's own cleaned copies (config files, the agents directory, role configs) are deleted with the home.
   const managedDir = (n: string) => (n === "agents" || n === AGENT_CONFIGS_DIR) && lstatSync(join(dir, n)).isDirectory();
   const real = names.filter((n) => !OWN.test(n) && !lstatSync(join(dir, n)).isSymbolicLink() && !isManagedConfig(join(dir, n)) && !managedDir(n));
   if (real.length) {
@@ -352,18 +415,26 @@ export function removeCodexHome(dir: string, walkieHome: string, opts: { move?: 
         + "move or delete them yourself, then remove the account again.");
     }
   }
+  // Older Walkie homes may have been linked before durable markers existed.
+  recordCodexSessionsLink(dir, walkieHome);
   const moved: string[] = [];
-  for (const n of real) { renameSync(join(dir, n), join(opts.baseHome as string, n)); moved.push(n); }
+  for (const n of real) { checkVaultHome(walkieHome, "codex", dir); renameSync(join(dir, n), join(opts.baseHome as string, n)); moved.push(n); }
   for (const n of names) {
+    checkVaultHome(walkieHome, "codex", dir);
     const p = join(dir, n);
     if (!existsSync(p) && !isLink(p)) continue;
     if (!moved.includes(n) && managedDir(n)) { rmSync(p, { recursive: true, force: true }); continue; }
     unlinkSync(p); // a symlink or auth.json* (files only: real directories were moved above)
   }
+  checkVaultHome(walkieHome, "codex", dir);
   rmdirSync(dir);
   return { moved };
 }
 
 function isLink(p: string): boolean {
-  try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
+  try { return lstatSync(p).isSymbolicLink(); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
 }

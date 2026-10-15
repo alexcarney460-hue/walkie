@@ -42,7 +42,7 @@ export class RunnerChild<S> {
   /**
    * A gated run (spec.gate): true once the runner says it is prepared and waits for `go`; false when it failed, was
    * stopped or ended first, or started its runtime without waiting (`ungated`: an installed runner older than this
-   * Walkie, which got no login). Always true at once for an ungated spec.
+   * Sqwakie, which got no login). Always true at once for an ungated spec.
    */
   readonly prepared: Promise<boolean>;
   /** The runner started its runtime without the `prepared` a gated spec asks for: an older installed copy. */

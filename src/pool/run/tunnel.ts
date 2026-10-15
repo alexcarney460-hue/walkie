@@ -1,7 +1,7 @@
 // Byte tunnels for split runs (WALKIE-POOL-2, hardened in POOL-3). llama-server on the head speaks llama.cpp's RPC
-// protocol to each rpc-server; neither side ever listens beyond 127.0.0.1. The bytes cross Walkie's authenticated
+// protocol to each rpc-server; neither side ever listens beyond 127.0.0.1. The bytes cross Sqwakie's authenticated
 // peer transport:
-//   Walkie Direct  one iroh QUIC bi-stream: read on demand, so QUIC flow control is the backpressure
+//   Sqwakie Direct  one iroh QUIC bi-stream: read on demand, so QUIC flow control is the backpressure
 //   Tailscale      a WebSocket on the existing peer API port. Bun 1.3's WebSockets can't stop reading their socket
 //                  and the client's bufferedAmount doesn't track what is in flight, so flow control is a credit
 //                  WINDOW: a sender may have at most WINDOW bytes the receiver hasn't consumed; the receiver sends
@@ -119,7 +119,7 @@ export function tcpEnd(sock: Socket): End {
 export interface IrohSend { writeAll(buf: number[]): Promise<void>; finish(): Promise<void>; reset(code: bigint): Promise<void> }
 export interface IrohRecv { read(limit: number): Promise<number[]>; stop(code: bigint): Promise<void> }
 
-/** One Walkie Direct bi-stream after its head frame. */
+/** One Sqwakie Direct bi-stream after its head frame. */
 export function irohEnd(send: IrohSend, recv: IrohRecv): End {
   let closed = false;
   const sig = signal();

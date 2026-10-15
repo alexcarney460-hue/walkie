@@ -104,7 +104,7 @@ export function sameScreen(a: ScreenMetaT | null | undefined, b: ScreenMetaT | n
 /** A page whose newest screen is older than this (while the project changed) is out of date. */
 export const SCREENS_STALE_MS = 7 * 24 * 3_600_000;
 
-/** Whether WalkieTalkie should say the screens are out of date: there are none, or the newest is more than a week old. */
+/** Whether Talkie should say the screens are out of date: there are none, or the newest is more than a week old. */
 export function screensWanted(s: { count: number; newest: number | null }, now: number): boolean {
   return s.count === 0 || s.newest === null || now - s.newest > SCREENS_STALE_MS;
 }

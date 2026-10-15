@@ -5,7 +5,7 @@ export interface ProjectCount { channel: string | null; name: string; prefix: st
 
 /** Count exactly the agents passed by Mission Control's default roster split. */
 export function projectCounts(shown: readonly AgentView[], projects: readonly ProjectView[]): ProjectCount[] {
-  if (!shown.length || !projects.length) return [];
+  if (!shown.length) return [];
   const byChannel = new Map(projects.map((project) => [project.channel, project]));
   const counts = new Map<string, number>();
   let unmatched = 0;

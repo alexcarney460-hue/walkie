@@ -109,7 +109,7 @@ describe("no launchers (ORCH-FIX-11): every agent is refused, even one an older 
     // the person stops and starts it
     expect((await personCli(kira, ["orchestrator", "stop"])).out).toContain("stopped");
     expect(await running()).toBe(false);
-    expect((await personCli(kira, ["orchestrator", "start", "--cwd", c.root])).out).toContain("WalkieTalkie started");
+    expect((await personCli(kira, ["orchestrator", "start", "--cwd", c.root])).out).toContain("Talkie started");
     expect(await running()).toBe(true);
   }, 60_000);
 });

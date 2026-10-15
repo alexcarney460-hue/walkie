@@ -169,7 +169,8 @@ describe("root removes a cron-denied user's spool entry directly (bug 2)", () =>
     expect(removeSpoolCrontab("walkie-s1", [tabs])).toContain("walkie-s1 is a directory");
     const file = join(t, "not-a-dir");
     writeFileSync(file, "");
-    expect(removeSpoolCrontab("walkie-s1", [file])).toMatch(/can't be checked \(ENOTDIR\)/);
+    expect(removeSpoolCrontab("walkie-s1", [file])).toBe(`Error: ${file} is a non-directory entry, not a spool directory`);
+    expect(readFileSync(file, "utf8")).toBe("");
   });
 });
 

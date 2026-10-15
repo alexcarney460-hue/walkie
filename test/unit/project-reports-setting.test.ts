@@ -3,9 +3,10 @@
 // member and an agent are refused with a plain reason), the stored view an older fold left behind, and the route guard.
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { readAudit } from "../../src/daemon/admin/audit.ts";
 import { dispatch, type RouteCtx } from "../../src/daemon/local-routes.ts";
 import { createLogger } from "../../src/daemon/logger.ts";
-import { registerHost, type OrchestratorHost } from "../../src/daemon/orchestrator/host.ts";
 import { FOLD_VERSION, ProjectsIndex } from "../../src/daemon/projects/index.ts";
 import "../../src/daemon/projects/routes.ts";
 import { updateProject, type WriteCtx } from "../../src/daemon/projects/service.ts";
@@ -106,8 +107,8 @@ describe("who may set it", () => {
     expect(statusReportDenial("owner", "alex", "kira")).toBeNull();
     expect(statusReportDenial("member", "kira", "kira")).toBeNull();
     expect(statusReportDenial("member", "bob", "kira")).toBe("only the project's creator or an owner can turn its status report on or off");
-    expect(statusReportDenial("observer", "kira", "kira")).toBe("observers can't change a project's status report");
-    expect(statusReportDenial("observer", "bob", "kira")).toBe("observers can't change a project's status report");
+    expect(statusReportDenial("observer", "kira", "kira")).toBe("observers can't change a project's status report; only the project's creator or an owner can turn it on or off");
+    expect(statusReportDenial("observer", "bob", "kira")).toBe("observers can't change a project's status report; only the project's creator or an owner can turn it on or off");
     expect(statusReportDenial(null, null, "kira")).toBe("only the project's creator or an owner can turn its status report on or off");
   });
 });
@@ -154,7 +155,7 @@ describe("the service", () => {
     await expect(updateProject(world("member").w, CH, { status_report: "hourly" }))
       .rejects.toMatchObject({ status: 403, message: "only the project's creator or an owner can turn its status report on or off" });
     await expect(updateProject(world("observer").w, CH, { status_report: "hourly" }))
-      .rejects.toMatchObject({ status: 403, message: "observers can't change a project's status report" });
+      .rejects.toMatchObject({ status: 403, message: expect.stringContaining("observers can't change a project's status report") });
   });
 
   test("an agent is refused: the switch is a person's", () => {
@@ -197,14 +198,35 @@ describe("the route", () => {
     await expect(request(h, undefined, { status_report: "daily" })).rejects.toMatchObject({ status: 400 });
   });
 
-  test("an agent is refused before the agent-admin gate, WalkieTalkie included, and nothing is written", async () => {
+  test("the owner's agent switches on and off; the audit and channel note name it and its person", async () => {
     const h = world();
-    registerHost(h.core, { acceptsToken: () => true } as unknown as OrchestratorHost);
-    const before = h.core.store.allocatedSelfSeq(h.core.nodeId);
-    for (const agent of ["cc-1", "orchestrator"]) {
-      await expect(request(h, agent, { status_report: "hourly" })).rejects.toMatchObject({ status: 403, message: expect.stringContaining("people only") });
+    for (const mode of ["hourly", "off"] as const) {
+      expect((await (await request(h, "cc-1", { status_report: mode })).json() as { project: ProjectView }).project.status_report).toBe(mode);
+      const last = h.core.store.queryEvents({ channel: CH, kinds: ["msg.post"], limit: 1 })[0];
+      expect(JSON.parse(last?.json ?? "{}").body.text).toContain("@alex/");
+      expect(JSON.parse(last?.json ?? "{}").body.text).toContain("cc-1");
     }
-    expect(h.core.store.allocatedSelfSeq(h.core.nodeId)).toBe(before);
+    const audit = readAudit(h.core.paths.home).filter((e) => String(e.action).includes("status_report"));
+    expect(audit).toHaveLength(2);
+    expect(audit.every((e) => String(e.actor).includes("@alex/") && String(e.actor).includes("cc-1") && !e.refused)).toBe(true);
+  });
+
+  test("a member's agent, an observer's agent, and an agent without an established person are refused", async () => {
+    for (const role of ["member", "observer"] as const) {
+      const h = world(role);
+      await expect(request(h, "cc-1", { status_report: "hourly" })).rejects.toMatchObject({ status: 403, message: expect.stringContaining(role === "observer" ? "observers" : "creator or an owner") });
+      expect(h.idx.project(CH)?.status_report).toBe("off");
+    }
+    const h = world();
+    h.core.myHandle = () => null;
+    await expect(request(h, "cc-1", { status_report: "hourly" })).rejects.toMatchObject({ status: 403, message: expect.stringContaining("creator or an owner") });
+  });
+
+  test("the machine agent-admin switch refuses an owner's agent", async () => {
+    const h = world();
+    writeFileSync(h.core.paths.config, JSON.stringify({ agent_admin: false }));
+    await expect(request(h, "cc-1", { status_report: "hourly" })).rejects.toMatchObject({ status: 403, code: "agent_admin_off" });
     expect(h.idx.project(CH)?.status_report).toBe("off");
+    expect(readAudit(h.core.paths.home)[0]).toMatchObject({ actor: expect.stringContaining("cc-1"), refused: "agent_admin_off" });
   });
 });

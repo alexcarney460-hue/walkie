@@ -172,7 +172,7 @@ describe("local loopback API", () => {
     const res = await fetch(url(alex, "/"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
-    expect(await res.text()).toContain("Walkie");
+    expect(await res.text()).toContain("Sqwakie");
   });
 
   test("unix socket is mode 0600", async () => {

@@ -150,7 +150,7 @@ export interface DiscoveryOptions {
   share?: SharePolicy | (() => SharePolicy);
   /** The Hermes profiles whose status may carry activity text (src/protocol/hermes-activity.ts), or a getter re-read every scan; default: none. */
   hermesActivity?: readonly string[] | (() => readonly string[]);
-  /** Walkie's home: the hooks' per-agent state, which says whether a cached title was set explicitly (default ~/.walkie). */
+  /** Sqwakie's home: the hooks' per-agent state, which says whether a cached title was set explicitly (default ~/.walkie). */
   home?: string;
   /** Claude's config directory for sessions that don't set CLAUDE_CONFIG_DIR (default: ~/.claude). */
   claudeConfigDir?: string;
@@ -195,7 +195,7 @@ export interface DiscoveredAgent {
   /** The session process has a token variable set (by name; the value is never read): its account is unknown. */
   token_login?: true;
   activity?: SeenActivity;
-  /** ACCOUNTS-2: the vault account a Walkie wrapper launched this session on (its WALKIE_ACCOUNT; an id, not a secret). */
+  /** ACCOUNTS-2: the vault account a Sqwakie wrapper launched this session on (its WALKIE_ACCOUNT; an id, not a secret). */
   account?: string;
 }
 

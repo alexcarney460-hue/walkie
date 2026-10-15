@@ -1,7 +1,7 @@
 {
   "id": "/m",
-  "name": "Walkie",
-  "short_name": "Walkie",
+  "name": "Sqwakie",
+  "short_name": "Sqwakie",
   "description": "Your team's agents on your phone: who is working, what is waiting for you, and the channels.",
   "start_url": "/m",
   "scope": "/m",

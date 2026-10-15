@@ -4,7 +4,7 @@ import { operationalHandler } from "../_lib/compute/alert-handler.js";
 // _lib/compute/tick.ts. Answers counts only.
 import { optionalEnv } from "../_lib/env.js";
 import { fail, json } from "../_lib/http.js";
-import { defaultHandlerDeps, errorResponse, secretMatches, type HandlerDeps } from "../_lib/compute/handler.js";
+import { defaultHandlerDeps, errorResponse, privateConfigInvalid, secretMatches, type HandlerDeps } from "../_lib/compute/handler.js";
 import { tick, EMPTY_REPORT } from "../_lib/compute/tick.js";
 
 export function makeTick(deps: HandlerDeps): (req: Request) => Promise<Response> {
@@ -15,7 +15,8 @@ function makeInner(deps: HandlerDeps): (req: Request) => Promise<Response> {
     const m = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "");
     if (!secretMatches(m?.[1] ?? null, optionalEnv(deps.env, "CRON_SECRET"))) return fail(401, "unauthorized");
     const d = await deps.compute();
-    if (!d) return json(EMPTY_REPORT);
+    // A set but unparseable private config fails the cron run (Vercel shows it), as well as paging the operator.
+    if (!d) return privateConfigInvalid(deps.env) ? fail(500, "config_invalid") : json(EMPTY_REPORT);
     try {
       return json(await tick(d));
     } catch (err) {

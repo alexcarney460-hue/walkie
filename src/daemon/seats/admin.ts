@@ -6,7 +6,7 @@
 // --apply`), which the daemon's user may run through sudo with exactly `seat-admin create <n>` or
 // `seat-admin destroy <n>` (n an integer; the user is `walkie-s<n>`, uid 600000+n), or `seat-admin pending` (the
 // ids of the calling person's that may still have something of them, for the daemon's restart). Those three answer
-// only the Walkie that setup-user registered for this machine's seat users (WALK-103, instance.ts): root binds the
+// only the Sqwakie that setup-user registered for this machine's seat users (WALK-103, instance.ts): root binds the
 // daemon that ran sudo to the registered socket's instance lock and its listening socket first. The system calls sit behind
 // AdminSys, so the grammar and every verification here are tested with fakes (test/unit/seats-fix5.test.ts,
 // seats-fix6.test.ts); the real one is admin-sys.ts.
@@ -93,7 +93,7 @@ export interface AdminSys {
   /** The person who asked (sudo's SUDO_UID): seat users are theirs, and only theirs are destroyed or listed. */
   caller(): number;
   /**
-   * WALK-103: whether the daemon that ran this helper is the Walkie setup-user registered for this machine's seat users
+   * WALK-103: whether the daemon that ran this helper is the Sqwakie setup-user registered for this machine's seat users
    * (admin-sys.ts checkSeatInstance: the record in SEAT_INSTANCE_FILE, and that daemon holding the recorded socket's
    * instance lock and its listening socket). `create`, `destroy` and `pending` answer only `registered`.
    */
@@ -128,7 +128,7 @@ export interface AdminSys {
   acl(path: string): string | null;
   /** lstat of a path: null when it doesn't exist (throws on any other error). */
   stat(path: string): Stat | null;
-  /** Adds the user to the cron and at deny files (exact lines; called with the ledger's lock held). */
+  /** Denies schedulers and rejects unsafe reuse before account creation, under the schedulers lock. */
   denySchedulers(name: string): void;
   /** The scheduler allow/deny files' text (null: absent), for the exact-match check. */
   readSchedulerFile(path: string): string | null;
@@ -168,7 +168,7 @@ export interface AdminSys {
 export interface AdminResult {
   ok: boolean; code?: "used" | "refused" | "failed" | "busy" | "running"; name?: string; uid?: number; home?: string; generation?: string; high?: number; why?: string;
   /**
-   * WALK-103: refused because the asking daemon isn't the registered Walkie (`other`), none is recorded
+   * WALK-103: refused because the asking daemon isn't the registered Sqwakie (`other`), none is recorded
    * (`unregistered`), or that couldn't be checked right now (`unchecked`, code `busy`: ask again).
    */
   scope?: "other" | "unregistered" | "unchecked";
@@ -221,10 +221,12 @@ export async function createSeatUser(n: number, sys: AdminSys): Promise<AdminRes
     return { ok: false, code: "refused", why: `the helper's id ledger can't be written: ${msg(err)}`, high: n };
   }
   try {
-    sys.createUser({ name, uid, home });
-    sys.makeHome(home, uid);
     // One helper at a time edits the deny files, without holding the id ledger while filesystem I/O runs.
     await withSeatFileLock(`${ledger.path}.schedulers.lock`, !!sys.talkieLockRoot, async () => sys.denySchedulers(name));
+    const schedulerWhy = schedulerProblem([name], sys.schedulerFiles, (p) => sys.readSchedulerFile(p));
+    if (schedulerWhy) throw new Error(schedulerWhy);
+    sys.createUser({ name, uid, home });
+    sys.makeHome(home, uid);
     const why = verifyCreated(n, sys);
     if (why) throw new Error(why);
     ledger.finish(n, op, "created");
@@ -562,9 +564,9 @@ export async function runSeatAdmin(argv: readonly string[], sys: AdminSys, emit:
   let caller: number;
   try { caller = sys.caller(); } catch (err) { return out({ ok: false, code: "refused", why: msg(err) }); }
   if (cmd.verb === "pending" || cmd.verb === "create" || cmd.verb === "destroy") {
-    // WALK-103: only the registered Walkie lists, makes or removes seat users; nothing is read or touched otherwise.
+    // WALK-103: only the registered Sqwakie lists, makes or removes seat users; nothing is read or touched otherwise.
     let scope: SeatInstanceCheck;
-    try { scope = sys.seatInstance(caller); } catch (err) { scope = { state: "other", why: `the asking Walkie could not be checked: ${msg(err)}` }; }
+    try { scope = sys.seatInstance(caller); } catch (err) { scope = { state: "other", why: `the asking Sqwakie could not be checked: ${msg(err)}` }; }
     if (scope.state !== "registered") {
       // The doctor's and setup's own `pending` probes land here (they aren't the daemon): say whether the ledger reads,
       // never what it holds.
@@ -581,7 +583,7 @@ export async function runSeatAdmin(argv: readonly string[], sys: AdminSys, emit:
     return out(talkieStatus(sys));
   }
   // Always take this lock before Talkie's own lock, the scheduler lock, or a ledger claim. Every mutating verb
-  // (seat create/destroy, WalkieTalkie create/destroy/reconcile/repair) runs under it; talkie-status stays read-only.
+  // (seat create/destroy, Talkie create/destroy/reconcile/repair) runs under it; talkie-status stays read-only.
   try {
     const path = sys.seatAdminLockPath ?? `${sys.ledger().path}.cleanup.lock`;
     return await withSeatAdminLock(path, !!sys.talkieLockRoot, async () => {
@@ -605,7 +607,7 @@ export async function runSeatAdmin(argv: readonly string[], sys: AdminSys, emit:
         let live: number;
         try { live = sys.procs(seatUserUid(cmd.n)).length; } catch (err) { return out({ ok: false, name: seatUserName(cmd.n), uid: seatUserUid(cmd.n), why: `can't tell whether ${seatUserName(cmd.n)} still runs anything (${msg(err)}): not removed` }); }
         if (live) return out({ ok: false, code: "running", name: seatUserName(cmd.n), uid: seatUserUid(cmd.n), processesGone: false,
-          why: `${seatUserName(cmd.n)} still has ${live} running process${live === 1 ? "" : "es"} and isn't one of this Walkie's current seats: not removed while it runs (checked again later)` });
+          why: `${seatUserName(cmd.n)} still has ${live} running process${live === 1 ? "" : "es"} and isn't one of this Sqwakie's current seats: not removed while it runs (checked again later)` });
       }
       return out(cmd.verb === "create" ? await createSeatUser(cmd.n, sys) : await destroySeatUser(cmd.n, sys));
     });

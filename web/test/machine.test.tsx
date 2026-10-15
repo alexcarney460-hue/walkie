@@ -170,6 +170,16 @@ test("an observer sees the open ask but no answer controls (the daemon would ref
   expect(out).not.toContain(">Answer</button>");
 });
 
+test("a retained ask uses the display name without changing the event body", () => {
+  go(`#/machines/${ALEX}`);
+  const raw = "[WalkieTalkie recommendation abc123]\nPlease review.";
+  const oldAsk = { ...ASK, ask: { ...ASK.ask, body: { ...ASK.ask.body, text: raw } } } as AskView;
+  const out = render(state({ asks: [oldAsk] }), <mod.MachineDetail />);
+  expect(out).toContain("[Talkie recommendation abc123]");
+  expect(out).not.toContain("[WalkieTalkie recommendation abc123]");
+  expect((oldAsk.ask.body as { text: string }).text).toBe(raw);
+});
+
 test("an offline machine: last known values, a status note, and an empty agents state", () => {
   go(`#/machines/${KIRA}`);
   const out = render(state({ agents: AGENTS.filter((a) => a.node !== KIRA) }), <mod.MachineDetail />);
@@ -178,10 +188,10 @@ test("an offline machine: last known values, a status note, and an empty agents 
   expect(out).toContain("kira-mac is offline. Stats and agents are what it last reported");
   expect(out).toContain('class="mg is-stale"');
   expect(out).toContain("kira-mac is offline</p>"); // empty agents state title
-  expect(out).toContain("Load not reported (an older Walkie)"); // no stats.sys from this daemon
+  expect(out).toContain("Load not reported (an older Sqwakie)"); // no stats.sys from this daemon
   expect(out).toContain("Tailscale · 100.101.1.3");
   expect(out).toContain("<dt>System</dt><dd>Apple M3 Pro</dd>"); // chip only: this daemon sends no platform facts
-  expect(out).toContain("<dt>Walkie</dt><dd class=\"mono\">not reported</dd>");
+  expect(out).toContain("<dt>Sqwakie</dt><dd class=\"mono\">not reported</dd>");
 });
 
 test("an unknown machine id: a friendly not-found state with a way back", () => {
@@ -200,6 +210,6 @@ test("helpers: agent split, asks to or from the machine, transport text", () => 
   expect(mod.machineAsks([ASK], NODES[1]!, NOW)).toHaveLength(1); // asked from kira-mac
   expect(mod.machineAsks([{ ...ASK, expires_at: NOW - 1 }], NODES[0]!, NOW)).toHaveLength(0); // expired
   expect(mod.transportText({ ...NODES[1]!, online: true, rtt_ms: 14 })).toBe("Tailscale · 100.101.1.3 · 14 ms");
-  expect(mod.transportText({ ...NODES[1]!, via: "direct", transports: ["direct"], rtt_ms: 30 })).toBe("Walkie Direct · 30 ms");
+  expect(mod.transportText({ ...NODES[1]!, via: "direct", transports: ["direct"], rtt_ms: 30 })).toBe("Sqwakie Direct · 30 ms");
   expect(mod.transportText({ ...NODES[1]!, via: "relay" })).toBe("Relayed through a teammate's machine");
 });

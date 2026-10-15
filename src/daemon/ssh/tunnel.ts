@@ -62,7 +62,7 @@ export function closeSshTunnelsQuietly(core: Core): void {
 }
 
 /**
- * Authenticated Walkie Direct stream to a loopback SSH server. Only a fixed local port is selected by the daemon: Walkie's
+ * Authenticated Sqwakie Direct stream to a loopback SSH server. Only a fixed local port is selected by the daemon: Sqwakie's
  * own service on 22022 on macOS, the machine's SSH server on 22 on Linux and WSL (`sshServicePort`).
  */
 export function sshTunnelGrant(core: Core, actorNode: string, port = sshServicePort(), keyHome = core.sshUserHome,

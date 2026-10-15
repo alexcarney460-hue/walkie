@@ -56,7 +56,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ bu
 
   return (
     <form className={`orch-composer${disabled ? " is-disabled" : ""}`} onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-      <label htmlFor="orch-input" className="sr-only">Message WalkieTalkie</label>
+      <label htmlFor="orch-input" className="sr-only">Message Talkie</label>
       <textarea
         id="orch-input"
         ref={area}

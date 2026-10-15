@@ -160,7 +160,7 @@ describe("approving a card move", () => {
 });
 
 describe("who may approve", () => {
-  test("an agent never can, whoever it is: named, unnamed, or WalkieTalkie itself", async () => {
+  test("an agent never can, whoever it is: named, unnamed, or Talkie itself", async () => {
     const { t, card, id } = await moveWorld();
     registerHost(t.core, { acceptsToken: () => true, scheduledTurnActive: () => false, currentTurnId: () => "turn-1" } as unknown as OrchestratorHost);
     for (const over of [{ agent: "cc-9" }, { underAgent: true }, { agent: "orchestrator", orchestratorToken: "valid" }]) {
@@ -171,7 +171,7 @@ describe("who may approve", () => {
     expect(openRecs(t.deps)).toHaveLength(1);
   });
 
-  test("while WalkieTalkie's scheduled turn runs, even its approval attempt is refused by the dispatcher", async () => {
+  test("while Talkie's scheduled turn runs, even its approval attempt is refused by the dispatcher", async () => {
     const { t, id } = await moveWorld();
     registerHost(t.core, { acceptsToken: () => true, scheduledTurnActive: () => true, currentTurnId: () => "turn-1" } as unknown as OrchestratorHost);
     expect(await outcome(approveShown(requester(t, { orchestratorToken: "valid" }), id))).toMatchObject({ status: 403, code: "scheduled_turn_cannot_act" });
@@ -283,7 +283,7 @@ describe("approving the other kinds", () => {
     const made = t.idx.db.cards(p.channel, { states: ["open"], limit: 10 }).find((c) => c.title === "Migrate the billing job");
     expect(made).toMatchObject({ column: "todo", created_by: { handle: "alex" } });
     // A model-recorded recommendation's words are never posted in the person's name: the body says who approved it, not why.
-    expect(made?.body).toContain("Created from a WalkieTalkie recommendation approved by @alex.");
+    expect(made?.body).toContain("Created from a Talkie recommendation approved by @alex.");
     expect(made?.body).not.toContain("An agent is working on it");
     expect(made?.created_by.agent).toBeUndefined();
     t.tick(1_000);

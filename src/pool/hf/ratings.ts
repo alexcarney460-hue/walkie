@@ -1,4 +1,4 @@
-// Re-rating the list built into Walkie (scripts/refresh-pool-catalog.ts --ratings-only). Pure: no network, no files.
+// Re-rating the list built into Sqwakie (scripts/refresh-pool-catalog.ts --ratings-only). Pure: no network, no files.
 //
 // The built-in models.json and gguf.json are generated together, but the rating rules (quality.ts, RATING_RULES) can
 // change without any model or download pin changing. This takes the current list and a fresh quality for each model (read

@@ -71,7 +71,7 @@ test("H3 signed pause is accepted with the roster hostname and one clean audit l
   const result = await call(mira, wire);
   expect(result.status).toBe(200);
   expect(readSchedules(A)[0]?.enabled).toBe(false);
-  const post = general().find((entry) => entry.body.text.includes("edited WalkieTalkie schedule"));
+  const post = general().find((entry) => entry.body.text.includes("edited Talkie schedule"));
   expect(post?.body.text).toContain("@mira/" + A.roster.nodes.get(K.nodeId)?.hostname);
   expect(post?.body.text).not.toContain("forged");
   expect(post?.body.text).not.toContain("\n");

@@ -1,6 +1,6 @@
 # Install and join a team
 
-Requirements: macOS or Linux. Windows enrollment uses the WSL Ubuntu bootstrap described below. That's all for **Walkie Direct** (the default since v0.2): machines connect
+Requirements: macOS or Linux. Windows enrollment uses the WSL Ubuntu bootstrap described below. That's all for **Sqwakie Direct** (the default since v0.2): machines connect
 peer-to-peer over QUIC, punching through NATs and falling back to an encrypted relay, and find each other by their
 keys. Outbound UDP helps (direct paths); with only HTTPS out, traffic goes through the relay.
 
@@ -14,7 +14,7 @@ The planned join page offers one **Copy installer** action: it saves a private, 
 user's Downloads folder and copies a fixed PowerShell command. The person pastes that command in PowerShell, reads
 one consent summary, types `ALLOW`, approves one same-account UAC elevation and, if WSL must be enabled, confirms a
 restart. The command verifies a signed release manifest and both downloaded scripts before execution. It installs
-Walkie in Ubuntu, joins with the invite on stdin, selects same-user seats, and configures systemd, linger, the WSL VM
+Sqwakie in Ubuntu, joins with the invite on stdin, selects same-user seats, and configures systemd, linger, the WSL VM
 idle timeout and a Windows logon keep-alive task. AC sleep is changed to never only when the person consented to that
 effect. `walkie seats doctor` in Ubuntu reports the persistence settings; actual Ready still depends on owner
 provisioning, subscription leases and a successful smoke seat. The join-page handoff contract is in
@@ -32,11 +32,13 @@ builds.
 ## 1. Put `walkie` on the machine
 
 ```bash
-curl -fsSL https://getwalkie.vercel.app/install.sh | sh      # verifies the release, installs to ~/.local/bin, runs setup
+curl -fsSL https://sqwakie.si/install.sh | sh      # verifies the release, installs to ~/.local/bin, runs setup
 ```
 
+The old `https://getwalkie.vercel.app` address still works for existing installs and links.
+
 The installer needs only `curl`, `openssl` (the LibreSSL that macOS ships works) and `shasum`/`sha256sum`. It
-downloads the release's `SHA256SUMS` and `SHA256SUMS.sig`, verifies the signature with the Walkie release key
+downloads the release's `SHA256SUMS` and `SHA256SUMS.sig`, verifies the signature with the Sqwakie release key
 (ECDSA P-256, `openssl dgst -sha256 -verify`), requires the signed `version` line to be the release it asked for
 (`WALKIE_VERSION=vX.Y.Z` pins one; otherwise the tag GitHub's "latest" resolves to), checks the binary's SHA-256,
 and removes the binary again if `walkie version` doesn't report that version. Without `openssl` it refuses.
@@ -61,10 +63,10 @@ so and exits non-zero (the binary stays updated).
 
 ```bash
 walkie daemon install          # launchd (macOS) or systemd --user (Linux); restarts on crash and at login
-walkie doctor                  # the network (Walkie Direct or Tailscale), daemon, socket permissions, database
+walkie doctor                  # the network (Sqwakie Direct or Tailscale), daemon, socket permissions, database
 ```
 
-On a Walkie Direct team the daemon runs an iroh endpoint on its node key (a UDP socket; no inbound port to open) and
+On a Sqwakie Direct team the daemon runs an iroh endpoint on its node key (a UDP socket; no inbound port to open) and
 connects to a relay; `walkie doctor` shows `walkie direct: endpoint … · relay …`. Relays are n0's public ones unless
 `~/.walkie/config.json` lists your own (`"relays": ["https://relay.example.com"]`); a relay only ever sees
 encrypted traffic.
@@ -80,11 +82,45 @@ Tailscale CLI 3 s, then starts without it (under the OS hostname, as when Tailsc
 API retry as above. On macOS the launchd agent runs as `ProcessType` `Standard`. Installs from v0.1.0–v0.1.2 used
 `Background`, which macOS throttles hard under load; run `walkie daemon install` once to rewrite it.
 
+### Machine-readable results (`--json`)
+
+An agent that installs Sqwakie can parse the result: `walkie setup`, `walkie hooks install|uninstall` and
+`walkie daemon start|stop` take `--json`. Stdout then carries exactly one JSON object and nothing else (the prose goes
+to stderr), the exit code is the one the prose path returns, and the command never asks a question: where setup would
+need an answer that no flag gave, it refuses with `input_required` (create-or-join with no `--team`, `--invite` or
+`--join-link`, the team name, the handle when it has no default, a `--join-link-stdin` on a terminal, `--seat-users`,
+which needs sudo at a terminal). Without `--json` the output is unchanged.
+
+```jsonc
+// success: ok, command, then the facts
+{"ok": true, "command": "setup", "version": "0.4.1",
+ "team": {"id": "…", "name": "Acme"} /* null while pending */, "handle": "alex", "machine": {"id": "…", "hostname": "alex-mbp"},
+ "transport": "direct" /* | "tailscale" | null */, "admitted": true, "pending": false,
+ "team_result": "created",       // already_member | joined | created | pending_approval (a fleet link waiting for an owner)
+ "service": {"state": "running"},   // running | restarted | started | skipped (with a reason)
+ "team_agents": "declined",      // allowed | declined | refused | incomplete | unsupported
+ "hooks": {"state": "connected", "agents": ["Claude Code"]},   // connected | none_found | skipped (reason)
+ "switching": {"state": "skipped", "reason": "--no-switching"}, // on | declined (reason) | skipped (reason)
+ "next_steps": ["Invite teammates: …", "…"]}
+// failure: the human message, the prose path's exit code
+{"ok": false, "command": "setup", "error": {"code": "daemon_unreachable", "message": "walkie daemon not reachable at …"}}
+```
+
+`hooks install|uninstall` answers `{"ok": true, "command": "hooks install", "action": "install", "target": "all",
+"dry_run": false, "hooks": [{"target": "claude", "changed": […], "commands": […], "note": "…"}, …]}` (one entry per
+runtime; `note` only when there is one). `daemon start` answers `{"state": "already_running"}` or
+`{"state": "started", "pid": 123, "log": "…"}`; `daemon stop` answers `{"state": "stopped", "pid": 123}`,
+`"not_running"` or `"running_unmanaged"` (a daemon with no pid file, managed by launchd/systemd). Error codes: the daemon's or
+client's own (`daemon_unreachable`, `agent_admin_off`, `person_only`, …), `usage` for a refused invocation,
+`input_required`, `service_failed`, `company_enrollment_incomplete` and `ssh_enrollment_incomplete` (exit 4; the facts
+of what was set up ride along), `daemon_start_failed`, `daemon_stop_timeout`. `walkie daemon restart` is not a verb (stop,
+then start); with `--json` it answers the `usage` failure object.
+
 ## 3. Create or join the team
 
 `walkie setup` asks whether to create or join. Or by hand:
 
-**Walkie Direct** (default). The first person creates the team and gives each teammate a one-time invite code:
+**Sqwakie Direct** (default). The first person creates the team and gives each teammate a one-time invite code:
 
 ```bash
 walkie init "Our Team" --handle alex --direct
@@ -95,11 +131,37 @@ Send the code privately (whoever holds it can join once as that handle). The tea
 (one code per machine; an invite for an existing handle adds a machine for that person):
 
 ```bash
-curl -fsSL https://getwalkie.vercel.app/install.sh | sh -s -- --invite <code>    # install + join
+curl -fsSL https://sqwakie.si/install.sh | sh -s -- --invite <code>    # install + join
 walkie join <code>                                                               # already installed
 ```
 
 The dashboard's Team page makes codes too (**Add a teammate**, with a copy button).
+
+**All of a business's machines: one fleet link.** Instead of a code per machine, an owner makes ONE link that adds up
+to N machines (25 by default, or no limit) as one member's machines (yours by default), for 7 or 30 days:
+
+```bash
+walkie team link                                   # up to 25 machines, as yours, 7 days
+walkie team link --for @ops --uses 100 --expires 30d --approve   # as @ops's; each waits for an owner's Approve
+walkie team link list                              # uses left, the machines that joined, machines waiting
+walkie team link revoke <id>                       # no more joins with it (machines it admitted stay)
+```
+
+Or in the dashboard: Team → Machines → **Add machines**. On each machine, open the link (the page shows the command
+with a Copy button) or run the command it printed; nothing is asked, the service starts and the machine appears in
+the dashboard:
+
+```bash
+curl -fsSL https://sqwakie.si/install.sh | sh -s -- --join-link wl1…      # macOS, Linux
+wsl -- sh -c "curl -fsSL https://sqwakie.si/install.sh | sh -s -- --join-link wl1…"   # Windows PowerShell, WSL2
+walkie join wl1…                                                                   # already installed
+```
+
+Machines with the same hostname get `-2`, `-3`, … A link made with `--approve` queues each machine in **Waiting to
+join** until an owner approves it there; the machine joins by itself once approved. The link is a bearer secret while
+it lasts: shell history may keep a pasted command, so `… | sh -s -- --join-link-stdin` (setup reads the link from the
+terminal, hidden) or `walkie join --link-stdin < file` keep it out. Links live on the roster authority: they need it
+online, and moving the authority ends them (make new ones).
 
 **Tailscale.** The first person creates the team and invites everyone by their **Tailscale login**. The login is
 what `tailscale whois` shows for their machine; it isn't always their email.
@@ -158,7 +220,7 @@ directory paths unless you opt in, in `~/.walkie/config.json` (the daemon picks 
   offline) and never an activity line, whatever `share_activity` says and whatever the profile is called. List the profiles
   with `walkie hooks install hermes --profiles <hooked> --activity name[,name]`; `--activity ""` clears the list, and an
   install without `--activity` leaves it alone. The command is gated and audited like any hooks change. A missing or invalid
-  value (a name Walkie cannot carry, more than 64 names, anything but a list) lists no profile. The daemon applies a change
+  value (a name Sqwakie cannot carry, more than 64 names, anything but a list) lists no profile. The daemon applies a change
   within about 15 seconds, with agent discovery on or off: a card that still shows a line for a profile taken off the list is
   posted again with its state only.
 
@@ -179,9 +241,9 @@ existing install when it starts after an upgrade, as new entries only. It never 
 there (your timeouts, matchers, entries shared with your own hooks, events you removed stay as they are), never adds
 an event again after you removed it, keeps a symlinked `settings.json` a link and keeps the file's mode, and leaves a
 read-only file alone. `walkie doctor` shows "claude hooks" (what is missing, what you changed, whether the file is
-writable); `walkie hooks install claude` rewrites Walkie's entries in full by hand. Claude Code sessions started
+writable); `walkie hooks install claude` rewrites Sqwakie's entries in full by hand. Claude Code sessions started
 before that pick the new events up when restarted. Codex sub-agents
-(`spawn_agent`) are not shown as sub-agents yet: Walkie reports Codex through its `notify` hook (turn end) and
+(`spawn_agent`) are not shown as sub-agents yet: Sqwakie reports Codex through its `notify` hook (turn end) and
 discovery, not through Codex's own hooks file (`~/.codex/hooks.json`), which is where Codex 0.156 offers
 `SubagentStart` / `SubagentStop` (docs/plans/MISSION-SUB-1.md).
 
@@ -216,7 +278,7 @@ turns this on by itself, best effort, from an agent runtime's execution markers 
 (claude, codex, kimi, aider, hermes, gemini, …); configuration variables (`CODEX_HOME`, `KIMI_*`, `AIDER_*`) never
 count. A runtime it doesn't recognise needs the flag on every read. A person's terminal sees the usual output.
 
-**Person-only commands ask you to confirm at a terminal.** `walkie invite`, `team add-machine`, `team role`,
+**Person-only commands ask you to confirm at a terminal.** `walkie invite`, `team add-machine`, `team link`, `team role`,
 `team revoke`, `team authority` and `walkie dashboard` ask you to type the handle, machine or `yes`; stdin must be
 your terminal (`echo kira | walkie invite …` and an agent's tool call are refused), the output can still be piped
 (`walkie team add-machine kira --json | jq .link`). An agent never runs them; the dashboard's Team page does the same
@@ -234,16 +296,16 @@ walkie tasks --mine                          # your cards across projects
 walkie task WR-2                             # the card, its signed history, the agents on it
 walkie task start WR-2 · walkie task done WR-2 · walkie task block WR-2 waiting on legal
 walkie projects export WR --format csv -o wr.csv
-walkie projects report WR on                 # WalkieTalkie writes a plain-English status report each hour something changes (owners and the project's creator; off to stop)
+walkie projects report WR on                 # Talkie writes a plain-English status report each hour something changes (owners and the project's creator; off to stop)
 walkie projects fact WR "Live build" "ddee2f0bca"          # a fact on the project's status page (members and their agents; six at most; --remove takes one off)
 walkie projects screen WR ./shot.png --title "Dispatch board" --group "Carrier" --status works --about "The board of booked loads." --route /carrier/dispatch
 ```
 
 **The status page.** Turn the hourly report on (the switch in the Projects list, or `walkie projects report WR on`) and the
 project gets a **Status page** (a tab on the project and a link on its row in the Projects list): the page your
-non-technical teammates read, with a plain headline and two sentences from WalkieTalkie's report, a strip of facts, what is
+non-technical teammates read, with a plain headline and two sentences from Talkie's report, a strip of facts, what is
 live and what lands next, and the project's screens grouped by who uses them, each with a status chip (Works, Partial, Empty
-state, Not built yet) and a line about what it shows. It reads on a phone and in the dark and light themes. Walkie counts
+state, Not built yet) and a line about what it shows. It reads on a phone and in the dark and light themes. Sqwakie counts
 some facts itself (cards done in the last 24 hours and the last 7 days, in progress, in review, blocked or waiting, agents working and on how
 many machines, when the project last changed; a card labelled `confidential` is never counted); the others are set by the
 project's people and agents with `walkie projects fact`. Agents add screenshots with `walkie projects screen` (a PNG, JPEG
@@ -261,19 +323,27 @@ cards, or the keyboard: `j`/`k` `h`/`l`, `Enter`, `c`, `m` then a column number,
 
 ## 4b. Automatic account switching (optional)
 
-With several Claude or ChatGPT accounts, Walkie can move a session to the next account **before** a usage limit, in
+With several Claude or ChatGPT accounts, Sqwakie can move a session to the next account **before** a usage limit, in
 the same terminal, continuing the same conversation — no logging in and out, no re-opening terminals.
 
 ```bash
 # once per account, at your own terminal (agents are refused):
 claude setup-token | walkie accounts add claude   # or run it bare and paste the token (hidden)
 walkie accounts add codex                         # runs `codex login` into a dedicated CODEX_HOME for that account
+walkie accounts add kimi --region global          # runs `kimi login` into a private KIMI_CODE_HOME on this machine
 walkie accounts vault                             # what is stored, the policy, sessions on each
 
 # once per machine: records the trusted claude / codex and makes every `claude` / `codex` go through the switcher
 walkie accounts shims install --profile           # shims in ~/.walkie/bin + one PATH line in your shell profile
 exec $SHELL -l                                    # (or open a new terminal)
 ```
+
+`walkie accounts add kimi` also accepts `--account <24-hex id>`, `--email <address>`, `--plan <name>`, and
+`--region mainland-cn`. It requires a person at a terminal, even when agent administration is enabled. Kimi writes
+its rotating credential under the account's 0700 vault home; Sqwakie reads it only for usage polling. A same-machine,
+same-user Kimi seat may select that account and receives its `KIMI_CODE_HOME`. Kimi accounts stay local regardless of
+the company pool and cannot be leased to another machine. `walkie accounts remove <account> [--move]` deletes the
+credential; `--move` moves other files Kimi wrote into the person's own Kimi home.
 
 `walkie setup` offers the shims step too (`--switching` answers yes without a prompt). Without the shims, start
 sessions as `walkie claude …` / `walkie codex …` (the CLI's own arguments, unchanged) after recording the trusted CLIs
@@ -282,11 +352,11 @@ once with `walkie accounts trust-cli`. Credentials go only to that recorded bina
 for Claude, the standalone binary or `brew install codex` for Codex); an npm-installed script launcher is refused with
 that install command. The binary must not be inside the project you are running from, in a repository or a
 `node_modules/.bin`, and must sit in a place only you or root can change. Any other `claude` found first on PATH runs
-without Walkie accounts, with one line saying why.
+without Sqwakie accounts, with one line saying why.
 
 What happens: the session starts on the account with the most room (sessions spread over accounts; an account whose
 usage window is at or over 95 % — `"switch_threshold_pct"` in `~/.walkie/config.json`, or `WALKIE_SWITCH_AT=90` — is
-picked only when nothing has more room). Walkie **switches when an account hits its limit; the session resumes
+picked only when nothing has more room). Sqwakie **switches when an account hits its limit; the session resumes
 automatically on an account with room**. When the CLI reports the limit, the CLI is ended, one line says
 `walkie: switched to bo***@gm***.com: al***@gm***.com reached its five-hour limit (resets 15:40)`, and the same
 session resumes on the next account (`claude --resume <id>` / `codex resume <id>`, with "Continue where you left off").
@@ -299,7 +369,7 @@ untouched for one command; a command that sets its own `CLAUDE_CODE_OAUTH_TOKEN`
 
 - **Credentialed sessions ignore redirects**: `ANTHROPIC_BASE_URL` and other endpoint overrides, unix sockets, CA and
   TLS overrides (`NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, …) and `CLAUDE_CODE_REMOTE` are removed from a
-  session Walkie gives a token to, and pinned in the `--settings` it passes, so a project's `.claude/settings.json`
+  session Sqwakie gives a token to, and pinned in the `--settings` it passes, so a project's `.claude/settings.json`
   cannot put them back (your own `--settings` is merged in). So are `HTTP(S)_PROXY` / `ALL_PROXY`, unless you run
   `walkie accounts allow-proxy on` (for a corporate proxy you trust). A custom CA for a TLS-inspecting proxy is not
   used by credentialed sessions.
@@ -307,10 +377,10 @@ untouched for one command; a command that sets its own `CLAUDE_CODE_OAUTH_TOKEN`
   overrides), its account home holds copies of your config.toml and profile files (`<name>.config.toml`) without
   provider / base-URL settings and no `.env`, voice (realtime conversation) is off,
   and Codex's endpoint / CA override variables are removed. A `-c` of your own that changes the provider or its
-  endpoints runs Codex without Walkie accounts. A settings file that gives Claude Code its own credential
-  (`apiKeyHelper`, an API key) also runs it without Walkie accounts.
+  endpoints runs Codex without Sqwakie accounts. A settings file that gives Claude Code its own credential
+  (`apiKeyHelper`, an API key) also runs it without Sqwakie accounts.
 - **Picking an account**: the 95 % threshold only ranks accounts; any account below its hard limit can still be
-  picked. Walkie waits for a reset only when every account is at its limit.
+  picked. Sqwakie waits for a reset only when every account is at its limit.
 - **Claude token hand-over**: the setup-token reaches Claude Code on file descriptor 3
   (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, checked on Claude Code 2.1.283). A Claude Code too old to know that
   variable would silently use its own login instead: set `WALKIE_TOKEN_VIA=env` to pass `CLAUDE_CODE_OAUTH_TOKEN`.
@@ -325,9 +395,8 @@ untouched for one command; a command that sets its own `CLAUDE_CODE_OAUTH_TOKEN`
   setup-token from this machine's vault (handed out over the team's encrypted peer channel, never written to disk
   there — but readable by that machine's user while the session runs); those machines need only the shims, no vault
   of their own. `shared --with kira` also a teammate, once this machine's config has `"vault_sharing": true` and Kira
-  ran `walkie accounts borrow on`; his own accounts are always used first. Codex logins stay on their machine: run
-  `walkie accounts add codex` on each (a Codex login is a 0600 `auth.json` like Codex's own, not encrypted; Claude
-  tokens are encrypted).
+  ran `walkie accounts borrow on`; his own accounts are always used first. Codex may be leased as an access-only copy;
+  its refresh token stays on the owning machine. Kimi's rotating credential cannot be leased.
 - `walkie accounts remove <account>` forgets a login (revoke a setup-token in your Claude account settings to cut off
   sessions already running on it); `walkie accounts shims uninstall --profile` turns switching off.
 
@@ -341,18 +410,18 @@ walkie dashboard
 
 ### Talkie recommendations
 
-WalkieTalkie's scheduled duties recommend; a person decides. The dashboard's WalkieTalkie tab shows the
+Talkie's scheduled duties recommend; a person decides. The dashboard's Talkie tab shows the
 recommendations above the schedules when no conversation is open (New chat), grouped as Work to start, Cards to
 move, Reviews waiting, Stalled, and Machines to set up, every open one before any answered one. Each has a one-line
 reason, its evidence folded under it, and Approve and Dismiss buttons; for someone who may not answer it the buttons
 are disabled and the reason is shown. Each one that sends or does something in your name shows it word for word: an ask's message
 (a fixed sentence for its topic, with the card's title as plain data on its own line, never text a model wrote), a card
 to create's title, a setup step's command, a seat's machine. Approving sends exactly what you saw: if it changed in the
-meantime (the card was renamed, another machine would be chosen), the approval is refused and you review it again. What WalkieTalkie
+meantime (the card was renamed, another machine would be chosen), the approval is refused and you review it again. What Talkie
 wrote itself in a scheduled run is shown quoted and marked as not sent. A seat goes only to a machine whose person can see the project, and approving is
 refused if the card is no longer one for a seat (blocked, confidential, assigned, waiting on someone, or an agent is on
 it). Setup steps run a command on another machine, so they are approved in a terminal, not the dashboard. An answer updates only that row. When an answer fails, the row stays blocked until a manual refresh
-succeeds, and Walkie never re-sends the answer on its own. Refresh is unavailable while an answer is still in
+succeeds, and Sqwakie never re-sends the answer on its own. Refresh is unavailable while an answer is still in
 flight. The same list and answers are in the terminal:
 
 ```text
@@ -367,8 +436,8 @@ accept `--json`. The list prints the same outgoing text and quoted words as the 
 ones it did not list; `approve` prints what it will do and asks you to type `yes` first. Listing with `--json` returns
 `{ recs }` (plus `more_open` when open ones were left out); `--all` adds resolved/expired records after the open
 ones, within the daemon's read limits, not full history. Agents may list visible suggestions but cannot approve or dismiss them.
-`walkie talkie recommend '<JSON object>' [--json]` records structured input only for an authenticated WalkieTalkie
-caller; it does not let a person or an ordinary agent become WalkieTalkie.
+`walkie talkie recommend '<JSON object>' [--json]` records structured input only for an authenticated Talkie
+caller; it does not let a person or an ordinary agent become Talkie.
 
 The intended workflow is to review a recommendation's reason and evidence, then approve or dismiss as a person
 at the local terminal or dashboard. Agents and paired phones cannot approve/dismiss. Observers cannot act;
@@ -393,58 +462,58 @@ once** (copy it then; within 24 hours of checkout) and the command to run on the
 walkie license activate <code>
 ```
 
-The authority exchanges the code at `https://getwalkie.vercel.app/api/license/bind` for a license bound to this team
+The authority exchanges the code at `https://sqwakie.si/api/license/bind` for a license bound to this team
 (a code activates one team; another team gets `license_bound_elsewhere`), records it for the whole team, and saves a
 renewal token in `~/.walkie/license-renew-token` (0600). If you move the roster authority to another machine, copy
 that file there. The authority renews automatically once a day when the license is within 7 days of expiry: it
-sends the license id and the renewal token to `https://getwalkie.vercel.app/api/license/renew` and nothing else. If
+sends the license id and the renewal token to `https://sqwakie.si/api/license/renew` and nothing else. If
 renewal fails the daemon logs `license_renew_failed` and tries again the next day; an expired license keeps working
 for 14 days. Allow those HTTPS calls from the authority's machine if it sits behind an egress firewall (and, on a
-Walkie Direct team, outbound UDP and HTTPS to the relays). (For local
+Sqwakie Direct team, outbound UDP and HTTPS to the relays). (For local
 development of the site only: `WALKIE_DEV=1 WALKIE_LICENSE_URL=http://127.0.0.1:<port>` points the daemon at it; any
 other value is ignored.)
 
-## 7. Walkie on your phone
+## 7. Sqwakie on your phone
 
 Mission Control, the asks waiting for you and your channels, on your phone. Nothing to install but the web app, and
-nothing opened on your computer: the phone reaches your computer's daemon through Walkie's relay, end-to-end
+nothing opened on your computer: the phone reaches your computer's daemon through Sqwakie's relay, end-to-end
 encrypted (the relay can't read it). Your computer must be on and online.
 
 1. On the computer: `walkie mobile pair`, or in the dashboard **Team → Devices → Pair a phone**. A QR code appears,
    good for 10 minutes and one phone.
 2. **iPhone**: scan it with the Camera app and open the link in Safari. Copy the code it shows, tap **Share → Add to
-   Home Screen**, open Walkie from your Home Screen and paste the code. (A Home Screen app keeps its own storage, so
-   it pairs itself; "Use Walkie in Safari instead" pairs the Safari tab.)
+   Home Screen**, open Sqwakie from your Home Screen and paste the code. (A Home Screen app keeps its own storage, so
+   it pairs itself; "Use Sqwakie in Safari instead" pairs the Safari tab.)
    **Android**: scan it and open the link in Chrome; it pairs, then tap **Install** (or the menu's Install app).
 3. The phone stays paired for 30 days after its last use (90 days at most). See and sign out phones with
    `walkie mobile devices` and `walkie mobile revoke <id>` (or `--all`), or Team → Devices; the app's Settings →
    Unpair signs itself out. Lost the phone? Revoke it.
 
-The code under the QR code is the key to your Walkie for those 10 minutes: don't share it. Nothing about the phone
+The code under the QR code is the key to your Sqwakie for those 10 minutes: don't share it. Nothing about the phone
 link is stored off your computer and phone. (Local development only: `WALKIE_DEV=1 WALKIE_RELAY_URL=ws://127.0.0.1:<port>
 WALKIE_MOBILE_APP_URL=http://localhost:<port>/m` points a source-run daemon at a local relay and app; run the relay with
 `bun src/relay/server.ts`.)
 
 ## 8. Remote seats (optional)
 
-A **seat** is a Claude Code or Codex agent that a teammate starts on your machine through Walkie
+A **seat** is a Claude Code or Codex agent that a teammate starts on your machine through Sqwakie
 ([PROTOCOL.md](PROTOCOL.md#11-remote-seats)). It is remote code execution by design, so it is off until you turn it
 on. On a company machine, `walkie seats enable` (also the consented join flow) defaults to seats running as **your**
-OS user. Launchers can read and change your files and keys, reach your Walkie daemon, and use any login your user can.
+OS user. Launchers can read and change your files and keys, reach your Sqwakie daemon, and use any login your user can.
 `walkie seats doctor` reports the selected mode. The private `~/.walkie-workers/<seat-id>/` roots (Claude config,
 Codex home when a safe login copy is available, and temp files) organize runs; they are not a security boundary.
-Each root starts with Walkie's worker template: Claude and Codex status hooks and a short worker instruction file.
+Each root starts with Sqwakie's worker template: Claude and Codex status hooks and a short worker instruction file.
 Your personal Claude `settings.json` and `CLAUDE.md`, Codex `config.toml`, and personal hooks are not inherited by default.
 This also applies to existing same-user machines after an upgrade. To opt in to your personal provider configuration,
 run `walkie seats allow --inherit-person-config --yes` locally; then seats use the selected provider homes and their
 settings. The roots are removed after a run and recovered from saved seat state after a daemon crash. A login that cannot be
 projected safely keeps its **selected worker** provider home. A default login that cannot be projected is refused with
-the sign-in or opt-in step needed; it is never silently run with personal settings. Walkie never removes your own `~/.claude`, `~/.codex`, or named
+the sign-in or opt-in step needed; it is never silently run with personal settings. Sqwakie never removes your own `~/.claude`, `~/.codex`, or named
 vault login to clean a worker root.
 
 Login order for same-user runs: a named v2 account wins (Claude token or an existing local/leased Codex home);
 otherwise a dedicated `walkie seats token set` Claude token wins over the seat environment's Claude token. With no
-token, Walkie copies a usable, access-only Claude credentials file (including a readable Keychain projection when
+token, Sqwakie copies a usable, access-only Claude credentials file (including a readable Keychain projection when
 available) into that run's root. Codex without a named account gets an access-only copy of the selected
 `CODEX_HOME/auth.json` or `~/.codex/auth.json`. With `--inherit-person-config` consent, a Codex home without a
 usable auth file is accepted only when `codex login status` succeeds for the selected home; the run retains that
@@ -463,7 +532,7 @@ and helper status. Let seats finish or stop them, run `walkie seats deny`, recon
 do not delete seat users, homes, or `/private/var/folders` by hand.
 
 Seats and compute sharing (`walkie pool share on`, split runs) can't be on together on one machine: the shared model
-server listens where any user of the machine, a seat user included, can reach it. Walkie refuses the second one and
+server listens where any user of the machine, a seat user included, can reach it. Sqwakie refuses the second one and
 says which to turn off (`walkie pool share off` / `walkie pool stop` before seats; `walkie seats deny` before sharing).
 
 **Opt-in seat-user hardening** (the following steps apply only when you choose `--seat-users`):
@@ -477,7 +546,7 @@ says which to turn off (`walkie pool share off` / `walkie pool stop` before seat
    to select seat-user hardening during the same consent (and `--codex-release` with it to give the seat users OpenAI's
    standalone Codex, below). `walkie setup` asks after you join someone else's team. On a Mac whose Claude login is only in the
    Keychain: `claude setup-token | walkie seats enable --yes --claude-token-stdin`.
-2. Let Walkie give every seat a fresh OS user of its own, made for it and destroyed after it, never reused (asks for
+2. Let Sqwakie give every seat a fresh OS user of its own, made for it and destroyed after it, never reused (asks for
    your password through sudo; macOS or Linux):
 
    ```sh
@@ -596,7 +665,7 @@ refused; the second runs as a **different** `walkie-sM` whose home has no `.clau
 ignores SIGTERM included); `walkie seats` shows nothing quarantined.
 
 **A seat user that stays quarantined.** `walkie seats` (and the dashboard) show a count, a few names in numeric order,
-and a reason summary; `--json` has every name and reason. Walkie retries with backoff (one minute initially, up to
+and a reason summary; `--json` has every name and reason. Sqwakie retries with backoff (one minute initially, up to
 15 minutes). Live seat cleanup takes priority over the recovery backlog. A reason that doesn't clear on its own names what to look at: a process that survives SIGKILL
 (`ps -U <uid>`: usually one stuck in the kernel, gone after a reboot), a mount it couldn't force off (`mount`), a file
 of its with a system flag (`ls -lO`; `sudo chflags noschg <path>`), an entry of another user inside a directory of its
@@ -604,7 +673,7 @@ of its with a system flag (`ls -lO`; `sudo chflags noschg <path>`), an entry of 
 fixed, the next retry removes it; a daemon restart retries too.
 
 On macOS, protected residue may remain in the seat user's own per-user folder under `/private/var/folders`.
-Walkie records each accepted path, the operation that returned `EPERM`, and flags when known. The sweep runs as the
+Sqwakie records each accepted path, the operation that returned `EPERM`, and flags when known. The sweep runs as the
 seat user: `EPERM` on stat, read-open, directory open, or list at any depth or name qualifies only under a freshly verified chain of unchanged directories owned
 by that uid on the per-user root's device; a stat-visible entry must also be owned by that uid, on that device, and
 not a symlink. This covers unflagged `TemporaryItems`, `0/dmd`, and nested vaults observed on macOS 26.5.1. In
@@ -628,17 +697,17 @@ directly inside `/Library/Caches` may remain only when the sweep observed `EPERM
 the seat uid and `UF_DATAVAULT` or `SF_RESTRICTED` flag. Other cache leftovers keep the user quarantined. The ledger
 records retained homes and vaults; `walkie seats` and doctor show their counts and size known from directory-entry
 metadata. Contents of opaque entries cannot be measured. A failed destroy still holds a slot, including a failed
-ledger write; only a verified `ok:true` cleanup frees it. Walkie cannot read retained protected contents; entitled
+ledger write; only a verified `ok:true` cleanup frees it. Sqwakie cannot read retained protected contents; entitled
 macOS services may still access their own vaults.
 
-WalkieTalkie uses a fixed uid across generations. Its destroy sweeps every older recorded per-user folder as the
+Talkie uses a fixed uid across generations. Its destroy sweeps every older recorded per-user folder as the
 dedicated user before deleting that account, and keeps one ledger row per folder that still has accepted residue.
 If this cleanup cannot verify an older folder, `walkie talkie cleanup --repair` is a person-run retry of the sweep;
 the cleanup obligation remains until the account, processes, home, and ledger owner are verified gone.
 
 One person per machine takes seats for now: the sudo rules name one daemon user, and a second person's `setup-user`
 is refused (it names whose seats the machine takes; `/usr/local/libexec/walkie/seat-owner`). Seat user ids run
-1–99,999 per machine and are never reused; after the last, no seat user is made and Walkie says so.
+1–99,999 per machine and are never reused; after the last, no seat user is made and Sqwakie says so.
 
 What this does not clean: named POSIX shared-memory objects a seat creates may outlive it (macOS has no way to list
 them; later seats run under other uids), and files it left on another mount or inside another user's directory it
@@ -650,23 +719,23 @@ use the machine.
 
 ## Owner SSH for company enrollment
 
-An owner may include a signed SSH authorization in a machine's one-use enrollment link (the add-machine link carries it after `&ssh=`, the install command after `--owner-ssh`). It rides in the person's one consent, which names the owner, the owner's everyday agents and WalkieTalkie as possible SSH callers, says what the door is (**a Walkie SSH service that listens only on this machine and accepts only key logins**, the same words on macOS, Linux and Windows with WSL; the service reads the person's own `~/.ssh/authorized_keys`, so any key already authorized for that account works on loopback, not only the owner's, which is why it says key logins), and is recorded in the same request as that consent. Walkie never asks the person to turn on Remote Login: macOS's Remote Login answers on the whole network, with password and PAM login for everyone on it, which is not the door the consent describes, so Walkie neither uses, opens nor changes it.
+An owner may include a signed SSH authorization in a machine's one-use enrollment link (the add-machine link carries it after `&ssh=`, the install command after `--owner-ssh`). It rides in the person's one consent, which names the owner, the owner's everyday agents and Talkie as possible SSH callers, says what the door is (**a Sqwakie SSH service that listens only on this machine and accepts only key logins**, the same words on macOS, Linux and Windows with WSL; the service reads the person's own `~/.ssh/authorized_keys`, so any key already authorized for that account works on loopback, not only the owner's, which is why it says key logins), and is recorded in the same request as that consent. Sqwakie never asks the person to turn on Remote Login: macOS's Remote Login answers on the whole network, with password and PAM login for everyone on it, which is not the door the consent describes, so Sqwakie neither uses, opens nor changes it.
 
-Before the consent question and before any administrator step, the terminal and the macOS app ask the machine's own daemon to **check** the authorization without spending it (`POST /v1/provision/check`: its signature and expiry against the owner's roster key, the team, the owner, the person, the invite that admitted this machine, and that it is not already used). The terminal and the macOS app also check it against the invite, and the join page and the Windows bootstrap check its form. A damaged, expired or foreign one is dropped or refused then, in plain words, and no administrator step runs for it. A refusal tells the truth about what to do: a link the owner must replace says to ask for a new add-machine link; **a machine that already joined with another link is told that the owner must remove it from the team and add it again** (a new link can never work there); and a failure on this machine (an `authorized_keys` that cannot be written, a record that cannot be read, a root marker that is not what Walkie installed) names the problem and says to fix it and run the same command again, because the one-use authorization is spent only once nothing before the key can still fail, so **the same link still works**. Exactly what each path does:
+Before the consent question and before any administrator step, the terminal and the macOS app ask the machine's own daemon to **check** the authorization without spending it (`POST /v1/provision/check`: its signature and expiry against the owner's roster key, the team, the owner, the person, the invite that admitted this machine, and that it is not already used). The terminal and the macOS app also check it against the invite, and the join page and the Windows bootstrap check its form. A damaged, expired or foreign one is dropped or refused then, in plain words, and no administrator step runs for it. A refusal tells the truth about what to do: a link the owner must replace says to ask for a new add-machine link; **a machine that already joined with another link is told that the owner must remove it from the team and add it again** (a new link can never work there); and a failure on this machine (an `authorized_keys` that cannot be written, a record that cannot be read, a root marker that is not what Sqwakie installed) names the problem and says to fix it and run the same command again, because the one-use authorization is spent only once nothing before the key can still fail, so **the same link still works**. Exactly what each path does:
 
-- **Terminal, Linux and macOS** (`curl … | sh -s -- --invite … --company-machine --owner-ssh …`, or `walkie setup` with the same flags): setup checks the authorization, asks the one company question with the SSH disclosure in it, runs ONE administrator step (sudo asks for the machine's password once), and posts the single grant. That one `sudo walkie provision root-marker install <home> [ssh-linux|ssh-macos]` installs the root-owned enrollment marker and, when the link carries owner SSH and Walkie's SSH service does not answer yet, the service: on **macOS** a launchd system daemon, `dev.walkie.sshd`, and on **Linux and WSL** a loopback-only `walkie-sshd` systemd unit (`scripts/enroll-ssh-linux.sh`, embedded in the binary). A machine that needs neither runs no sudo, and a service that already answers is left alone. **On Linux and WSL, the enrollment does not use an SSH server that is not Walkie's, already answering on 127.0.0.1:22 (a stock sshd): owner SSH stays off on that machine in this release.** Setup finds this out before the question and says "This machine already runs its own SSH server; Walkie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent below leaves SSH out."; the consent it then shows, and the grant it records, have no SSH in them, no SSH service is installed, and nothing reports SSH ready. It looks again right after your typed yes, before the administrator step and the grant, because a server can start while you read the question: one found then is said so ("The consent recorded leaves SSH out, though the one shown above included it."), the grant is recorded without SSH and nothing is installed or reported ready. The administrator step skips the SSH install only when the server that answers is Walkie's, so a server that appears even later makes the install script refuse the taken port 22 before anything is recorded. The same check runs for `walkie provision grant --owner-ssh`, in WSL for the Windows enrollment's grant, and in `walkie ssh enable`. A server counts as Walkie's only when systemd, asked as you, says its `walkie-sshd` unit is loaded from `/etc/systemd/system/walkie-sshd.service` and active (the CLI never looks for that file itself). The daemon's own routes do not judge what answers on port 22; these enrollment checks do. If the SSH half of that step fails, setup stops before anything is recorded and prints the exact command that repeats just that step (and says to run the same command again); the one-use authorization is not spent. The seats-only question, the `--allow-team-agents` flag and an agent never authorize SSH. The command line, and so shell history and process listings, carries the authorization as it carries the invite.
+- **Terminal, Linux and macOS** (`curl … | sh -s -- --invite … --company-machine --owner-ssh …`, or `walkie setup` with the same flags): setup checks the authorization, asks the one company question with the SSH disclosure in it, runs ONE administrator step (sudo asks for the machine's password once), and posts the single grant. That one `sudo walkie provision root-marker install <home> [ssh-linux|ssh-macos]` installs the root-owned enrollment marker and, when the link carries owner SSH and Sqwakie's SSH service does not answer yet, the service: on **macOS** a launchd system daemon, `dev.walkie.sshd`, and on **Linux and WSL** a loopback-only `walkie-sshd` systemd unit (`scripts/enroll-ssh-linux.sh`, embedded in the binary). A machine that needs neither runs no sudo, and a service that already answers is left alone. **On Linux and WSL, the enrollment does not use an SSH server that is not Sqwakie's, already answering on 127.0.0.1:22 (a stock sshd): owner SSH stays off on that machine in this release.** Setup finds this out before the question and says "This machine already runs its own SSH server; Sqwakie's owner SSH needs its own service, which a later release adds alongside it; owner SSH stays off. The consent below leaves SSH out."; the consent it then shows, and the grant it records, have no SSH in them, no SSH service is installed, and nothing reports SSH ready. It looks again right after your typed yes, before the administrator step and the grant, because a server can start while you read the question: one found then is said so ("The consent recorded leaves SSH out, though the one shown above included it."), the grant is recorded without SSH and nothing is installed or reported ready. The administrator step skips the SSH install only when the server that answers is Sqwakie's, so a server that appears even later makes the install script refuse the taken port 22 before anything is recorded. The same check runs for `walkie provision grant --owner-ssh`, in WSL for the Windows enrollment's grant, and in `walkie ssh enable`. A server counts as Sqwakie's only when systemd, asked as you, says its `walkie-sshd` unit is loaded from `/etc/systemd/system/walkie-sshd.service` and active (the CLI never looks for that file itself). The daemon's own routes do not judge what answers on port 22; these enrollment checks do. If the SSH half of that step fails, setup stops before anything is recorded and prints the exact command that repeats just that step (and says to run the same command again); the one-use authorization is not spent. The seats-only question, the `--allow-team-agents` flag and an agent never authorize SSH. The command line, and so shell history and process listings, carries the authorization as it carries the invite.
 - **Browser join page**: reads `&ssh=` from the link, strips the whole fragment from the address bar and history as before, keeps the authorization in memory, and puts it only into the terminal command it shows and the local app link it opens (only when seats are allowed). It never goes into a URL query, storage or a log.
 - **macOS app**: takes the authorization from its deep link, shows the consent text with the SSH disclosure and says that one administrator password will be asked once. After the join it asks its own daemon to check the authorization (a Mac that already joined is told at the consent window, which then leaves SSH out), then runs **one** system administrator prompt for what is missing: the app-bundled walkie's `provision root-marker install <home>` plus `ssh-macos` when the authorization is usable, and then records the grant in the one request. The authorization is held in memory only: it never goes through the prompt, an argument, a log, the consent receipt or the window, and the app's Keychain copy of the pending link holds a marker instead (after a restart the app says the link's SSH was left out; open the original link again). A daemon refusal shows the daemon's own message. The app then reports what `walkie ssh status` says. **No fresh-Mac run has verified the administrator prompt or the macOS service yet.**
-- **Windows with WSL**: the bootstrap's private handoff may carry the authorization (`ownerSsh`, `scripts/windows/README.md`). Its one consent describes SSH, and inside its one elevation it installs the marker and the loopback-only SSH service as WSL root (no sudo), records the consent with the authorization, and reports `walkie ssh status`. If that Ubuntu already runs an SSH server that is not Walkie's, the install script refuses the taken port (the WSL root step exits 5, and the enrollment continues: the consent is still recorded) and the WSL step that records the consent leaves the authorization out: what is recorded has no SSH in it, although PowerShell's consent, shown before the WSL half can look inside the Ubuntu, named it. The WSL step says why in plain words on its own standard error, and the installer's closing summary prints that sentence ("Owner SSH was left out of the consent recorded: This machine already runs its own SSH server; …") instead of the status's "ask the owner for a new add-machine link", which would meet the same server; nothing reports SSH ready. The join page does not offer the Windows installer yet, so only a handoff written by hand or by a later page carries it. **No Windows run has verified this path, and the closing summary's PowerShell is untested: no PowerShell was available (the change is read against `scripts/windows/bootstrap.ps1` and pinned by a static test).**
+- **Windows with WSL**: the bootstrap's private handoff may carry the authorization (`ownerSsh`, `scripts/windows/README.md`). Its one consent describes SSH, and inside its one elevation it installs the marker and the loopback-only SSH service as WSL root (no sudo), records the consent with the authorization, and reports `walkie ssh status`. If that Ubuntu already runs an SSH server that is not Sqwakie's, the install script refuses the taken port (the WSL root step exits 5, and the enrollment continues: the consent is still recorded) and the WSL step that records the consent leaves the authorization out: what is recorded has no SSH in it, although PowerShell's consent, shown before the WSL half can look inside the Ubuntu, named it. The WSL step says why in plain words on its own standard error, and the installer's closing summary prints that sentence ("Owner SSH was left out of the consent recorded: This machine already runs its own SSH server; …") instead of the status's "ask the owner for a new add-machine link", which would meet the same server; nothing reports SSH ready. The join page does not offer the Windows installer yet, so only a handoff written by hand or by a later page carries it. **No Windows run has verified this path, and the closing summary's PowerShell is untested: no PowerShell was available (the change is read against `scripts/windows/bootstrap.ps1` and pinned by a static test).**
 - **`walkie provision grant --owner-ssh <packet>`**: the manual route, with the person's own typed consent, the same check first and the same one administrator step.
 
-**The macOS service.** `dev.walkie.sshd` is `/Library/LaunchDaemons/dev.walkie.sshd.plist`, which runs `/usr/sbin/sshd -D -f '/Library/Application Support/Walkie/ssh/sshd_config'`. That config listens on `127.0.0.1` and `::1` only, on **port 22022** (not 22, which is Remote Login's), and allows public-key login only (`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `UsePAM no`, `PermitRootLogin no`) for the one person who enrolled (`AllowUsers`), reading that person's own `~/.ssh/authorized_keys`, where the tagged owner key goes. Its host key and pid file live in that same root-owned, mode 0700 directory. The files are staged and checked (`sshd -t`, `plutil -lint`) before they are renamed into place; a reinstall keeps the host key and replaces only Walkie's own files; it never touches `com.openssh.sshd`, `/etc/ssh` or Remote Login, and it refuses to take over a service installed for another person on the same Mac. `walkie ssh enable` installs or repairs it on an enrolled machine (after the person types yes; one sudo), on Linux and WSL as well. **`walkie provision unenroll` removes the service and its files in the same administrator step that removes the root marker, and says so; revoking the grant leaves the service, which holds no key then.** A service installed for another person is left in place, and so is one whose configuration cannot be read to say whose it is (a link, a directory, unreadable, or no `AllowUsers` line): un-enroll then says why and prints the commands to remove it by hand.
+**The macOS service.** `dev.walkie.sshd` is `/Library/LaunchDaemons/dev.walkie.sshd.plist`, which runs `/usr/sbin/sshd -D -f '/Library/Application Support/Walkie/ssh/sshd_config'`. That config listens on `127.0.0.1` and `::1` only, on **port 22022** (not 22, which is Remote Login's), and allows public-key login only (`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `UsePAM no`, `PermitRootLogin no`) for the one person who enrolled (`AllowUsers`), reading that person's own `~/.ssh/authorized_keys`, where the tagged owner key goes. Its host key and pid file live in that same root-owned, mode 0700 directory. The files are staged and checked (`sshd -t`, `plutil -lint`) before they are renamed into place; a reinstall keeps the host key and replaces only Sqwakie's own files; it never touches `com.openssh.sshd`, `/etc/ssh` or Remote Login, and it refuses to take over a service installed for another person on the same Mac. `walkie ssh enable` installs or repairs it on an enrolled machine (after the person types yes; one sudo), on Linux and WSL as well. **`walkie provision unenroll` removes the service and its files in the same administrator step that removes the root marker, and says so; revoking the grant leaves the service, which holds no key then.** A service installed for another person is left in place, and so is one whose configuration cannot be read to say whose it is (a link, a directory, unreadable, or no `AllowUsers` line): un-enroll then says why and prints the commands to remove it by hand.
 
 The authorization names the invite that admits the machine, so it works for that machine only: a machine that already joined cannot take the authorization from a later link (the owner removes it and adds it again with a fresh link), and the check says so before anything is asked or installed. If the grant is still refused after the administrator step (a failure on this machine, such as an `authorized_keys` that cannot be written), the service stays installed with no owner key, which opens nothing, and the same command run again after the fix finds it answering and reuses it.
 
-SSH counts as **ready** only when `walkie ssh status` (or `walkie doctor`) shows Walkie's SSH service answering an SSH banner on 127.0.0.1 (macOS: port 22022; Linux and WSL: port 22), the owner's key installed and the tunnel open; on macOS Remote Login is never consulted. The status read is fully asynchronous. After every daemon start the machine must sync with the team's roster authority before SSH opens; a machine that cannot (the authority is offline, or it shares no Walkie Direct or Tailscale transport with it) stays at `ssh_team_waiting`, which setup, the app and the bootstrap report as a failed enrollment after a minute, with the reason and what fixes it. A service that never answers is a failed enrollment too, with `walkie ssh enable` as the fix (Linux and WSL name `walkie-sshd` only when its unit exists on the machine).
+SSH counts as **ready** only when `walkie ssh status` (or `walkie doctor`) shows Sqwakie's SSH service answering an SSH banner on 127.0.0.1 (macOS: port 22022; Linux and WSL: port 22), the owner's key installed and the tunnel open; on macOS Remote Login is never consulted. The status read is fully asynchronous. After every daemon start the machine must sync with the team's roster authority before SSH opens; a machine that cannot (the authority is offline, or it shares no Sqwakie Direct or Tailscale transport with it) stays at `ssh_team_waiting`, which setup, the app and the bootstrap report as a failed enrollment after a minute, with the reason and what fixes it. A service that never answers is a failed enrollment too, with `walkie ssh enable` as the fix (Linux and WSL name `walkie-sshd` only when its unit exists on the machine).
 
-The owner uses `walkie ssh <machine>` or `walkie ssh config <machine>` through Walkie Direct. `walkie ssh revoke` removes Walkie's recorded key line; `walkie admin remote off` or enrollment grant revocation closes live tunnels. The target records an open before bridging and a close with duration and byte counts, then posts one content-free session summary to the machine person's `#general` feed. In `admin-audit.jsonl`, `actor` is `@<owner>/<source node ID>` from the authenticated Direct key and roster. The open action and session summary say `opened from <node> (owner <x>); reported caller: agent <y> (reported by <node>)`. The caller and optional claim are supplied by the source node for audit only; the target never uses them to grant access. The source bridge compares the socket peer's process start time before looking up ancestry and names an agent only from the OS-reported executable. Missing or ambiguous process information becomes `unverified caller`. Another process with the source OS user's access can impersonate an agent label.
+The owner uses `walkie ssh <machine>` or `walkie ssh config <machine>` through Sqwakie Direct. `walkie ssh revoke` removes Sqwakie's recorded key line; `walkie admin remote off` or enrollment grant revocation closes live tunnels. The target records an open before bridging and a close with duration and byte counts, then posts one content-free session summary to the machine person's `#general` feed. In `admin-audit.jsonl`, `actor` is `@<owner>/<source node ID>` from the authenticated Direct key and roster. The open action and session summary say `opened from <node> (owner <x>); reported caller: agent <y> (reported by <node>)`. The caller and optional claim are supplied by the source node for audit only; the target never uses them to grant access. The source bridge compares the socket peer's process start time before looking up ancestry and names an agent only from the OS-reported executable. Missing or ambiguous process information becomes `unverified caller`. Another process with the source OS user's access can impersonate an agent label.
 
 ## Remove
 

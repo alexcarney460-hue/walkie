@@ -8,6 +8,7 @@ import { hrefFor } from "../../lib/route.ts";
 import { byFolder, presence } from "../../lib/projects.ts";
 import { useProjects, projectsStore } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
+import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { CreateProject } from "./CreateProject.tsx";
 import { LinearImport } from "./LinearImport.tsx";
 import { Meter } from "./Meter.tsx";
@@ -36,7 +37,7 @@ export function AgentFaces({ agents, max = 4 }: { agents: readonly AgentView[] |
   return (
     <span className="faces" aria-label={`${agents.length} agent${agents.length === 1 ? "" : "s"} working here: ${agents.map((a) => a.agent).join(", ")}`}>
       {shown.map((a) => (
-        <span key={a.id} className={`face state-${a.effective_state}`} title={`@${a.id} · ${a.effective_state}${a.status.title ? ` · ${a.status.title}` : ""}`}>
+        <span key={a.id} className={`face state-${a.effective_state}`} title={`@${a.id} · ${a.effective_state}${a.status.title ? ` · ${displayStoredText(a.status.title)}` : ""}`}>
           <Avatar handle={a.handle} name={a.agent} size={20} agent />
         </span>
       ))}

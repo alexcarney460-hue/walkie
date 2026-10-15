@@ -220,10 +220,10 @@ describe("CLI plan text", () => {
     expect(planLine(planView(l, T0, { people: 7, machines: 9 }, T0 + 40 * DAY_MS))).toContain("renewal overdue, grace until");
   });
   test("a 402 prints a friendly upgrade message", () => {
-    const err = new WalkieError("plan_limit", "x", 402, { resource: "people", limit: 2, used: 2, plan: "free", upgrade_url: "https://getwalkie.vercel.app/api/checkout?plan=team&interval=month&seats=3" });
+    const err = new WalkieError("plan_limit", "x", 402, { resource: "people", limit: 2, used: 2, plan: "free", upgrade_url: "https://sqwakie.si/api/checkout?plan=team&interval=month&seats=3" });
     const text = planLimitText(err) ?? "";
     expect(text).toContain("Your Free plan includes 2 people (2 in use).");
-    expect(text).toContain(c.bold("https://getwalkie.vercel.app/api/checkout?plan=team&interval=month&seats=3"));
+    expect(text).toContain(c.bold("https://sqwakie.si/api/checkout?plan=team&interval=month&seats=3"));
     expect(planLimitText(new WalkieError("forbidden", "x", 403))).toBeNull();
   });
 });
@@ -321,7 +321,8 @@ describe("renewal", () => {
       () => Response.json({ key: testVendor().issue({ team, lic_id: "sub_abc" }) }),
     ];
     for (const respond of cases) outcomes.push(await new LicenseRenewer(core, log, { now, service: service(fetcher([], respond)) }).tick());
-    expect(outcomes).toEqual(["refused", "refused", "failed", "failed", "failed", "failed"]);
+    // A 403 invalid_renewal is retried once with the signed roster proof; refused again, it is "proof_refused".
+    expect(outcomes).toEqual(["refused", "proof_refused", "failed", "failed", "failed", "failed"]);
     expect(core.roster.license?.key).toBe(key);
   });
 

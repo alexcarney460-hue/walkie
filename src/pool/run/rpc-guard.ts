@@ -5,7 +5,7 @@
 // FUNCTION POINTER read from op_params. Issue #25299 (not planned either) crashes the server with graph node id 0.
 //
 // So the guard parses the stream (b11205's wire format: `u8 cmd | u64 size | payload`, ggml/src/ggml-rpc/
-// ggml-rpc.cpp) and lets through ONLY what llama-server itself sends for the models Walkie runs:
+// ggml-rpc.cpp) and lets through ONLY what llama-server itself sends for the models Sqwakie runs:
 //   - the first message must be HELLO (cmd 14, 24 bytes); its transport capabilities are zeroed, so no connection
 //     is upgraded to RDMA off the tunnel;
 //   - commands: an ALLOW-LIST (ALLOWED_CMDS), each with its exact size where the server's struct is fixed;
@@ -208,7 +208,7 @@ export class RpcGuard {
       checkViews(shapes);
       ops = shapes.map((t) => t.op);
     }
-    // POOL-REAL-1: a head never makes the worker write its tensor cache (rpc-server -c); only Walkie's own prepare
+    // POOL-REAL-1: a head never makes the worker write its tensor cache (rpc-server -c); only Sqwakie's own prepare
     // (weights.ts, from a checked file) writes it. SET_TENSOR's cache flag sits right after its rpc_tensor.
     if (st.cmd === CMD.SET_TENSOR) st.buf[9 + RPC_TENSOR_SIZE] = 0;
     const size = Number(view(st.buf).getBigUint64(1, true));

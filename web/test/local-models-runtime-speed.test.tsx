@@ -1,4 +1,4 @@
-// Review F2 (local-models-hf-review), the dashboard side: a pick timed at a GPU that Walkie's own runtime does not use
+// Review F2 (local-models-hf-review), the dashboard side: a pick timed at a GPU that Sqwakie's own runtime does not use
 // (a DGX Spark, an NVIDIA card on Linux arm64) says so next to its speed in the Mission Control card and on the Team page,
 // in the best overall, each pick row and the whole-team pick; a Metal Mac or a Linux x64 CUDA box never gets the line.
 import { expect, test } from "bun:test";
@@ -10,7 +10,7 @@ import { CATALOG } from "../../src/pool/catalog.ts";
 installWindow();
 const { LocalModelsCard, LocalModelsSection } = await import("../src/components/LocalModels.tsx");
 const GiB = 1024 ** 3;
-const CAVEAT = "assumes a GPU build of llama.cpp: Walkie's own runtime is counted as CPU only on";
+const CAVEAT = "assumes a GPU build of llama.cpp: Sqwakie's own runtime is counted as CPU only on";
 const models = { catalog: CATALOG, source: "built-in" as const, state: "built-in" as const, checkedAt: null, note: null };
 const text = (html: string): string => html.replace(/&#x27;/g, "'").replace(/<[^>]+>/g, " ");
 const count = (s: string, sub: string): number => s.split(sub).length - 1;

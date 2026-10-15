@@ -27,7 +27,7 @@ const FIX = join(import.meta.dir, "../fixtures/claude-subagents");
 type Line = { event: string; payload: Record<string, unknown> };
 const fixture = (name: string): Line[] => readFileSync(join(FIX, name), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Line);
 
-/** Whether Walkie's installed hooks receive this recorded event (the probe logged every event and every tool). */
+/** Whether Sqwakie's installed hooks receive this recorded event (the probe logged every event and every tool). */
 function delivered(l: Line): boolean {
   return CLAUDE_EVENTS.some((e) => e.event === l.event && (!e.matcher || e.matcher === "*" || new RegExp(`^(${e.matcher})$`).test(String(l.payload.tool_name ?? ""))));
 }
@@ -293,14 +293,14 @@ describe("hooks install and upgrade (Opus mission-sub r1 #1-4)", () => {
     expect(next.hooks.PreToolUse).toEqual([{ matcher: "Agent|Task", hooks: [{ type: "command", command: OURS, timeout: 5 }] }]);
     expect(readdirSync(dir).filter((f) => f.includes(".bak-walkie-")).length).toBe(1);
     expect(refreshClaudeHooks({ settingsPath: path, home, now: 2 }).status).toBe("current");
-    // Removed after Walkie added it: never added again; doctor says so.
+    // Removed after Sqwakie added it: never added again; doctor says so.
     const trimmed = read(path);
     delete (trimmed.hooks as Record<string, unknown>).SubagentStop;
     writeFileSync(path, JSON.stringify(trimmed));
     expect(refreshClaudeHooks({ settingsPath: path, home, now: 3 }).status).toBe("current");
     const doc = claudeHooksDoctor({ settingsPath: path, home });
-    expect(doc.some((d) => d.level === "warn" && /removed after Walkie added them \(SubagentStop\)/.test(d.detail))).toBe(true);
-    expect(doc.some((d) => /your changes to Walkie's entries kept \(Notification/.test(d.detail))).toBe(true);
+    expect(doc.some((d) => d.level === "warn" && /removed after Sqwakie added them \(SubagentStop\)/.test(d.detail))).toBe(true);
+    expect(doc.some((d) => /your changes to Sqwakie's entries kept \(Notification/.test(d.detail))).toBe(true);
   });
 
   test("a mixed entry (ours + the person's) is left untouched and reported", () => {

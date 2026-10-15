@@ -59,6 +59,8 @@ test("a working separate monitor renews ownership during a slow helper", async (
     expect(obligation.ownerActive("run")).toBe(true);
     const db = new Database(cleanupFile);
     try {
+      // The monitor renews concurrently; match CleanupObligation's bounded wait for its short write lock.
+      db.exec("PRAGMA busy_timeout = 5000");
       const row = db.query("SELECT heartbeat, interval_ms FROM retry_owner WHERE generation = 'run'").get() as { heartbeat: number; interval_ms: number };
       expect(row.interval_ms).toBe(3_000);
       expect(Date.now() - row.heartbeat).toBeLessThan(3_000);

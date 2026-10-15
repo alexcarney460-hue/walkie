@@ -1,6 +1,6 @@
 // The seat runner (`walkie seat-runner`, PROTOCOL §11 "Seat users"): what the host daemon runs as a seat's own fresh
 // user, only through `sudo -n -u walkie-s<n> <runner> seat-runner` (a fixed argv, no shell). Every seat gets a user made
-// for it and destroyed after it (admin.ts), so a seat can't reach the host person's Walkie (the daemon's 0700 home), the
+// for it and destroyed after it (admin.ts), so a seat can't reach the host person's Sqwakie (the daemon's 0700 home), the
 // person's closed home, or another seat. The daemon can't signal another user's processes: this runner does it for it.
 //
 // stdin (from the daemon; sudo passes no other descriptor and resets the environment): one JSON line (the spec, at
@@ -332,7 +332,7 @@ async function runSeat(spec: RunnerSpec, input: Input): Promise<number> {
     rmSync(join(dir, "claude-config", ".credentials.json"), { force: true });
   };
   const scope = fakeScope();
-  // This run's own runtime configuration, fresh in the fresh home, with Walkie's settings: no hooks, whatever an
+  // This run's own runtime configuration, fresh in the fresh home, with Sqwakie's settings: no hooks, whatever an
   // earlier seat or the repository planted (Codex r4 HIGH 2).
   const claudeConfig = join(dir, "claude-config");
   const codexHome = join(dir, "codex-home");

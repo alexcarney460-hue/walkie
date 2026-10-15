@@ -41,7 +41,7 @@ describe("planBadgeText", () => {
 
 describe("plan_limit errors", () => {
   test("details are parsed only when well formed", () => {
-    const d = planLimitDetails({ code: "plan_limit", resource: "people", limit: 2, used: 2, plan: "free", upgrade_url: "https://getwalkie.vercel.app/api/checkout?plan=team&interval=month&seats=3" });
+    const d = planLimitDetails({ code: "plan_limit", resource: "people", limit: 2, used: 2, plan: "free", upgrade_url: "https://sqwakie.si/api/checkout?plan=team&interval=month&seats=3" });
     expect(d?.resource).toBe("people");
     expect(limitMessage(d!)).toBe("Your Free plan includes 2 people (2 used). Upgrade to add more.");
     expect(planLimitDetails({ resource: "bogus", limit: 2, used: 2, upgrade_url: "x" })).toBeUndefined();
@@ -54,7 +54,7 @@ describe("plan_limit errors", () => {
   test("only http(s) upgrade links render", () => {
     expect(safeExternalUrl("javascript:alert(1)")).toBeNull();
     expect(safeExternalUrl("data:text/html,x")).toBeNull();
-    expect(safeExternalUrl("https://getwalkie.vercel.app/api/portal")).toBe("https://getwalkie.vercel.app/api/portal");
+    expect(safeExternalUrl("https://sqwakie.si/api/portal")).toBe("https://sqwakie.si/api/portal");
     expect(safeExternalUrl("not a url")).toBeNull();
   });
 });

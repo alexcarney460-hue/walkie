@@ -43,10 +43,10 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff", ".txt": "text/plain; charset=utf-8", ".map": "application/json",
 };
 
-const PLACEHOLDER = `<!doctype html><html><head><meta charset="utf-8"><title>Walkie</title>
+const PLACEHOLDER = `<!doctype html><html><head><meta charset="utf-8"><title>Sqwakie</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;background:#0b0d10;color:#e6e8eb;display:grid;place-items:center;height:100vh;margin:0}
 main{max-width:32rem;padding:2rem}code{background:#1a1e24;padding:.1em .35em;border-radius:4px}</style></head>
-<body><main><h1>Walkie daemon is running</h1><p>The dashboard bundle is not built on this install.
+<body><main><h1>Sqwakie daemon is running</h1><p>The dashboard bundle is not built on this install.
 The local API is up at <code>/v1/*</code>. Build it with <code>bun run web:build</code>.</p></main></body></html>`;
 
 export interface LocalApiDeps {
@@ -57,7 +57,7 @@ export interface LocalApiDeps {
   peerApi?: () => PeerApiStatus;
   /** This daemon's own event-loop lag, distinct from another in-process test daemon. */
   localLag?: () => { max_ms: number; at: number } | null;
-  /** Which transport this daemon runs; Walkie Direct's endpoint (src/daemon/direct/link.ts). */
+  /** Which transport this daemon runs; Sqwakie Direct's endpoint (src/daemon/direct/link.ts). */
   transport?: TransportControl;
   integrations?: Integrations;
   /** The vendor's license service (activation codes); absent → activation codes answer 503. */
@@ -124,7 +124,7 @@ function legacyCookies(port: number): string[] { return ["walkie_token", `walkie
 const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   ["GET", /^\/v1\/import\/linear\/status$/],
   ["POST", /^\/v1\/import\/linear\/(?:plan|run|resume|cancel|sync|settings)$/],
-  ["GET", /^\/v1\/(?:me|team|agents|accounts|peers|events|asks|team\/pending|license|integrations|linear\/issues|stream|pool)$/],
+  ["GET", /^\/v1\/(?:me|team|agents|accounts|peers|events|asks|team\/pending|team\/links|license|integrations|linear\/issues|stream|pool)$/],
   ["GET", /^\/v1\/guests(?:\/audit)?$/],
   ["POST", /^\/v1\/guests(?:\/kill|\/[a-z0-9-]+\/revoke)?$/],
   ["GET", /^\/v1\/events\/[^/]+$/],
@@ -140,7 +140,7 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   // / remove / attach). The upload is a room upload only (the project's channel), not the generic artifact upload.
   ["GET", /^\/v1\/projects\/p-[0-9a-f]{8}\/room(?:\/[^/]+(?:\/content)?)?$/],
   ["POST", /^\/v1\/projects\/p-[0-9a-f]{8}\/room(?:\/[^/]+)?$/],
-  ["POST", /^\/v1\/(?:post|answer|team\/admit|team\/invite|team\/invite-code|team\/add-machine|channels|license)$/],
+  ["POST", /^\/v1\/(?:post|answer|team\/admit|team\/admit-link|team\/invite|team\/invite-code|team\/add-machine|team\/links|team\/links\/revoke|channels|license)$/],
   ["POST", /^\/v1\/integrations\/[a-z]+(?:\/run)?$/],
   ["POST", /^\/v1\/accounts\/(?:reset|reset\/prepare|reset\/resolve|refresh)$/],
   ["DELETE", /^\/v1\/integrations\/[a-z]+$/],
@@ -156,6 +156,10 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   // The Orchestrator tab (ORCH-FIX-11): this machine's host, its local conversation, sending and stopping a reply;
   // its Start and Stop buttons (PRE5-INT: start with the daemon's defaults only, orchestrator/routes.ts).
   ["GET", /^\/v1\/orchestrator(?:\/messages)?$/],
+  ["GET", /^\/v1\/browser\/(?:config|review\/[0-9a-f-]{36})$/],
+  ["POST", /^\/v1\/browser\/config$/],
+  ["GET", /^\/v1\/channels\/(?:status|health|config)$/],
+  ["POST", /^\/v1\/channels\/(?:config|link|reset-quota)$/],
   ["GET", /^\/v1\/orchestrator\/schedules(?:\/next)?$/],
   ["POST", /^\/v1\/orchestrator\/schedules(?:\/[^/]+\/run-now)?$/],
   ["POST", /^\/v1\/orchestrator\/schedules\/[0-9a-f-]{36}\/reset$/],
@@ -164,16 +168,19 @@ const DASHBOARD_ROUTES: readonly (readonly [string, RegExp])[] = [
   // ORCH-2: and its model picker (the chat header).
   ["POST", /^\/v1\/orchestrator\/(?:say|stop-reply|start|stop|model|access|auto)$/],
   // TALKIE-OPS-1: the tab's recommendations, and a person's one-tap approve or dismiss (rec-routes.ts checks the id and
-  // keeps answers person-only). Not POST /v1/talkie/recs itself: recording one is WalkieTalkie's child's alone.
+  // keeps answers person-only). Not POST /v1/talkie/recs itself: recording one is Talkie's child's alone.
   ["GET", /^\/v1\/talkie\/recs$/],
   ["POST", /^\/v1\/talkie\/recs\/[^/]+\/(?:approve|dismiss)$/],
   // Team > Devices (WALKIE-PWA-1): pair a phone, list and revoke paired phones.
   ["GET", /^\/v1\/mobile$/],
   ["POST", /^\/v1\/mobile\/pair$/],
   ["DELETE", /^\/v1\/mobile\/devices\/[0-9a-f]{12}$/],
-  // AGENT-ADMIN-1: the person's admin switches (the Seats view's "Agents set up Walkie" card) and the audit log.
+  // AGENT-ADMIN-1: the person's admin switches (the Seats view's "Agents set up Sqwakie" card) and the audit log.
   ["GET", /^\/v1\/admin$/],
   ["POST", /^\/v1\/admin\/switches$/],
+  // Quarantined legacy notes can be deleted only with a live dashboard session, never a bearer or Unix socket.
+  ["POST", /^\/v1\/memory\/delete-legacy$/],
+  ["POST", /^\/v1\/learn\/confirm$/],
   // RENT-2: "Add compute" (Machines, Mission Control): prices, the credit balance and rentals, renting, stopping and
   // a credit checkout link (the person pays in Stripe Checkout). Owner machines only (compute/routes.ts).
   ["GET", /^\/v1\/compute\/(?:quotes|state)$/],
@@ -506,7 +513,7 @@ export class LocalApi {
       // TALKIE-OPS-1: served before dispatch, so the scheduled-turn hold (local-routes.ts refuseScheduledWrite) is repeated here.
       const host = hostFor(this.d.core);
       if (req.headers.get(ORCHESTRATOR_TOKEN_HEADER) !== null && (host?.scheduledChildActive ? host.scheduledChildActive() : host?.scheduledTurnActive?.())) {
-        throw new HttpError(403, "scheduled_turn_cannot_act", "a scheduled WalkieTalkie turn changes nothing: it cannot sign out dashboards or rotate the token");
+        throw new HttpError(403, "scheduled_turn_cannot_act", "a scheduled Talkie turn changes nothing: it cannot sign out dashboards or rotate the token");
       }
       adminGate({ core: this.d.core, agent, underAgent, req }, url.pathname === "/v1/auth/logout" ? "signed out every dashboard session" : "rotated the local API token");
     }

@@ -148,13 +148,23 @@ describe("seats get access tokens only (Opus r8 2)", () => {
 
 describe("liveness, identity, ledgers (Codex r8 MEDIUM 1, Opus r8 LOW)", () => {
   test("an operation whose process can't be inspected stays held (busy), never taken over", () => {
-    expect(processAlive({ pid: 999_999_9, start: "whenever" })).toBe(true); // ps can't tell about this pid
-    const db = join(tmp(), "ledger.sqlite");
-    const ledger = new Ledger(db, false, () => true);
-    cleanups.push(() => ledger.close());
-    ledger.reserve(3, 501, { pid: 999_999_9, start: "whenever" });
-    ledger.advance(3, { pid: 999_999_9, start: "whenever" }, "reserved", "making");
-    expect(ledger.takeForDestroy(3, 501, { pid: process.pid, start: "me" })).toMatchObject({ ok: false, busy: true, state: "making" });
+    const operation = { pid: 999_999_9, start: "whenever" };
+    const original = Bun.spawnSync;
+    let probes = 0;
+    Bun.spawnSync = ((...args: Parameters<typeof Bun.spawnSync>) => {
+      expect(args[0]).toEqual(["/bin/ps", "-o", "lstart=", "-p", String(operation.pid)]);
+      probes += 1;
+      return { exitCode: 2, stdout: Buffer.alloc(0), stderr: Buffer.from("fixture: ps inspection failed") };
+    }) as typeof Bun.spawnSync;
+    try {
+      expect(processAlive(operation)).toBe(true);
+      const ledger = new Ledger(join(tmp(), "ledger.sqlite"), false);
+      cleanups.push(() => ledger.close());
+      ledger.reserve(3, 501, operation);
+      ledger.advance(3, operation, "reserved", "making");
+      expect(ledger.takeForDestroy(3, 501, { pid: process.pid, start: "me" })).toMatchObject({ ok: false, busy: true, state: "making" });
+      expect(probes).toBe(2); // Direct check and the ledger both use the real fail-closed liveness function.
+    } finally { Bun.spawnSync = original; }
   });
 
   test("a round-6 ledger (no owner or operation columns) is migrated; its rows are taken by the first person's helper", () => {

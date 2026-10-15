@@ -268,7 +268,7 @@ const FORMAT = /\p{Cf}/gu;
 
 /** A markdown link, every part of it bounded (so no input costs more than a few thousand steps per `[`): `[words](target "title")`. */
 const LINK = /\[([^\]\n]{0,300})\]\(\s{0,20}[^)\s]{0,2000}(?:\s{1,20}"[^"\n]{0,200}")?\s{0,20}\)/g;
-const JOIN_CODE = /wk1[A-Za-z0-9_-]{38,}/g;
+const JOIN_CODE = /w[kl]1[A-Za-z0-9_-]{38,}/g;
 /** The daemon's own join-code check looks for this anywhere in a text (after it has removed every space). */
 const WK1 = /wk1/g;
 const CODE_CHAR = /[A-Za-z0-9_-]/;

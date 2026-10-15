@@ -1,7 +1,7 @@
 // When owner SSH is READY on an enrolled machine, in one place: the terminal setup, `walkie ssh status` (which the
 // desktop app and the Windows bootstrap run) and anything else that reports it.
 //
-// Ready means exactly what `GET /v1/ssh/status` says: Walkie's SSH service answers on 127.0.0.1 (on macOS its own launchd
+// Ready means exactly what `GET /v1/ssh/status` says: Sqwakie's SSH service answers on 127.0.0.1 (on macOS its own launchd
 // service on 22022, never Remote Login; on Linux and WSL the loopback sshd on 22), the owner's key is installed, and the
 // tunnel gate is open. The gate stays closed (`ssh_team_waiting`) until this daemon has pulled the roster authority's log since it
 // started; a daemon that can't (the authority is offline, or it shares no transport with it) never gets there, so a
@@ -21,9 +21,9 @@ export type SshVerdict =
 /** The verdict once the wait is over: nothing is left for a person to flip by hand, so a wait that ran out is a failure. */
 export type SshFinal = { state: "ready" } | { state: "failed"; code: string; why: string; fix: string };
 
-/** What the caller knows about this machine that a fix may need to be true: only then is Walkie's own Linux unit named. */
+/** What the caller knows about this machine that a fix may need to be true: only then is Sqwakie's own Linux unit named. */
 export interface SshHints {
-  /** Linux and WSL: Walkie's own SSH unit (walkie-sshd) exists here. Unknown reads as absent: a fix never names a unit that may not exist. */
+  /** Linux and WSL: Sqwakie's own SSH unit (walkie-sshd) exists here. Unknown reads as absent: a fix never names a unit that may not exist. */
   walkieUnit?: boolean;
 }
 
@@ -44,19 +44,19 @@ const REFUSALS: Record<string, { why: string; fix: string }> = {
 
 const ENABLE = "run walkie ssh enable (one administrator step), then run walkie ssh status";
 
-/** What fixes a server that is not answering, per platform; Walkie's own Linux unit is named only when it exists here. */
+/** What fixes a server that is not answering, per platform; Sqwakie's own Linux unit is named only when it exists here. */
 function serverFix(platform: NodeJS.Platform, hints: SshHints): string {
-  if (platform === "darwin") return `start Walkie's SSH service: ${ENABLE}`;
+  if (platform === "darwin") return `start Sqwakie's SSH service: ${ENABLE}`;
   return hints.walkieUnit
-    ? "Walkie's SSH service (walkie-sshd) is installed but not answering: sudo systemctl enable --now walkie-sshd (sudo systemctl status walkie-sshd says why it stopped), then run walkie ssh status"
-    : `no SSH service of Walkie's answers on this machine: ${ENABLE}`;
+    ? "Sqwakie's SSH service (walkie-sshd) is installed but not answering: sudo systemctl enable --now walkie-sshd (sudo systemctl status walkie-sshd says why it stopped), then run walkie ssh status"
+    : `no SSH service of Sqwakie's answers on this machine: ${ENABLE}`;
 }
 
 /** One reading of `GET /v1/ssh/status`, judged. `platform` and `hints` only decide what fixes a server that is not answering. */
 export function sshVerdict(s: SshStatus, platform: NodeJS.Platform, hints: SshHints = {}): SshVerdict {
   if (s.revocation_unsaved) return { state: "failed", code: "ssh_revocation_unsaved", why: REVOCATION_UNSAVED_MESSAGE, fix: "run walkie ssh revoke again once the disk is writable" };
   if (s.owner_key_error) {
-    return { state: "failed", code: "owner_key_error", why: "the owner's key can't be checked: authorized_keys or Walkie's record of it can't be read", fix: "fix that file's permissions or contents, then run walkie ssh status" };
+    return { state: "failed", code: "owner_key_error", why: "the owner's key can't be checked: authorized_keys or Sqwakie's record of it can't be read", fix: "fix that file's permissions or contents, then run walkie ssh status" };
   }
   const reason = s.reason;
   if (reason && reason !== "ssh_team_waiting" && reason !== "ssh_pending") {
@@ -70,7 +70,7 @@ export function sshVerdict(s: SshStatus, platform: NodeJS.Platform, hints: SshHi
   if (reason === "ssh_team_waiting") {
     return { state: "waiting", code: "ssh_team_waiting", ...(s.is_authority
       ? { why: "this machine is the team's roster authority and has not yet synced with every team machine it can reach", fix: "bring the team's other machines online, then run walkie ssh status" }
-      : { why: "this machine has not synced with the team's roster authority since it started, so it can't yet rule out a revocation", fix: "make sure the roster authority machine is online and shares Walkie Direct or Tailscale with this one (walkie doctor shows both), then run walkie ssh status" }) };
+      : { why: "this machine has not synced with the team's roster authority since it started, so it can't yet rule out a revocation", fix: "make sure the roster authority machine is online and shares Sqwakie Direct or Tailscale with this one (walkie doctor shows both), then run walkie ssh status" }) };
   }
   if (!s.owner_key_present) return { state: "failed", code: "owner_key_absent", ...REFUSALS.owner_key_absent! };
   if (!s.tunnel_allowed) return { state: "failed", code: "ssh_tunnel_closed", why: "the SSH tunnel gate is closed", fix: "run walkie doctor" };
@@ -93,7 +93,7 @@ export interface SshWaitDeps {
   sleep(ms: number): Promise<void>;
   now(): number;
   platform: NodeJS.Platform;
-  /** Linux and WSL: whether Walkie's own SSH unit exists here (see SshHints). */
+  /** Linux and WSL: whether Sqwakie's own SSH unit exists here (see SshHints). */
   walkieUnit?(): boolean;
   /** How long a wait that can still resolve by itself is given. */
   timeoutMs: number;
@@ -113,7 +113,7 @@ export async function waitForOwnerSsh(d: SshWaitDeps): Promise<SshFinal> {
   for (;;) {
     let verdict: SshVerdict;
     try { verdict = sshVerdict(await d.read(), d.platform, { walkieUnit: d.walkieUnit?.() === true }); }
-    catch { verdict = { state: "waiting", code: "status_unavailable", why: "this machine's Walkie did not answer the SSH status request", fix: "run walkie doctor, then walkie ssh status" }; }
+    catch { verdict = { state: "waiting", code: "status_unavailable", why: "this machine's Sqwakie did not answer the SSH status request", fix: "run walkie doctor, then walkie ssh status" }; }
     if (verdict.state === "ready" || verdict.state === "failed") return verdict;
     if (noted !== verdict.code) { noted = verdict.code; d.onWaiting?.(verdict); }
     if (d.now() >= deadline) return sshFinal(verdict);
@@ -123,7 +123,7 @@ export async function waitForOwnerSsh(d: SshWaitDeps): Promise<SshFinal> {
 
 /** The plain lines for a verdict (no colours: the caller decorates). */
 export function sshFinalLines(f: SshFinal | SshReport): string[] {
-  if (f.state === "ready") return ["owner SSH is ready: Walkie's SSH service answers on 127.0.0.1, the owner's key is installed and the tunnel is open through Walkie"];
+  if (f.state === "ready") return ["owner SSH is ready: Sqwakie's SSH service answers on 127.0.0.1, the owner's key is installed and the tunnel is open through Sqwakie"];
   const head = f.state === "waiting" ? "owner SSH is not ready yet" : "owner SSH is NOT ready";
   return [`${head} (${f.code}): ${f.why}`, `what fixes it: ${f.fix}`];
 }

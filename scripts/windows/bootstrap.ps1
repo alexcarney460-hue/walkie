@@ -165,7 +165,7 @@ function Invoke-WslInput([string] $user, [string] $command, [string] $inputText,
 # loopback-only SSH service (embedded in the walkie binary), then the consent is recorded with the packet in the same
 # request, then SSH is judged ONLY by `walkie ssh status`. Returns one plain sentence; a failure here never tears down the
 # rest of the enrollment, and the packet is never printed, logged or placed in a command line. When the WSL step left SSH out of the
-# consent it recorded (an SSH server that is not Walkie's already answers in this Ubuntu, or the authorization does not fit this
+# consent it recorded (an SSH server that is not Sqwakie's already answers in this Ubuntu, or the authorization does not fit this
 # enrollment) it says why on its standard error; the status can then only say that no authorization is recorded, so that sentence is
 # the summary instead of the status's fix (a new add-machine link would meet the same server). Static: untested without pwsh.
 function Enable-OwnerSsh([string] $user, [string] $walkie, $journal, [string] $packet) {
@@ -212,7 +212,7 @@ done
   if (-not $homes.Count) { return }
   $user = [string]$journal.user
   if ($homes.Count -ne 1 -or $homes[0] -cne "/home/$user/.walkie" -or $journal.joinStarted -ne $true) {
-    throw 'Ubuntu already contains Walkie state; use a fresh Ubuntu instance'
+    throw 'Ubuntu already contains Sqwakie state; use a fresh Ubuntu instance'
   }
   $walkie = "/home/$user/.local/bin/walkie"
   $observed = (Invoke-WslInput $user "$walkie daemon status --json" '') | ConvertFrom-Json
@@ -293,14 +293,14 @@ try {
       else { Write-Host "This link can't turn on owner SSH: its SSH authorization is damaged. Ask the owner for a new link. Enrollment continues without SSH." }
     }
     Write-Host "Allow $($handoff.owner) and $namedLaunchers to provision this company machine and run agents as your Windows-WSL user $user?"
-    Write-Host 'Owners can use allow-listed remote admin commands. Launched agents can run arbitrary code, read/change your files and keys, and use your Walkie daemon as you.'
-    Write-Host 'Owner-provided subscription logins may be leased for a run. Walkie records who provisioned and launched.'
-    Write-Host "Seat cap: $($handoff.maxSeats). Profile: $($handoff.profile). Walkie permanently keeps Ubuntu running after logon, including on battery."
+    Write-Host 'Owners can use allow-listed remote admin commands. Launched agents can run arbitrary code, read/change your files and keys, and use your Sqwakie daemon as you.'
+    Write-Host 'Owner-provided subscription logins may be leased for a run. Sqwakie records who provisioned and launched.'
+    Write-Host "Seat cap: $($handoff.maxSeats). Profile: $($handoff.profile). Sqwakie permanently keeps Ubuntu running after logon, including on battery."
     Write-Host 'WSL will shut down once to activate systemd; running WSL sessions will stop.'
     if ($handoff.acSleepNever -eq $true) { Write-Host 'AC sleep will be set to never.' }
     if ($ownerSsh) {
-      Write-Host "$($handoff.owner), their everyday agents and WalkieTalkie may also sign in to this Ubuntu over SSH as your user $user, through Walkie. Walkie records the caller, source machine, session time and duration, but not session content, and posts one summary to you."
-      Write-Host 'This uses a Walkie SSH service that listens only on this machine and accepts only key logins; Walkie installs it in Ubuntu in the same elevation. Revoke with walkie ssh revoke, walkie admin remote off, or by leaving the team.'
+      Write-Host "$($handoff.owner), their everyday agents and Talkie may also sign in to this Ubuntu over SSH as your user $user, through Sqwakie. Sqwakie records the caller, source machine, session time and duration, but not session content, and posts one summary to you."
+      Write-Host 'This uses a Sqwakie SSH service that listens only on this machine and accepts only key logins; Sqwakie installs it in Ubuntu in the same elevation. Revoke with walkie ssh revoke, walkie admin remote off, or by leaving the team.'
     }
     Write-Host 'Stop seats: walkie seats deny. Stop remote setup: walkie admin remote off and walkie agents admin off. You can leave the team.'
     if ((Read-Host 'Type ALLOW to consent') -cne 'ALLOW') { throw 'Consent declined' }
@@ -424,7 +424,7 @@ printf 'WALKIE_PACKAGES_END\n'
   try { $rootOutput = Invoke-WslInput 'root' "/bin/sh -s -- $user" $rootScript }
   catch {
     if ($_.Exception.Message -notlike '*WALKIE_APT_SOURCES_BLOCKED*') { throw }
-    Write-Host 'Ubuntu has an extra APT source for a Walkie bootstrap package, or no candidate from the official Ubuntu archive.'
+    Write-Host 'Ubuntu has an extra APT source for a Sqwakie bootstrap package, or no candidate from the official Ubuntu archive.'
     Write-Host 'Using that source may install third-party code. Remove it from Ubuntu to continue with the official archive.'
     if ((Read-Host 'To use the configured APT sources and keys anyway, type ALLOW-EXTRA-APT-SOURCES') -cne 'ALLOW-EXTRA-APT-SOURCES') { throw 'APT source override declined' }
     $rootOutput = Invoke-WslInput 'root' "/bin/sh -s -- $user allow-extra" $rootScript
@@ -479,7 +479,7 @@ printf 'WALKIE_PACKAGES_END\n'
   Write-PackageReceipt $journal
   $journal.phase = 'complete'; Save-Journal $journal
   Finish-Enrollment
-  Write-Host 'Walkie joined. Seat readiness still depends on owner provisioning and account leases; run walkie seats doctor inside Ubuntu.'
+  Write-Host 'Sqwakie joined. Seat readiness still depends on owner provisioning and account leases; run walkie seats doctor inside Ubuntu.'
   if ($sshSummary) { Write-Host $sshSummary }
 } catch {
   [Console]::Error.WriteLine('Windows enrollment stopped: ' + $_.Exception.Message)

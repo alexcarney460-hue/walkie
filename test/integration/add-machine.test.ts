@@ -98,7 +98,7 @@ describe("POST /v1/team/add-machine", () => {
     expect((await alex.client("claude-3f9a").inviteCode("kira", "member")).handle).toBe("kira");
     expect((await alex.client("claude-3f9a").inviteCode("newperson", "member")).handle).toBe("newperson");
     const privateMessages = (await alex.client().orchestratorMessages({ limit: 20 })).messages;
-    expect(privateMessages.some((m) => m.via === "private" && m.text.includes("Link: https://getwalkie.vercel.app/join#wk1"))).toBe(true);
+    expect(privateMessages.some((m) => m.via === "private" && m.text.includes("Link: https://sqwakie.si/join#wk1"))).toBe(true);
     expect(privateMessages.some((m) => m.text.includes("Code: wk1"))).toBe(true);
     expect((await refused(alex.client("claude-3f9a").orchestratorMessages({ limit: 20 }))).code).toBe("forbidden");
     const log = readFileSync(join(alex.home, "admin-audit.jsonl"), "utf8");
@@ -503,7 +503,7 @@ describe.skipIf(!["curl", "openssl", "sh"].every((t) => existsSync(`/usr/bin/${t
     expect(code).toBe(4);
     expect(out).toContain(`Verified: release signature (openssl), version ${TAG} and SHA-256.`);
     expect(out).toContain("daemon already running");
-    expect(out).toContain("joined acme as @kira (Walkie Direct)");
+    expect(out).toContain("joined acme as @kira (Sqwakie Direct)");
     expect(out).toContain("company seats stay off: type yes at this machine's terminal");
     expect(err).toContain("Company enrollment is incomplete");
     expect((await kira2.client().seats()).local.allow).toBe(false);

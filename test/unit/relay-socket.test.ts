@@ -68,6 +68,17 @@ async function until(fn: () => boolean, ms = 3_000): Promise<void> {
   while (!fn()) { if (Date.now() > end) throw new Error("timed out"); await Bun.sleep(10); }
 }
 
+/** Keep the real upgrade/inbound socket, but make outbound backpressure independent of the OS send-buffer size. */
+function stallWrites(sock: RelaySocket): () => void {
+  const state = sock as unknown as {
+    socket: { write(data: Uint8Array | string): number; end(): void; terminate(): void };
+    flush(): void;
+  };
+  const native = state.socket;
+  state.socket = { write: () => 0, end: () => native.end(), terminate: () => native.terminate() };
+  return () => { state.socket = native; state.flush(); };
+}
+
 test("a peer that stops reading and keeps sending native pings: pings are rate-limited and the connection ends", async () => {
   const url = await peer((sock) => { for (let i = 0; i < 100; i++) sock.write(frame(9, "p".repeat(100))); }, false);
   const { sock, seen } = client(url);
@@ -81,9 +92,11 @@ test("pongs to a non-reading peer never queue past the limit", async () => {
   const url = await peer((sock) => { s = sock; }, false);
   const { sock, seen } = client(url, { maxQueued: 4_096 });
   await until(() => seen.opened);
-  // fill the kernel's buffer and then our own queue with data the peer won't read (small frames, until refused)
+  stallWrites(sock);
+  // Fill the bounded queue while writes are blocked. A paused peer alone may still have kernel receive capacity.
   let sent = 0;
-  while (sock.send(new Uint8Array(100)) && sent < 1_000_000) { sent += 1; if (sent % 2_000 === 0) await Bun.sleep(1); }
+  while (sent < 100 && sock.send(new Uint8Array(100))) sent += 1;
+  expect(sent).toBeLessThan(100);
   expect(sock.queued).toBeGreaterThan(4_096 - 200);
   expect(sock.queued).toBeLessThanOrEqual(4_096);
   (s as unknown as net.Socket).write(frame(9, "p".repeat(125))); // an allowed ping; its 131-byte pong doesn't fit
@@ -409,15 +422,18 @@ test("outbound lanes drain round-robin: one room's backlog doesn't hold back ano
   const url = await peer((sock) => { s = sock; sock.on("data", (d: Buffer) => { got = Buffer.concat([got, d]); }); }, false);
   const { sock, seen } = client(url, { maxQueued: 8 * 1024 * 1024 });
   await until(() => seen.opened);
+  const drain = stallWrites(sock);
   const order: string[] = [];
   const a = new Uint8Array(64 * 1024).fill(0x61);
   for (let i = 0; i < 60; i++) expect(sock.send(a, "room-a", () => order.push(`a${i}`))).toBe(true); // ~3.8 MiB backlog
   expect(sock.send(new Uint8Array(100).fill(0x62), "room-b", () => order.push("b"))).toBe(true);
+  expect(order).toEqual([]);
   (s as unknown as net.Socket).resume();
+  drain();
   await until(() => order.length === 61, 5_000);
   const at = order.indexOf("b");
   expect(at).toBeGreaterThanOrEqual(0);
-  expect(at).toBeLessThan(40); // not behind the whole backlog (the kernel took the first few before it was queued)
+  expect(at).toBeLessThanOrEqual(2); // at most the in-flight a0 and the next round's a1 precede room-b
   expect(order.filter((x) => x !== "b")).toEqual(Array.from({ length: 60 }, (_, i) => `a${i}`)); // a lane stays in order
 });
 

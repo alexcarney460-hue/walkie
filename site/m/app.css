@@ -1,4 +1,4 @@
-/* Walkie on your phone (WALKIE-PWA-1). The product's palette: graphite ink, signal green for "live", amber for "a
+/* Sqwakie on your phone (WALKIE-PWA-1). The product's palette: graphite ink, signal green for "live", amber for "a
    human is needed", red for "stuck". Dark by default, light with the system. Phone first (390 px), safe areas. */
 @font-face { font-family: "Geist"; src: url("/assets/fonts/geist-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "Geist"; src: url("/assets/fonts/geist-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500 600; font-display: swap; }

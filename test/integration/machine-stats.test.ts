@@ -12,8 +12,9 @@ let reading: Reading = { mem: { total: 16 * GiB, used: 9 * GiB, swap_used: 0, pr
 
 beforeAll(async () => {
   c = new Cluster();
-  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", machineStats: { intervalMs: 100,
-    read: async () => reading, readSys: () => null } });
+  alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", machineStats: { intervalMs: 100, heartbeatMs: 60_000,
+    read: async () => reading,
+    readSys: () => ({ os: "darwin", arch: "arm64", cpus: 8, load1: 0, load5: 0, load15: 0, cpu_busy_pct: 0 }) } });
   kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kiras-mbp" }); // stats off (as a v0.1.3 peer sends none)
   await alex.client().init("acme", "alex");
   await alex.client().invite("kira@example.com", "kira", "member");
@@ -28,6 +29,7 @@ test("own stats on this node; a peer's arrive over vv; a peer without stats has 
   const self = await waitFor(async () => (await nodeOn(alex, "alex-mbp"))?.stats, { what: "alex's own stats" });
   expect(self.mem).toEqual({ total: 16 * GiB, used: 9 * GiB, free: 7 * GiB, swap_used: 0, pressure: "normal" });
   expect(self.temp_c).toBe(58);
+  expect(self.sys?.load1).toBe(0);
   const seen = await waitFor(async () => (await nodeOn(kira, "alex-mbp"))?.stats, { what: "alex's stats on kira" });
   expect(seen.temp_c).toBe(58);
   expect(seen.at).toBeLessThanOrEqual(Date.now());
@@ -53,6 +55,11 @@ test("a meaningful change reaches the peer; noise does not", async () => {
 });
 
 test("offline peer: last known stats kept (the dashboard greys them)", async () => {
+  reading = { mem: { total: 16 * GiB, used: 14.5 * GiB, swap_used: 2 * GiB, pressure: "warn" }, temp_c: 91 };
+  await waitFor(async () => {
+    const st = (await nodeOn(kira, "alex-mbp"))?.stats;
+    return st?.temp_c === 91 ? st : null;
+  }, { what: "updated stats on kira before alex goes offline" });
   await alex.stop();
   const n = await waitFor(async () => {
     const x = await nodeOn(kira, "alex-mbp");

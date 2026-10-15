@@ -1,4 +1,4 @@
-// Walkie mobile link: what travels where (WALKIE-PWA-1). Shared by the relay, the daemon and the phone app.
+// Sqwakie mobile link: what travels where (WALKIE-PWA-1). Shared by the relay, the daemon and the phone app.
 //
 // Relay (relay/server.ts): a daemon connects to /v1/daemon?v=<RELAY_PROTOCOL>, waits for the relay's `hello {v}`, and
 // claims rooms with keys (room id = roomOf(key), so only the key holder can claim one); a phone connects to

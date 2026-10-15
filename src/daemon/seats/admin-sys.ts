@@ -13,13 +13,15 @@ import { Database } from "bun:sqlite";
 import { Ledger, processAlive, processStart, type HomeRetirementStore, type OpId, type TalkieOwnerRecord } from "./admin-ledger.ts";
 import { AT_FDCWD, S_IFLNK, S_IFMT, closeFd, forceUnmount, listDir, mkdirAt, openDirAt, renameAtExclusive, statAt, userMounts, writeDurably } from "./fsat.ts";
 import { validRoots } from "./runner-sweep.ts";
-import { SEATS_GROUP, SEAT_HOME_MARKER, SEAT_USER_PREFIX, type AdminSys } from "./admin.ts";
+import { SEATS_GROUP, SEAT_HOME_MARKER, SEAT_USER_PREFIX, parseAdminArgv, seatUserName, type AdminSys } from "./admin.ts";
 import { DS_GROUP_ATTRS, macImplicitGids, parseDsGroups, parseDsUser } from "./mac-groups.ts";
 import { runnerOp } from "./runner-child.ts";
 import { verifySeatHomeResidue } from "./admin-home-residue.ts";
 import { aclAllowsWrite, hasExtendedAcl, stripExtendedAcl } from "./admin-acl.ts";
 import { SCHEDULER_FILES, SEAT_ROOTS_FILE, listAcl } from "./seat-user.ts";
+import { fcronConfigProblem, fcronDenied } from "./fcron-policy.ts";
 import { sweep, type SweepResult } from "./sweep.ts";
+import { TALKIE_USER } from "./talkie-user.ts";
 import { O_CLOEXEC, instanceLockHeld } from "../instance-lock.ts";
 import { SEAT_INSTANCE_FILE, canonicalPath, otherScopeWhy, readSeatRegistration, type SeatInstanceCheck } from "./instance.ts";
 
@@ -798,7 +800,7 @@ function executableMatches(pid: number): boolean {
 }
 
 /**
- * Linux WalkieTalkie check. Socket names come from UNIX_DIAG (or `/proc/net/unix` if the kernel cannot answer it),
+ * Linux Talkie check. Socket names come from UNIX_DIAG (or `/proc/net/unix` if the kernel cannot answer it),
  * not from lsof, which cuts a name at the first space. Only this process's socket inodes are queried.
  * An accepted connection carries the same path and is not listening, so one client does not hide the daemon.
  */
@@ -927,7 +929,7 @@ export function callingTalkieDaemon(owner: number, instance: string, parent = pr
 }
 
 /**
- * The daemon allowed to make the first WalkieTalkie owner claim. When the root seat-instance record is present,
+ * The daemon allowed to make the first Talkie owner claim. When the root seat-instance record is present,
  * the caller-supplied socket hash is accepted only for that record's socket. When no record exists (a setup from
  * before the record), the hash is the caller's own, as before. A record that can't be trusted fails closed.
  */
@@ -938,7 +940,7 @@ export function callingTalkieClaimDaemon(owner: number, instance: string, parent
   if (read.state === "absent") return callingTalkieDaemon(owner, instance, parent);
   if (read.state === "invalid") throw new Error(`the seat registration can't be trusted: ${read.why}`);
   const registered = read.registration;
-  if (registered.uid !== owner) throw new Error(`another Walkie daemon owns shell access on this machine (${registered.user}'s, home ${registered.home})`);
+  if (registered.uid !== owner) throw new Error(`another Sqwakie daemon owns shell access on this machine (${registered.user}'s, home ${registered.home})`);
   return callingTalkieDaemon(owner, instance, parent, registered.socket);
 }
 
@@ -1013,7 +1015,7 @@ function processHoldsListeningSocket(pid: number, socketPath: string, owner: num
  * `/proc/self/fd/<n>/<name>` (Bun binds that way, then closes `<n>`): `<n>` in this pid is resolved when it is still
  * the socket's directory, and otherwise the kernel's record of that listening socket's file must be the registered
  * socket (inode, and the mount's device). The text table has no such record, so a closed directory fd there is
- * "could not be checked", not another Walkie. A file inode above 32 bits does not match once that directory fd is
+ * "could not be checked", not another Sqwakie. A file inode above 32 bits does not match once that directory fd is
  * closed. Root opens nothing of the daemon user's.
  * macOS: lsof shows the lock file open and the bound socket path in the unix socket's NAME (a peer's `->0x` address
  * does not count), and the lock is held (instanceLockHeld, opening only that same inode, without following links or
@@ -1065,7 +1067,7 @@ export function callingSeatDaemon(owner: number, socket: string, parent = proces
     if (!match) throw new Error("the invoking daemon's process identity is ambiguous");
     const uid = Number(match[2]);
     if (uid === owner) {
-      if (!holds(pid)) throw new SeatCallerMismatch("the Walkie that asked doesn't hold the registered Walkie's socket");
+      if (!holds(pid)) throw new SeatCallerMismatch("the Sqwakie that asked doesn't hold the registered Sqwakie's socket");
       const start = (match[3] as string).trim();
       if (processStart(pid) !== start) throw new Error("the invoking daemon changed during inspection");
       return { pid, start };
@@ -1077,7 +1079,7 @@ export function callingSeatDaemon(owner: number, socket: string, parent = proces
 }
 
 /**
- * WALK-103: whether the daemon that ran this helper is the Walkie `walkie seats setup-user --apply` registered for this
+ * WALK-103: whether the daemon that ran this helper is the Sqwakie `walkie seats setup-user --apply` registered for this
  * machine's seat users (SEAT_INSTANCE_FILE, root's). Nothing recorded: `unregistered` (a setup from before the record);
  * a check that failed for a passing reason (ps or lsof timed out): `unchecked`, asked again later.
  */
@@ -1085,7 +1087,7 @@ export function checkSeatInstance(owner: number, path = SEAT_INSTANCE_FILE, bind
   root = true): SeatInstanceCheck {
   const read = readSeatRegistration(path, root);
   if (read.state === "absent") {
-    return { state: "unregistered", why: "this machine's seat users were set up by an earlier Walkie, which didn't record which Walkie on this machine owns them: the helper lists, makes and removes seat users again once walkie seats setup-user --apply records it" };
+    return { state: "unregistered", why: "this machine's seat users were set up by an earlier Sqwakie, which didn't record which Sqwakie on this machine owns them: the helper lists, makes and removes seat users again once walkie seats setup-user --apply records it" };
   }
   if (read.state === "invalid") return { state: "other", why: `${read.why}: run walkie seats setup-user --apply again` };
   const r = read.registration;
@@ -1095,7 +1097,7 @@ export function checkSeatInstance(owner: number, path = SEAT_INSTANCE_FILE, bind
     return { state: "registered" };
   } catch (err) {
     if (err instanceof SeatCallerMismatch) return { state: "other", why: `${otherScopeWhy(r)} (${err.message})` };
-    return { state: "unchecked", why: `the helper couldn't check which Walkie asked right now (${(err as Error).message}): asked again later` };
+    return { state: "unchecked", why: `the helper couldn't check which Sqwakie asked right now (${(err as Error).message}): asked again later` };
   }
 }
 
@@ -1105,7 +1107,7 @@ export async function checkTalkieDaemonStopped(root: string, owner: number, gene
   try {
     if (!daemon || !Number.isSafeInteger(daemon.pid) || daemon.pid <= 1 || !daemon.start)
       throw new Error("the root-owned daemon process identity is missing");
-    if (processAlive(daemon)) return { ok: false, why: "the recorded daemon process is still live; stop WalkieTalkie before repair" };
+    if (processAlive(daemon)) return { ok: false, why: "the recorded daemon process is still live; stop Talkie before repair" };
     const prefix = `walkie-seats-${owner}-`;
     for (const name of readdirSync(root)) {
       if (!name.startsWith(prefix) || !/^walkie-seats-\d+-[0-9a-f]{16}$/.test(name)) continue;
@@ -1123,17 +1125,17 @@ export async function checkTalkieDaemonStopped(root: string, owner: number, gene
           || !("expires" in lease) || typeof lease.expires !== "number" || !Number.isFinite(lease.expires))
           throw new Error(`${leasePath} could not be verified`);
         if (Date.now() < lease.expires)
-          return { ok: false, why: `the ${lease.run === generation ? "recorded " : "other "}daemon lease is still live; stop WalkieTalkie before repair` };
+          return { ok: false, why: `the ${lease.run === generation ? "recorded " : "other "}daemon lease is still live; stop Talkie before repair` };
       } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
       const socket = join(dir, "talkie.sock");
       try {
         const socketStat = lstatSync(socket);
         if (!socketStat.isSocket() || socketStat.isSymbolicLink() || socketStat.uid !== owner)
           throw new Error(`${socket} is not a trusted shell socket`);
-        if (await liveSocket(socket)) return { ok: false, why: "the shell socket still has a live owner; stop WalkieTalkie before repair" };
+        if (await liveSocket(socket)) return { ok: false, why: "the shell socket still has a live owner; stop Talkie before repair" };
       } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
     }
-    if (processAlive(daemon)) return { ok: false, why: "the recorded daemon process is still live; stop WalkieTalkie before repair" };
+    if (processAlive(daemon)) return { ok: false, why: "the recorded daemon process is still live; stop Talkie before repair" };
     return { ok: true };
   } catch (err) { return { ok: false, why: `the daemon process, lease and socket could not be checked: ${errCode(err)}` }; }
 }
@@ -1366,6 +1368,7 @@ function groupExists(name: string, mac: boolean): boolean {
 
 /** Entries of `dir` owned by `uid` (read-only; a missing directory holds none; anything else unreadable throws). */
 function ownedIn(dir: string, uid: number): string[] {
+  if (!spoolDirectory(dir)) return [];
   let names: string[];
   try { names = readdirSync(dir); } catch (err) {
     if ((err as { code?: string }).code === "ENOENT") return [];
@@ -1379,60 +1382,287 @@ function ownedIn(dir: string, uid: number): string[] {
   });
 }
 
-/** The cron spool directories that hold a user's crontab as `<dir>/<name>` (macOS: /usr/lib/cron is /var/at). */
+/**
+ * The cron spool directories that hold a user's crontab as `<dir>/<name>` (macOS: /usr/lib/cron is /var/at). Linux:
+ * Debian's crontabs, the older flat /var/spool/cron, SUSE's cronie tabs, and fcron's compiled tabs. A directory a
+ * distro doesn't have is simply absent.
+ */
 export const CRON_TABS: Record<"darwin" | "linux", string[]> = {
   darwin: ["/usr/lib/cron/tabs", "/var/at/tabs"],
-  linux: ["/var/spool/cron/crontabs", "/var/spool/cron"],
+  linux: ["/var/spool/cron/crontabs", "/var/spool/cron", "/var/spool/cron/tabs", "/var/spool/fcron"],
 };
+
+/**
+ * Spool directories where fcron keeps its own per-user files beside the compiled tab `<dir>/<name>`: the text a user
+ * wrote as `<dir>/<name>.orig` and the pending tab `fcrontab` writes as `<dir>/new.<name>` (owned by the user, or by
+ * fcron). Only here: in any other spool `new.x` is simply the tab of a user named `new.x`.
+ */
+export const CRON_SOURCE_TABS: Record<"darwin" | "linux", string[]> = { darwin: [], linux: ["/var/spool/fcron"] };
 
 const errCode = (err: unknown) => (err as { code?: string }).code ?? (err as Error).message;
 
 /**
- * A crontab of `name` removed from the root-only spool directly. Seat users are in cron.deny, so root unlinks
- * `<dir>/<name>` after lstat confirms it is a regular file, then verifies it gone. None there: nothing to remove.
+ * The documented fcron configuration trees: `/etc`, `/usr/local/etc` and `/opt/<vendor>/etc`, each
+ * including its contents. The installation search decides membership from the path as it reached a
+ * directory and, for a directory link, from the link's resolved target, so a tree keeps its
+ * configuration scan whether it is a real directory, a link at the tree's own path, a link at an
+ * ancestor inside a searched root, or a directory reached through a link from outside the searched
+ * roots.
  */
-export function removeSpoolCrontab(name: string, tabs: readonly string[]): string | null {
-  for (const d of tabs) {
-    const p = join(d, name);
-    let st: ReturnType<typeof lstatSync>;
-    try { st = lstatSync(p); } catch (err) {
-      if (errCode(err) === "ENOENT") continue;
-      return `${p} can't be checked (${errCode(err)})`;
-    }
-    if (st.isDirectory()) return `${p} is a directory, not a crontab`;
-    if (!st.isFile()) return `${p} is a ${st.isSymbolicLink() ? "symbolic link" : "non-file entry"}, not a crontab`;
-    try { unlinkSync(p); } catch (err) {
-      if (errCode(err) !== "ENOENT") return `${p} could not be removed (${errCode(err)})`;
-    }
-    try { lstatSync(p); return `${p} is still there after it was removed`; } catch (err) {
-      if (errCode(err) !== "ENOENT") return `${p} can't be checked after it was removed (${errCode(err)})`;
-    }
+export function isFcronConfigTree(path: string, resolvedPath?: string): boolean {
+  const matches = (p: string) => p === "/etc" || p.startsWith("/etc/") ||
+    p === "/usr/local/etc" || p.startsWith("/usr/local/etc/") || /^\/opt\/[^/]+\/etc(?:\/|$)/.test(p);
+  return matches(path) || (resolvedPath !== undefined && matches(resolvedPath));
+}
+
+/** Check the spool directory itself before using child paths. Parent symlink swaps are NOT race-proof here. */
+function spoolDirectory(dir: string, tabs: readonly string[] = []): boolean {
+  let st: ReturnType<typeof lstatSync>;
+  try { st = lstatSync(dir); } catch (err) {
+    if (errCode(err) === "ENOENT") return false;
+    throw err;
+  }
+  // In the flat layout this is another user's tab, not a directory. The parent scan still checks its uid.
+  if (st.isFile() && basename(dir) === "tabs" && tabs.includes(dirname(dir))) return false;
+  if (!st.isDirectory()) throw new Error(`${dir} is a ${st.isSymbolicLink() ? "symbolic link" : "non-directory entry"}, not a spool directory`);
+  return true;
+}
+
+/** Every spool path that is `name`'s own tab: `<dir>/<name>` in each tab dir, `<dir>/<name>.orig` and `<dir>/new.<name>` in each fcron dir. */
+const spoolTabPaths = (name: string, tabs: readonly string[], sources: readonly string[]): string[] =>
+  [...tabs.map((d) => join(d, name)), ...sources.flatMap((d) => [join(d, `${name}.orig`), join(d, `new.${name}`)])];
+
+/** Only the helper's own users have a spool tab it looks at or removes: `walkie-s<n>` (n as `seat-admin` parses it) or the Talkie user. */
+function isHelperUserName(name: string): boolean {
+  if (name === TALKIE_USER) return true;
+  if (!name.startsWith(SEAT_USER_PREFIX)) return false;
+  const parsed = parseAdminArgv(["create", name.slice(SEAT_USER_PREFIX.length)]);
+  return parsed?.verb === "create" && seatUserName(parsed.n) === name;
+}
+
+/** Throws, before any file is touched, for a name that is not one of the helper's own users. */
+function assertHelperUserName(name: string): void {
+  if (!isHelperUserName(name)) throw new Error(`${JSON.stringify(name)} is not a user this helper made: its spool is not touched`);
+}
+
+/** One spool path removed if it is a regular file (lstat, unlink, lstat again): null when it is gone, else why not. */
+function removeSpoolFile(p: string): string | null {
+  let st: ReturnType<typeof lstatSync>;
+  try { st = lstatSync(p); } catch (err) {
+    return errCode(err) === "ENOENT" ? null : `${p} can't be checked (${errCode(err)})`;
+  }
+  if (st.isDirectory()) return `${p} is a directory, not a crontab`;
+  if (!st.isFile()) return `${p} is a ${st.isSymbolicLink() ? "symbolic link" : "non-file entry"}, not a crontab`;
+  try { unlinkSync(p); } catch (err) {
+    if (errCode(err) !== "ENOENT") return `${p} could not be removed (${errCode(err)})`;
+  }
+  try { lstatSync(p); return `${p} is still there after it was removed`; } catch (err) {
+    if (errCode(err) !== "ENOENT") return `${p} can't be checked after it was removed (${errCode(err)})`;
   }
   return null;
 }
 
+/**
+ * The crontab of `name` removed from the cron spool directly. Seat users are in cron.deny, so root unlinks `<dir>/<name>`
+ * (plus fcron's `<dir>/<name>.orig` and `<dir>/new.<name>`) after lstat confirms each is a regular file, then verifies it
+ * gone. The final component is never followed: unlink removes that entry itself, and a link or directory there is
+ * refused and left. The spool directory itself is checked with lstat; symlinks there are refused. Parent path
+ * symlinks and concurrent directory replacement are not excluded by these path-based calls. The spool directories are the
+ * distro's or fcron's own and not writable by a seat user, so the final component is the only one a seat could
+ * influence, and only through the cron programs that write a regular file under its own name. A file is attributed by its exact name, not by owner: cron, cronie and fcron own their spool files as
+ * root, the user or a service group, depending on the distro. A refused entry does not stop the others (every layout's
+ * tab is still removed); every problem is reported. None there: nothing to remove. A name that is not one of the
+ * helper's own users throws before any file is touched.
+ */
+export function removeSpoolCrontab(name: string, tabs: readonly string[], sources: readonly string[] = []): string | null {
+  assertHelperUserName(name);
+  const problems: string[] = [];
+  for (const p of spoolTabPaths(name, tabs, sources)) {
+    try { if (!spoolDirectory(dirname(p), tabs)) continue; }
+    catch (err) { problems.push(String(err)); continue; }
+    const why = removeSpoolFile(p);
+    if (why) problems.push(why);
+  }
+  return problems.length ? problems.join("; ") : null;
+}
+
 /** Remove a live account's crontab from the spool, then inspect every known spool by both name and uid. */
-export function removeSeatSchedules(name: string, uid: number, exists: boolean, tabs: readonly string[], jobs: readonly string[]): string | null {
+export function removeSeatSchedules(name: string, uid: number, exists: boolean, tabs: readonly string[], jobs: readonly string[], sources: readonly string[] = []): string | null {
+  assertHelperUserName(name); // before any file call, with the account present or already gone
   if (exists) {
-    const why = removeSpoolCrontab(name, tabs);
+    const why = removeSpoolCrontab(name, tabs, sources);
     if (why) return why;
   }
   const left: string[] = [];
-  for (const d of tabs) {
-    const st = (() => { try { return lstatSync(join(d, name)); } catch (err) { if ((err as { code?: string }).code === "ENOENT") return null; throw err; } })();
-    if (st) left.push(`${d}/${name}`);
-    left.push(...ownedIn(d, uid).map((f) => `${d}/${f}`));
+  const problems: string[] = [];
+  for (const p of spoolTabPaths(name, tabs, sources)) {
+    try { if (!spoolDirectory(dirname(p), tabs)) continue; }
+    catch (err) { problems.push(String(err)); continue; }
+    try { lstatSync(p); left.push(p); } catch (err) { if ((err as { code?: string }).code !== "ENOENT") throw err; }
   }
-  for (const d of jobs) left.push(...ownedIn(d, uid).map((f) => `${d}/${f}`));
-  return left.length ? `scheduled jobs of it remain (${[...new Set(left)].slice(0, 5).join(", ")})` : null;
+  for (const d of new Set([...tabs, ...sources, ...jobs])) {
+    try { if (spoolDirectory(d, tabs)) left.push(...ownedIn(d, uid).map((f) => `${d}/${f}`)); }
+    catch (err) { problems.push(String(err)); }
+  }
+  if (left.length) problems.push(`scheduled jobs of it remain (${[...new Set(left)].slice(0, 5).join(", ")})`);
+  return problems.length ? [...new Set(problems)].join("; ") : null;
 }
 
-export function realAdminSys(): AdminSys {
-  const mac = process.platform === "darwin";
-  const platform = mac ? "darwin" : "linux";
+/** Tests only: platform and a root for spool AND scheduler config/permission paths. A root skips the host process probe unless a fixture process list is supplied. */
+export interface RealAdminSysSeam { platform?: "darwin" | "linux"; spoolRoot?: string; processList?: string }
+
+export function realAdminSys(seam: RealAdminSysSeam = {}): AdminSys {
+  const platform = seam.platform ?? (process.platform === "darwin" ? "darwin" : "linux");
+  const mac = platform === "darwin";
   // /var is a symlink on macOS; use its real root-owned directory chain for lock verification.
   const ledgerPath = mac ? "/private/var/db/walkie-seat-admin.sqlite" : "/var/lib/walkie/seat-admin.sqlite";
   const files = SCHEDULER_FILES[platform];
+  const at = (p: string) => seam.spoolRoot === undefined ? p : join(seam.spoolRoot, p);
+  // Search the supported system and vendor installation trees within bounded depth and entries.
+  const alternateFcronProblem = (): string | null => {
+    const stock = new Set(["/etc/fcron.conf", "/etc/fcron.allow", "/etc/fcron.deny", "/var/spool/fcron",
+      "/usr/bin/fcrontab", "/usr/sbin/fcron"]);
+    for (const path of ["/etc", "/var/spool/fcron"]) {
+      let entries: string[];
+      try { entries = readdirSync(at(path)); }
+      catch (err) {
+        if (errCode(err) === "ENOENT") continue;
+        return `cannot inspect ${path} for alternate fcron installations: ${String(err)}`;
+      }
+      if (path === "/var/spool/fcron" && entries.length > 0)
+        return "fcron spool is populated; previously loaded tabs cannot be excluded";
+    }
+    const roots = ["/etc", "/opt", "/usr/local", "/var/spool", "/var/lib",
+      "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+    // `path` addresses the filesystem (under spoolRoot in fixtures); `logical` is the path as the
+    // search reached it, which is what the configuration-tree policy and the stock-path checks key on.
+    const pending = roots.map((path) => ({ path, logical: path, depth: 0, configTree: isFcronConfigTree(path) }));
+    const seen = new Set<string>();
+    let visited = 0;
+    search: while (pending.length) {
+      const { path, logical, depth, configTree: inheritedConfigTree } = pending.pop()!;
+      let directory: Stats;
+      try { directory = statSync(at(path)); }
+      catch (err) {
+        if (errCode(err) === "ENOENT") continue;
+        if (logical === "/etc" || logical === "/var/spool/fcron") return `cannot inspect ${logical} for alternate fcron installations: ${String(err)}`;
+        continue;
+      }
+      const identity = `${directory.dev}:${directory.ino}:${inheritedConfigTree}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      let entries: string[];
+      try { entries = readdirSync(at(path)); }
+      catch (err) {
+        if (errCode(err) === "ENOENT") continue;
+        if (logical === "/etc" || logical === "/var/spool/fcron") return `cannot inspect ${logical} for alternate fcron installations: ${String(err)}`;
+        continue;
+      }
+      if (logical === "/var/spool/fcron" && entries.length > 0)
+        return "fcron spool is populated; previously loaded tabs cannot be excluded";
+      for (const entry of entries) {
+        if (++visited > 100_000) break search;
+        const child = join(logical, entry);
+        const childAt = join(path, entry);
+        let st: Stats;
+        try { st = lstatSync(at(childAt)); }
+        catch (err) {
+          if (child === "/var/spool/fcron") return `cannot inspect ${child} for alternate fcron installations: ${String(err)}`;
+          continue;
+        }
+        if (/fcron/i.test(entry) && !stock.has(child)) return `alternate fcron installation at ${child} is unsupported`;
+        if (child === "/var/spool/fcron" && st.isSymbolicLink()) {
+          try {
+            if (readdirSync(at(childAt)).length > 0) return "fcron spool is populated; previously loaded tabs cannot be excluded";
+          } catch (err) { return `cannot inspect ${child} for alternate fcron installations: ${String(err)}`; }
+        }
+        const configTree = inheritedConfigTree || isFcronConfigTree(child);
+        if (st.isSymbolicLink()) {
+          let target: Stats;
+          try { target = statSync(at(childAt)); } catch { continue; }
+          if (target.isDirectory()) {
+            let resolved: string;
+            try { resolved = realpathSync(at(childAt)); } catch { continue; }
+            if (seam.spoolRoot !== undefined) {
+              if (!resolved.startsWith(`${seam.spoolRoot}/`)) continue;
+              resolved = resolved.slice(seam.spoolRoot.length);
+            }
+            // The tree stays a configuration tree after resolution: decided from the path as
+            // reached (a link at the tree's own path or above it) and from the resolved target.
+            // A linked configuration tree is searched wherever its target lies: a target inside
+            // a searched root is otherwise reached only under its own path, which is not a
+            // configuration tree, so its files would never be read for the fcron keys. A linked
+            // directory that is not a configuration tree and resolves inside a searched root is
+            // still skipped here; the plain walk reaches it.
+            const linkedConfigTree = configTree || isFcronConfigTree(child, resolved);
+            if (depth < 5 && (linkedConfigTree || !roots.some((root) => resolved === root || resolved.startsWith(`${root}/`))))
+              pending.push({ path: resolved, logical: child, depth: depth + 1, configTree: linkedConfigTree });
+            continue;
+          }
+          if (!target.isFile()) continue;
+        }
+        if ((st.isFile() || st.isSymbolicLink()) && configTree && child !== "/etc/fcron.conf") {
+          let fd: number;
+          try { fd = openSync(at(childAt), constants.O_RDONLY | constants.O_NONBLOCK | (st.isSymbolicLink() ? 0 : constants.O_NOFOLLOW)); }
+          catch { continue; }
+          try {
+            const opened = fstatSync(fd);
+            if (!opened.isFile() || opened.size > 1024 * 1024) continue;
+            if (/\bfcron(?:tabs|allow|deny)\b|\bpidfile\b[\s\S]*\bfifofile\b|\bfifofile\b[\s\S]*\bpidfile\b/i.test(readFileSync(fd, "utf8")))
+              return `alternate fcron configuration at ${child} is unsupported`;
+          } catch { continue; }
+          finally { closeSync(fd); }
+        }
+        if (st.isDirectory() && depth < 5) pending.push({ path: childAt, logical: child, depth: depth + 1, configTree });
+      }
+    }
+    if (seam.spoolRoot === undefined || seam.processList !== undefined) {
+      const out = seam.processList ?? run(["ps", "-e", "-o", "comm=,args="]);
+      if (typeof out !== "string" && (!out || out.code !== 0)) return "cannot establish absence of fcron-like scheduler processes";
+      if (/fcron/i.test(typeof out === "string" ? out : out.out)) return "fcron-like scheduler process is running; loaded tabs cannot be excluded";
+      let pids: string[];
+      try { pids = readdirSync(at("/proc")).filter((name) => /^\d+$/.test(name)); }
+      catch (err) { return `cannot establish absence of fcron-like scheduler processes: ${String(err)}`; }
+      for (const pid of pids) {
+        let exe: string | null = null;
+        try { exe = readlinkSync(at(`/proc/${pid}/exe`)); }
+        catch (err) {
+          if (errCode(err) !== "ENOENT") return `cannot inspect scheduler process ${pid}: ${String(err)}`;
+        }
+        if (exe !== null && /fcron/i.test(exe)) return "fcron-like scheduler process is running; loaded tabs cannot be excluded";
+        let fds: string[];
+        try { fds = readdirSync(at(`/proc/${pid}/fd`)); }
+        catch (err) {
+          if (errCode(err) === "ENOENT") continue;
+          return `cannot inspect scheduler process ${pid}: ${String(err)}`;
+        }
+        for (const fd of fds) {
+          let target: string;
+          try { target = readlinkSync(at(`/proc/${pid}/fd/${fd}`)); }
+          catch (err) {
+            if (errCode(err) === "ENOENT") continue;
+            return `cannot inspect scheduler process ${pid} fd ${fd}: ${String(err)}`;
+          }
+          const parts = target.split("/");
+          if (/(?:fifo|pid)/i.test(parts.at(-1) ?? "") && parts.some((part) => /fcron/i.test(part)))
+            return "fcron-like scheduler process is running; loaded tabs cannot be excluded";
+        }
+      }
+    }
+    return null;
+  };
+  const readSchedulerFile = (p: string): string | null => {
+    const path = at(p);
+    let fd: number;
+    try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    catch (err) { if (errCode(err) === "ENOENT") return null; throw err; }
+    try {
+      const st = fstatSync(fd);
+      const owner = seam.spoolRoot === undefined ? 0 : process.getuid!();
+      if (!st.isFile() || st.uid !== owner || (st.mode & 0o022) !== 0) throw new Error(`${p} is not a protected scheduler file`);
+      return readFileSync(fd, "utf8");
+    } finally { closeSync(fd); }
+  };
   // The runner is the helper's sibling in the root-owned install directory (walkie seats setup-user --apply).
   const runnerPath = join(dirname(process.execPath), "walkie-seat-runner");
   const rootsPath = join(dirname(process.execPath), SEAT_ROOTS_FILE);
@@ -1531,7 +1761,7 @@ export function realAdminSys(): AdminSys {
         must(["dscl", ".", "-create", g]);
         must(["dscl", ".", "-create", g, "PrimaryGroupID", String(uid)]);
         must(["dscl", ".", "-create", u]);
-        for (const [k, v] of [["UserShell", "/usr/bin/false"], ["RealName", `Walkie seat ${name.slice(SEAT_USER_PREFIX.length)}`], ["UniqueID", String(uid)],
+        for (const [k, v] of [["UserShell", "/usr/bin/false"], ["RealName", `Sqwakie seat ${name.slice(SEAT_USER_PREFIX.length)}`], ["UniqueID", String(uid)],
           ["PrimaryGroupID", String(uid)], ["NFSHomeDirectory", home], ["Password", "*"], ["IsHidden", "1"]] as const) {
           must(["dscl", ".", "-create", u, k, v]);
         }
@@ -1588,13 +1818,38 @@ export function realAdminSys(): AdminSys {
       }
     },
     denySchedulers(name) {
-      for (const f of [files.cron[1], files.at[1]]) {
-        const text = existsSync(f) ? readFileSync(f, "utf8") : "";
+      assertHelperUserName(name);
+      if (!mac) {
+        const why = fcronConfigProblem(readSchedulerFile("/etc/fcron.conf"));
+        if (why) throw new Error(why);
+        const hostWhy = alternateFcronProblem();
+        if (hostWhy) throw new Error(hostWhy);
+        if (name === TALKIE_USER) {
+          // Disk absence and a deny entry say nothing about a pre-upgrade tab in daemon memory.
+          const paths = ["/etc/fcron.conf", "/var/spool/fcron", "/usr/bin/fcrontab", "/usr/sbin/fcron",
+            "/usr/local/bin/fcrontab", "/usr/local/sbin/fcron", "/usr/local/etc/fcron.conf"];
+          const present = paths.some((p) => {
+            // ENOTDIR: a path component (e.g. a linked /usr/local/etc) is not a directory, so the stock file can't exist there.
+            try { lstatSync(at(p)); return true; } catch (err) { if (errCode(err) === "ENOENT" || errCode(err) === "ENOTDIR") return false; throw err; }
+          });
+          if (present)
+            throw new Error("walkie-talkie cannot be created on an fcron host: a previously loaded tab cannot be excluded; daemon eviction is not implemented");
+        }
+      }
+      for (const [service, pair] of Object.entries(files)) {
+        const f = pair[1];
+        const text = readSchedulerFile(f) ?? "";
+        if (service === "fcron") {
+          // Prepend: upstream in_file returns on the first user OR all, even if a later line names this user.
+          writeRoot(at(f), `${name}\n${text.split("\n").filter((line) => line !== name).join("\n")}`, 0o644);
+          if (!fcronDenied(name, readSchedulerFile(pair[0]), readSchedulerFile(f))) throw new Error("fcron denial did not verify");
+          continue;
+        }
         if (text.split("\n").includes(name)) continue;
-        writeRoot(f, `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${name}\n`, 0o644);
+        writeRoot(at(f), `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${name}\n`, 0o644);
       }
     },
-    readSchedulerFile(p) { return existsSync(p) ? readFileSync(p, "utf8") : null; },
+    readSchedulerFile,
     procs(uid) {
       const r = run(["ps", "-U", String(uid), "-o", "pid=,stat="]);
       if (psShowsNoProcesses(r, mac, () => !this.idTaken(uid))) return [];
@@ -1616,9 +1871,14 @@ export function realAdminSys(): AdminSys {
       return r.code === 0 ? `${unit} is ${active || "active"}` : `systemctl is-active ${unit} couldn't tell (${r.code}: ${JSON.stringify(active)})`;
     },
     removeSchedules(name, uid, exists) {
-      const tabs = CRON_TABS[platform];
-      const jobs = mac ? ["/usr/lib/cron/jobs"] : ["/var/spool/cron/atjobs", "/var/spool/at"];
-      return removeSeatSchedules(name, uid, exists, tabs, jobs);
+      assertHelperUserName(name);
+      if (!mac) {
+        try { const why = fcronConfigProblem(readSchedulerFile("/etc/fcron.conf")); if (why) return why; }
+        catch (err) { return `can't check fcron configuration: ${String(err)}`; }
+      }
+      const tabs = CRON_TABS[platform].map(at);
+      const jobs = (mac ? ["/usr/lib/cron/jobs"] : ["/var/spool/cron/atjobs", "/var/spool/at", "/var/spool/atjobs"]).map(at);
+      return removeSeatSchedules(name, uid, exists, tabs, jobs, CRON_SOURCE_TABS[platform].map(at));
     },
     async sweepAsUser(name, _uid, roots, residueFolders = [], timeoutMs = 30 * 60_000) {
       // root → the seat user through sudo (initgroups: its own groups only), cwd /, a fixed environment.

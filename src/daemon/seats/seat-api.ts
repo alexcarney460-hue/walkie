@@ -1,8 +1,9 @@
-// The seats' own Walkie socket (PROTOCOL §11, SECURITY.md threat 13). A running seat never gets its host daemon's
+// The seats' own Sqwakie socket (PROTOCOL §11, SECURITY.md threat 13). A running seat never gets its host daemon's
 // local API (that speaks as the host's person to anyone who omits X-Walkie-Agent): its WALKIE_SOCKET is this
 // separate unix socket, and its WALKIE_SEAT_TOKEN a credential the daemon issued for that one seat. Every request
-// needs the token; the daemon, not the caller, decides who speaks (the seat's own agent `seat-<id>`), and the only
-// thing it can do is post progress in its own thread of the host's seats channel. The token dies with the seat.
+// needs the token; the daemon, not the caller, decides who speaks (the seat's own agent `seat-<id>`). The only
+// actions are progress posts in its own thread and, if the machine's person explicitly allowed this exact seat,
+// browser actions. The token dies with the seat.
 import type { Server } from "bun";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, rmSync } from "node:fs";
@@ -11,12 +12,15 @@ import { PostReq, type Event } from "../../protocol/schemas.ts";
 import { HttpError, errorResponse, json, parseWith, readJson } from "../http.ts";
 import type { Logger } from "../logger.ts";
 import { verifySeatSocketDir } from "./seat-user.ts";
+import { BrowserActionSchema, type BrowserAction } from "../browser/schema.ts";
+import type { BrowserResult } from "../browser/service.ts";
 
 const BODY_MAX = 64 * 1024;
 
 export interface SeatPoster {
   /** Posts `text` as the seat `seatId` in its own thread; throws HttpError when it may not. */
   postAsSeat(seatId: string, body: { channel: string; text: string; thread?: string }): Event;
+  browserAsSeat?(seatId: string, body: BrowserAction): Promise<BrowserResult>;
 }
 
 function tokenEq(a: string, b: string): boolean {
@@ -84,7 +88,7 @@ export class SeatApi {
     const authz = req.headers.get("authorization");
     const presented = authz?.startsWith("Bearer ") ? authz.slice(7).trim() : "";
     if (presented) for (const [id, t] of this.tokens) if (tokenEq(t, presented)) return id;
-    throw new HttpError(401, "unauthorized", "this socket serves running Walkie seats only (a valid WALKIE_SEAT_TOKEN is required)");
+    throw new HttpError(401, "unauthorized", "this socket serves running Sqwakie seats only (a valid WALKIE_SEAT_TOKEN is required)");
   }
 
   private async handle(req: Request): Promise<Response> {
@@ -92,8 +96,13 @@ export class SeatApi {
       const url = new URL(req.url);
       if (url.pathname === "/v1/healthz" && req.method === "GET") return json({ ok: true, seat: true });
       const seat = this.seatFor(req);
+      if (url.pathname === "/v1/browser/action" && req.method === "POST" && this.poster.browserAsSeat) {
+        const b = parseWith(BrowserActionSchema, await readJson(req, BODY_MAX));
+        if (this.seatFor(req) !== seat) throw new HttpError(401, "unauthorized", "this seat is over");
+        return json(await this.poster.browserAsSeat(seat, b));
+      }
       if (url.pathname !== "/v1/post" || req.method !== "POST") {
-        throw new HttpError(403, "forbidden", "a seat's Walkie access is limited to posting in its own thread of the seats channel");
+        throw new HttpError(403, "forbidden", "a seat's Sqwakie access is limited to its progress thread and person-allowed browser actions");
       }
       const b = parseWith(PostReq, await readJson(req, BODY_MAX));
       // The body arrives after the headers were authenticated: the seat may have ended (its token revoked) meanwhile.

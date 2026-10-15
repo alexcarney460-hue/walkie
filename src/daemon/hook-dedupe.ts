@@ -1,5 +1,5 @@
 // A bounded memory of the hook deliveries this daemon has applied, so one hook event that reaches it twice is applied
-// once (src/protocol/hook-delivery.ts). It keys on what the event is, never on what is configured: two Walkie installs,
+// once (src/protocol/hook-delivery.ts). It keys on what the event is, never on what is configured: two Sqwakie installs,
 // a stale or hand-edited hook file, or the same hook registered in two files all end here the same way.
 
 /** How long a delivery is remembered: far longer than two hooks of one event take to arrive (a hook's timeout is 5 s). */

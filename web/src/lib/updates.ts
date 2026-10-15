@@ -19,6 +19,30 @@ export function unreportedProjects(projects: readonly ProjectView[]): ProjectVie
   return projects.filter((p) => p.state === "active" && reportMode(p) !== "hourly");
 }
 
+/** More active projects than this and the picker offers a text filter (fewer fit on a screen without one). */
+export const PICKER_FILTER_ABOVE = 12;
+
+/** Letters compared without case or accents, so "alpha" and "Alpha" are one place in the order. */
+const alike = (a: string, b: string): number => a.localeCompare(b, undefined, { sensitivity: "base" });
+
+/**
+ * The picker's rows: every active project (an archived one writes no report, so it is not offered), in a fixed order that
+ * reads as the label each row shows, "folder · name": by folder (projects with none first), then name, then channel.
+ * The report setting is not part of it, so switching a project on or off never moves a row. A new array.
+ */
+export function pickerProjects(projects: readonly ProjectView[]): ProjectView[] {
+  return projects
+    .filter((p) => p.state === "active")
+    .sort((a, b) => alike(a.folder, b.folder) || alike(a.name, b.name) || a.channel.localeCompare(b.channel));
+}
+
+/** The projects whose name, folder or prefix contains the text (case-insensitive, surrounding spaces ignored); no text keeps all. A new array. */
+export function filterPickerProjects(projects: readonly ProjectView[], query: string): ProjectView[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...projects];
+  return projects.filter((p) => [p.name, p.folder, p.prefix].some((field) => field.toLowerCase().includes(q)));
+}
+
 function reportAt(e: UpdateEntry | undefined): number | null {
   return e?.status === "ready" && e.data.report ? e.data.report.at : null;
 }

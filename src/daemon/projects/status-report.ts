@@ -1,4 +1,4 @@
-// PROJECT-REPORTS-1 in the daemon: WalkieTalkie's hourly plain-English status reports. `prepareProjectReports` is the
+// PROJECT-REPORTS-1 in the daemon: Talkie's hourly plain-English status reports. `prepareProjectReports` is the
 // duty's prepare step: for every active project with the switch on that this daemon can see, did anything change since its
 // last report (a card created, moved, edited, labelled or commented on, or an agent working on it by the Mission Control
 // mapping)? Changes are what this daemon RECEIVED after the report's facts were gathered, on its own clock: an origin's
@@ -6,7 +6,7 @@
 // turn. Otherwise at most REPORT_CAP projects of one privacy class (owners-only projects never share a turn with the
 // team's), those whose reports have not been failing first and then the oldest-reported, each with a compact fact sheet,
 // go into the turn; `deliverReports` then reads the turn's reply and, for each project, posts the report in the project's
-// channel as WalkieTalkie, saves it in its Data Room, and records the time. The pure parts (ordering, the sheet, parsing,
+// channel as Talkie, saves it in its Data Room, and records the time. The pure parts (ordering, the sheet, parsing,
 // cleaning) are protocol/projects/status-report.ts.
 import type { AgentView, BodyOf } from "../../protocol/schemas.ts";
 import { associate } from "../../protocol/projects/assoc.ts";
@@ -83,7 +83,7 @@ export function agentsByProject(d: Pick<ReportDeps, "core" | "idx" | "agents">, 
   const out = new Map<string, Array<{ agent: AgentView; key?: string }>>();
   for (const a of d.agents()) {
     if (a.status.parent) continue; // a sub-agent's row: its session's row says it
-    if (a.agent === ORCHESTRATOR_AGENT) continue; // WalkieTalkie's own status changes every turn: never a reason to report
+    if (a.agent === ORCHESTRATOR_AGENT) continue; // Talkie's own status changes every turn: never a reason to report
     const cwd = a.node === d.core.nodeId ? d.core.localCwds.get(a.agent) : undefined;
     const hit = associate(a.status, projects, (channel, n) => d.idx.db.hasCardN(channel, n), cwd ?? a.status.cwd);
     if (hit) out.set(hit.channel, [...(out.get(hit.channel) ?? []), { agent: a, ...(hit.key ? { key: hit.key } : {}) }]);
@@ -225,7 +225,7 @@ export async function prepareProjectReports(d: ReportDeps, canAct: () => boolean
   const due: Array<{ channel: string; last: number | null; attempted: number | null }> = [];
   let paused = 0;
   for (const p of selected) {
-    if (!canAct() || signal?.aborted) throw new Error("WalkieTalkie lease expired");
+    if (!canAct() || signal?.aborted) throw new Error("Talkie lease expired");
     await yieldLoop();
     const was = last.get(p.channel) ?? null;
     // A project whose reports kept failing waits until it changes again: news counts from its last failed try, not from its
@@ -248,7 +248,7 @@ export async function prepareProjectReports(d: ReportDeps, canAct: () => boolean
   const keys = [...new Set(visible.flatMap((p) => [p.prefix, ...(p.prior_prefixes ?? [])]))];
   const sheets: ProjectFacts[] = [];
   for (const channel of batch) {
-    if (!canAct() || signal?.aborted) throw new Error("WalkieTalkie lease expired");
+    if (!canAct() || signal?.aborted) throw new Error("Talkie lease expired");
     await yieldLoop();
     const p = selected.find((x) => x.channel === channel) as ProjectView;
     sheets.push(gatherFacts(d, p, last.get(channel) ?? null, at, onThem.get(channel) ?? [], keys));
@@ -374,7 +374,7 @@ export function deliverReports(d: ReportDeps, run: ReportRun, reply: string): Tu
 
 export interface StatusReportPost { text: string; as_of: number; at: number; by: { handle: string; agent?: string } }
 
-/** The project's latest report post: written by an owner's WalkieTalkie, carrying its own marker. */
+/** The project's latest report post: written by an owner's Talkie, carrying its own marker. */
 export function latestStatusReport(core: Core, idx: ProjectsIndex, channel: string): StatusReportPost | null {
   const owners = [...core.roster.members.values()].filter((m) => m.role === "owner").map((m) => m.handle);
   for (const ev of idx.db.statusReportPosts(channel, owners, 5)) {

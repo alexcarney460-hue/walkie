@@ -1,5 +1,5 @@
 // Serve on the best machine (POOL-REAL-1): a catalog model that fits one machine's GPU runs there whole, at that
-// GPU's full speed, and every member machine can use it through Walkie. This is the serving side: one model at a
+// GPU's full speed, and every member machine can use it through Sqwakie. This is the serving side: one model at a
 // time per machine.
 //
 //   start (this machine's person, or a member machine when the owner shares it) -> download the pinned GGUF
@@ -8,7 +8,7 @@
 //
 // Members connect (`POST /peer/v1/pool/serve` connect): each connecting machine gets its own bearer key, a lease it
 // renews (CONN_LEASE_MS without a renew drops it) and tunnels (`/peer/v1/pool/serve-tunnel/<id>`, the split-run
-// tunnel transport: a Walkie Direct stream or a Tailscale WebSocket) spliced into the proxy, within
+// tunnel transport: a Sqwakie Direct stream or a Tailscale WebSocket) spliced into the proxy, within
 // MAX_TUNNELS_PER_CLIENT at once and OPENS_PER_MIN new ones a minute. Consent is re-checked every WATCH_MS and on
 // every roster change: sharing turned off drops every other machine's connection and stops a model another machine
 // started; seats on stop everything; a machine that may no longer head runs here loses its connection. No request for
@@ -153,7 +153,7 @@ export class PoolServer {
     const m = CATALOG.models.find((x) => x.id === modelId);
     if (!m) throw new HttpError(400, "unknown_model", `no model "${modelId}" in the catalog (walkie pool lists them)`);
     const files = filesFor(m.id, quant);
-    if (!files) throw new HttpError(400, "no_such_format", `${m.name} has no ${quant === "q8" ? "8-bit" : "4-bit"} GGUF in Walkie's list`);
+    if (!files) throw new HttpError(400, "no_such_format", `${m.name} has no ${quant === "q8" ? "8-bit" : "4-bit"} GGUF in Sqwakie's list`);
     const c = this.cur;
     if (c && LIVE.has(c.view.state) && !c.stopping) {
       if (c.view.model.id === m.id && c.view.model.quant === quant) return this.view()!; // already serving it: join it

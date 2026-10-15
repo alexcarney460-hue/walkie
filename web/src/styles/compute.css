@@ -12,6 +12,12 @@
 .ac-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: var(--fs-13); }
 .ac-balance-label { color: var(--text-3); font-size: var(--fs-12); }
 .ac-balance b { font-size: var(--fs-14); font-weight: 600; color: var(--text); }
+.ac-lots-wrap { display: flex; flex-direction: column; gap: 4px; }
+.ac-lots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-12); }
+.ac-lot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--text-2); }
+.ac-lot.is-soon { color: var(--text); }
+.ac-lot-soon { border-color: var(--amber-line); background: var(--amber-soft); }
+.ac-lot-next { margin: 0; font-size: var(--fs-12); }
 .ac-buy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ac-buy-label { color: var(--text-3); font-size: var(--fs-12); margin-right: 2px; }
 .ac-tiers { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -54,6 +60,7 @@
 .chip.chip-rented { border-color: var(--accent-line); color: var(--accent-text); }
 .btn.rented-stop { height: 22px; min-height: 22px; padding: 0 9px; font-size: var(--fs-11); }
 .add-compute-btn svg { margin-right: 4px; }
+.add-compute-elsewhere { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-13); }
 @media (max-width: 860px) {
   .ac-tier { flex-direction: column; }
   .ac-tier-side { justify-items: start; grid-template-columns: auto auto; align-items: center; column-gap: 10px; }

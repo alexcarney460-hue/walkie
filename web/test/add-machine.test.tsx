@@ -60,15 +60,15 @@ test("member: no minting action anywhere; told to ask an owner for an Add a mach
   const out = render(state("member", "arvid"), <mod.Team />);
   expect(out).not.toContain("Add a machine for @");
   expect(out).not.toContain("Add another of my machines");
-  expect(out).toContain("to put Walkie on another of your machines, ask Maren Holt for an “Add a machine” link");
+  expect(out).toContain("to put Sqwakie on another of your machines, ask Maren Holt for an “Add a machine” link");
 });
 
 test("the sheet: link, pinned command, copy buttons, once-only for @handle, expiry and the warning", () => {
   const code = `wk1${"A".repeat(180)}`;
   const res: AddMachine = {
     code, handle: "arvid", role: "member", expires_at: NOW + 7 * 86_400_000, existing_member: true, version: "0.2.0-pre.2", team_agents: false,
-    link: `https://getwalkie.vercel.app/join#${code}&v=v0.2.0-pre.2`,
-    command: `curl -fsSL https://getwalkie.vercel.app/install.sh | WALKIE_VERSION=v0.2.0-pre.2 sh -s -- --invite ${code}`,
+    link: `https://sqwakie.si/join#${code}&v=v0.2.0-pre.2`,
+    command: `curl -fsSL https://sqwakie.si/install.sh | WALKIE_VERSION=v0.2.0-pre.2 sh -s -- --invite ${code}`,
   };
   const out = renderToStaticMarkup(<mod.AddMachineResult res={res} />);
   expect(out).toContain(res.link.replace(/&/g, "&amp;"));

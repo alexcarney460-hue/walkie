@@ -75,7 +75,7 @@ function CpuGauge({ stats }: { stats: MachineStats | undefined }) {
   if (!sys || !cpu) {
     return (
       <Gauge icon={icon} title="CPU" ring={<Ring pct={null} level={null} label="CPU load not reported">–</Ring>}
-        value={chip ?? "n/a"} sub={sys ? `${sys.cpus} cores · no load average on this OS` : "Load not reported (an older Walkie)"} />
+        value={chip ?? "n/a"} sub={sys ? `${sys.cpus} cores · no load average on this OS` : "Load not reported (an older Sqwakie)"} />
     );
   }
   return (
@@ -119,7 +119,7 @@ function AccelCard({ stats }: { stats: MachineStats | undefined }) {
       <div className="mg-text">
         <span className="mg-title"><Zap size={13} strokeWidth={1.75} aria-hidden="true" />Accelerator</span>
         {!accel ? (
-          <span className="mg-sub">Not reported (an older Walkie)</span>
+          <span className="mg-sub">Not reported (an older Sqwakie)</span>
         ) : gpus.length === 0 ? (
           <>
             <span className="mg-value">{accel.unified ? "Unified memory" : "No discrete GPU"}</span>
@@ -162,7 +162,7 @@ export function MachineGauges({ node }: { node: NodeView }) {
       <header className="section-head">
         <h2 className="section-title" id="mg-h">Live stats</h2>
         <span className="section-meta">
-          {!stats ? "not reported (turned off, or an older Walkie)" : node.online ? `updated ${agoLong(stats.at, now)}` : `last known · sampled ${agoLong(stats.at, now)}`}
+          {!stats ? "not reported (turned off, or an older Sqwakie)" : node.online ? `updated ${agoLong(stats.at, now)}` : `last known · sampled ${agoLong(stats.at, now)}`}
         </span>
       </header>
       <div className="mg-grid">

@@ -22,6 +22,8 @@ import { sendAlert } from '../_lib/compute/alerts.js';
 import { heldAccounts, handoverKey, holdHandover, licenseTransitionKey, rejectedHandover, rejectedHandoverDigest,
   requireHandoverTokenKey, seedLegacyEnrollment } from '../_lib/compute/handover.js';
 import { stderrLog } from '../_lib/compute/deps.js';
+import { forkOpen } from '../_lib/compute/ownership.js';
+import { raiseLicenceAlert, recordLicenceBindings } from '../_lib/compute/licence-records.js';
 import { refusedFork } from '../_lib/compute/fork-rejection.js';
 import { LATEST_MIGRATION } from '../_lib/compute/migrations.js';
 import type { LicenseTransition } from '../_lib/compute/handover.js';
@@ -38,11 +40,13 @@ class StripeOperationError extends Error {
 export const bindMessage = (team: string, license: string, expires: number): string =>
   `walkie-license-bind-v1\n${team}\n${license}\n${expires}`;
 
+/** A store that never answers must fail well inside the 10 s function (lane C round 12): 3 s to connect, not PgStore's 8. */
+const BIND_STORE_CONNECT_S = 3;
 const pools = new Map<string, Promise<PgStore>>();
 async function computeStore(url: string): Promise<PgStore> {
   let pool = pools.get(url);
   if (!pool) {
-    pool = import('../_lib/compute/pg-store.js').then(({ PgStore }) => PgStore.connect(url));
+    pool = import('../_lib/compute/pg-store.js').then(({ PgStore }) => PgStore.connect(url, { connectTimeoutS: BIND_STORE_CONNECT_S }));
     pools.set(url, pool);
     void pool.catch(() => pools.delete(url));
   }
@@ -102,6 +106,27 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
       if (!p) return fail(400, "invalid_code");
       const dbUrl = computeAvailable ? deps.env.DATABASE_URL?.trim() : undefined;
       const store = computeAvailable ? deps.computeStore?.() ?? (dbUrl ? await computeStore(dbUrl) : null) : null;
+      const unavailable = async (): Promise<Response> => {
+        await sendAlert({ store: null, env: deps.env, now: deps.now, log: stderrLog },
+          'compute_state_unavailable', { team });
+        return fail(503, 'compute_state_unavailable');
+      };
+      const storeRequired = async (): Promise<Response> => {
+        await raiseLicenceAlert({ store: null, env: deps.env, now: deps.now, log: stderrLog, memory: true },
+          'licence_store_missing', { team });
+        return fail(503, 'licence_store_required');
+      };
+      // The compute-capable site records every binding in its store (licence-records.ts), enabled or drained, so it
+      // refuses to bind without one (lane C round 11): the supported rollback is drain, which keeps DATABASE_URL. A store
+      // behind LATEST_MIGRATION (an empty or unmigrated database: a mistaken DATABASE_URL) cannot keep that record either,
+      // so it is refused the same way, before any Stripe call (round 12). An unreachable store is an outage: 503 below.
+      if (computeAvailable && !store) return storeRequired();
+      if (store?.schemaVersion) {
+        let version: number;
+        try { version = await store.schemaVersion(); }
+        catch { return unavailable(); }
+        if (version < LATEST_MIGRATION) return storeRequired();
+      }
       if (store) releaseClaim = await lockSubscriptionClaim(p.lic_id);
       const readOnlyCompute = optionalEnv(deps.env, 'COMPUTE_ENABLED') !== '1';
       const chainKey = `enrollment-chain:${team}`;
@@ -110,29 +135,13 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
       if (!initialSub) return fail(404, "not_found");
       if (initialSub.status !== LICENSED_STATUS) return fail(402, "subscription_inactive");
       let sub = initialSub;
-      const unavailable = async (): Promise<Response> => {
-        await sendAlert({ store: null, env: deps.env, now: deps.now, log: stderrLog },
-          'compute_state_unavailable', { team });
-        return fail(503, 'compute_state_unavailable');
-      };
       if (!readOnlyCompute && !store) return unavailable();
       const handoverTokenKey = store ? requireHandoverTokenKey(deps.env) : undefined;
-      let allowLegacyMissingTables = false;
-      if (store?.schemaVersion) {
-        let version: number;
-        try { version = await store.schemaVersion(); }
-        catch { return unavailable(); }
-        if (version < LATEST_MIGRATION) {
-          if (version !== 0 || !readOnlyCompute) return unavailable();
-          allowLegacyMissingTables = true;
-        }
-      }
       const claimIsCurrent = async (t: Tx, claimed: { authority?: string; chain?: string },
         current: { metadata: Record<string, string> }): Promise<boolean> => {
         if (claimed.authority && (current.metadata[AUTHORITY_META] !== claimed.authority ||
             current.metadata[AUTHORITY_CHAIN_META] !== claimed.chain)) return false;
         if (!claimed.authority && current.metadata[AUTHORITY_META]) return false;
-        if (allowLegacyMissingTables) return true;
         const enrollment = await t.enrollment(team);
         const latest = await t.control(chainKey) as { chainId?: string } | undefined;
         if (await t.control(handoverKey(team))) return false;
@@ -144,8 +153,7 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
       if (handoverTokenKey && await store?.bindClaim?.(p.lic_id)) {
         const recovered = await store!.tx(async t => {
           await t.lockSubscriptionBind(p.lic_id);
-          if (allowLegacyMissingTables) await t.lockLegacyBind(chainKey);
-          else if (readOnlyCompute) await t.lockTeamBind(chainKey);
+          if (readOnlyCompute) await t.lockTeamBind(chainKey);
           else await t.lockControl(chainKey);
           const prior = await t.bindClaim(p.lic_id);
           if (!prior) return null;
@@ -157,8 +165,9 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
             return fail(409, 'license_bound_elsewhere');
           if (prior.team !== team) return current.metadata[TEAM_META] === prior.team
             ? fail(409, 'license_bound_elsewhere') : unavailable();
+          await recordLicenceBindings(t, team, [p.lic_id]);
           // A proposal does not replace current authority. Approval must resolve this claim first.
-          if (!allowLegacyMissingTables && await t.control(handoverKey(team)))
+          if (await t.control(handoverKey(team)))
             return fail(403, 'team_ownership_required');
           if (!await claimIsCurrent(t, prior, current)) {
             return fail(403, 'team_ownership_required');
@@ -208,6 +217,8 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
           const current = await replayBindWrite(stripe, p.lic_id, prior);
           if (!current || !await claimIsCurrent(t, prior, current) ||
               current.metadata[TEAM_META] !== team || current.metadata[RENEW_HASH_META] !== prior.hash) return undefined;
+          // The bind's own transaction rolled back with its record write: record the binding here too (round 11).
+          await recordLicenceBindings(t, team, [p.lic_id]);
           claimSettled = true;
           return json({ key: attempted.key, renewal_token: attempted.token });
         }); } catch { return undefined; }
@@ -228,21 +239,20 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
         if (inFlightStripeWrite) await inFlightStripeWrite.catch(() => undefined);
       };
       const lockBind = async (t: Tx): Promise<void> => {
-        if (allowLegacyMissingTables) await t.lockLegacyBind(chainKey);
-        else if (readOnlyCompute) await t.lockTeamBind(chainKey);
+        if (readOnlyCompute) await t.lockTeamBind(chainKey);
         else await t.lockControl(chainKey);
       };
-      const emptyUnderLock = async (t: Tx): Promise<boolean> =>
-        !allowLegacyMissingTables || await t.legacyEmpty();
       if (!proof || typeof proof !== 'object' || Array.isArray(proof)) {
         const bindLegacy = async (t?: Tx): Promise<Response> => {
         const bound = sub.metadata[TEAM_META];
           if (bound && bound !== team) return fail(409, 'license_bound_elsewhere');
+          // The site's record of the binding, under the team lock and before any Stripe write (lane C round 10).
+          if (t) await recordLicenceBindings(t, team, [sub.id]);
           if (bound === team) {
             const key = issueKey(payloadFor(sub, deps.env, deps.now(), team), deps.env);
             return json({ key });
           }
-          if (t && !allowLegacyMissingTables) {
+          if (t) {
             const hasState = Boolean(await t.enrollment(team)) ||
               (await (readOnlyCompute ? t.accountsByTeamUnlocked(team) : t.accountsByTeam(team))).length > 0 ||
               (await t.control(chainKey)) != null || (await t.control(handoverKey(team))) != null ||
@@ -270,10 +280,9 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
             try {
               await t.lockSubscriptionBind(p.lic_id);
               await lockBind(t);
-              if (!await emptyUnderLock(t)) return unavailable();
               const changed = await refreshSub();
               if (changed) return changed;
-              const response = await bindLegacy(allowLegacyMissingTables ? undefined : t);
+              const response = await bindLegacy(t);
               if (stripeWrote && response.ok) capturedResponse = response;
               return response;
             } catch (err) { callbackError = err; throw err; }
@@ -300,6 +309,8 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
           typeof claim.bind_signature !== 'string' ||
           !verifySig(authority.key, bindMessage(team, p.lic_id, claim.expires_at as number), claim.bind_signature)) return fail(403, 'team_ownership_required');
       let forked = false;
+      let forkedDrained = false;
+      let forkPaused: { chain: string; old_chain: string | null } | undefined;
       let rejected = false;
       let review = false;
       let capturedResponse: Response | undefined;
@@ -307,7 +318,8 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
         if (await rejectedHandoverDigest(t, team, authority, 0, authority.key)) { rejected = true; return; }
         const refusal = await refusedFork(t, team, kept, authority, proof as Parameters<typeof refusedFork>[4]);
         if (refusal) { rejected = true; return; }
-        if (readOnlyCompute) return;
+        // Drained: no fork controls are written, but the operator still hears of the refused branch (round 8).
+        if (readOnlyCompute) { forkedDrained = true; return; }
         await t.setControl(forkKey, deps.now());
         await t.setControl(`enrollment-fork-candidate:${team}`, { chain: authority, roster: proof });
         forked = true;
@@ -323,6 +335,7 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
       }
       const bound = sub.metadata[TEAM_META];
       if (bound && bound !== team) return fail(409, "license_bound_elsewhere");
+      if (t) await recordLicenceBindings(t, team, [sub.id]);
       if (t) {
         const latest = await t.control(chainKey) as { depth: number; chainId: string; chain?: string[]; version?: number } | undefined;
         const current = latest ? chainRelation(latest, authority) : 'extends';
@@ -404,6 +417,20 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
           (!bound || sub.metadata[AUTHORITY_META] !== authority.key ||
             sub.metadata[AUTHORITY_CHAIN_META] !== authority.chainId || replaceLegacyToken))
         return fail(403, 'team_ownership_required');
+      // An open fork pauses every change to an already-bound licence: re-activation cannot move its authority or issue
+      // it a new token until the operator resolves the fork (lane C round 9). Key-only re-binds and new licences proceed.
+      if (t && bound === team && (sub.metadata[AUTHORITY_META] !== authority.key || replaceLegacyToken || replaceChangedAuthority) &&
+          await forkOpen(t, team)) {
+        const recorded = (await t.control(chainKey) as { chainId?: string } | undefined)?.chainId ?? null;
+        const candidate = (await t.control(`enrollment-fork-candidate:${team}`) as
+          { chain?: { chainId?: string } } | undefined)?.chain?.chainId ?? null;
+        // For the operator: the branch that tried, and the other side of the open fork.
+        forkPaused = { chain: authority.chainId, old_chain: recorded === authority.chainId ? candidate : recorded };
+        await t.setControl(`licence-rebind-refused:${team}`, { subscription: sub.id, key: authority.key, chain: authority.chainId,
+          licence_authority: sub.metadata[AUTHORITY_META] ?? null, licence_chain: sub.metadata[AUTHORITY_CHAIN_META] ?? null,
+          recorded_chain: recorded, candidate_chain: candidate, at: deps.now() });
+        return fail(409, 'authority_fork_open');
+      }
       const key = issueKey(payloadFor(sub, deps.env, deps.now(), team), deps.env);
       if (bound === team) {
         if (sub.metadata[AUTHORITY_META] !== authority.key || replaceLegacyToken || replaceChangedAuthority) {
@@ -429,7 +456,8 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
               ? null : { ...transition, subscriptions });
           }
         }
-        if (t && !readOnlyCompute) await updateChain(t);
+        // Drain (COMPUTE_ENABLED unset, store configured) records the chain exactly as when enabled (lane C round 6).
+        if (t) await updateChain(t);
         return capturedResponse ?? json({ key });
       }
       const token = randomBytes(32).toString("base64url");
@@ -445,7 +473,7 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
         return fail(409, "license_bound_elsewhere");
       claimSettled = true;
       capturedResponse = json({ key, renewal_token: token });
-      if (t && !readOnlyCompute) await updateChain(t);
+      if (t) await updateChain(t);
       return capturedResponse;
       };
       const updateChain = async (t: Tx): Promise<void> => {
@@ -453,6 +481,8 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
         const relation = latest ? chainRelation(latest, authority) : 'extends';
         if (relation === 'older' || relation === 'conflict') throw new Error('stale_authority_chain');
         const enrollment = await t.enrollment(team);
+        // The verified newer chain is recorded even while the enrollment names an earlier link (no compute credit),
+        // so a branch conflicting with it is refused as a fork; compute moves the enrollment to its head (lane C round 5).
         if (await t.control(handoverKey(team)) || latest && enrollment && enrollment.key !== authority.key &&
             relation === 'extends' && (await heldAccounts(t, team)).length) return;
         if (relation === 'extends' || !latest)
@@ -466,13 +496,7 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
           response = await store.tx(async t => {
             try {
               await t.lockSubscriptionBind(p.lic_id);
-              if (allowLegacyMissingTables) {
-                await lockBind(t);
-                if (!await emptyUnderLock(t)) return unavailable();
-                const changed = await refreshSub();
-                if (changed) return changed;
-              }
-              const result = await bindLocked(allowLegacyMissingTables ? undefined : t);
+              const result = await bindLocked(t);
               if (stripeWrote && result.ok) capturedResponse = result;
               return result;
             }
@@ -493,6 +517,9 @@ export function makeBind(deps: Deps & { computeStore?: () => ComputeStore | null
         }
       }
       if (forked && store) await sendAlert({ store, env: deps.env, now: deps.now, log: () => {} }, 'authority_fork', { team });
+      if (forkedDrained) await sendAlert({ store: null, env: deps.env, now: deps.now, log: stderrLog }, 'authority_fork', { team });
+      if (forkPaused) await sendAlert({ store: readOnlyCompute ? null : store, env: deps.env, now: deps.now, log: stderrLog },
+        'authority_fork', { team, ...forkPaused });
       if (rejected && store) await sendAlert({ store: readOnlyCompute ? null : store, env: deps.env, now: deps.now, log: stderrLog },
         'handover_rejected_refusal', { team, chain: authority.chainId });
       if (review) await sendAlert({ store: readOnlyCompute ? null : store, env: deps.env, now: deps.now, log: stderrLog },

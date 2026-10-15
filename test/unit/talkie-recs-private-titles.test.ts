@@ -188,7 +188,7 @@ describe("a schedule record does not carry a private or confidential title", () 
     comment(t.w, card.id, `Done: ${VAULT} merged`);
     t.idx.flushAll();
     await prepareCardCuration(curationDeps(t), () => true);
-    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "bea"] });
+    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "bea"] });
     bea.mirror();
     expect(bea.idx.db.card(card.id)?.title).toBe(VAULT);
     expect(dumped(t, SCHEDULE_CHANNEL)).not.toContain(VAULT);
@@ -336,7 +336,7 @@ async function posted() {
   expect((await post({ kind: "ask_orchestrator", to: "@maren", topic: "status", card: move.id, reason: `${VAULT} has no update` })).status).toBe(201);
   expect((await post({ kind: "ask_orchestrator", to: "@maren", topic: "status", card: secret.id, reason: `${LAYOFF} is overdue` })).status).toBe(201);
   const bea = t.person("bea", "owner");
-  t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren", "bea"] });
+  t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren", "bea"] });
   bea.mirror();
   maren.mirror();
   return { t, bea, maren, vault, seat, secret, move };
@@ -377,7 +377,7 @@ async function printed(who: { core: RecsWorld["core"]; idx: RecsWorld["idx"] }):
 /** An owner who is in the schedule channel and not in the private project. */
 function admit(t: RecsWorld) {
   const bea = t.person("bea", "owner");
-  t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren", "bea"] });
+  t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren", "bea"] });
   bea.mirror();
   return bea;
 }
@@ -402,7 +402,7 @@ function scheduleOf(who: { core: RecsWorld["core"] }): string {
 /** A schedules record written the way an older daemon stored it: the title is still in the key, the summary and the action. */
 function emitLegacy(t: RecsWorld, channel: string, rec: Record<string, unknown>): void {
   t.core.emit("msg.post", {
-    text: `WalkieTalkie recommends: ${String(rec.summary ?? "")}`,
+    text: `Talkie recommends: ${String(rec.summary ?? "")}`,
     talkie_rec: { v: 1, op: "create", ...rec },
   } as unknown as BodyOf<"msg.post">, { channel: SCHEDULE_CHANNEL, agent: "orchestrator" });
   forgetRecs(t.core);
@@ -430,7 +430,7 @@ describe("a viewer who cannot see the project learns nothing from the list", () 
     const stored = scheduleOf(t);
     expect(stored).not.toContain(fragment);
     expect(stored).not.toContain(VAULT);
-    expect(stored).toContain("WalkieTalkie suggested this");
+    expect(stored).toContain("Talkie suggested this");
     const raw = await outcome(requester(t)("GET", `/v1/events?channel=${SCHEDULE_CHANNEL}&limit=500`));
     expect(raw.status).toBe(200);
     const rawText = JSON.stringify(raw.body);
@@ -607,7 +607,7 @@ describe("an owners-only create key is not a hash of the title", () => {
   });
 });
 
-describe("a project post is trusted only from the recommendation's own WalkieTalkie", () => {
+describe("a project post is trusted only from the recommendation's own Talkie", () => {
   test("L1 a person-written title post is not the title, and approving waits", async () => {
     const { t, vault } = await privateWorld();
     const stolen = t.core.emit("msg.post", { text: "hello", talkie_title: { v: 1, title: "Stolen title" } } as unknown as BodyOf<"msg.post">, { channel: vault.channel });
@@ -694,6 +694,25 @@ describe("a project post is trusted only from the recommendation's own WalkieTal
 const flat = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
 describe("private phrases are removed after the same normalisation", () => {
+  test("running-script, split and symbol titles stay out of team recommendations", async () => {
+    const { t } = await privateWorld();
+    const chinese = await t.project("秘密计划", "SEC", { off: true, private: true });
+    t.card(chinese, "🦄🚀");
+    const joined = await t.project("NorthwindVault", "NWV", { off: true, private: true });
+    t.card(joined, "輪換密鑰");
+    const web = await t.project("Website", "WEB", { off: true });
+    t.idx.flushAll();
+    const reason = "我们需要先完成秘密计划的工作; Northwind Vault; the 🦄🚀 project; 請先輪換密鑰再更新";
+    const rec = buildRec(t.deps, { kind: "create_card", project: web.channel, title: "Update home page", reason }).rec;
+    expect(rec.audience).toBe("team");
+    expect(rec.context).not.toContain("秘密计划");
+    expect(rec.context).not.toContain("Northwind Vault");
+    expect(rec.context).not.toContain("🦄🚀");
+    expect(rec.context).not.toContain("輪換密鑰");
+    expect(() => buildRec(t.deps, { kind: "create_card", project: web.channel, title: "整理秘密计划的页面", reason: "work" }))
+      .toThrow("this title matches a private card or project name");
+  });
+
   test("near-miss spellings, keys, archived titles and a team create are scrubbed", async () => {
     const { t, vault, card } = await privateWorld();
     expect(card.key).toBe("VLT-1");
@@ -778,7 +797,7 @@ describe("an owners-only schedule record carries no model text", () => {
       expect(JSON.stringify(rec)).not.toContain(fragment);
       expect(JSON.stringify(rec)).not.toContain("VLT-1");
     }
-    expect(JSON.stringify(raw.body)).toContain("WalkieTalkie suggested this");
+    expect(JSON.stringify(raw.body)).toContain("Talkie suggested this");
     const holder = JSON.stringify((await outcome(requester(t)("GET", `/v1/events?channel=${vault.channel}&limit=500`))).body);
     expect(holder).toContain(fragment);
     expect((await listed(t))).toContain(fragment);
@@ -867,7 +886,7 @@ describe("the rec seal secret is not replaced in silence", () => {
     registerHost(maren.core, { acceptsToken: () => true, scheduledTurnActive: () => true, currentTurnId: () => "turn-m" } as unknown as OrchestratorHost);
     const vault = await t.project(PNAME, "VLT", { off: true, private: true });
     t.core.emit("channel.upsert", { name: vault.channel, project: true, members: ["alex", "maren"] });
-    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren"] });
+    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren"] });
     maren.mirror();
     const input = { kind: "create_card" as const, project: vault.channel, title: "Call the HSM vendor", reason: "needed" };
     const mine = buildRec(t.deps, input).rec;
@@ -987,7 +1006,7 @@ describe("a blind dismissal from someone who cannot see the project does not cou
     expect(made.status).toBe(201);
     const id = made.body.id as string;
     const dana = t.person("dana", "owner");
-    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren", "dana"] });
+    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren", "dana"] });
     dana.mirror();
     const rec = readRecs(t.deps).find((r) => r.id === id);
     expect(rec?.status).toBe("pending");
@@ -1224,7 +1243,7 @@ describe("an answer is judged where it stands in the log, not by what it says ab
         const id = createRec(t.deps, ownersMove(vault, card), vault.channel);
         const rec = readRecs(t.deps).find((r) => r.id === id)!;
         const dana = t.person("dana", "owner");
-        t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren", "dana"] });
+        t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren", "dana"] });
         dana.mirror();
         let moves = 0;
         overrideCall((method, path) => {
@@ -1252,7 +1271,7 @@ describe("an answer is judged where it stands in the log, not by what it says ab
     const id = createRec(t.deps, ownersMove(vault, card), vault.channel);
     const rec = readRecs(t.deps).find((r) => r.id === id)!;
     const olive = t.person("olive", "owner");
-    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren", "olive"] });
+    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren", "olive"] });
     t.core.emit("channel.upsert", { name: vault.channel, project: true, members: ["alex", "maren", "olive"] });
     olive.mirror();
     const before = t.tick(1_000);
@@ -1278,7 +1297,7 @@ describe("an answer is judged where it stands in the log, not by what it says ab
     const id = createRec(t.deps, ownersMove(vault, card), vault.channel);
     const rec = readRecs(t.deps).find((r) => r.id === id)!;
     const olive = t.person("olive", "owner");
-    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "WalkieTalkie schedules", members: ["alex", "maren", "olive"] });
+    t.core.emit("channel.upsert", { name: SCHEDULE_CHANNEL, topic: "Talkie schedules", members: ["alex", "maren", "olive"] });
     t.core.emit("channel.upsert", { name: vault.channel, project: true, members: ["alex", "maren", "olive"] });
     olive.mirror();
     t.tick(1_000);
@@ -1325,7 +1344,7 @@ describe("an answer is judged where it stands in the log, not by what it says ab
     // Posts that came after the answers, in the schedules channel and in the project.
     t.core.store.transaction(() => {
       for (let i = 0; i < 400; i++) {
-        t.core.emit("msg.post", { text: `WalkieTalkie note ${i}` } as BodyOf<"msg.post">, { channel: SCHEDULE_CHANNEL, agent: "orchestrator" });
+        t.core.emit("msg.post", { text: `Talkie note ${i}` } as BodyOf<"msg.post">, { channel: SCHEDULE_CHANNEL, agent: "orchestrator" });
         t.core.emit("msg.post", { text: `project chat ${i}` } as BodyOf<"msg.post">, { channel: vault.channel });
       }
     });
@@ -1407,4 +1426,88 @@ test("a team create whose title normalizing stretches a private name across the 
   const r = await post({ kind: "create_card", project: web.channel, title, reason: "office supplies" });
   expect(r.status).toBe(400);
   expect(r.message).toBe("this title matches a private card or project name");
+});
+
+describe("removing a private phrase cannot leave the phrase behind", () => {
+  test("a title nested inside itself is not rebuilt by its own removal (Codex pre.13 audit round 4 MUST)", async () => {
+    const { t, card } = await privateWorld();
+    const ask = (reason: string, note?: string) =>
+      buildRec(t.deps, { kind: "ask_orchestrator", to: "@maren", topic: "status", card: card.id, reason, ...(note ? { note } : {}) }).rec.context ?? "";
+    const nest = (depth: number) => "Rotate the ".repeat(depth) + "vault keys" + " vault keys".repeat(depth - 1);
+    // Codex's exact input: four levels in the note, a one-letter reason.
+    const codex = ask("r", nest(4));
+    expect(flat(codex)).not.toContain("rotatethevaultkeys");
+    for (const depth of [2, 3, 5, 8, 12]) {
+      for (const ctx of [ask("r", nest(depth)), ask(nest(depth)), ask(`before ${nest(depth)} after`)]) {
+        expect(flat(ctx)).not.toContain("rotatethevaultkeys");
+      }
+    }
+    // The project name nests the same way.
+    expect(flat(ask("r", "Northwind Northwind Northwind Vault Vault Vault"))).not.toContain("northwindvault");
+    // Plain words around a removed title are still shown.
+    expect(ask("deploy is blocked")).toContain("deploy is blocked");
+  });
+});
+
+// The quoted words are cut at 600 characters after every scrub. The scrub trims, so the final "would one more scrub change
+// this?" check must compare the cut text trimmed the same way: a cut that lands after a space or a newline is not a leak.
+describe("the 600-character cut of a recommendation's quoted words", () => {
+  const ask = async (reason: string, note?: string, evidence?: string[]): Promise<string> => {
+    const { t, card } = await privateWorld();
+    return buildRec(t.deps, {
+      kind: "ask_orchestrator", to: "@maren", topic: "status", card: card.id, reason, ...(note ? { note } : {}), ...(evidence ? { evidence } : {}),
+    }).rec.context ?? "";
+  };
+  /** Plain words of exactly `n` characters, the last one a letter. */
+  const words = (n: number, seed: string): string => seed.repeat(Math.ceil(n / seed.length)).slice(0, n).replace(/ $/, "z");
+  const REASON = words(200, "the landing copy is stale and the pricing table is wrong ");
+  const NOTE_SEED = "context words go here ";
+
+  test("a cut that lands just after a space keeps the words (the cut text is trimmed, not dropped)", async () => {
+    const note = `${words(398, NOTE_SEED).slice(0, 397)}z x`; // note[398] is a space: joined[599] is that space
+    expect(REASON.length).toBe(200);
+    expect(note.length).toBe(400);
+    expect(note[398]).toBe(" ");
+    const ctx = await ask(REASON, note);
+    expect(ctx).not.toBe("(no words)");
+    expect(ctx).toBe(`${REASON}\n${note.slice(0, 398)}`);
+    expect(ctx).toBe(ctx.trim());
+  });
+
+  test("a cut that lands just after a newline between two fields keeps the words", async () => {
+    const note = words(398, NOTE_SEED);
+    expect(note.length).toBe(398);
+    const ctx = await ask(REASON, note, ["the last field"]); // joined[599] is the newline before the evidence
+    expect(ctx).not.toBe("(no words)");
+    expect(ctx).toBe(`${REASON}\n${note}`);
+  });
+
+  test("a cut inside a word keeps the words up to it", async () => {
+    const note = `${words(380, NOTE_SEED).slice(0, 379)} ${"abcdefghijklmnopqrst"}`;
+    expect(note.length).toBe(400);
+    const ctx = await ask(REASON, note);
+    expect(ctx).toBe(`${REASON}\n${note.slice(0, 399)}`);
+    expect(ctx.length).toBe(600);
+  });
+
+  test("a private title that straddles the cut is shown neither whole nor as the part before the cut", async () => {
+    // joined: reason (0-199), newline, note (201-580), newline, then "abc Rotate the vault keys" from 582: the title
+    // starts at 586 and a cut at 600 would leave "Rotate the va".
+    const note = words(380, NOTE_SEED);
+    const ctx = await ask(REASON, note, [`abc ${VAULT}`]);
+    expect(ctx).not.toBe("(no words)");
+    expect(ctx).toContain(REASON);
+    expect(flat(ctx)).not.toContain("rotatethe");
+    expect(ctx.toLowerCase()).not.toContain("vault");
+  });
+
+  test("Codex's exact round-3 input leaves no visible part of the title (the words are made readable before any cut)", async () => {
+    // 145 "ﬃ " pairs become 580 letters; the title is formed only by the readable pass (the control character is
+    // dropped), so it starts near 581 and a cut of the readable line at 600 would leave "Rotate the vault k".
+    const note = "ﬃ ".repeat(145) + "Rotate the vau\u0001lt keys";
+    expect(note.length).toBe(312);
+    const ctx = await ask("r", note);
+    expect(ctx).not.toContain("Rotate the vault k");
+    expect(ctx.toLowerCase()).not.toContain("rotate the vau");
+  });
 });

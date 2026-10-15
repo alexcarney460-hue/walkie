@@ -84,7 +84,7 @@ export type MachineAccel = z.infer<typeof MachineAccel>;
 
 /**
  * The machine's platform, for the dashboard's machine page (WALKIE-UI-POLISH-1): the OS family and CPU architecture
- * as Node names them (bucketed, never a kernel string), the Walkie version (optional), the logical CPU count and the 1-minute
+ * as Node names them (bucketed, never a kernel string), the Sqwakie version (optional), the logical CPU count and the 1-minute
  * load average (null where the OS has none, e.g. Windows). Team-visible (SECURITY.md). Malformed: dropped.
  */
 export const MachineSys = z.object({
@@ -162,7 +162,7 @@ export const MachineStats = z.object({
    */
   peer_rtt: z.record(z.string().regex(/^[0-9a-f]{16}$/), z.number().int().nonnegative().max(60_000))
     .refine((r) => Object.keys(r).length <= 64, { message: "too many peers" }).optional().catch(undefined),
-  /** Platform, Walkie version and CPU load (MachineSys); absent from older daemons. Malformed: dropped, the rest kept. */
+  /** Platform, Sqwakie version and CPU load (MachineSys); absent from older daemons. Malformed: dropped, the rest kept. */
   sys: MachineSys.optional().catch(undefined),
   /**
    * AGENT-SEE-1: local model servers running on the machine (ollama, llama-server, rpc-server, vllm, mlx-lm), by name

@@ -1,6 +1,6 @@
 // Prompts on the controlling terminal (/dev/tty), even when stdin is a pipe (`… | walkie accounts add claude`). The
 // vault commands that change logins need a person at a terminal: no terminal, no prompt, no change.
-import { openSync } from "node:fs";
+import { openSync, writeSync } from "node:fs";
 import { ReadStream } from "node:tty";
 
 export interface Tty {
@@ -8,6 +8,8 @@ export interface Tty {
   ask(question: string): Promise<string>;
   /** One line, not echoed (a token). */
   secret(question: string): Promise<string>;
+  /** Writes a recovery code to the controlling terminal, never a redirected stream. */
+  show?(line: string): void;
   close(): void;
 }
 
@@ -20,7 +22,7 @@ export function openTty(): Tty | null {
   let fd: number;
   try { fd = openSync("/dev/tty", "r+"); } catch { return null; }
   const input = new ReadStream(fd);
-  const write = (s: string) => process.stderr.write(s);
+  const write = (s: string) => { const bytes = Buffer.from(s); let at = 0; while (at < bytes.length) at += writeSync(fd, bytes, at, bytes.length - at); };
   const line = (question: string, hidden: boolean) => new Promise<string>((resolve, reject) => {
     write(question);
     let buf = "";
@@ -47,6 +49,7 @@ export function openTty(): Tty | null {
   return {
     ask: (q) => line(q, false),
     secret: (q) => line(q, true),
+    show: write,
     close: () => { try { input.destroy(); } catch { /* closed */ } },
   };
 }

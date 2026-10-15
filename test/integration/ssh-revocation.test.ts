@@ -118,7 +118,7 @@ test("an authority that lacks the receipt route (404) is asked once, never retri
     const old = olderPeers(worker);
     const err = await worker.client().request("POST", "/v1/ssh/revoke", {}).then(() => null, (e: { code?: string; message?: string }) => e);
     expect(err).toMatchObject({ code: "ssh_team_receipt_unavailable" });
-    expect(err?.message).toContain("older Walkie");
+    expect(err?.message).toContain("older Sqwakie");
     expect(err?.message).toContain("update the roster authority");
     expect(old.calls()).toBe(1);
     // No retry loop behind it: several sync rounds later it is still the one call.
@@ -150,7 +150,7 @@ test("an authority target keeps its own receipt when every older peer answers 40
     expect(old.calls()).toBe(2);
     // If its own log could not take the receipt either (here: a grant too old to be stored), the same two answers read
     // as "no machine asked can hold it", not as a fault, and each peer was still asked only once more.
-    await expect(publishSshRevocation(lead.d.core, lead.d.client, grantFor(lead, lead, 1))).rejects.toThrow("older Walkie");
+    await expect(publishSshRevocation(lead.d.core, lead.d.client, grantFor(lead, lead, 1))).rejects.toThrow("older Sqwakie");
     expect(old.calls()).toBe(4);
   } finally { await isolated.close(); }
 }, 30_000);

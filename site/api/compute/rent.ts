@@ -1,8 +1,9 @@
 import { computeReleaseGate } from "../_lib/compute/release-gate.js";
 import { operationalHandler } from "../_lib/compute/alert-handler.js";
 // POST /api/compute/rent (Bearer) {idempotency_key, machines:[{tier,count}], codes[], walkie_version, idle_minutes?}
-// → RentResult. Credit must cover the first hour of every machine asked for (402 insufficient_credit otherwise); what
-// quota can't hold now is queued, never refused. The join codes go only into the machines' user-data: stored briefly with pending work, never logged. COMPUTE_ENABLED=1 must be set. 30 rent requests per account per hour.
+// → RentResult. Credit must cover the first hour of every machine asked for (402 insufficient_credit otherwise); a tier
+// off sale (quota 0) is refused (409 tier_unavailable); what quota can't hold now is queued, never refused. walkie_version
+// must be a release the site knows was published (400 unsupported_walkie_version, releases.ts). The join codes go only into the machines' user-data: stored briefly with pending work, never logged. COMPUTE_ENABLED=1 must be set. 30 rent requests per account per hour.
 import { fail, json } from "../_lib/http.js";
 import { optionalEnv } from "../_lib/env.js";
 import { allow, defaultHandlerDeps, withAccount, type HandlerDeps } from "../_lib/compute/handler.js";

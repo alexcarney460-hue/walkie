@@ -4,7 +4,11 @@
 // bigint columns come back as strings from the driver: `num` converts them and refuses anything unsafe.
 import postgres from "postgres";
 import { MIGRATIONS } from "./migrations.js";
-import type { Account, BindClaim, Enrollment, ComputeStore, LedgerEntry, Rental, RentalPatch, RentRequestRow, Tx } from "./store.js";
+import { ALERT_CLAIM_PREFIX, CREDIT_HOLD_PREFIX, FREEZE_HOLD_PREFIX } from "./store.js";
+import type { Account, BindClaim, Enrollment, ComputeStore, LedgerEntry, Rental, RentalPatch, RentRequestRow, Tx, TxOptions } from "./store.js";
+
+/** A timeout setting in whole milliseconds, at least 1 (0 would mean "no bound" to Postgres). */
+const bound = (ms: number): string => `${Math.max(1, Math.floor(ms))}ms`;
 
 type Sql = postgres.Sql;
 type Row = Record<string, unknown>;
@@ -113,6 +117,10 @@ function makeTx(s: Sql): Tx {
       const rows = await s`SELECT * FROM compute_accounts WHERE id = ${id} FOR UPDATE`;
       return rows[0] ? toAccount(rows[0]) : null;
     },
+    async account(id) {
+      const rows = await s`SELECT * FROM compute_accounts WHERE id = ${id}`;
+      return rows[0] ? toAccount(rows[0]) : null;
+    },
     async lockCapacity() {
       await s`SELECT pg_advisory_xact_lock(${CAPACITY_LOCK})`;
     },
@@ -160,12 +168,38 @@ function makeTx(s: Sql): Tx {
       return { paid: num(rows[0]?.paid ?? 0), other: num(rows[0]?.other ?? 0) };
     },
     async addLedger(e: LedgerEntry) {
-      const rows = await s`INSERT INTO compute_ledger (account_id, kind, amount_micros, idem_key, rental_id, ref, live, created_at)
-        VALUES (${e.account_id}, ${e.kind}, ${e.amount_micros}, ${e.idem_key}, ${e.rental_id ?? null}, ${e.ref ?? null}, ${e.live === true}, ${e.created_at})
+      const rows = await s`INSERT INTO compute_ledger (account_id, kind, amount_micros, idem_key, rental_id, ref, live, lot, created_at)
+        VALUES (${e.account_id}, ${e.kind}, ${e.amount_micros}, ${e.idem_key}, ${e.rental_id ?? null}, ${e.ref ?? null}, ${e.live === true},
+          ${e.lot ?? null}, ${e.created_at})
         ON CONFLICT (idem_key) DO NOTHING RETURNING id`;
       if (rows.length === 1 && (e.kind === 'purchase' || e.kind === 'adjustment') && e.amount_micros > 0)
         await s`UPDATE compute_accounts SET first_funded_at = COALESCE(first_funded_at, ${e.created_at}) WHERE id = ${e.account_id}`;
       return rows.length === 1;
+    },
+    async creditLots(accountId) {
+      const rows = await s`SELECT l.idem_key, l.live, l.amount_micros, l.created_at,
+          COALESCE(a.flow, 0)::bigint AS attributed, COALESCE(a.expires, 0)::bigint AS expires
+        FROM compute_ledger l
+        LEFT JOIN (SELECT lot, SUM(amount_micros) AS flow, COUNT(*) FILTER (WHERE kind = 'expire') AS expires
+          FROM compute_ledger WHERE account_id = ${accountId} AND lot IS NOT NULL GROUP BY lot) a ON a.lot = l.idem_key
+        WHERE l.account_id = ${accountId} AND l.kind IN ('purchase', 'adjustment') AND l.amount_micros > 0
+        ORDER BY l.id`;
+      return rows.map((r) => ({ id: String(r.idem_key), live: r.live === true, amount_micros: num(r.amount_micros),
+        created_at: num(r.created_at), attributed_micros: num(r.attributed), expire_rows: num(r.expires) }));
+    },
+    async rentalLotCharges(rentalId, upTo) {
+      const rows = await s`SELECT lot, live, COALESCE(-SUM(amount_micros), 0)::bigint AS charged FROM compute_ledger
+        WHERE rental_id = ${rentalId} AND created_at <= ${upTo} AND kind IN ('burn', 'refund') GROUP BY lot, live`;
+      return rows.map((r) => ({ lot: strOrNull(r.lot), live: r.live === true, charged: num(r.charged) }));
+    },
+    async dueLotAccounts(cutoff, limit) {
+      // A lot row (memory-store.ts isLot) credited by the cutoff that no expire row names yet (indexes compute_ledger_lots,
+      // compute_ledger_lot_expiries); ties in account order by bytes, as MemoryStore.
+      const rows = await s`SELECT l.account_id, MIN(l.created_at) AS first FROM compute_ledger l
+        WHERE l.kind IN ('purchase', 'adjustment') AND l.amount_micros > 0 AND l.created_at <= ${cutoff}
+          AND NOT EXISTS (SELECT 1 FROM compute_ledger x WHERE x.kind = 'expire' AND x.lot = l.idem_key)
+        GROUP BY l.account_id ORDER BY first, l.account_id COLLATE "C" LIMIT ${limit}`;
+      return rows.map((r) => String(r.account_id));
     },
     async accountByPurchaseRef(ref) {
       const rows = await s`SELECT account_id FROM compute_ledger WHERE kind = 'purchase' AND ref = ${ref} LIMIT 1`;
@@ -219,6 +253,41 @@ function makeTx(s: Sql): Tx {
       if (Math.random() < 0.01) await s`DELETE FROM compute_rate_limits WHERE window_start < ${windowStart - 86_400_000}`;
       return num(rows[0]?.hits ?? max + 1) <= max;
     },
+    async pendingFreezeHolds(limit) {
+      // Casts only a JSON number, so a malformed row sorts first instead of failing the tick; key order is byte order,
+      // as MemoryStore's.
+      const rows = await s`SELECT key, value FROM compute_control
+        WHERE starts_with(key, ${FREEZE_HOLD_PREFIX}) AND value->>'state' = 'pending' AND jsonb_typeof(value->'charge') = 'string'
+        ORDER BY CASE WHEN jsonb_typeof(value->'updated_at') = 'number' THEN (value->>'updated_at')::numeric END NULLS FIRST,
+          key COLLATE "C"
+        LIMIT ${limit}`;
+      return rows.map((r) => ({ key: String(r.key), value: r.value }));
+    },
+    async heldCreditHolds(before, limit) {
+      // CASE, so a row whose first_at is not a JSON number is never cast (and never listed), whatever the plan's order.
+      const rows = await s`SELECT key, value FROM compute_control
+        WHERE starts_with(key, ${CREDIT_HOLD_PREFIX}) AND jsonb_typeof(value) = 'object' AND value->>'state' = 'held'
+          AND value->'alerted_at' IS NULL
+          AND (CASE WHEN jsonb_typeof(value->'first_at') = 'number' THEN (value->>'first_at')::numeric END) <= ${before}
+        ORDER BY (CASE WHEN jsonb_typeof(value->'first_at') = 'number' THEN (value->>'first_at')::numeric END), key COLLATE "C"
+        LIMIT ${limit}`;
+      return rows.map((r) => ({ key: String(r.key), value: r.value }));
+    },
+    async queuedAlerts(now, limit, minPriority) {
+      // A delivered claim is a JSON number and a repeating claim too: only objects are queued; CASE keeps the cast safe.
+      // minPriority: a numeric priority at least it, or none (NULL), like MemoryStore.
+      const band = minPriority === undefined ? s`` : s`AND COALESCE((CASE WHEN jsonb_typeof(value->'priority') = 'number'
+          THEN (value->>'priority')::numeric END) >= ${minPriority}, true)`;
+      const rows = await s`SELECT key, value FROM compute_control
+        WHERE starts_with(key, ${ALERT_CLAIM_PREFIX}) AND jsonb_typeof(value) = 'object'
+          AND (CASE WHEN jsonb_typeof(value->'next_at') = 'number' THEN (value->>'next_at')::numeric END) <= ${now}
+          ${band}
+        ORDER BY (CASE WHEN jsonb_typeof(value->'priority') = 'number' THEN (value->>'priority')::numeric END) NULLS LAST,
+          (CASE WHEN jsonb_typeof(value->'first_at') = 'number' THEN (value->>'first_at')::numeric END) NULLS LAST,
+          key COLLATE "C"
+        LIMIT ${limit}`;
+      return rows.map((r) => ({ key: String(r.key), value: r.value }));
+    },
   };
 }
 
@@ -226,13 +295,21 @@ export class PgStore implements ComputeStore {
   private claimTableReady: Promise<void> | null = null;
   constructor(private readonly sql: Sql) {}
 
-  static connect(url: string): PgStore {
-    // Serverless functions: few connections, no prepared statements (Neon's pooler runs in transaction mode).
-    return new PgStore(postgres(url, { max: 3, prepare: false, idle_timeout: 20, connect_timeout: 8, onnotice: () => {} }));
+  static connect(url: string, options: { connectTimeoutS?: number } = {}): PgStore {
+    // Serverless functions: few connections, no prepared statements (Neon's pooler runs in transaction mode). The licence
+    // bind connects with a shorter timeout (lane C round 12).
+    return new PgStore(postgres(url, { max: 3, prepare: false, idle_timeout: 20, connect_timeout: options.connectTimeoutS ?? 8,
+      onnotice: () => {} }));
   }
 
-  async tx<T>(fn: (t: Tx) => Promise<T>): Promise<T> {
-    return (await this.sql.begin((s) => fn(makeTx(s as unknown as Sql)))) as T;
+  /** One BEGIN … COMMIT; `opts` bounds its lock waits and statements for this transaction only (SET LOCAL). */
+  async tx<T>(fn: (t: Tx) => Promise<T>, opts: TxOptions = {}): Promise<T> {
+    return (await this.sql.begin(opts.readOnly ? 'isolation level repeatable read read only' : '', async (s) => {
+      const tx = s as unknown as Sql;
+      if (opts.lockTimeoutMs !== undefined) await tx`SELECT set_config('lock_timeout', ${bound(opts.lockTimeoutMs)}, true)`;
+      if (opts.statementTimeoutMs !== undefined) await tx`SELECT set_config('statement_timeout', ${bound(opts.statementTimeoutMs)}, true)`;
+      return fn(makeTx(tx));
+    })) as T;
   }
 
   private async ensureBindClaimTable(): Promise<void> {

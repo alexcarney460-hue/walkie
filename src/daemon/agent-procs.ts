@@ -105,7 +105,7 @@ const HERMES_FREE_TEXT_FLAGS: readonly string[] = ["-z", "--oneshot", "-q", "--q
  * `run` is the messaging gateway (hermesRuns). A card for one of these would be a ghost for as long as the command runs, and it
  * is no liveness evidence for a hooked session, but for `cron`, `dashboard` and `serve` when they run agent turns in their own
  * process (hermesHostOf). A word that is on no list (a plugin's command, or the value of an option
- * Walkie does not know, such as one a newer Hermes added) fails open: it stays a session, so a session is never dropped for it.
+ * Sqwakie does not know, such as one a newer Hermes added) fails open: it stays a session, so a session is never dropped for it.
  * Keep the list in step with Hermes' own when `hermes update` adds a subcommand.
  */
 const HERMES_MANAGEMENT_COMMANDS: ReadonlySet<string> = new Set([
@@ -271,7 +271,7 @@ export function wireRuntime(rt: AgentRuntime): "claude-code" | "codex" | "kimi" 
   return rt === "grok" || rt === "gemini" || rt === "opencode" || rt === "hermes" ? "other" : rt;
 }
 
-/** The profile names Walkie can carry (hooks and the status route accept no other). */
+/** The profile names Sqwakie can carry (hooks and the status route accept no other). */
 const WALKIE_PROFILE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 /** Most words of one command line read for a profile selector: a longer line leaves the process unresolved. */
 const HERMES_ARGV_SCAN_MAX = 256;
@@ -300,7 +300,7 @@ function insideMcpAddArgs(args: readonly string[], index: number): boolean {
   return mcp >= 0 && mcp < index && args.slice(mcp + 1, index).includes("add");
 }
 
-/** A selector's value as Hermes reads it (`strip` + `casefold`, as normalize_profile_name), when Walkie can name it. */
+/** A selector's value as Hermes reads it (`strip` + `casefold`, as normalize_profile_name), when Sqwakie can name it. */
 function profileNamed(raw: string): string | null {
   const name = raw.trim().toLowerCase();
   return WALKIE_PROFILE.test(name) ? name : null;
@@ -324,7 +324,7 @@ function startsFreeText(args: readonly string[], at: number): boolean {
  * The profile a Hermes process names in its command line, read the way hermes_cli/main.py `_scan_profile_flag` reads
  * its argv: `-p X`, `--profile X` and `--profile=X`, before or after the subcommand, the value of each top-level value
  * flag skipped, nothing read past `--` or `mcp add … --args`, the first selector deciding. Null when it names none (a
- * bare `hermes` runs the default, the sticky active or the HERMES_HOME profile) or names one Walkie cannot carry (a
+ * bare `hermes` runs the default, the sticky active or the HERMES_HOME profile) or names one Sqwakie cannot carry (a
  * name over 32 characters or with an underscore; Python's `casefold` also folds a few non-ASCII letters, such as ß,
  * onto ASCII, which `toLowerCase` does not, so such a spelling stays unresolved here).
  * Nothing is read after a flag whose value is free text (startsFreeText): `ps` joins argv with spaces, so Hermes' one

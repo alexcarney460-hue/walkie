@@ -33,7 +33,7 @@ function Loading() {
 
 /** What a view's boundary calls it (the same words as the navigation). */
 const VIEW_NAME: Record<View, string> = {
-  mission: "Mission Control", updates: "Updates", orchestrator: "WalkieTalkie", projects: "Projects", simple: "Simple", board: "Channels", asks: "Asks", artifacts: "Artifacts",
+  mission: "Mission Control", updates: "Updates", orchestrator: "Talkie", projects: "Projects", simple: "Simple", board: "Channels", asks: "Asks", artifacts: "Artifacts",
   team: "Team", integrations: "Integrations", accounts: "Accounts", seats: "Seats", machine: "Machine",
 };
 

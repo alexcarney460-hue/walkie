@@ -1,11 +1,11 @@
-// TALKIE-OPS-1 local API for WalkieTalkie's recommendations (PROTOCOL §9):
+// TALKIE-OPS-1 local API for Talkie's recommendations (PROTOCOL §9):
 //   GET  /v1/talkie/recs[?status=open|all]   what this member can see, each with its short id and what they may do about it:
 //                                            every open one first (up to MAX_OPEN_LIST, `more_open` counts the rest), then
 //                                            with status=all the answered and expired ones, newest first (up to MAX_LIST)
 //   POST /v1/talkie/recs/:id/approve         a person approves it: the action is performed (rec-act.ts), then the answer is signed
 //   POST /v1/talkie/recs/:id/dismiss         a person says not now
-//   POST /v1/talkie/recs                     WalkieTalkie's own child records one (rec-input.ts)
-// Approving and dismissing are a person's alone (no agent, WalkieTalkie included, and no paired phone): the same gate the status
+//   POST /v1/talkie/recs                     Talkie's own child records one (rec-input.ts)
+// Approving and dismissing are a person's alone (no agent, Talkie included, and no paired phone): the same gate the status
 // report switch has. `:id` is the 8-hex short id the lists show, or the full event id.
 import { z } from "zod";
 import { personOnly } from "../admin/gate.ts";
@@ -77,7 +77,7 @@ const ID = "([0-9a-f]{8}|[0-9a-f]{16}(?::|%3[Aa])[1-9][0-9]*)";
 
 /** Finds the recommendation, refuses what cannot be answered (answered already, expired, not this person's), and runs `then` under its lock. */
 async function answering(c: RouteCtx, ref: string, what: string, then: (d: RecDeps, rec: Rec, by: string, body: z.infer<typeof Note>) => Promise<{ status: "approved" | "dismissed"; result?: string }>): Promise<Response> {
-  personOnly(c, `${what} a WalkieTalkie recommendation`);
+  personOnly(c, `${what} a Talkie recommendation`);
   const d = deps(c);
   const body = parseWith(Note, await readJson(c.req, LOCAL_BODY_MAX));
   limitWrite(c);
@@ -131,17 +131,17 @@ route("POST", new RegExp(`^/v1/talkie/recs/${ID}/dismiss$`), (c, [ref]) =>
     return { status: "dismissed" };
   }));
 
-/** Recommendations recorded by each turn of WalkieTalkie (a turn is a message's id) on this daemon: at most MAX_TURN_RECS. */
+/** Recommendations recorded by each turn of Talkie (a turn is a message's id) on this daemon: at most MAX_TURN_RECS. */
 const recordedBy = new WeakMap<object, Map<string, number>>();
 
 /**
- * WalkieTalkie's own child records a recommendation (its scheduled project sync and machine onboarding do, in place of acting):
+ * Talkie's own child records a recommendation (its scheduled project sync and machine onboarding do, in place of acting):
  * the daemon validates the fields, writes the sentence, picks the audience, drops a repeat and keeps the caps. Nobody else may: a
- * person approves or dismisses; another agent has no business writing in WalkieTalkie's name.
+ * person approves or dismisses; another agent has no business writing in Talkie's name.
  */
 route("POST", "/v1/talkie/recs", async (c) => {
   const d = deps(c);
-  if (c.agent !== ORCHESTRATOR_AGENT) throw new HttpError(403, "forbidden", "only WalkieTalkie records recommendations; a person approves or dismisses them");
+  if (c.agent !== ORCHESTRATOR_AGENT) throw new HttpError(403, "forbidden", "only Talkie records recommendations; a person approves or dismisses them");
   const input = parseWith(RecommendInput, await readJson(c.req, LOCAL_BODY_MAX));
   refuseAgentJoinContent(c, input);
   limitWrite(c);
@@ -154,7 +154,7 @@ route("POST", "/v1/talkie/recs", async (c) => {
   let result: Recorded;
   try { result = recordRec(d, built.rec, built.channel); }
   catch (err) {
-    if (err instanceof Error && /lease expired/.test(err.message)) throw new HttpError(409, "leadership_unavailable", "WalkieTalkie's lease has ended: nothing was recorded");
+    if (err instanceof Error && /lease expired/.test(err.message)) throw new HttpError(409, "leadership_unavailable", "Talkie's lease has ended: nothing was recorded");
     throw err;
   }
   if (result.outcome === "created") {

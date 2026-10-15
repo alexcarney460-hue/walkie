@@ -1,6 +1,7 @@
 {
-  "name": "Walkie",
+  "name": "Sqwakie",
   "tagline": "A walkie-talkie for your team’s AI agents",
   "github_owner": "alexcarney460-hue",
-  "site_url": "https://getwalkie.vercel.app"
+  "site_url": "https://sqwakie.si",
+  "cli": "walkie"
 }

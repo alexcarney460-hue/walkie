@@ -21,6 +21,8 @@ import { isGrokHook } from "./grok-events.ts";
 import { loadState, saveState, shareableTask, shareableTitle, stateProvenance, type HookState } from "./state.ts";
 import { dropPendingLaunches, endSubagents, isSubagentEvent, LAUNCH_TOOLS, recordLaunch, recordLaunched, runningIds, runSubagentEvent, type SubagentFields } from "./subagents.ts";
 import { recordSwitchEvent, type SwitchEventInput } from "./switch-channel.ts";
+import { sessionMemoryContext, type RecallResult } from "../daemon/memory/primer.ts";
+import type { PrimerReply } from "../cli/commands/primer.ts";
 
 export interface ClaudeHookInput extends SubagentFields {
   hook_event_name: string;
@@ -170,7 +172,7 @@ async function inboxContext(client: WalkieClient, state: HookState): Promise<{ t
     ...mine.map((e) => wrapForModel(e, String(e.body.text ?? ""))),
   ];
   return {
-    text: `Walkie: teammates' agents reached out to you.\n${parts.join("\n")}`,
+    text: `Sqwakie: teammates' agents reached out to you.\n${parts.join("\n")}`,
     ids: [...fresh.map((a) => a.ask.id), ...mine.map((e) => e.id)],
   };
 }
@@ -278,6 +280,24 @@ async function claudeHook(raw: string, env: NodeJS.ProcessEnv): Promise<string> 
     log(`${input.hook_event_name} status: ${err instanceof Error ? err.message : String(err)}`);
   }
   await automation;
+  // SessionStart injects only actual personal context. Unknown identity or an unavailable store stays silent.
+  if (input.hook_event_name === "SessionStart" && agent !== ORCHESTRATOR_AGENT) {
+    try {
+      const project = ref ? await client.task(ref).then((result) => result.card.channel, () => "global") : "global";
+      const query = [task, ctx.repo, ctx.branch].filter(Boolean).join(" ").slice(0, 200) || "current project";
+      const [primer, recall] = await Promise.all([
+        client.request<PrimerReply>("GET", `/v1/primer?project=${encodeURIComponent(project)}`),
+        client.request<RecallResult>("GET", `/v1/recall?q=${encodeURIComponent(query)}${project !== "global" ? `&project=${encodeURIComponent(project)}` : ""}`),
+      ]);
+      const additionalContext = sessionMemoryContext(primer.primer, recall, primer.status === "unavailable");
+      saveState(agent, t.next);
+      return additionalContext ? JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }) : "";
+    } catch (err) {
+      log(`SessionStart memory: ${err instanceof Error ? err.message : String(err)}`);
+      saveState(agent, t.next);
+      return "";
+    }
+  }
   // The session's sub-agents that ended unseen (not in Stop's running list), or all of them when the session ends.
   const ev = input.hook_event_name;
   if (ev === "Stop" || ev === "UserPromptSubmit") {

@@ -2,6 +2,7 @@ import type { ComputeDeps } from './deps.js';
 import type { Tx } from './store.js';
 import { terminate } from './service.js';
 import { bounded, CALL_MS, CONCURRENCY } from './budget.js';
+import { onAccount, type TickPass } from './tick-pass.js';
 
 interface Job { readonly key: string; readonly provider: string; readonly instance: string; readonly rental?: string; readonly after: number; readonly attempts: number }
 const KEY = 'cleanup_jobs';
@@ -14,8 +15,12 @@ export async function enqueueCleanup(t: Tx, provider: string, instance: string, 
 }
 export async function hasCleanup(d: ComputeDeps): Promise<boolean> { return d.store.tx(async t => (await jobs(t)).length > 0); }
 
-/** Claim moves a job to the tail before I/O. A killed invocation releases its claim by time, fairly across ticks. */
-export async function drainCleanup(d: ComputeDeps, deadline: number): Promise<number> {
+/**
+ * Claim moves a job to the tail before I/O. A killed invocation releases its claim by time, fairly across ticks. With
+ * the tick's `pass` (tick-pass.ts), a rental whose account row is busy is still deleted at the provider; only its record
+ * waits, and the job is retried on the next pass.
+ */
+export async function drainCleanup(d: ComputeDeps, deadline: number, pass?: TickPass): Promise<number> {
   const active = await d.store.tx(t => t.activeRentals());
   await d.store.tx(async t => {
     for (const r of active.filter(r => r.state === 'stopping'))
@@ -38,7 +43,9 @@ export async function drainCleanup(d: ComputeDeps, deadline: number): Promise<nu
         const ms = Math.min(CALL_MS, deadline - Date.now());
         if (job.rental) {
           const r = await d.store.tx(t => t.rental(job.rental!));
-          ok = !r || r.state !== 'stopping' || await terminate(d, r, ms);
+          ok = !r || r.state !== 'stopping' || (pass
+            ? (await onAccount(d, pass, r.account_id, bounds => terminate(d, r, ms, bounds), { evenIfBusy: true })) ?? false
+            : await terminate(d, r, ms));
         } else {
           const driver = d.driver(job.provider);
           if (!driver) throw new Error('provider_unavailable');
