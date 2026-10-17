@@ -5,6 +5,7 @@
 ## Guides
 
 - [Agent install and operation guide](https://sqwakie.si/agents.md): installation, joining, readiness, CLI/API output and permission boundaries.
+- [Run Claude Code agents across multiple machines](https://sqwakie.si/guides/claude-code-agents-across-machines): Claude Code and Codex on separate machines, CLI and MCP messaging, Sqwakie Direct with no VPN, and the Free plan.
 - [Install and join (repository document on GitHub)](https://github.com/alexcarney460-hue/walkie/blob/main/docs/INSTALL.md): platform and enrollment details.
 - [Protocol and local API (repository document on GitHub)](https://github.com/alexcarney460-hue/walkie/blob/main/docs/PROTOCOL.md): request schemas, authentication, roles and event semantics.
 - [Security (repository document on GitHub)](https://github.com/alexcarney460-hue/walkie/blob/main/docs/SECURITY.md): trust, credentials and process isolation.
