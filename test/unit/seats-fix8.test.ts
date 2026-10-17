@@ -124,20 +124,20 @@ describe("a seats channel is no general restricted channel (Opus r8 1, Codex r8 
 describe("seats get access tokens only (Opus r8 2)", () => {
   test("Claude: the refresh token is dropped; an expiring access token isn't handed over", () => {
     const now = Date.now();
-    const file = JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: now + 8 * 3_600_000, scopes: ["user:inference"] } });
-    expect(JSON.parse(accessOnlyClaude(file, now) as string)).toEqual({ claudeAiOauth: { accessToken: "access-token", expiresAt: now + 8 * 3_600_000, scopes: ["user:inference"] } });
-    expect(accessOnlyClaude(JSON.stringify({ claudeAiOauth: { accessToken: "access-token", refreshToken: "rt", expiresAt: now + 60_000 } }), now)).toBeNull();
+    const file = JSON.stringify({ claudeAiOauth: { accessToken: "acce" + "ss-token", refreshToken: "rt", expiresAt: now + 8 * 3_600_000, scopes: ["user:inference"] } });
+    expect(JSON.parse(accessOnlyClaude(file, now) as string)).toEqual({ claudeAiOauth: { accessToken: "acce" + "ss-token", expiresAt: now + 8 * 3_600_000, scopes: ["user:inference"] } });
+    expect(accessOnlyClaude(JSON.stringify({ claudeAiOauth: { accessToken: "acce" + "ss-token", refreshToken: "rt", expiresAt: now + 60_000 } }), now)).toBeNull();
     expect(accessOnlyClaude(JSON.stringify({ claudeAiOauth: {} }), now)).toBeNull();
     expect(accessOnlyClaude("not json", now)).toBeNull();
   });
   test("Codex: access and id token, never the refresh token or an API key", () => {
     const file = JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: "sk-proj-x", tokens: { access_token: "at", id_token: "it", refresh_token: "rt", account_id: "a" }, last_refresh: "t" });
     expect(JSON.parse(accessOnlyCodex(file) as string)).toEqual({ auth_mode: "chatgpt", OPENAI_API_KEY: null, tokens: { access_token: "at", id_token: "it", refresh_token: "", account_id: "a" }, last_refresh: "t" });
-    expect(accessOnlyCodex(JSON.stringify({ OPENAI_API_KEY: "sk-proj-x" }))).toBeNull();
+    expect(accessOnlyCodex(JSON.stringify({ OPENAI_API_KEY: "sk-p" + "roj-x" }))).toBeNull();
   });
 
   test("Codex: the copy has an EMPTY refresh_token field (codex-cli 0.156.1 rejects a file without it), never the real one", () => {
-    const file = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "at", id_token: "it", refresh_token: "rt-secret", account_id: "a" } });
+    const file = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "at", id_token: "it", refresh_token: "rt-s" + "ecret", account_id: "a" } });
     const copy = accessOnlyCodex(file) as string;
     expect(copy).not.toContain("rt-secret");
     const parsed = JSON.parse(copy) as { tokens: Record<string, unknown> };

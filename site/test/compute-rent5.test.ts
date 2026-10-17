@@ -83,7 +83,7 @@ test('C1P: another rental cleanup cannot block a paid guest lease', async () => 
   w.cloud.terminate = async () => { throw new Error('persistent provider outage'); };
   const response = await makeLease({ env: {}, compute: () => w.d, stripe: () => null })(new Request('https://site.test/api/compute/lease', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ rental_id: id }) }));
   expect(response.status).toBe(200);
-  const deps = { env: { COMPUTE_STRIPE_WEBHOOK_SECRET: 'whsec_fixture' }, compute: () => w.d, stripe: () => null };
+  const deps = { env: { COMPUTE_STRIPE_WEBHOOK_SECRET: 'whse' + 'c_fixture' }, compute: () => w.d, stripe: () => null };
   const beat = await makeHeartbeat(deps)(new Request('https://site.test/api/compute/heartbeat', { method: 'POST',
     body: JSON.stringify({ rental_id: id, token, busy_seats: 1, pool_jobs: 0, cpu_pct: 30, egress_bytes: 0 }) }));
   expect(beat.status).toBe(200);

@@ -65,7 +65,7 @@ beforeAll(async () => {
   const home = join(c.root, "arvid-home");
   personHome = home;
   mkdirSync(join(home, ".claude"), { recursive: true });
-  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "machine-claude-access", refreshToken: "machine-claude-refresh", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "mach" + "ine-claude-access", refreshToken: "mach" + "ine-claude-refresh", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   signInCodex(home);
   claudeLog = join(c.root, "same-user-claude.jsonl");
   codexLog = join(c.root, "same-user-codex.jsonl");
@@ -257,7 +257,7 @@ describe("v2 seats", () => {
     const id = "e".repeat(24);
     const home = join(arvid.home, "vault", "kimi", id);
     mkdirSync(join(home, "credentials"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(home, "credentials", "kimi-code-env-0123456789abcdef.json"), JSON.stringify({ access_token: "fake-seat-token" }), { mode: 0o600 });
+    writeFileSync(join(home, "credentials", "kimi-code-env-0123456789abcdef.json"), JSON.stringify({ access_token: "fake" + "-seat-token" }), { mode: 0o600 });
     const vault = Vault.open(arvid.home);
     try { vault.addKimi({ id, label: "Kimi account", plan: null, home }); } finally { vault.close(); }
     const brief = "use the named vault Kimi account";

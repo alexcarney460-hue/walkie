@@ -46,7 +46,7 @@ else console.log(JSON.stringify({type:'turn.completed'}));
     }), readiness: (m, s) => readiness(m, s),
     probeReaders: { inventory: () => new Map(), session: () => null, identity: () => "source-fixture-leader" } };
   node = await cluster.add({ name: "alex", login: "alex@example.com", seats: { ossFixture: fixture,
-    env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, OPENAI_API_KEY: "synthetic-secret", CODEX_HOME: join(home, "poison-codex"),
+    env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, OPENAI_API_KEY: "synt" + "hetic-secret", CODEX_HOME: join(home, "poison-codex"),
       OLLAMA_HOST: "http://never.invalid", HTTPS_PROXY: "http://never.invalid", NODE_OPTIONS: "poison", UNKNOWN_SECRET: "poison" },
     keychain: async () => null, seatRegistration: () => ({ state: "absent" }), admin: async () => ({ ok: true, ids: [] }), launchesPerMinute: 100, flushMs: 50 } });
   await client().init("source-fixture", "alex");

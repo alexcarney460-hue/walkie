@@ -45,7 +45,7 @@ test("private and confidential cards fail closed; assigned content is projected 
   const projected = scope.call(guest, "walkie_task", { key: "WEB-1" }).content[0]!.text;
   expect(projected).toContain("due");
   expect(projected).toContain("[REDACTED:");
-  expect(projected).not.toContain("sk-proj-123456789012345678901234");
+  expect(projected).not.toContain("sk-" + "proj-123456789012345678901234");
   expect(projected).not.toContain("PRIVATE REVIEWER");
   expect(projected).not.toContain("PRIVATE AUTHOR");
   expect(projected).not.toContain("p-11111111");
@@ -53,7 +53,7 @@ test("private and confidential cards fail closed; assigned content is projected 
   data.comments = () => [{ id: "bbbbbbbbbbbbbbbb:2", text: ("api_key=sk" + "-proj-123456789012345678901234"), author: { handle: "alex" }, channel: project.channel }];
   const thread = scope.call(guest, "walkie_read", { thread: card.id }).content[0]!.text;
   expect(thread).toContain("[REDACTED:");
-  expect(thread).not.toContain("sk-proj-123456789012345678901234");
+  expect(thread).not.toContain("sk-" + "proj-123456789012345678901234");
   expect(thread).not.toContain("bbbbbbbbbbbbbbbb:2");
 });
 

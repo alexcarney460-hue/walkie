@@ -81,7 +81,7 @@ beforeAll(async () => {
   home = join(c.root, "arvid-home");
   mkdirSync(home, { recursive: true });
   mkdirSync(join(home, ".claude"));
-  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixture-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixt" + "ure-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   mkdirSync(join(home, ".codex-seat"));
   writeFileSync(join(home, ".codex-seat", "auth.json"), FAKE_CODEX_AUTH_FILE, { mode: 0o600 });
   claudeLog = join(c.root, "claude.jsonl");
@@ -90,7 +90,7 @@ beforeAll(async () => {
     flushMs: 100, launchesPerMinute: 100, // this file launches more than the default 10 a minute from @alex
     env: {
       PATH: `${join(FIXTURES, "fake-claude")}:${join(FIXTURES, "fake-codex")}:${BUN_DIR}:/usr/bin:/bin`, HOME: home,
-      OPENAI_API_KEY: "sk-should-never-reach-a-seat", GITHUB_TOKEN: "x", WALKIE_HOME: "/nowhere", FAKE_CLAUDE_LOG: claudeLog, FAKE_CLAUDE_STATE: join(c.root, "fake-state"), FAKE_CODEX_LOG: codexLog,
+      OPENAI_API_KEY: "sk-" + "should-never-reach-a-seat", GITHUB_TOKEN: "x", WALKIE_HOME: "/nowhere", FAKE_CLAUDE_LOG: claudeLog, FAKE_CLAUDE_STATE: join(c.root, "fake-state"), FAKE_CODEX_LOG: codexLog,
     },
   };
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp" });

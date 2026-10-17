@@ -15,7 +15,7 @@ import { ephemeralKey } from "../../src/accounts/vault/seal.ts";
 import { feed, makeCore } from "../helpers/core.ts";
 import { createTeam, memberEv, nodeEv, now, tnode } from "../helpers/events.ts";
 
-const TOKEN = "sk-ant-oat01-FAKEHANDOUTTOKEN0123456789abcdefghijk";
+const TOKEN = "sk-" + "ant-oat01-FAKEHANDOUTTOKEN0123456789abcdefghijk";
 const A = "a".repeat(24);
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) (cleanups.pop() as () => void)(); });

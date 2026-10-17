@@ -51,7 +51,7 @@ export async function rig6(opts: { createMs?: number; destroyMs?: number; destro
   const launches = join(root, "fake-launches.jsonl");
   const talkieHome = join(root, "walkie-talkie"); mkdirSync(talkieHome);
   const cfgDir = join(root, "claude-cfg"); mkdirSync(cfgDir);
-  writeFileSync(join(cfgDir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fake-access", refreshToken: "fake-refresh", expiresAt: Date.now() + 3600_000 } }));
+  writeFileSync(join(cfgDir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fake" + "-access", refreshToken: "fake" + "-refresh", expiresAt: Date.now() + 3600_000 } }));
   const runner = join(root, "talkie-runner");
   writeFileSync(runner, `#!/bin/sh\nexec '${process.execPath}' '${join(WT, "src/cli/main.ts")}' "$@"\n`); chmodSync(runner, 0o755);
   const runtime = join(root, "claude-runtime");

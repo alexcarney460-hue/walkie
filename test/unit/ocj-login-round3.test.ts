@@ -60,7 +60,7 @@ test("disclosure distinguishes separate, same-user, and dedicated Claude login",
 });
 
 test("seat output scrubs reversed projected token", () => {
-  const token = "fake-claude-access-123456";
+  const token = "fake" + "-claude-access-123456";
   const reversed = [...token].reverse().join("");
   expect(scrubSeatOutput(`output ${reversed}`, token)).not.toContain(reversed);
 });

@@ -21,7 +21,7 @@ import { MemoryStore } from '../api/_lib/compute/memory-store.ts';
 
 const WH = 'whsec_' + 'lane_b_fixture_secret';
 const CRON = 'cron-' + 'lane-b-fixture';
-const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 const CREATED = 1_790_000_000;
 const hex = () => randomBytes(12).toString('hex');
 

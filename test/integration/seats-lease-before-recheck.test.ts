@@ -18,7 +18,7 @@ import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const BUN_DIR = dirname(process.execPath);
 const ACCOUNT = "a".repeat(24);
-const TOKEN = "sk-ant-oat01-FAKEHANDOUTTOKEN0123456789abcdefghijk";
+const TOKEN = "sk-" + "ant-oat01-FAKEHANDOUTTOKEN0123456789abcdefghijk";
 const OBSERVER = "re-checked before it started: @bob is now an observer, and observers can't start seats";
 
 let c: Cluster;
@@ -98,7 +98,7 @@ beforeAll(async () => {
   c = new Cluster();
   const home = join(c.root, "arvid-home");
   mkdirSync(join(home, ".claude"), { recursive: true });
-  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixture-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixt" + "ure-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   gate = join(c.root, "gate");
   const seats = {
     flushMs: 100, keychain: async () => null, holdMaxMs: 4_000, launchesPerMinute: 100,

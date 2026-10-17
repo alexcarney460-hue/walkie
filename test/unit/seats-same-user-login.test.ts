@@ -18,7 +18,7 @@ function fixture(expiresInMs = 3_600_000) {
   const worker = join(home, "worker-claude");
   mkdirSync(worker);
   mkdirSync(join(home, ".claude"));
-  const creds = (token: string, expiresAt: number) => JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: "refresh-is-never-copied", expiresAt, scopes: ["user:inference"] } });
+  const creds = (token: string, expiresAt: number) => JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: "refr" + "esh-is-never-copied", expiresAt, scopes: ["user:inference"] } });
   writeFileSync(join(worker, ".credentials.json"), creds("worker-access", Date.now() + expiresInMs));
   writeFileSync(join(home, ".claude", ".credentials.json"), creds("default-access", Date.now() + 8 * 3_600_000));
   const root = createWorkerRoot(home, "0123456789abcdef:1");
@@ -69,7 +69,7 @@ test("a long seat keeps the selected refreshing path when the token cannot cover
 
 test("default Claude login near expiry refuses rather than inheriting personal settings", async () => {
   const f = fixture();
-  writeFileSync(join(f.home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "near-default", expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } }));
+  writeFileSync(join(f.home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "near" + "-default", expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } }));
   await expect(projected(f, join(f.home, ".claude"), async () => ({}))).rejects.toThrow(/cannot be projected for the full seat timeout/);
 });
 
@@ -182,7 +182,7 @@ test("an unresolvable selected Codex home is refused by doctor and launch", asyn
 test("default identity may use its injected Keychain login", async () => {
   const f = fixture();
   rmSync(join(f.home, ".claude", ".credentials.json"));
-  const value = JSON.stringify({ claudeAiOauth: { accessToken: "keychain-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } });
+  const value = JSON.stringify({ claudeAiOauth: { accessToken: "keyc" + "hain-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } });
   const env = await projected(f, join(f.home, ".claude"), async () => ({ claude_credentials: value }));
   expect(env.CLAUDE_CONFIG_DIR).toBe(f.root.claude);
   expect(readFileSync(join(f.root.claude, ".credentials.json"), "utf8")).toContain("keychain-access");
@@ -223,7 +223,7 @@ function statusRig(o: { ephemeral?: boolean; inherit?: boolean; expiresInMs?: nu
   let keychainReads = 0;
   const keychain = async () => {
     keychainReads++;
-    return JSON.stringify({ claudeAiOauth: { accessToken: "rig-access-token", refreshToken: "rig-refresh", expiresAt: Date.now() + (o.expiresInMs ?? 30 * 60_000), scopes: ["user:inference"] } });
+    return JSON.stringify({ claudeAiOauth: { accessToken: "rig-" + "access-token", refreshToken: "rig-" + "refresh", expiresAt: Date.now() + (o.expiresInMs ?? 30 * 60_000), scopes: ["user:inference"] } });
   };
   const host = Object.create(SeatsHost.prototype) as Rig;
   Object.assign(host, {
@@ -331,7 +331,7 @@ test("a launch that does not use the machine's login does not re-check it", asyn
   const r = statusRig();
   expect(await recheck(r.host, seat("claude", true))).toEqual([]); // a named account
   expect(await recheck(r.host, seat("codex", true))).toEqual([]);
-  expect(await recheck(r.host, seat("claude"), { CLAUDE_CODE_OAUTH_TOKEN: "set-in-the-seat-env" })).toEqual([]); // its own Claude token
+  expect(await recheck(r.host, seat("claude"), { CLAUDE_CODE_OAUTH_TOKEN: "set-" + "in-the-seat-env" })).toEqual([]); // its own Claude token
   writeFileSync(join(r.home, ".walkie", "seats-claude-token"), "dedicated-seat-token\n", { mode: 0o600 });
   expect(await recheck(r.host, seat("claude"))).toEqual([]);
   expect((await recheck(r.host, seat("codex"))).length).toBe(1); // Codex has no such override

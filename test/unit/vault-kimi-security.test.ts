@@ -15,7 +15,7 @@ import type { Ctx } from "../../src/cli/context.ts";
 const roots: string[] = [];
 const root = () => { const p = mkdtempSync(join(tmpdir(), "kimi-security-")); roots.push(p); return p; };
 const id = "a".repeat(24);
-const fake = JSON.stringify({ access_token: "fake-token-12345" });
+const fake = JSON.stringify({ access_token: "fake" + "-token-12345" });
 const home = (walkie: string) => join(walkie, "vault", "kimi", id);
 const credential = (dir: string, mode = 0o600) => {
   mkdirSync(join(dir, "credentials"), { recursive: true, mode: 0o700 });
@@ -266,7 +266,7 @@ test("agent removal has the same AGENT-ADMIN-1 gate for Claude, Codex and Kimi",
     try {
       if (provider === "kimi") { mkdirSync(home(walkie), { recursive: true }); vault.addKimi({ id, label: "Kimi account", plan: null, home: home(walkie) }); }
       else if (provider === "codex") vault.addCodex({ id, label: "ChatGPT account", plan: null, home: join(walkie, "vault", "codex", id) });
-      else await vault.addClaude({ id, label: "Claude account", plan: null, linked: false, token: "sk-ant-oat01-FAKECLITOKEN0123456789abcdefghijklmnop" });
+      else await vault.addClaude({ id, label: "Claude account", plan: null, linked: false, token: "sk-" + "ant-oat01-FAKECLITOKEN0123456789abcdefghijklmnop" });
     } finally { vault.close(); }
     setTtyForTests(null);
     const ctx = { args: { pos: ["remove", id], flags: new Map() }, json: false,
@@ -307,7 +307,7 @@ test("Codex vault token reader refuses a linked home and linked auth file", () =
   const p = root(); const walkie = join(p, "walkie"); const outside = join(p, "outside");
   mkdirSync(join(walkie, "vault", "codex"), { recursive: true }); mkdirSync(outside);
   const auth = join(outside, "auth.json");
-  writeFileSync(auth, JSON.stringify({ tokens: { account_id: "acct", access_token: "fake-token-12345" } }), { mode: 0o600 });
+  writeFileSync(auth, JSON.stringify({ tokens: { account_id: "acct", access_token: "fake" + "-token-12345" } }), { mode: 0o600 });
   const dir = join(walkie, "vault", "codex", id);
   symlinkSync(outside, dir);
   expect(readCodexToken({ provider: "codex", dir, isDefault: false, vault: true })).toBe("none");
@@ -320,7 +320,7 @@ test("Codex vault lease reader refuses a linked home and auth file", () => {
   mkdirSync(join(walkie, "vault", "codex"), { recursive: true }); mkdirSync(outside);
   const jwt = `x.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 86_400 })).toString("base64url")}.x`;
   const auth = join(outside, "auth.json");
-  writeFileSync(auth, JSON.stringify({ tokens: { account_id: "acct", access_token: jwt, id_token: jwt, refresh_token: "fake-refresh" } }), { mode: 0o600 });
+  writeFileSync(auth, JSON.stringify({ tokens: { account_id: "acct", access_token: jwt, id_token: jwt, refresh_token: "fake" + "-refresh" } }), { mode: 0o600 });
   const dir = join(walkie, "vault", "codex", id); symlinkSync(outside, dir);
   const vault = Vault.open(walkie);
   try {

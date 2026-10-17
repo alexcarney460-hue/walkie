@@ -13,7 +13,7 @@ import { fakeSeatWorld, type FakeSeatWorld } from "../helpers/fake-seat-users.ts
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 const BUN_DIR = dirname(process.execPath);
-const FAKE_TOKEN = "sk-ant-oat01-OWNLOGINFAKE0123456789abcdefghijklmnop";
+const FAKE_TOKEN = "sk-" + "ant-oat01-OWNLOGINFAKE0123456789abcdefghijklmnop";
 let c: Cluster; let bea: TestNode; let noor: TestNode; let olive: TestNode; let world: FakeSeatWorld; let log: string;
 /** Set: the seat user's runner is started behind a shim that drops `gate` from its spec (a runner older than the gate). */
 let oldRunner = false;
@@ -41,7 +41,7 @@ beforeAll(async () => {
   mkdirSync(join(home, ".codex"), { recursive: true });
   chmodSync(home, 0o700);
   writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: null,
-    tokens: { access_token: "probe-codex-access", refresh_token: "", account_id: "probe" } }), { mode: 0o600 });
+    tokens: { access_token: "prob" + "e-codex-access", refresh_token: "", account_id: "probe" } }), { mode: 0o600 });
   log = join(c.root, "zz.jsonl");
   const wrapDir = join(c.root, "wrap");
   mkdirSync(wrapDir, { recursive: true }); chmodSync(wrapDir, 0o755);

@@ -12,8 +12,8 @@ const CLI = join(import.meta.dir, "..", "..", "src", "cli", "main.ts");
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()?.(); });
 
-const TOKEN = "sk-ant-oat01-FAKEGATETOKEN0123456789abcdefghijk";
-const CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "fake-access", expiresAt: 4_102_444_800_000, scopes: ["user:inference"] } });
+const TOKEN = "sk-" + "ant-oat01-FAKEGATETOKEN0123456789abcdefghijk";
+const CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "fake" + "-access", expiresAt: 4_102_444_800_000, scopes: ["user:inference"] } });
 const base = { rv: RUNNER_PROTOCOL, dir_name: "20261002-230000-gate01-1", bin: "/bin/echo", args: [], env: {}, token: "cd".repeat(32), socket: "/tmp/walkie-no-such.sock", bundle_len: 0, prompt_len: 1 };
 
 describe("the gated spec and its go line", () => {

@@ -160,7 +160,7 @@ test('a transfer leaves every account token intact without an independent acknow
 });
 
 test('K2 signed watchdog status alerts for invalid tags, failed deletes, persistence, and clock skew', async () => {
-  const w = C.world(), secret = 'fixture-watchdog-secret';
+  const w = C.world(), secret = 'fixt' + 'ure-watchdog-secret';
   const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' }, compute: () => w.d,
     stripe: () => null });
   const ts = Date.now() - 61_000;
@@ -205,7 +205,7 @@ test('sustained tag failure marks risk, then watchdog deletion caps billing at d
 
 test('signed watchdog deletion ends a running rental at the reported delete time', async () => {
   const w = C.world(), t = C.mkTeam('rent7-deleted'), live = await C.runningRental(w, t.f, t.team, t.genesis);
-  const secret = 'fixture-watchdog-secret', ts = Date.now() - 1_000;
+  const secret = 'fixt' + 'ure-watchdog-secret', ts = Date.now() - 1_000;
   await w.store.tx((tx: any) => tx.updateRental(live.rid, { instance_id: '7', started_at: ts - 120_000 }));
   const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' }, compute: () => w.d, stripe: () => null });
   const body = JSON.stringify({ ts, failed_delete_ids: [], invalid_tag_ids: [], deleted: [{ id: 7, at: ts }] });

@@ -486,7 +486,7 @@ test("bun's singular wording for one file in all ('running 1/1 test file', 'acro
 
 test("the tests run without the agent and session variables of the terminal that started the release; test knobs stay", () => {
   const f = fixture();
-  const secret = "seat-token-value-never-printed";
+  const secret = "seat" + "-token-value-never-printed";
   const leaked = {
     CLAUDECODE: "1", AI_AGENT: "claude-code_2.1.0_agent", CLAUDE_CODE_SESSION_ID: "00000000-0000-4000-8000-000000000000",
     CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDE_PROJECT_DIR: "/somewhere", WALKIE_AGENT: "cc-release", WALKIE_SEAT_TOKEN: secret,

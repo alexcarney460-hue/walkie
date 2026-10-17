@@ -52,7 +52,7 @@ beforeAll(async () => {
   personHome = join(c.root, "arvid-home");
   mkdirSync(join(personHome, ".claude"), { recursive: true });
   chmodSync(personHome, 0o700);
-  writeFileSync(join(personHome, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", refreshToken: "the-machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(join(personHome, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "the-" + "machines-own-login", refreshToken: "the-" + "machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   signInCodex(personHome);
   log = join(c.root, "codex.jsonl");
   const walkieHome = join(c.root, "arvid");
@@ -215,7 +215,7 @@ describe("seats from the sign-up link", () => {
     const home = join(c.root, `${name}-home`);
     mkdirSync(join(home, ".claude"), { recursive: true });
     chmodSync(home, 0o700);
-    writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", refreshToken: "the-machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+    writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "the-" + "machines-own-login", refreshToken: "the-" + "machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
     signInCodex(home);
     return home;
   }

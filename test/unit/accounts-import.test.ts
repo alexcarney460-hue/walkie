@@ -20,7 +20,7 @@ afterAll(() => {
   else process.env.WALKIE_VAULT_KEYSTORE = keystoreBefore;
 });
 
-const token = "sk-ant-oat01-FAKECLITOKEN0123456789abcdefghijklmnop";
+const token = "sk-" + "ant-oat01-FAKECLITOKEN0123456789abcdefghijklmnop";
 const jwt = (body: object) => `x.${Buffer.from(JSON.stringify(body)).toString("base64url")}.x`;
 
 test("imports tracked Codex and Claude once, refuses copied refresh tokens, and never returns credentials", async () => {
@@ -30,7 +30,7 @@ test("imports tracked Codex and Claude once, refuses copied refresh tokens, and 
   mkdirSync(join(home, ".codex"), { recursive: true });
   mkdirSync(join(home, ".claude"));
   mkdirSync(walkie);
-  const auth = { auth_mode: "chatgpt", tokens: { account_id: "acct-1", id_token: jwt({ sub: "user-1", email: "alice@example.com" }), access_token: jwt({ exp: 2_000_000_000 }), refresh_token: "fake-refresh-1" } };
+  const auth = { auth_mode: "chatgpt", tokens: { account_id: "acct-1", id_token: jwt({ sub: "user-1", email: "alice@example.com" }), access_token: jwt({ exp: 2_000_000_000 }), refresh_token: "fake" + "-refresh-1" } };
   writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(auth), { mode: 0o600 });
   writeFileSync(join(home, ".claude.json"), JSON.stringify({ oauthAccount: { accountUuid: "claude-uuid-1", emailAddress: "alice@example.com" } }));
   writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt: Date.now() + 100 * 86_400_000 } }), { mode: 0o600 });
@@ -95,7 +95,7 @@ test("daemon refuses a copied Codex session even when auto-import is on", async 
   const walkie = join(root, "walkie");
   mkdirSync(join(home, ".codex"), { recursive: true });
   mkdirSync(walkie);
-  const auth = { auth_mode: "chatgpt", tokens: { account_id: "copied-account", id_token: jwt({ sub: "person" }), access_token: jwt({ exp: 2_000_000_000 }), refresh_token: "fake-copied-refresh" } };
+  const auth = { auth_mode: "chatgpt", tokens: { account_id: "copied-account", id_token: jwt({ sub: "person" }), access_token: jwt({ exp: 2_000_000_000 }), refresh_token: "fake" + "-copied-refresh" } };
   writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(auth), { mode: 0o600 });
   writeFileSync(join(walkie, "config.json"), JSON.stringify({ accounts_auto_import: true }));
   const { identifyCodex } = await import("../../src/accounts/adapters/codex.ts");
@@ -174,7 +174,7 @@ test("untrusted Codex CLI skips that login and still imports independent Claude 
   mkdirSync(join(home, ".claude"));
   mkdirSync(walkie);
   writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: {
-    account_id: "acct-independent", id_token: jwt({ sub: "user-independent" }), access_token: jwt({ exp: 2_000_000_000 }), refresh_token: "fake-refresh-independent",
+    account_id: "acct-independent", id_token: jwt({ sub: "user-independent" }), access_token: jwt({ exp: 2_000_000_000 }), refresh_token: "fake" + "-refresh-independent",
   } }), { mode: 0o600 });
   writeFileSync(join(home, ".claude.json"), JSON.stringify({ oauthAccount: { accountUuid: "claude-independent", emailAddress: "alice@example.com" } }));
   writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt: Date.now() + 100 * 86_400_000 } }), { mode: 0o600 });

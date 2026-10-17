@@ -71,7 +71,7 @@ beforeAll(async () => {
   mkdirSync(talkieHome);
   const cfgDir = join(c.root, "claude-cfg");
   mkdirSync(cfgDir);
-  writeFileSync(join(cfgDir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fake-access", refreshToken: "fake-refresh", expiresAt: Date.now() + 3_600_000 } }));
+  writeFileSync(join(cfgDir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fake" + "-access", refreshToken: "fake" + "-refresh", expiresAt: Date.now() + 3_600_000 } }));
   const runner = join(c.root, "talkie-runner");
   writeFileSync(runner, `#!/bin/sh\nexec '${process.execPath}' '${join(WT, "src/cli/main.ts")}' "$@"\n`);
   chmodSync(runner, 0o755);

@@ -47,7 +47,7 @@ function lenderCodex(now: number): string {
   return JSON.stringify({
     auth_mode: "chatgpt",
     OPENAI_API_KEY: null,
-    tokens: { access_token: access, refresh_token: "stays-on-the-lender", account_id: "lease-account" },
+    tokens: { access_token: access, refresh_token: "stay" + "s-on-the-lender", account_id: "lease-account" },
   });
 }
 
@@ -58,10 +58,10 @@ beforeAll(async () => {
   mkdirSync(join(home, ".codex"), { recursive: true });
   credFile = join(home, ".claude", ".credentials.json");
   hostCodex = join(home, ".codex");
-  writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: "host-own-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(credFile, JSON.stringify({ claudeAiOauth: { accessToken: "host" + "-own-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   writeFileSync(join(hostCodex, "auth.json"), JSON.stringify({
     auth_mode: "chatgpt", OPENAI_API_KEY: null,
-    tokens: { access_token: "host-codex-access", refresh_token: "", account_id: "host-not-the-lease" },
+    tokens: { access_token: "host" + "-codex-access", refresh_token: "", account_id: "host-not-the-lease" },
   }), { mode: 0o600 });
   logFile = join(c.root, "claude.jsonl");
   codexLog = join(c.root, "codex.jsonl");

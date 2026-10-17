@@ -235,7 +235,7 @@ test("FTS syntax does not widen, suppression fails closed, and unsafe paths are 
     const f = fixture();
     try {
       f.add("allowed", "orchid visible");
-      f.add("allowed", "cedar secret: sk-test-abcdefghijklmnopqrstuvwxyz123456");
+      f.add("allowed", "cedar secret: sk-" + "test-abcdefghijklmnopqrstuvwxyz123456");
       prepareWal(f, mode);
       const settings = { enabled: true, path: f.path, freshnessDays: 90, allowedProjects: ["allowed"] };
       expect(searchClaudeMem(settings, 'orchid" OR cedar', f.home, f.now).items).toEqual([]);

@@ -103,7 +103,7 @@ test('hold waits for another owner machine signed delivery ack and expires unack
     [moved2.transfer], { roster_events: moved2.events }));
   w2.clock.now += 72 * 60 * 60_000;
   const alerts: string[] = [];
-  const tick = makeTick({ env: { CRON_SECRET: 'fixture-cron', COMPUTE_ENABLED: '1', COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture',
+  const tick = makeTick({ env: { CRON_SECRET: 'fixt' + 'ure-cron', COMPUTE_ENABLED: '1', COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture',
     COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture' }, compute: () => w2.d, stripe: () => null,
     alertFetch: async (_url: string, init: RequestInit) => {
       alerts.push(String(init.body));

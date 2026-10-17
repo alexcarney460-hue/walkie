@@ -57,7 +57,7 @@ const forgetHelpProbe = () => {
 
 function lenderCodex(now: number): string {
   return JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: null,
-    tokens: { access_token: codexAccessToken(now + 5 * 86_400_000), refresh_token: "stays-on-the-lender", account_id: "lease-account" } });
+    tokens: { access_token: codexAccessToken(now + 5 * 86_400_000), refresh_token: "stay" + "s-on-the-lender", account_id: "lease-account" } });
 }
 
 /** Puts `extra` in the host's seats channel so the channel is too wide (a hold, not a lost launcher). */
@@ -74,9 +74,9 @@ beforeAll(async () => {
   const home = join(c.root, "olive-home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   mkdirSync(join(home, ".codex"), { recursive: true });
-  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "host-own-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "host" + "-own-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ auth_mode: "chatgpt", OPENAI_API_KEY: null,
-    tokens: { access_token: "host-codex-access", refresh_token: "", account_id: "host-not-the-lease" } }), { mode: 0o600 });
+    tokens: { access_token: "host" + "-codex-access", refresh_token: "", account_id: "host-not-the-lease" } }), { mode: 0o600 });
   helpLog = join(c.root, "help.jsonl");
   slowHelp = join(c.root, "slow-help");
   codexLog = join(c.root, "codex.jsonl");

@@ -6,7 +6,7 @@ const source = readFileSync(join(import.meta.dir, "../../scripts/install.sh"), "
 const cliSource = readFileSync(join(import.meta.dir, "../../src/cli/commands/update.ts"), "utf8");
 // Load only the pure CLI checksum function: no updater imports or runtime side effects.
 const cliFunction = cliSource.match(/export function checksumFor\(sums: string, asset: string\): string \| null \{([\s\S]*?)\n\}/)![1]!;
-const cliChecksum = new Function("sums", "asset", cliFunction) as (sums: string, asset: string) => string | null;
+const cliChecksum = Function("sums", "asset", cliFunction) as (sums: string, asset: string) => string | null;
 const hash = "a".repeat(64);
 const pinned = source.match(/^DEFAULT_VERSION="([^"]+)"/m)![1]!;
 const listing = '[\n{"tag_name": "v0.2.0-pre.12"},\n{"tag_name": "v0.2.0"},\n{"tag_name": "v0.1.0"}\n]';

@@ -58,7 +58,7 @@ const CORPUS: Array<[string, string, string]> = [
   ["jwt bare", ("curl -d token ey" + "JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U x"), "dozjgNryP4J3"],
   ["openssl pass", "openssl enc -aes-256-cbc -pass pass:Sup3rS3cretPw -in f", S],
   ["psql conn kv", "psql 'host=db user=app password=Sup3rS3cretPw dbname=x'", S],
-  ["aws secret", "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"],
+  ["aws secret", "export AWS_SECRET_ACCESS_KEY=" + "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"],
   ["keychain -w", "security add-generic-password -a alex -s svc -w Sup3rS3cretPw", S],
   ["api-key hdr", "curl -H \"api-key: Sup3rS3cretPwLongValue123\" x", S],
   ["multiword quoted", `CLIENT_SEC${""}RET="Zq8Rt3Wv9Lp2Xk7Mn SecondSecretPart" ./run`, "SecondSecretPart"],

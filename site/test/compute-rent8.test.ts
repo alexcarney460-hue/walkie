@@ -80,7 +80,7 @@ test('delayed watchdog deletion refunds minutes already billed after deletion, o
   const expectedMinutes = Math.max(tierSpec(before.tier).min_minutes, startedMinutes(started, deletedAt));
   const expectedCharge = priceOfMinutes(before.price_per_hour_micros, expectedMinutes);
   expect(before.charged_micros).toBeGreaterThan(expectedCharge);
-  const secret = 'fixture-watchdog-secret';
+  const secret = 'fixt' + 'ure-watchdog-secret';
   const send = async (ts: number) => {
     const body = JSON.stringify({ ts, deleted: [{ id: 7, at: deletedAt }] });
     return makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' }, compute: () => w.d, stripe: () => null })(

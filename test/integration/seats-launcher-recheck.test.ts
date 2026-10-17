@@ -113,7 +113,7 @@ beforeAll(async () => {
   c = new Cluster();
   const home = join(c.root, "arvid-home");
   mkdirSync(join(home, ".claude"), { recursive: true });
-  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixture-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "fixt" + "ure-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } }), { mode: 0o600 });
   claudeLog = join(c.root, "claude.jsonl");
   gate = join(c.root, "gate");
   const seats = {

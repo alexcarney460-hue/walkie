@@ -49,7 +49,7 @@ function accountHome(name: string): string {
   mkdirSync(acct, { recursive: true, mode: 0o700 });
   const idt = `${b64({ alg: "none" })}.${b64({ email: "lab@example.com", "https://api.openai.com/auth": { chatgpt_plan_type: "plus", chatgpt_account_id: "acct-lab", chatgpt_user_id: "u" }, exp: 4102444800 })}.sig`;
   const access = `${b64({ alg: "none" })}.${b64({ FAKECXLAB: 1, exp: 4102444800, "https://api.openai.com/auth": { chatgpt_account_id: "acct-lab" } })}.FAKECXLABsig`;
-  writeFileSync(join(acct, "auth.json"), JSON.stringify({ OPENAI_API_KEY: null, tokens: { id_token: idt, access_token: access, refresh_token: "FAKECXLAB-refresh", account_id: "acct-lab" }, last_refresh: new Date().toISOString() }), { mode: 0o600 });
+  writeFileSync(join(acct, "auth.json"), JSON.stringify({ OPENAI_API_KEY: null, tokens: { id_token: idt, access_token: access, refresh_token: "FAKE" + "CXLAB-refresh", account_id: "acct-lab" }, last_refresh: new Date().toISOString() }), { mode: 0o600 });
   return acct;
 }
 

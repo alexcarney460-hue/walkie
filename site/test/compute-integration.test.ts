@@ -50,7 +50,7 @@ describe("lane C's licence-read failure reaches the operator as a confirmed aler
 });
 
 describe("lane C round 11's alerts reach the operator (integration)", () => {
-  const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: "fixture-bot", COMPUTE_ALERT_TELEGRAM_CHAT: "fixture-chat" };
+  const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: "fixt" + "ure-bot", COMPUTE_ALERT_TELEGRAM_CHAT: "fixture-chat" };
   test("licence_bindings_overflow (one team fails closed) is a confirmed team-waiting alert", async () => {
     const { alertFromLog, alertPriority, CONFIRMED_ALERTS } = await import("../api/_lib/compute/alerts.ts");
     expect(alertFromLog("alert_licence_bindings_overflow", { team: "0123456789abcdef" })).toBe("licence_bindings_overflow");

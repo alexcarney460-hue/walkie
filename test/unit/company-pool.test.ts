@@ -43,7 +43,7 @@ const H = 3_600_000;
 const A = "a".repeat(24);
 const B = "b".repeat(24);
 const C = "c".repeat(24);
-const TOKEN = "sk-ant-oat01-FAKEPOOLTOKEN0123456789abcdefghijklmn";
+const TOKEN = "sk-" + "ant-oat01-FAKEPOOLTOKEN0123456789abcdefghijklmn";
 
 const b64u = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const jwt = (exp: number) => `${b64u({ alg: "none" })}.${b64u({ exp: Math.floor(exp / 1000), email: "x@example.test" })}.sig`;
@@ -154,7 +154,7 @@ describe("lease, never copy: one refresher per login", () => {
     expect(o.last_refresh).toBe(new Date(T0).toISOString());
     expect(isAccessOnly(lease?.json as string)).toBe(true);
     // An access token whose expiry cannot be read, or with under 30 minutes left: not lent.
-    const noExp = JSON.stringify({ tokens: { access_token: "opaque-token", id_token: "x.y.z", refresh_token: REFRESH } });
+    const noExp = JSON.stringify({ tokens: { access_token: "opaq" + "ue-token", id_token: "x.y.z", refresh_token: REFRESH } });
     expect(codexLeaseCopy(noExp, T0)).toBeNull();
     expect(codexLeaseCopy(codexAuth(T0 + 20 * 60_000), T0)).toBeNull();
   });

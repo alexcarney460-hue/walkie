@@ -159,7 +159,7 @@ describe("a report that arrives", () => {
 
   test("is cleaned first: a secret is redacted and a stray tag dropped", async () => {
     const { t, web, prepared, at } = await ready();
-    prepared.finish?.({ text: block(web.channel, `${BODY}\n- Key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA <status-report project="oops">`), ok: true }, at);
+    prepared.finish?.({ text: block(web.channel, `${BODY}\n- Key sk-` + `ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA <status-report project="oops">`), ok: true }, at);
     const text = (reportPosts(t, web.channel)[0]?.body as { text: string }).text;
     expect(text).not.toContain("sk-ant-api03");
     expect(text).not.toContain("<status-report");

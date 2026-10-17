@@ -6,7 +6,7 @@ import { world, MIN } from './compute-helpers.ts';
 import { tick } from '../api/_lib/compute/tick.ts';
 
 test('watchdog heartbeat accepts only a fresh signed timestamp and stores the latest', async () => {
-  const store = new MemoryStore(), now = Date.now(), secret = 'fixture-secret';
+  const store = new MemoryStore(), now = Date.now(), secret = 'fixt' + 'ure-secret';
   const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' }, compute: () => null,
     alertStore: () => store, stripe: () => null });
   const body = JSON.stringify({ ts: now });

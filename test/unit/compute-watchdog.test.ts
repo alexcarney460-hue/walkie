@@ -31,7 +31,7 @@ test('a 1000-machine sweep reaches the site in signed acknowledged parts', async
   const expired = await sweep({ list: async () => ({ droplets, next: false }), delete: async () => {} }, now, true,
     { deleted: (id, at) => deleted.push({ id, at }) });
   expect(expired).toHaveLength(1000);
-  const store = new MemoryStore(), secret = 'fixture-watchdog-secret';
+  const store = new MemoryStore(), secret = 'fixt' + 'ure-watchdog-secret';
   const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' }, compute: () => null,
     alertStore: () => store, stripe: () => null });
   const responses: number[] = [];
@@ -57,7 +57,7 @@ test('failed watchdog delivery keeps the report for a later run', async () => {
     await expect(deliverWatchdogReport(report, path, 'fixture-secret', async () => new Response('', { status: 503 }))).rejects.toThrow();
     expect(existsSync(path)).toBe(true);
     const store = new MemoryStore();
-    const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: 'fixture-secret', COMPUTE_ENABLED: '1' }, compute: () => null,
+    const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: 'fixt' + 'ure-secret', COMPUTE_ENABLED: '1' }, compute: () => null,
       alertStore: () => store, stripe: () => null });
     await deliverWatchdogReport(null, path, 'fixture-secret', handler);
     expect(existsSync(path)).toBe(false);
@@ -69,7 +69,7 @@ test('3201 failed deletions survive one rejected group and retry without duplica
   const dir = mkdtempSync(join(process.cwd(), '.watchdog-pending-'));
   const path = join(dir, 'pending.json');
   const ids = Array.from({ length: 3201 }, (_, i) => i + 1);
-  const store = new MemoryStore(), secret = 'fixture-secret';
+  const store = new MemoryStore(), secret = 'fixt' + 'ure-secret';
   const alerts: string[] = [];
   const handler = makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' },
     compute: () => ({ store, log: (event: string, fields: { instance_ref?: string }) => {

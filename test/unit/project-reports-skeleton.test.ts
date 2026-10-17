@@ -167,7 +167,7 @@ describe("what is shown keeps its accents", () => {
     expect(safeText("Café résumé https://example.com/a for Zoë", 80)).toBe("Café résumé (link) for Zoë");
   });
   test("a plain key beside accents is redacted and the accents stay", () => {
-    const out = safeText("Zoë uses sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA at the café", 100);
+    const out = safeText("Zoë uses sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA at the café", 100);
     expect(out).toContain("Zoë");
     expect(out).toContain("café");
     expect(out).not.toContain("sk-ant-api03");

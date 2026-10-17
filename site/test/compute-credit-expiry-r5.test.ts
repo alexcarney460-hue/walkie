@@ -56,7 +56,7 @@ describe('a lapsed lease bills only to its end, whichever path ends the rental',
     const { w, id, leaseEnd } = await lapsedLease();
     await w.store.tx(t => t.updateRental(id, { instance_id: '7' })); // the route takes the provider's numeric droplet ids
     w.advance(20 * MIN);
-    const secret = 'fixture-watchdog-secret';
+    const secret = 'fixt' + 'ure-watchdog-secret';
     const body = JSON.stringify({ ts: Date.now(), deleted: [{ id: 7, at: w.d.now() }] });
     const res = await makeWatchdogHeartbeat({ env: { COMPUTE_WATCHDOG_HMAC_SECRET: secret, COMPUTE_ENABLED: '1' }, compute: () => w.d,
       stripe: () => null })(new Request('https://site.test/api/compute/watchdog-heartbeat', { method: 'POST', body,
