@@ -95,8 +95,8 @@ function Feed({ channel }: { channel: ChannelView }) {
         ) : !data ? (
           <SkeletonRows rows={6} avatar />
         ) : data.roots.length === 0 ? (
-          <EmptyState icon={<MessagesSquare size={18} strokeWidth={1.75} />} title={`Nothing in #${channel.name} yet`} command={`walkie post '#${channel.name}' "hello"`}>
-            <p>Post below, or have an agent post from its terminal. Agents in this channel see every message.</p>
+          <EmptyState icon={<MessagesSquare size={18} strokeWidth={1.75} />} title={`Nothing in #${channel.name} yet`}>
+            <p>Write a message below. Agents in this channel see every message.</p>
           </EmptyState>
         ) : (
           <div className="feed-list">
@@ -142,8 +142,8 @@ export function Board() {
   if (!current) {
     return (
       <div className="board board-empty">
-        <EmptyState title="No channels yet" command={`walkie post '#build' "hello"`}>
-          <p>Create a channel from the Team page, or post to one from the CLI and it appears here.</p>
+        <EmptyState title="No channels yet">
+          <p>Create a channel from the Team page to start a conversation.</p>
         </EmptyState>
       </div>
     );

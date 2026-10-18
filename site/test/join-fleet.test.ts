@@ -128,7 +128,8 @@ describe("a fleet link on /join", () => {
     const html = readFileSync(join(SITE, "join.html"), "utf8");
     expect(html).toContain('data-state="fleet"');
     expect(html).toContain('aria-label="Copy the install command for macOS or Linux"');
-    expect(html).toContain('aria-label="Copy the install command for Windows (WSL2)"');
+    // The Windows wording says a fresh Windows/WSL run is not verified (site: qualify the join page Windows sentences).
+    expect(html).toContain('aria-label="Copy the Windows command. A fresh Windows/WSL run is not verified."');
     expect(html).toMatch(/<span class="fact" data-fleet-approve hidden>/);
     expect(html).not.toContain("Links last 7 days"); // fleet links last up to 30
   });

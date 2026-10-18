@@ -1,0 +1,33 @@
+.home-page { max-width: 920px; margin-inline: auto; }
+.home-section { margin-block: 28px; }
+.home-section h2 { margin: 0 0 14px; font-size: var(--fs-18); }
+.home-section h3 { margin: 18px 0 8px; font-size: var(--fs-14); }
+.home-needs, .home-projects, .home-person ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.home-need, .home-projects li, .home-person li { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface-1); }
+.home-need { min-height: 54px; padding: 12px 14px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 14px; }
+.home-need-leading { width: 32px; display: flex; align-items: center; color: var(--text-2); }
+.home-need-copy { display: grid; gap: 3px; min-width: 0; }
+.home-need-identity { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-need-copy small { font-size: var(--fs-12); }
+.home-need-action { justify-self: start; }
+.home-need-copy p { margin: 0; }
+.home-need-open { display: flex; width: 100%; min-height: 44px; align-items: center; gap: 12px; padding: 0; text-align: left; color: inherit; background: none; border: 0; cursor: pointer; }
+.home-need .ask-actions { flex: none; }
+.home-need .ask-form { width: min(100%, 420px); }
+.home-projects a { display: grid; gap: 8px; color: inherit; padding: 14px; }
+.home-projects .meter { max-width: 320px; }
+.home-project-report { margin: 0 14px 12px 54px; font-size: var(--fs-12); }
+.home-project-report button { padding: 0; border: 0; background: none; color: var(--accent-text); text-decoration: underline; cursor: pointer; }
+.home-person li { padding-inline: 12px; }
+.home-empty { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+.home-fleet { margin-block: 28px; font-size: var(--fs-13); }
+@media (max-width: 650px) {
+  .home-page .btn { min-height: 44px; }
+  .home-need { grid-template-columns: 32px minmax(0, 1fr); align-items: start; }
+  .home-need-action { grid-column: 2; }
+  .home-need .ask-actions { width: 100%; }
+  .home-need-open { flex-wrap: wrap; }
+  .home-need-open .truncate { min-width: 0; max-width: 100%; }
+  .home-need-identity.is-agent { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 5px; overflow: visible; white-space: normal; }
+  .home-need-identity.is-agent strong { overflow-wrap: anywhere; }
+}

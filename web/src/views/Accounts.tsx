@@ -3,38 +3,59 @@
 // a vault), the sessions running on each, and sessions still outside the switcher. Nothing here can move or change a
 // login.
 import { useMemo, useState } from "react";
-import { AccountTile, inUse } from "../components/Accounts.tsx";
-import { PoolPanel } from "../components/AccountsPool.tsx";
+import { AccountTile, effectiveAccountState, type BadgeState } from "../components/Accounts.tsx";
+import { PoolBanner, PoolPanel } from "../components/AccountsPool.tsx";
+import { RememberedDetails } from "../components/RememberedDetails.tsx";
+import { ErrorBoundary } from "../components/ErrorBoundary.tsx";
 import { PageHeader } from "../components/Shell.tsx";
 import { EmptyState } from "../components/primitives.tsx";
-import { displayState, unswitchedSessions } from "../../../src/protocol/accounts-format.ts";
+import { clockAvailability, resetText, unswitchedSessions, usageUntil } from "../../../src/protocol/accounts-format.ts";
 import { useNow } from "../lib/time.ts";
 import { useStore } from "../state/store.tsx";
 
-type Filter = "all" | "in-use" | "attention";
-const FILTERS: Array<{ id: Filter; label: string }> = [
-  { id: "all", label: "All" },
-  { id: "in-use", label: "In use" },
-  { id: "attention", label: "Needs attention" },
-];
+type Filter = "all" | BadgeState;
+
+export function accountSummary(accounts: Readonly<ReturnType<typeof useStore>["accounts"]>, now: number) {
+  const count = (state: BadgeState) => accounts.filter((account) => effectiveAccountState(account, now) === state).length;
+  const reset = accounts.filter((account) => effectiveAccountState(account, now) === "exhausted")
+    .map((account) => {
+      const availability = clockAvailability(account.clock, account.usage, now);
+      return availability.kind === "exhausted" ? availability.until : usageUntil(account.usage);
+    })
+    .filter((value): value is number => value !== null && value > now).sort((a, b) => a - b)[0];
+  return { room: count("ok"), exhausted: count("exhausted"), relogin: count("relogin"), stale: count("stale"), unknown: count("unknown"), likely: count("likely"), reset };
+}
+
+export function orderedAccounts(accounts: Readonly<ReturnType<typeof useStore>["accounts"]>, now: number) {
+  const priority = (state: string) => state === "relogin" ? 0 : state === "exhausted" ? 1 : state === "stale" ? 2 : 3;
+  return [...accounts].sort((a, b) => priority(effectiveAccountState(a, now)) - priority(effectiveAccountState(b, now)));
+}
 
 export function Accounts() {
   const { accounts, agents, nodes, accountsPool } = useStore();
   const unswitched = useMemo(() => unswitchedSessions(agents, accounts), [agents, accounts]);
   const now = useNow();
   const [filter, setFilter] = useState<Filter>("all");
-  const attention = (st: string) => st === "exhausted" || st === "relogin" || st === "stale";
-  const shown = useMemo(() => accounts.filter((a) =>
-    filter === "all" ? true : filter === "in-use" ? inUse(a) : attention(displayState(a.usage, now)),
-  ), [accounts, filter, now]);
-  const count = (f: Filter) => accounts.filter((a) => (f === "all" ? true : f === "in-use" ? inUse(a) : attention(displayState(a.usage, now)))).length;
+  const summary = accountSummary(accounts, now);
+  const shown = useMemo(() => orderedAccounts(accounts.filter((a) =>
+    filter === "all" ? true : effectiveAccountState(a, now) === filter,
+  ), now), [accounts, filter, now]);
 
   return (
     <div className="page accounts-page">
       <PageHeader
         title="Accounts"
-        meta={<>{accounts.length} account{accounts.length === 1 ? "" : "s"} · {accounts.filter(inUse).length} in use · usage left per window</>}
+        meta={<><button type="button" onClick={() => setFilter("all")}>{accounts.length} login{accounts.length === 1 ? "" : "s"}</button>
+          {summary.room > 0 && <> · <button type="button" onClick={() => setFilter("ok")}>{summary.room} have room</button></>}
+          {summary.exhausted > 0 && <> · <button type="button" onClick={() => setFilter("exhausted")}>{summary.exhausted} at {summary.exhausted === 1 ? "its" : "their"} limit{summary.reset ? ` (usable again ${resetText(summary.reset, now).replace("resets ", "")})` : ""}</button></>}
+          {summary.relogin > 0 && <> · <button type="button" onClick={() => setFilter("relogin")}>{summary.relogin} needs signing in again</button></>}
+          {summary.stale > 0 && <> · <button type="button" onClick={() => setFilter("stale")}>{summary.stale} stale</button></>}
+          {summary.unknown > 0 && <> · <button type="button" onClick={() => setFilter("unknown")}>{summary.unknown} unknown</button></>}
+          {summary.likely > 0 && <> · <button type="button" onClick={() => setFilter("likely")}>{summary.likely} likely available</button></>}
+        </>}
       />
+      <RememberedDetails id="accounts-sharing" summary="How accounts are shared">
+      <ErrorBoundary scope="item" name="Accounts banner" resetKeys={[accountsPool]}><PoolBanner pool={accountsPool} /></ErrorBoundary>
       <p className="acct-intro muted">
         Each machine reads the usage of the logins it holds and shares the numbers with the team; Sqwakie never refreshes a
         token. The one action here is using a limit reset, after you confirm, on a login this machine holds. Accounts
@@ -49,16 +70,7 @@ export function Accounts() {
         </div>
       )}
       {accounts.length > 0 && <PoolPanel accounts={accounts} nodes={nodes} pool={accountsPool} now={now} />}
-      {accounts.length > 0 && (
-        <div className="segmented acct-filter" role="radiogroup" aria-label="Show">
-          {FILTERS.map((f) => (
-            <button key={f.id} type="button" role="radio" aria-checked={filter === f.id} className={filter === f.id ? "seg is-on" : "seg"} onClick={() => setFilter(f.id)}>
-              {f.label}
-              <span className="seg-n tnum">{count(f.id)}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      </RememberedDetails>
       {accounts.length === 0 ? (
         <EmptyState title="No accounts recorded yet">
           <p>An account appears as soon as a Claude Code, Codex, Kimi or Grok session runs on a teammate's machine. Its usage is read on that machine and shared here.</p>

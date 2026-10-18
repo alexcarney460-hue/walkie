@@ -140,7 +140,7 @@ export function ArchiveView({ machine }: { machine?: string }) {
         </label>
         <label className="archive-machine">
           <span className="sr-only">Machine</span>
-          <select className="select" value={machine ?? ""} onChange={(e) => navigate({ view: "mission", tab: "archive", ...(e.target.value ? { machine: e.target.value } : {}) })}>
+          <select className="select" value={machine ?? ""} onChange={(e) => navigate({ view: "agents", tab: "archive", ...(e.target.value ? { machine: e.target.value } : {}) })}>
             <option value="">All machines</option>
             {machineNames.map((h) => <option key={h} value={h}>{h}</option>)}
           </select>
@@ -166,7 +166,7 @@ export function ArchiveView({ machine }: { machine?: string }) {
       ) : shown.length === 0 ? (
         <EmptyState icon={<ArchiveIcon size={18} strokeWidth={1.75} />} title={entries.length ? "Nothing in the archive matches" : "The archive is empty"}>
           {(q || state !== "all" || machine) && (
-            <button type="button" className="btn btn-sm" onClick={() => { setQ(""); setState("all"); navigate({ view: "mission", tab: "archive" }); }}>Clear filters</button>
+            <button type="button" className="btn btn-sm" onClick={() => { setQ(""); setState("all"); navigate({ view: "agents", tab: "archive" }); }}>Clear filters</button>
           )}
         </EmptyState>
       ) : (
@@ -209,7 +209,7 @@ export function ArchiveView({ machine }: { machine?: string }) {
           <button type="button" className="btn btn-sm" onClick={loadMore} disabled={loadingMore} aria-busy={loadingMore} data-testid="archive-more">{loadingMore ? "Loading…" : "Load more"}</button>
         </p>
       )}
-      {machine && <p className="archive-foot"><a href={hrefFor({ view: "mission" })}>Back to Live</a></p>}
+      {machine && <p className="archive-foot"><a href={hrefFor({ view: "agents" })}>Back to Live</a></p>}
     </div>
   );
 }

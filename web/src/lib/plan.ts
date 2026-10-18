@@ -45,7 +45,9 @@ export function overLimit(p: PlanView): boolean {
 }
 
 export function planTone(p: PlanView): PlanTone {
-  if (p.status === "grace" || overLimit(p)) return "amber";
+  const hit = (meter: { used: number; limit: number | null }) => meter.limit !== null && meter.used >= meter.limit;
+  if (p.status === "grace" || overLimit(p) || hit(p.seats) || hit(p.machines)
+    || p.status === "trial" && (p.trial?.days_left ?? 0) <= 3 || p.status === "free" && !!p.license) return "amber";
   if (p.status === "active") return "signal";
   return "neutral";
 }

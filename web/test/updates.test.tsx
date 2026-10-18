@@ -25,6 +25,7 @@ let route: typeof import("../src/lib/route.ts");
 let hotkeys: typeof import("../src/lib/hotkeys.ts");
 let shell: typeof import("../src/components/Shell.tsx");
 let ProjectList: typeof import("../src/views/projects/ProjectList.tsx").ProjectList;
+let Settings: typeof import("../src/views/settings/Settings.tsx").Settings;
 let st: typeof import("../src/state/projects.ts");
 let StaticStore: (p: { state: State; children: ReactNode }) => ReactNode;
 let initialState: State;
@@ -35,6 +36,7 @@ beforeAll(async () => {
   hotkeys = await import("../src/lib/hotkeys.ts");
   shell = await import("../src/components/Shell.tsx");
   ProjectList = (await import("../src/views/projects/ProjectList.tsx")).ProjectList;
+  Settings = (await import("../src/views/settings/Settings.tsx")).Settings;
   st = await import("../src/state/projects.ts");
   StaticStore = (await import("../src/state/store.tsx")).StaticStore;
   initialState = (await import("../src/state/reducer.ts")).initialState;
@@ -247,10 +249,11 @@ test("a text filter appears above twelve active projects only, labelled Find a p
   expect(pageHtml(owner, [...many(12), archived, project({ channel: "p-000000ff", name: "Old two", prefix: "OL2", state: "archived" })])).not.toContain("Find a project");
 });
 
-test("with no project reported it says how to turn one on, naming a real project in the command, and no longer sends people to the Projects list", () => {
+test("with no project reported it points to the switches below without a command", () => {
   const out = html([off, archived], {});
   expect(out).toContain("No project updates yet");
-  expect(out).toContain("walkie projects report LEG on");
+  expect(out).toContain("Turn on a project&#x27;s hourly status report");
+  expect(out).not.toContain("walkie projects report");
   expect(out).not.toContain("Projects list");
   expect(out).not.toContain('class="update"');
 });
@@ -275,21 +278,20 @@ test("g r jumps to it, and the shortcut list says so", () => {
 
 const ready = (me: { handle: string; role: string }) => ({ ...initialState, phase: "ready" as const, me: { ...me, node: { hostname: "kira-mac" } } as unknown as State["me"], agents: [] });
 
-test("the sidebar lists Updates right under Mission Control, above Projects; the phone tab bar does not (six fit)", () => {
+test("Updates remains in Projects and Settings while the primary navigation has five items", () => {
   const rail = renderToStaticMarkup(<StaticStore state={ready({ handle: "kira", role: "owner" })}><shell.Sidebar onSearch={() => {}} /></StaticStore>);
-  const at = (label: string) => rail.indexOf(`<span class="rail-link-label">${label}</span>`);
-  expect(at("Updates")).toBeGreaterThan(at("Mission Control"));
-  expect(at("Projects")).toBeGreaterThan(at("Updates"));
-  expect(rail).toContain('href="#/updates"');
+  expect(rail).not.toContain('href="#/updates"');
+  expect(rail).toContain('href="#/settings"');
+  const settings = renderToStaticMarkup(<StaticStore state={ready({ handle: "kira", role: "owner" })}><Settings /></StaticStore>);
+  expect(settings).toContain('href="#/updates"');
   const tabs = renderToStaticMarkup(<StaticStore state={ready({ handle: "kira", role: "owner" })}><shell.TabBar /></StaticStore>);
   expect(tabs).not.toContain('href="#/updates"');
-  expect(tabs.match(/class="tab(?: is-active)?"/g)).toHaveLength(6);
+  expect(tabs.match(/class="tab(?: is-active)?"/g)).toHaveLength(5);
 });
 
-test("the Projects list opens with a link to Updates that counts the reported projects", () => {
+test("the Projects list omits the Updates banner; Settings reaches reports", () => {
   st.projectsStore.set({ status: "ready", error: null, projects: [web, hiring, off], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
   const out = renderToStaticMarkup(<StaticStore state={ready({ handle: "bob", role: "member" })}><ProjectList /></StaticStore>);
-  expect(out).toContain('class="updates-link" href="#/updates"');
-  expect(out).toContain("plain-English status reports on 2 projects");
-  expect(out.indexOf("updates-link")).toBeLessThan(out.indexOf("project-row"));
+  expect(out).not.toContain('class="updates-link"');
+  expect(out).toContain('class="project-row"');
 });

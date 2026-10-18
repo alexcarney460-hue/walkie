@@ -134,7 +134,7 @@ export function Composer({ channel, thread, placeholder, autoFocus }: { channel:
           }}
         />
         <div className="composer-bar">
-          <span className="composer-hint muted"><span className="mono">@</span> to mention an agent · <kbd>⌘</kbd><kbd>↵</kbd> to send</span>
+          <span className="composer-hint muted"><span className="mono">@</span> to mention · <kbd>⌘</kbd><kbd>↵</kbd> to send</span>
           <button type="button" className="btn btn-primary btn-sm composer-send" onClick={() => void send()} disabled={!text.trim() || busy} aria-label="Send message">
             <ArrowUp size={14} strokeWidth={2} aria-hidden="true" />
             {busy ? "Sending" : "Send"}

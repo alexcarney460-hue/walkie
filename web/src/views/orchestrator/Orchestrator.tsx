@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { CloudOff, Menu, Monitor, Sparkles, SquarePen, TriangleAlert, X } from "lucide-react";
+import { CloudOff, Menu, Sparkles, SquarePen, TriangleAlert, X } from "lucide-react";
 import { api, friendlyError } from "../../api/client.ts";
-import { CopyCommand, ErrorState } from "../../components/primitives.tsx";
+import { ErrorState } from "../../components/primitives.tsx";
+import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
+import { RememberedDetails } from "../../components/RememberedDetails.tsx";
 import { useMdOpts } from "../../state/useMdOpts.ts";
 import { hrefFor, navigate, useRoute } from "../../lib/route.ts";
 import { duration, useNow } from "../../lib/time.ts";
@@ -13,8 +15,8 @@ import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
 import { RecommendationsPanel } from "./Recommendations.tsx";
 import { SchedulesPanel } from "./Schedules.tsx";
 import { HeaderModel } from "./ModelPicker.tsx";
-import { accessLabel, cleanupDiagnostic, notRunningKind, ResumeButton, standingDown, StoppedCard, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
-import { awaitingReply, conversations, dayGroup, localOrchestrator, modelLabel, threadMessages, type Conversation, type DayGroup } from "./model.ts";
+import { cleanupDiagnostic, notRunningKind, ResumeButton, standingDown, StoppedCard, TalkieStateCard, useTalkieView } from "./TalkieState.tsx";
+import { awaitingReply, conversations, dayGroup, localOrchestrator, threadMessages, type Conversation, type DayGroup } from "./model.ts";
 
 const SUGGESTIONS = [
   "What is everyone working on right now?",
@@ -22,8 +24,6 @@ const SUGGESTIONS = [
   "Summarize what the team got done today",
   "Ask the agents on my other machines for a status report",
 ];
-
-const START = "walkie talkie start";
 
 function ConversationList({ items, current, onPick, now }: { items: Conversation[]; current?: string; onPick: () => void; now: number }) {
   const groups: Array<[DayGroup, Conversation[]]> = [];
@@ -59,29 +59,11 @@ function ConversationList({ items, current, onPick, now }: { items: Conversation
   );
 }
 
-function NotRunning() {
+function NotRunning({ canStart, stoppedByYou = false }: { canStart: boolean; stoppedByYou?: boolean }) {
   return (
-    <div className="orch-card" role="region" aria-labelledby="orch-off-title">
-      <div className="orch-card-icon" aria-hidden="true"><Sparkles size={18} strokeWidth={1.75} /></div>
-      <h2 id="orch-off-title" className="orch-card-title">Talkie is stopped on this machine</h2>
-      <p className="orch-card-body">
-        Start it here. It runs your own Claude Code sign-in on this machine, and the conversation stays on this machine:
-        talk to it in this tab or with <code className="md-code">walkie talkie say</code>.
-      </p>
-      <StartOrchestrator />
-      <p className="orch-card-note">Or from a terminal, to choose its model, folder or permissions:</p>
-      <CopyCommand command={START} />
-      <LocalNote />
-    </div>
-  );
-}
-
-/** The conversation is local to this machine (ORCH-FIX-12): no other device reaches it, the phone app included. */
-function LocalNote() {
-  return (
-    <p className="orch-card-note">
-      <Monitor size={13} strokeWidth={1.75} aria-hidden="true" /> Only on this machine: nothing of it is synced to your team or your other devices.
-    </p>
+    <p className="orch-card-body">{canStart
+      ? stoppedByYou ? "Resume Talkie above to begin a conversation on this machine." : "Start Talkie above to begin a conversation on this machine."
+      : "Talkie is not running on this machine."}</p>
   );
 }
 
@@ -139,10 +121,13 @@ export function Orchestrator() {
   const activity = host?.effective_state === "working" && host.status.activity ? displayStoredText(host.status.activity) : "Thinking…";
 
   // Stick to the bottom while the reader is there; a new conversation starts at the bottom.
-  useLayoutEffect(() => { stick.current = true; }, [thread]);
+  useLayoutEffect(() => {
+    stick.current = true;
+    if (!thread && scroller.current) scroller.current.scrollTop = 0;
+  }, [thread]);
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
+    if (el && thread && stick.current) el.scrollTop = el.scrollHeight;
   });
   const onScroll = () => {
     const el = scroller.current;
@@ -192,9 +177,10 @@ export function Orchestrator() {
     <>
       <span className={`orch-dot orch-dot-${status?.effective_state ?? talkie?.state ?? "idle"}`} aria-hidden="true" />
       <span>
-        on this machine · {modelLabel(status?.status.model ?? talkie?.model)} · {accessLabel(talkie?.access)}
+        on this machine
         {talkie?.started_at ? ` · up ${duration(now - talkie.started_at)}` : ""}
       </span>
+      {talkie?.access === "full" && <span className="chip chip-amber">Full access</span>}
     </>
   ) : (
     <span>
@@ -220,7 +206,7 @@ export function Orchestrator() {
       {host?.effective_state === "blocked" && (
         <div className="orch-offline" role="alert">
           <TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>{host.status.activity ? displayStoredText(host.status.activity) : "Talkie is stuck."} It retries on its own; check <span className="mono">walkie talkie status</span>.</span>
+          <span>{host.status.activity ? displayStoredText(host.status.activity) : "Talkie is stuck."} It retries on its own.</span>
         </div>
       )}
       {hostRunning ? (
@@ -236,13 +222,13 @@ export function Orchestrator() {
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
           <span>{talkie.state === "standby" ? `Talkie is on standby here${talkie.lead ? `; it runs on ${talkie.lead}` : ""}.` : talkie.needs ?? "Talkie needs a model login."}</span>
         </div>
-      ) : !empty && notRunningKind(talkie) === "stopped_by_you" ? (
+      ) : !empty && notRunningKind(talkie) === "stopped_by_you" && me?.role === "observer" ? (
         <div className="orch-offline orch-offline-start" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
           <span>Talkie is stopped (by you). Resume to continue: it runs on its own again.</span>
           <ResumeButton size="sm" />
         </div>
-      ) : !empty && notRunningKind(talkie) === "failed" ? (
+      ) : !empty && notRunningKind(talkie) === "failed" && me?.role === "observer" ? (
         <div className="orch-offline orch-offline-start" role="alert">
           <TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
           <span>{talkie?.last_error ?? "Talkie keeps failing."}</span>
@@ -253,10 +239,10 @@ export function Orchestrator() {
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
           <span>{talkie?.last_error ?? "Talkie is starting on its own…"}</span>
         </div>
-      ) : !empty ? (
+      ) : !empty && (me?.role === "observer" || !talkie) ? (
         <div className="orch-offline orch-offline-start" role="status">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
-          <span>Talkie isn't running here. Start it to continue (or <code className="md-code">{START}</code> in a terminal).</span>
+          <span>Talkie isn't running here. Start it to continue.</span>
           <StartOrchestrator size="sm" />
         </div>
       ) : null}
@@ -276,7 +262,7 @@ export function Orchestrator() {
             <X size={16} strokeWidth={1.75} />
           </button>
         </div>
-        {load === "error" ? <ErrorState message="Couldn't load conversations." onRetry={() => setLoadNonce((n) => n + 1)} compact />
+        {load === "error" ? <p className="orch-side-empty">Couldn't load conversations. <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLoadNonce((n) => n + 1)}>Retry</button></p>
           : <ConversationList items={convs} current={thread} onPick={() => setSideOpen(false)} now={now} />}
       </aside>
       {sideOpen && <button type="button" className="orch-scrim" aria-label="Close conversations" onClick={() => setSideOpen(false)} />}
@@ -290,7 +276,6 @@ export function Orchestrator() {
             <h1>Talkie</h1>
             <p className="orch-where">{where}</p>
           </div>
-          {host && <HeaderModel refresh={`${host.status.model ?? ""}|${host.status.started_at ?? ""}`} />}
           {talkieLive && <StopOrchestrator />}
           <button type="button" className="btn btn-ghost btn-sm orch-head-new" onClick={newChat} title="New chat">
             <SquarePen size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -300,8 +285,19 @@ export function Orchestrator() {
 
         {channelNotice && <div className="orch-offline" role="alert"><TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />{channelNotice}</div>}
 
+        {talkie && !hostRunning && !standingDown(talkie) && notRunningKind(talkie) !== "starting" && me?.role !== "observer" &&
+          <ErrorBoundary scope="item" name="Talkie controls" resetKeys={[talkie]}><div className="orch-offline orch-offline-start"><span>{notRunningKind(talkie) === "failed" ? `Talkie keeps failing: ${talkie.last_error ?? "Try starting it again."}` : "Talkie is stopped."}</span>
+            {notRunningKind(talkie) === "stopped_by_you" ? <><ResumeButton size="sm" /><RememberedDetails id="talkie-settings" summary="Talkie settings" className="orch-settings"><SchedulesPanel /></RememberedDetails></>
+              : <StartOrchestrator size="sm" settings={<SchedulesPanel />} />}
+          </div></ErrorBoundary>}
+        {(hostRunning || standingDown(talkie)) && <RememberedDetails id="talkie-settings" summary="Talkie settings" className="orch-settings">
+          {host && <HeaderModel refresh={`${host.status.model ?? ""}|${host.status.started_at ?? ""}`} />}
+          <SchedulesPanel />
+        </RememberedDetails>}
+
         <div className="orch-scroll" ref={scroller} onScroll={onScroll}>
           <div className="orch-col">
+            {empty && <ErrorBoundary scope="item" name="Talkie suggestions"><div id="talkie-recommendations"><RecommendationsPanel /></div></ErrorBoundary>}
             {empty ? (
               talkieLive ? (
                 <div className="orch-hello">
@@ -317,7 +313,8 @@ export function Orchestrator() {
                 </div>
               ) : talkie?.state === "cleanup_pending" ? <TalkieStateCard view={talkie} />
                 : talkie && standingDown(talkie) ? <TalkieStateCard view={talkie} />
-                : notRunningKind(talkie) !== "manual" ? <StoppedCard kind={notRunningKind(talkie) as "stopped_by_you" | "starting" | "failed"} view={talkie} /> : <NotRunning />
+                : notRunningKind(talkie) === "starting" ? <StoppedCard view={talkie} /> : <NotRunning canStart={!!talkie && me?.role !== "observer"}
+                  stoppedByYou={notRunningKind(talkie) === "stopped_by_you"} />
             ) : (
               <div className="orch-thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
                 {load === "loading" && !messages.length && (
@@ -342,8 +339,6 @@ export function Orchestrator() {
               </div>
             )}
           </div>
-          {empty && <RecommendationsPanel />}
-          {empty && <SchedulesPanel />}
         </div>
         {!empty && composerEl}
       </section>

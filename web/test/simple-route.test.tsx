@@ -78,34 +78,33 @@ test("parseHash reads #/simple, and card wins over ask", () => {
   expect(parseHash(`#/simple?ask=${encodeURIComponent(ask)}&card=c1`)).toEqual({ view: "simple", card: "c1" });
   expect(parseHash("#/projects").view).toBe("projects");
   expect(parseHash("#/projects?card=keep").card).toBe("keep");
-  expect(parseHash("#/not-a-view").view).toBe("mission");
+  expect(parseHash("#/not-a-view").view).toBe("home");
 });
 
-test("sidebar and phone header link to Simple; the six phone tabs do not", async () => {
+test("Simple stays reachable from the palette while the rail and five phone tabs stay focused", async () => {
   const side = await env.mount(<StaticStore state={ready()}><Sidebar onSearch={() => {}} /></StaticStore>);
   const link = side.all("a").find((a) => a.getAttribute("href") === "#/simple");
-  expect(link?.textContent).toContain("Simple");
-  expect(link?.getAttribute("aria-current")).toBe("page");
+  expect(link).toBeUndefined();
+  expect(side.all("a").map((a) => a.getAttribute("href"))).toContain("#/settings");
   await side.unmount();
 
   const tabs = await env.mount(<StaticStore state={ready()}><TabBar /></StaticStore>);
   expect(tabs.all("a").some((a) => a.getAttribute("href") === "#/simple")).toBe(false);
-  expect(tabs.all("a").length).toBe(6);
+  expect(tabs.all("a").length).toBe(5);
   await tabs.unmount();
 
   const phone = await env.mount(<StaticStore state={ready()}><MobileBar onSearch={() => {}} /></StaticStore>);
   const mobile = phone.all("a").find((a) => a.getAttribute("href") === "#/simple");
-  expect(mobile?.className).toContain("mobile-simple");
-  expect(mobile?.textContent).toContain("Simple");
-  expect(mobile?.getAttribute("aria-current")).toBe("page");
+  expect(mobile).toBeUndefined();
   await phone.unmount();
 });
 
 test("g then n is listed, and the command palette offers Simple", async () => {
   expect(SHORTCUTS.some((s) => s.keys.join(" ") === "g n" && s.label === "Simple")).toBe(true);
-  expect(SHORTCUTS.some((s) => s.keys.includes("h") || s.keys.includes("j") || s.keys.includes("k") || s.keys.includes("l"))).toBe(false);
+  expect(SHORTCUTS.some((s) => s.keys.join(" ") === "g h" && s.label === "Home")).toBe(true);
+  expect(SHORTCUTS.some((s) => s.keys.length === 1 && ["h", "j", "k", "l"].includes(s.keys[0] ?? ""))).toBe(false);
   const page = await env.mount(<StaticStore state={ready()}><CommandPalette onClose={() => {}} /></StaticStore>);
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  expect(page.text()).toContain("Simple");
+  expect(page.text()).toContain("Plain-language board");
   await page.unmount();
 });

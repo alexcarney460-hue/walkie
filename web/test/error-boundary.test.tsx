@@ -136,7 +136,7 @@ test("view: the view's place shows its name and the message while a sibling (the
   expect(env.uncaught).toEqual([]);
 });
 
-test("root: a plain screen with the message, a closed Details, Reload and Back to Mission Control", async () => {
+test("root: a plain screen with the message, a closed Details, Reload and Back to Home", async () => {
   const reloads: number[] = [];
   (testWindow.location as { reload?: () => void }).reload = () => { reloads.push(1); };
   const page = await env.mount(<eb.ErrorBoundary scope="root" name="Sqwakie dashboard"><Boom message="the store fell over" /></eb.ErrorBoundary>);
@@ -149,21 +149,21 @@ test("root: a plain screen with the message, a closed Details, Reload and Back t
   expect(details.textContent).toContain("Sqwakie dashboard"); // where
   expect(details.one("pre")?.textContent).toContain("Boom");
   expect(page.one("p.boundary-message")?.textContent).not.toContain("at Boom"); // no stack outside Details
-  const back = page.all("a").find((a) => a.textContent === "Back to Mission Control") as MiniElement;
-  expect(back.getAttribute("href")).toBe("#/mission");
+  const back = page.all("a").find((a) => a.textContent === "Back to Home") as MiniElement;
+  expect(back.getAttribute("href")).toBe("#/home");
   const reload = page.all("button").find((b) => b.textContent === "Reload") as MiniElement;
   expect(reload).toBeDefined();
   await page.click(reload);
   expect(reloads).toEqual([1]);
 });
 
-test("root: Back to Mission Control tries the page again without a reload", async () => {
+test("root: Back to Home tries the page again without a reload", async () => {
   let failing = true;
   function Flaky() { if (failing) throw new Error("not yet"); return <span>recovered</span>; }
   const page = await env.mount(<eb.ErrorBoundary scope="root" name="Sqwakie dashboard"><Flaky /></eb.ErrorBoundary>);
   expect(page.one('[data-testid="boundary-root"]')).not.toBeNull();
   failing = false;
-  await page.click(page.all("a").find((a) => a.textContent === "Back to Mission Control") as MiniElement);
+  await page.click(page.all("a").find((a) => a.textContent === "Back to Home") as MiniElement);
   expect(page.text()).toBe("recovered");
 });
 
@@ -309,7 +309,7 @@ test("Mission Control: an agent card that cannot render is replaced by the small
   const agents = [agent("seat-1", "working", "Build the archive view"), { ...odd, status: { ...odd.status, title: oddTitle } }, agent("seat-3", "working", "Fix the ledger")];
   const page = await env.mount(<StaticStore state={state({ agents })}><MissionControl /></StaticStore>);
   await settle();
-  expect(page.one("h1.page-title")?.textContent).toBe("Mission Control");
+  expect(page.one("h1.page-title")?.textContent).toBe("Agents and machines");
   expect(page.text()).toContain("Build the archive view");
   expect(page.text()).toContain("Fix the ledger");
   expect(count(page.text(), ITEM)).toBe(1);
@@ -417,7 +417,7 @@ test("Mission Control: a live-activity entry that cannot render is replaced by t
   ];
   const page = await env.mount(<StaticStore state={state({ events: events as unknown as State["events"] })}><MissionControl /></StaticStore>);
   await settle();
-  expect(page.one("h1.page-title")?.textContent).toBe("Mission Control");
+  expect(page.one("h1.page-title")?.textContent).toBe("Agents and machines");
   const feed = page.one("section.feed-rail") as MiniElement;
   expect(feed.textContent).toContain("Live activity");
   expect(feed.textContent).toContain("Wrote the tests");
@@ -430,7 +430,7 @@ test("Mission Control: events the activity feed cannot even build leave the feed
   const events = [statusEvent("e1", NOW - 1_000, "seat-9", "working", "x", null)]; // no author at all
   const page = await env.mount(<StaticStore state={state({ events: events as unknown as State["events"], agents: [agent("seat-1", "working", "Build the archive view")] })}><MissionControl /></StaticStore>);
   await settle();
-  expect(page.one("h1.page-title")?.textContent).toBe("Mission Control");
+  expect(page.one("h1.page-title")?.textContent).toBe("Agents and machines");
   expect(page.text()).toContain("Build the archive view");
   const feed = page.one("section.feed-rail") as MiniElement;
   expect(feed.textContent).toContain("Live activity");
@@ -504,7 +504,7 @@ test("a view that throws leaves the shell; going to another view brings the app 
     const page = await env.mount(<StaticStore state={state({})}><App /></StaticStore>);
     await settle();
     expect(page.one("aside.rail")).not.toBeNull(); // the shell is still there
-    expect(page.one("nav.rail-nav")?.textContent).toContain("Mission Control");
+    expect(page.one("nav.rail-nav")?.textContent).toContain("Home");
     const view = page.one('[data-testid="boundary-view"]') as MiniElement;
     expect(view).not.toBeNull();
     expect(view.textContent).toContain("Projects");
@@ -513,7 +513,7 @@ test("a view that throws leaves the shell; going to another view brings the app 
     await nav("#/mission");
     await settle();
     expect(page.one('[data-testid="boundary-view"]')).toBeNull();
-    expect(page.one("h1.page-title")?.textContent).toBe("Mission Control");
+    expect(page.one("h1.page-title")?.textContent).toBe("Home");
   } finally {
     projectsStore.set({ status: "idle", error: null, projects: [], stubs: [], cards: {}, cardsError: {}, rooms: {}, roomsError: {} });
   }
@@ -547,11 +547,11 @@ function daemon(poison: boolean): void {
   }) as typeof fetch;
 }
 
-test("root: the app itself starts and shows Mission Control from a well-formed daemon answer (control for the next test)", async () => {
+test("root: the app itself starts and shows Home from a well-formed daemon answer (control for the next test)", async () => {
   daemon(false);
   const page = await env.mount(<Root />);
   await until(() => page.one("h1.page-title") !== null);
-  expect(page.one("h1.page-title")?.textContent).toBe("Mission Control");
+  expect(page.one("h1.page-title")?.textContent).toBe("Home");
   expect(page.one('[data-testid="boundary-root"]')).toBeNull();
   expect(env.uncaught).toEqual([]);
 });
@@ -564,6 +564,6 @@ test("root: an answer the store cannot fold (the team without its channels) show
   expect(env.uncaught).toEqual([]);
   expect(page.one("h1")?.textContent).toBe("Sqwakie's dashboard hit an error");
   expect(page.all("button").some((b) => b.textContent === "Reload")).toBe(true);
-  expect(page.text()).toContain("Back to Mission Control");
+  expect(page.text()).toContain("Back to Home");
   expect(logged()).toHaveLength(1);
 });

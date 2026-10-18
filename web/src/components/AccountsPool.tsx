@@ -23,7 +23,7 @@ function SplitLine({ provider, split }: { provider: string; split: SplitResult }
       {busy.map((m, i) => (
         <span key={m.node_id}>
           {i > 0 ? " · " : ""}
-          <span className="mono">{m.hostname}</span> {m.seats.map((s) => `${s.seats} × ${s.label}${s.plan ? ` (${s.plan})` : ""}`).join(", ")}
+          <span>{m.hostname}</span> {m.seats.map((s) => `${s.seats} × ${s.label}${s.plan ? ` (${s.plan})` : ""}`).join(", ")}
         </span>
       ))}
     </li>
@@ -59,7 +59,7 @@ export function PoolPanel({ accounts, nodes, pool, now }: Props) {
         {Object.entries(frees).map(([provider, f]) => f && (
           <li key={provider} role="status">
             <span className="acct-pool-k">Next {PROVIDER_NAME[provider as keyof typeof PROVIDER_NAME] ?? provider} frees</span>{" "}
-            <Countdown at={f.at} now={now} /> · <span className="mono">{f.label}</span>
+            <Countdown at={f.at} now={now} /> · <span>{f.label}</span>
           </li>
         ))}
         {using.length > 0 && (
@@ -68,7 +68,7 @@ export function PoolPanel({ accounts, nodes, pool, now }: Props) {
             <ul className="acct-pool-uses" aria-label="Which machine uses which account now">
               {using.slice(0, 12).map((u) => (
                 <li key={u.key}>
-                  <span className="mono">{u.host}</span> <span className="muted">{u.who}</span> → <span className="mono">{u.label}</span>
+                  <span>{u.host}</span> <span className="muted">{u.who}</span> → <span>{u.label}</span>
                   {u.via === "switched" && <span className="muted"> · leased</span>}
                 </li>
               ))}

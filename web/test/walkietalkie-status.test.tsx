@@ -112,19 +112,21 @@ describe("WalkieTalkieStatus (Mission Control's card, and the same view the Talk
   });
 });
 
-describe("Mission Control renders the Talkie card", () => {
-  test("MissionControl.tsx wires WalkieTalkieCard into its extras panel", async () => {
-    const src = await Bun.file(new URL("../src/views/mission/MissionControl.tsx", import.meta.url)).text();
-    expect(src).toContain('import { WalkieTalkieCard } from "../orchestrator/TalkieState.tsx";');
-    expect(src).toContain("<WalkieTalkieCard />");
+describe("Talkie page keeps the lifecycle control", () => {
+  test("Orchestrator.tsx places Start Talkie in the compact stopped bar", async () => {
+    const src = await Bun.file(new URL("../src/views/orchestrator/Orchestrator.tsx", import.meta.url)).text();
+    expect(src).toContain("Talkie is stopped.");
+    expect(src).toContain('<StartOrchestrator size="sm"');
+    expect(src).not.toContain("<WalkieTalkieCard />");
   });
 });
 
-describe("the Talkie page's header shows access and uptime too", () => {
-  test("Orchestrator.tsx composes access and uptime into the running 'where' line, and names why it's stopped otherwise", async () => {
+describe("the Talkie page keeps running context in the header and settings behind a disclosure", () => {
+  test("Orchestrator.tsx shows uptime and moves model and access to Talkie settings", async () => {
     const src = await Bun.file(new URL("../src/views/orchestrator/Orchestrator.tsx", import.meta.url)).text();
-    expect(src).toContain("accessLabel(talkie?.access)");
     expect(src).toContain("up ${duration(now - talkie.started_at)}");
+    expect(src).toContain('summary="Talkie settings"');
+    expect(src).toContain("<HeaderModel");
     expect(src).toContain('"stopped (by you)"');
     expect(src).toContain('"starting on its own"');
     expect(src).toContain('"not running on this machine"');

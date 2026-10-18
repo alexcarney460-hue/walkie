@@ -216,16 +216,17 @@ test("Stop on a rented machine asks first; declining sends nothing", async () =>
   seed();
 });
 
-test("Machines (owner): Add compute, the rented chip with Stop on the rented machine, queued rentals listed", () => {
+test("Team Advanced retains rental controls for joined and queued machines", () => {
   seed();
   go("#/team");
   const out = render(state("owner", "maren"), <mod.Team />);
   expect(out).toContain("Add compute");
-  expect(out).toContain('data-testid="rented-r_0123456789abcdef"');
-  expect(out).toContain("Rented · Agent box · $0.75/h");
+  expect(out).toContain("<summary>Advanced</summary>");
+  expect(out).toContain('data-testid="rented-joined-r_0123456789abcdef"');
   expect(out).toContain('aria-label="Stop rent-agent-7f3a"');
   expect(out).toContain('data-testid="rented-pending-r_fedcba9876543210"');
-  expect(out.match(/Rented · /g)).toHaveLength(2); // joined and queued rentals both retain shutdown controls
+  expect(out).toContain('aria-label="Stop rent-gpu-20-c21d"');
+  expect(out.match(/Rented · /g)).toHaveLength(2);
 });
 
 test("Machines (owner): alerts say what is wrong, including an ended rental's machine still on the team", () => {
@@ -242,7 +243,7 @@ test("Machines (owner): alerts say what is wrong, including an ended rental's ma
   seed();
 });
 
-test("Mission Control (owner): Talkie, Add compute, and the rented machine render together", () => {
+test("Agents page (owner): Add compute and the rented machine remain available without the Talkie card", () => {
   seed();
   go("#/mission");
   const working = {
@@ -251,7 +252,7 @@ test("Mission Control (owner): Talkie, Add compute, and the rented machine rende
     effective_state: "working", archived: false,
   } as State["agents"][number];
   const out = render({ ...state("owner", "maren"), agents: [working] }, <mod.MissionControl />);
-  expect(out).toContain('data-testid="walkietalkie-card"');
+  expect(out).not.toContain('data-testid="walkietalkie-card"');
   expect(out).toContain("Add compute");
   expect(out).toContain("Rented · Agent box · $0.75/h");
   expect(out).toContain('aria-label="Stop rent-agent-7f3a"');

@@ -23,6 +23,7 @@ type Switch = typeof import("../src/views/projects/StatusReportSwitch.tsx");
 type Panel = typeof import("../src/views/projects/StatusReportPanel.tsx");
 let lib: Lib, sw: Switch, panel: Panel;
 let ProjectList: typeof import("../src/views/projects/ProjectList.tsx").ProjectList;
+let ProjectSettings: typeof import("../src/views/projects/ProjectSettings.tsx").ProjectSettings;
 let st: typeof import("../src/state/projects.ts");
 let StaticStore: (p: { state: State; children: ReactNode }) => ReactNode;
 let initialState: State;
@@ -31,6 +32,7 @@ beforeAll(async () => {
   sw = await import("../src/views/projects/StatusReportSwitch.tsx");
   panel = await import("../src/views/projects/StatusReportPanel.tsx");
   ProjectList = (await import("../src/views/projects/ProjectList.tsx")).ProjectList;
+  ProjectSettings = (await import("../src/views/projects/ProjectSettings.tsx")).ProjectSettings;
   st = await import("../src/state/projects.ts");
   const s = await import("../src/state/store.tsx");
   StaticStore = s.StaticStore;
@@ -178,11 +180,11 @@ test("a project list read that started before a successful switch cannot put the
   expect(now.find((x) => x.channel === p.channel)?.status_report).toBe("hourly");
   // The read still brings in what the switch did not touch.
   expect(now.find((x) => x.channel === other.channel)?.name).toBe("Hiring team");
-  // And the switch on the Projects list stays checked.
+  // The project settings dialog reflects the accepted switch and the renamed neighbour.
   const state = { ...initialState, phase: "ready" as const, me: { handle: "kira", role: "owner" } as State["me"], agents: [] };
-  const list = renderToStaticMarkup(<StaticStore state={state}><ProjectList /></StaticStore>);
-  expect(list).toMatch(/aria-checked="true" aria-label="Hourly status report for Website"/);
-  expect(list).toMatch(/aria-checked="false" aria-label="Hourly status report for Hiring team"/);
+  const settings = (p: ProjectView) => renderToStaticMarkup(<StaticStore state={state}><ProjectSettings project={p} onClose={() => {}} /></StaticStore>);
+  expect(settings(now[0]!)).toMatch(/aria-checked="true" aria-label="Hourly status report for Website"/);
+  expect(settings(now[1]!)).toMatch(/aria-checked="false" aria-label="Hourly status report for Hiring team"/);
 });
 
 test("a list read that starts after the switch is believed: someone else turning the report off shows", async () => {
@@ -218,11 +220,16 @@ function listHtml(me: { handle: string; role: string }, projects: ProjectView[])
   const state = { ...initialState, phase: "ready" as const, me: me as State["me"], agents: [] };
   return renderToStaticMarkup(<StaticStore state={state}><ProjectList /></StaticStore>);
 }
+function settingsHtml(me: { handle: string; role: string }, project: ProjectView): string {
+  const state = { ...initialState, phase: "ready" as const, me: me as State["me"], agents: [] };
+  return renderToStaticMarkup(<StaticStore state={state}><ProjectSettings project={project} onClose={() => {}} /></StaticStore>);
+}
 
-test("each row of the project list has the switch for an owner, outside the link to its board", () => {
+test("project rows show a settings button, with the report switch inside the dialog", () => {
   const html = listHtml({ handle: "kira", role: "owner" }, [project({ status_report: "hourly" }), project({ channel: "p-00000002", name: "Hiring", prefix: "HR" })]);
-  expect(html.match(/role="switch"/g)).toHaveLength(2);
-  expect(html).toContain('aria-label="Hourly status report for Hiring"');
+  expect(html.match(/aria-label="Settings for /g)).toHaveLength(2);
+  expect(html).not.toContain('role="switch"');
+  expect(settingsHtml({ handle: "kira", role: "owner" }, project())).toContain('aria-label="Hourly status report for Website"');
   // No control sits inside a link: the rows' anchors hold no input.
   const anchors = [...html.matchAll(/<a class="project-row"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => m[1] ?? "");
   expect(anchors).toHaveLength(2);
@@ -241,22 +248,24 @@ test("the daemon's real owner /v1/me payload offers the switch on active project
   const html = renderToStaticMarkup(<StaticStore state={state}><ProjectList /></StaticStore>);
   expect(me.handle).toBe("kira");
   expect(me.role).toBe("owner");
-  expect(html).toContain('aria-label="Hourly status report for Website"');
+  expect(html).toContain('aria-label="Settings for Website"');
+  expect(settingsHtml(me, project())).toContain('aria-label="Hourly status report for Website"');
 });
 
 test("a member who is not the creator sees the read-only state and reason on both rows", () => {
-  const html = listHtml({ handle: "bob", role: "member" }, [project({ status_report: "hourly" }), project({ channel: "p-00000002", name: "Hiring", prefix: "HR" })]);
-  expect(html).not.toContain('role="switch"');
-  expect(html.match(/Reported hourly/g)).toHaveLength(1);
-  expect(html).toContain('class="project-report-off">Off</span>');
-  expect(html.match(/Only the creator or an owner can change this\./g)).toHaveLength(2);
+  const hourly = settingsHtml({ handle: "bob", role: "member" }, project({ status_report: "hourly" }));
+  const off = settingsHtml({ handle: "bob", role: "member" }, project({ channel: "p-00000002", name: "Hiring", prefix: "HR" }));
+  expect(hourly).not.toContain('role="switch"');
+  expect(hourly).toContain("Reported hourly");
+  expect(off).toContain('class="project-report-off">Off</span>');
+  expect(hourly + off).toContain("Only the creator or an owner can change this.");
 });
 
 test("an observer and a viewer without a handle get a reason but no switch", () => {
-  const observer = listHtml({ handle: "kira", role: "observer" }, [project()]);
+  const observer = settingsHtml({ handle: "kira", role: "observer" }, project());
   expect(observer).not.toContain('role="switch"');
   expect(observer).toContain("Observers can&#x27;t change this.");
-  const noHandle = listHtml({ handle: "", role: "owner" }, [project()]);
+  const noHandle = settingsHtml({ handle: "", role: "owner" }, project());
   expect(noHandle).not.toContain('role="switch"');
   expect(noHandle).toContain("Sign in to change this.");
 });
@@ -274,7 +283,7 @@ test("the panel shows the latest report as Markdown with the time its facts are 
   expect(html).toContain("Checkout.");
   expect(html).toContain('dateTime="2026-10-01T14:00:00.000Z"');
   expect(html).toContain("as of");
-  expect(html).toContain("Talkie");
+  expect(html).toContain("<summary>");
 });
 
 test("with no report yet it says so plainly, and differently when reports are off", () => {
@@ -282,8 +291,7 @@ test("with no report yet it says so plainly, and differently when reports are of
   expect(hourly).toContain("No status report yet");
   expect(hourly).toContain("each hour something changes");
   const off = renderToStaticMarkup(<panel.StatusReportView state={{ status: "ready", data: { mode: "off", report: null } }} onRetry={() => {}} />);
-  expect(off).toContain("Hourly status reports are off");
-  expect(off).not.toContain("No status report yet");
+  expect(off).toBe("");
 });
 
 test("an archived project says its reports are paused, with or without an older report to show", () => {
@@ -305,5 +313,6 @@ test("while loading it is a busy skeleton, and a failure says why with a retry",
 test("a report older than the project's switch still shows, saying when it is from", () => {
   const html = renderToStaticMarkup(<panel.StatusReportView state={{ status: "ready", data: { mode: "off", report: { markdown: MARKDOWN, header: null, as_of: AT, at: AT, by: { handle: "kira", agent: "orchestrator" } } } }} onRetry={() => {}} />);
   expect(html).toContain("<strong>On track:</strong>");
-  expect(html).toContain("Hourly status reports are off");
+  expect(html).toContain("Last report");
+  expect(html).toContain("hourly reports are off");
 });

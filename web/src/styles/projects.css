@@ -133,8 +133,6 @@
 .pboard-filters .input { width: 220px; }
 .pboard-filters .select { width: auto; min-width: 130px; }
 .pboard-sel { color: var(--signal); font-size: var(--fs-12); }
-.pboard-keys { margin-left: auto; font-size: var(--fs-11); }
-.pboard-keys kbd { margin: 0 1px; }
 
 .menu-wrap { position: relative; }
 .menu {
@@ -437,7 +435,6 @@
   .pboard-filters { margin-right: 16px; }
   .pboard-filters .input { width: 100%; }
   .pboard-filters .select { flex: 1; min-width: 0; }
-  .pboard-keys { display: none; }
   .kcol-tabs {
     display: flex;
     gap: 4px;
@@ -539,3 +536,6 @@
   .li-table tr.li-issues-row td { padding: 0; background: none; }
   .li-issues .check { flex-basis: 100%; }
 }
+.card-meta-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.status-report details > summary { cursor: pointer; font-size: var(--fs-13); }
+.status-report details[open] .status-report-body { margin-top: 10px; }

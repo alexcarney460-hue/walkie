@@ -54,7 +54,7 @@ const ACCOUNT: AccountView = {
 const state = (over: Partial<State>): State => ({ ...mod.initialState, phase: "ready", team: TEAM, nodes: NODES, me: { handle: "maren" } as State["me"], ...over });
 const render = (s: State, el: ReactNode) => renderToStaticMarkup(<mod.StaticStore state={s}>{el}</mod.StaticStore>);
 
-test("Mission Control order: working agents (with a live count per machine), then Needs you, then the feed, accounts, local models", () => {
+test("Agents page keeps the live roster, Needs you and activity in order without global account and model panels", () => {
   go("#/mission");
   const out = render(state({
     agents: [agent("atlas", "seat-1", "working"), agent("atlas", "seat-2", "working"), agent("maren-mbp", "ux", "blocked")],
@@ -65,11 +65,9 @@ test("Mission Control order: working agents (with a live count per machine), the
   expect(out).toMatch(/data-testid="machine-live-maren-mbp"[^>]*>0 working/);
   expect(at("seat-1 title")).toBeLessThan(at('id="attention-h"'));
   expect(at('id="attention-h"')).toBeLessThan(at('aria-label="Live activity"'));
-  expect(at('aria-label="Live activity"')).toBeLessThan(at('id="acct-row-h"'));
-  // Accounts: one compact row (chips), collapsed; the grid of meters only after a click.
-  expect(out).toContain('data-testid="accounts-row"');
-  expect(out).toContain('aria-expanded="false"');
-  expect(out).not.toContain("acct-mini");
+  expect(out).not.toContain('data-testid="accounts-row"');
+  expect(out).not.toContain('data-testid="walkietalkie-card"');
+  expect(out).not.toContain("What your team could run locally");
 });
 
 /**

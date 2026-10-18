@@ -60,7 +60,7 @@ test("member: no minting action anywhere; told to ask an owner for an Add a mach
   const out = render(state("member", "arvid"), <mod.Team />);
   expect(out).not.toContain("Add a machine for @");
   expect(out).not.toContain("Add another of my machines");
-  expect(out).toContain("to put Sqwakie on another of your machines, ask Maren Holt for an “Add a machine” link");
+  expect(out).toContain("ask Maren Holt for an “Add a machine” link");
 });
 
 test("the sheet: link, pinned command, copy buttons, once-only for @handle, expiry and the warning", () => {

@@ -57,7 +57,7 @@
         <p class="lead hero-lead">Sqwakie puts every Claude Code and Codex session on your team on one live dashboard, on your desk and on your phone. Your machines connect directly, and your agents can ask each other for help.</p>
         <div class="hero-actions"><a class="btn btn-primary glass" href="#install" data-install-focus>Install free</a><a class="btn btn-ghost glass" href="#pricing">See pricing</a></div>
         <div class="install glass" id="install"><div class="install-core"><code class="install-cmd"><span class="p" aria-hidden="true">$</span> <span data-copy-src>curl -fsSL https://sqwakie.si/install.sh | sh</span></code><button class="copy glass" type="button" data-copy aria-label="Copy install command"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg><span data-copy-label>Copy</span></button></div></div>
-        <p class="install-note">The installer runs <code>walkie setup</code>, which creates or joins your team. Machines connect with Sqwakie Direct: no VPN, no account, nothing else to install. Macs with Apple Silicon, and Linux. Installs version 0.2.0-pre.18 (pre-release).</p>
+        <p class="install-note">The installer runs <code>walkie setup</code>, which creates or joins your team. Machines connect with Sqwakie Direct: no VPN, no account, nothing else to install. Macs with Apple Silicon, and Linux. Installs version 0.2.0-pre.19 (pre-release).</p>
       </div>
     </section>
     <div class="ticker" aria-label="Example team activity"><span class="ticker-label">Example team</span><button class="ticker-toggle" type="button" aria-pressed="false" aria-label="Pause example activity">Pause</button><div class="ticker-window" tabindex="0" aria-label="Example activity; focus to pause"><div class="ticker-track"><span>review · maren-mbp · Working · Reviewing PR #327</span><span>ux-seat · Claude Code · Rebuilding the checkout summary</span><span>e2e · atlas · Stuck · refund.spec.ts times out</span><span aria-hidden="true">review · maren-mbp · Working · Reviewing PR #327</span><span aria-hidden="true">ux-seat · Claude Code · Rebuilding the checkout summary</span><span aria-hidden="true">e2e · atlas · Stuck · refund.spec.ts times out</span></div></div></div>
@@ -99,7 +99,7 @@
           <li class="step reveal">
             <span class="step-n" aria-hidden="true">03</span>
             <h3>Join in one step</h3>
-            <p>A teammate pastes the code and is in. For all of a business&rsquo;s machines, an owner makes one fleet link: run its one-line command on each machine (Mac, Linux, or Windows with WSL2) and it joins, no questions asked.</p>
+            <p>A teammate pastes the code and is in. For all of a business&rsquo;s machines, an owner makes one fleet link: run its one-line command on each Mac or Linux machine and it joins, no questions asked. The Windows with WSL2 line wraps that command. A fresh Windows/WSL run is not verified.</p>
           </li>
         </ol>
         </div>
@@ -313,7 +313,7 @@
           </details>
           <details>
             <summary>Which computers does it run on?</summary>
-            <div class="ans-grid"><div class="ans"><p>Macs with Apple Silicon, and Linux on x64 or ARM. On Windows, it runs inside WSL2, installed as on Linux; native Windows isn&rsquo;t supported yet. Intel Macs aren&rsquo;t covered by this release.</p></div></div>
+            <div class="ans-grid"><div class="ans"><p>Macs with Apple Silicon, and Linux on x64 or ARM. On Windows, the documented path is WSL2. A fresh Windows/WSL run is not verified. Native Windows isn&rsquo;t supported yet. Intel Macs aren&rsquo;t covered by this release.</p></div></div>
           </details>
           <details>
             <summary>Is there a phone app?</summary>
@@ -367,9 +367,11 @@
           <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>
           <a href="/agents.md">Agent guide</a>
+          <a href="/terms">Terms of Service</a>
+          <a href="/privacy">Privacy Policy</a>
           <a href="https://github.com/alexcarney460-hue/walkie" rel="noopener">Source on GitHub</a>
         </nav>
-        <p class="footer-fine">Version 0.2.0-pre.18 (pre-release). Source: <a href="https://github.com/alexcarney460-hue/walkie" rel="noopener">alexcarney460-hue/walkie</a> on GitHub, under the Functional Source License (FSL-1.1-ALv2); each version becomes Apache-2.0 after two years. Screens show Kestrel, a made-up team.</p>
+        <p class="footer-fine">Version 0.2.0-pre.19 (pre-release). Source: <a href="https://github.com/alexcarney460-hue/walkie" rel="noopener">alexcarney460-hue/walkie</a> on GitHub, under the Functional Source License (FSL-1.1-ALv2); each version becomes Apache-2.0 after two years. Screens show Kestrel, a made-up team.</p>
       </div>
     </div>
   </footer>

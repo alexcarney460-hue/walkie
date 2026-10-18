@@ -122,7 +122,10 @@ export function LocalModelsCard({ nodes, models }: { nodes: readonly NodeView[];
         <Cpu size={14} strokeWidth={1.75} aria-hidden="true" className="lm-icon" />
         <h2 className="lm-card-title" id="lm-card-h">What your team could run locally</h2>
         <span className="lm-est">estimate</span>
-        <a className="lm-more" href={hrefFor({ view: "team", tab: "models" })}>Details <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" /></a>
+        <a className="lm-more" href={hrefFor({ view: "settings", tab: "models" })}
+          onClick={(event) => { if (document.getElementById("model-details")) { event.preventDefault(); document.getElementById("model-details")?.scrollIntoView({ block: "start" }); } }}>
+          Details <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" />
+        </a>
       </header>
       {!s ? (
         <p className="lm-empty">No machine has reported its memory yet. Machines share it once they run a Sqwakie newer than v0.1.3.</p>

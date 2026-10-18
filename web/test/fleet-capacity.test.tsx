@@ -144,7 +144,7 @@ test("the badge names free seats, the limit and the score for each factor", () =
   expect(badge(machine(), null)).toBe("");
 });
 
-test("Mission Control, Team and the machine page show the score once seats are loaded, and not before", () => {
+test("Mission Control and machine detail retain the capacity score outside Team's compact list", () => {
   go("#/mission");
   expect(page(<mod.MissionControl />, null)).not.toContain("capacity-harbor-1");
   const mission = page(<mod.MissionControl />, seats());
@@ -152,8 +152,7 @@ test("Mission Control, Team and the machine page show the score once seats are l
   expect(mission).toContain("2 free");
   go("#/team");
   const team = page(<mod.Team />, seats());
-  expect(team).toContain('data-testid="capacity-harbor-1"');
-  expect(team).toContain("2 free");
+  expect(team).not.toContain('data-testid="capacity-harbor-1"');
   go(`#/machines/${NODE}`);
   const detail = page(<mod.MachineDetail />, seats());
   expect(detail).toContain('data-testid="capacity-harbor-1"');
@@ -251,13 +250,13 @@ test("the badge uses theme tokens and wraps at the phone width, which covers 390
   expect(tokens).toContain('data-theme="light"');
 });
 
-test("Team and the live Mission Control list tick on a 30 second clock", () => {
+test("the compact Team list no longer polls capacity, while the live Agents list still ticks", () => {
   const team = readFileSync(new URL("../src/views/Team.tsx", import.meta.url), "utf8");
-  expect(team).toContain("useCoarseNow(");
+  expect(team).not.toContain("useCoarseNow(");
   expect(team).not.toMatch(/useNow\(/);
   const mission = readFileSync(new URL("../src/views/mission/MissionControl.tsx", import.meta.url), "utf8");
   const liveStart = mission.indexOf("function LiveView");
-  const liveEnd = mission.indexOf("function MissionExtras");
+  const liveEnd = mission.length;
   expect(liveStart).toBeGreaterThan(0);
   expect(liveEnd).toBeGreaterThan(liveStart);
   const live = mission.slice(liveStart, liveEnd);

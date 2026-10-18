@@ -3,7 +3,6 @@ import { Archive as ArchiveIcon, ArrowUpRight, ChevronRight, Laptop, Server } fr
 import type { AgentState, AgentView, ArchiveCount, NodeView, SeatsView, TeamView } from "../../api/types.ts";
 import { ErrorBoundary } from "../../components/ErrorBoundary.tsx";
 import { PageHeader } from "../../components/Shell.tsx";
-import { LocalModelsCard } from "../../components/LocalModels.tsx";
 import { ModelServerLoad } from "../../components/MachineStats.tsx";
 import { Avatar, CopyCommand, EmptyState, StatePill, hueVar } from "../../components/primitives.tsx";
 import { STATE_LABEL, STATE_RANK, askBody, canAnswer, displayName, hueFor, machineHue, needsAttention } from "../../lib/format.ts";
@@ -14,10 +13,10 @@ import { displayStoredText } from "../../../../src/protocol/display-text.ts";
 import { archiveCountText, hiddenByNode, isArchived, shownByDefault } from "../../../../src/protocol/agent-roster.ts";
 import { ActivityFeed } from "./ActivityFeed.tsx";
 import { accountForAgent, AccountsRow } from "../../components/Accounts.tsx";
+import { HomeTop } from "../home/Home.tsx";
 import type { AccountView } from "../../api/types.ts";
 import { AgentGroupView, groupAgents } from "./Subagents.tsx";
 import { ArchiveView } from "./Archive.tsx";
-import { WalkieTalkieCard } from "../orchestrator/TalkieState.tsx";
 import { rentalForNode, useCompute, type ComputeSnapshot } from "../../api/compute.ts";
 import { AddComputeButton, AddComputeSheet, ComputeOnAuthority, CreditButton, authorityHost, computeAction } from "../compute/AddComputeSheet.tsx";
 import { RentedChip } from "../compute/RentedChip.tsx";
@@ -199,7 +198,7 @@ function ArchiveLink({ node, count }: { node: NodeView; count: ArchiveCount | un
   const text = count ? archiveCountText(count) : "";
   if (!text) return null;
   return (
-    <a className="machine-archive" href={hrefFor({ view: "mission", tab: "archive", machine: node.hostname })} data-testid={`archive-link-${node.hostname}`}>
+    <a className="machine-archive" href={hrefFor({ view: "agents", tab: "archive", machine: node.hostname })} data-testid={`archive-link-${node.hostname}`}>
       <ArchiveIcon size={12} strokeWidth={1.75} aria-hidden="true" />
       <span className="tnum">{text}</span>
       <span>in the archive</span>
@@ -221,7 +220,7 @@ function MachineBlock({ node, agents, hidden, accounts, onOpen, filtered, comput
     <div className={`machine ${node.online ? "" : "is-offline"}`} data-testid={`machine-${node.hostname}`} style={hueVar("--mh", machineHue(node.hostname))}>
       <div className="machine-head">
         <Icon size={14} strokeWidth={1.75} aria-hidden="true" className="machine-icon" />
-        <span className="machine-name mono">{node.hostname}</span>
+        <a className="machine-name mono" href={hrefFor({ view: "machine", node: node.node_id })}>{node.hostname}</a>
         {node.self && <span className="chip">this machine</span>}
         {rental && <RentedChip rental={rental} quotes={compute.quotes} canStop={owner} />}
         <span className={`machine-live tnum${working ? " is-on" : ""}`} data-testid={`machine-live-${node.hostname}`}>{working} working</span>
@@ -266,11 +265,12 @@ function UnreportedGuest({ guest, killed, refresh }: { guest: GuestListing; kill
   );
 }
 
-export function MissionControl() {
+/** The live agent view. As Home (`home`), it opens with what needs the person and project progress, and ends with the accounts strip. */
+export function MissionControl({ home = false }: { home?: boolean } = {}) {
   const route = getRoute();
   const tab = route.tab === "archive" ? "archive" : "live";
   const { shown, cloud, hidden, archivedTotal } = useRosterSplit();
-  const { me, team, nodes } = useStore();
+  const { me, team, nodes, accounts } = useStore();
   const counted = useMemo(() => defaultLiveAgents(shown, team, nodes), [shown, team, nodes]);
   const compute = useCompute(me?.role === "owner");
   const [renting, setRenting] = useState(false);
@@ -287,30 +287,31 @@ export function MissionControl() {
   return (
     <div className="mission">
       <div className="mission-main">
-        <PageHeader title="Mission Control" actions={me?.role === "owner" && computeAction(compute) === "rent"
+        <PageHeader title={home ? "Home" : "Agents and machines"} actions={me?.role === "owner" && computeAction(compute) === "rent"
           ? compute.authorityRequired
             ? <ComputeOnAuthority host={authorityHost(nodes, team?.authority)} />
             : <AddComputeButton onOpen={() => setRenting(true)} />
           : me?.role === "owner" && computeAction(compute) === "credit" ? <CreditButton onOpen={() => setRenting(true)} /> : undefined} />
         <LocalLagBanner lag={localLag} now={now} />
         <UnreachedNotice />
+        {home && tab === "live" && <ErrorBoundary scope="item" name="Home"><HomeTop /></ErrorBoundary>}
         {tab === "live" && <ProjectCountStrip shown={counted} />}
         <nav className="tabs" role="tablist" aria-label="Agents">
-          <a role="tab" aria-selected={tab === "live"} href={hrefFor({ view: "mission" })} className={tab === "live" ? "tab-link is-on" : "tab-link"}>Live</a>
-          <a role="tab" aria-selected={tab === "archive"} href={hrefFor({ view: "mission", tab: "archive" })} className={tab === "archive" ? "tab-link is-on" : "tab-link"} data-testid="archive-tab">
+          <a role="tab" aria-selected={tab === "live"} href={hrefFor({ view: home ? "home" : "agents" })} className={tab === "live" ? "tab-link is-on" : "tab-link"}>Live</a>
+          <a role="tab" aria-selected={tab === "archive"} href={hrefFor({ view: home ? "home" : "agents", tab: "archive" })} className={tab === "archive" ? "tab-link is-on" : "tab-link"} data-testid="archive-tab">
             Archive <span className="seg-n tnum">{archivedTotal}</span>
           </a>
         </nav>
-        {tab === "archive" ? <ArchiveView machine={route.machine} /> : <LiveView shown={shown} cloud={cloud} hidden={hidden} />}
+        {tab === "archive" ? <ArchiveView machine={route.machine} /> : <LiveView shown={shown} cloud={cloud} hidden={hidden} home={home} />}
+        {home && tab === "live" && <ErrorBoundary scope="item" name="accounts" resetKeys={[accounts]}><AccountsRow accounts={accounts} now={now} /></ErrorBoundary>}
       </div>
       <ActivityFeed />
-      {tab === "live" && <MissionExtras />}
       {renting && <AddComputeSheet onClose={closeRenting} />}
     </div>
   );
 }
 
-function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentView[]; hidden: ArchiveCount[] }) {
+function LiveView({ shown, cloud, hidden, home = false }: { shown: AgentView[]; cloud: AgentView[]; hidden: ArchiveCount[]; home?: boolean }) {
   const { team, nodes, me, accounts } = useStore();
   const seats = useSeatSnapshot();
   const now = useCoarseNow();
@@ -356,10 +357,10 @@ function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentVi
       <p className="mission-lede">
         {plural(shown.filter((a) => a.effective_state === "working").length, "agent")} working
         {attention.length > 0 && <> · {attention.length} need{attention.length === 1 ? "s" : ""} you</>}
-        {" "}on {plural(nodes.length, "machine")}. Idle and ended agents are in the <a href={hrefFor({ view: "mission", tab: "archive" })}>Archive</a>.
+        {" "}on {plural(nodes.length, "machine")}. Idle and ended agents are in the <a href={hrefFor({ view: "agents", tab: "archive" })}>Archive</a>.
       </p>
       <SummaryStrip agents={shown} nodes={nodes} active={stateFilter} onPick={setStateFilter} />
-      <NeedsYouBanner agents={attention} />
+      {!home && <NeedsYouBanner agents={attention} />}
 
       {members.length > 1 && (
         <div className="filters" role="toolbar" aria-label="Filter agents">
@@ -435,20 +436,7 @@ function LiveView({ shown, cloud, hidden }: { shown: AgentView[]; cloud: AgentVi
         ))
       )}
 
-      {stateFilter === "all" && <AttentionList agents={attention} onOpen={open} />}
+      {!home && stateFilter === "all" && <AttentionList agents={attention} onOpen={open} />}
     </>
-  );
-}
-
-/** Below the feed: provider accounts as one compact row (expands to the grid), then what the team could run locally. */
-function MissionExtras() {
-  const { nodes, accounts } = useStore();
-  const now = useNow();
-  return (
-    <div className="mission-extras">
-      <ErrorBoundary scope="item" name="Talkie card"><WalkieTalkieCard /></ErrorBoundary>
-      <ErrorBoundary scope="item" name="accounts" resetKeys={[accounts]}><AccountsRow accounts={accounts} now={now} /></ErrorBoundary>
-      <ErrorBoundary scope="item" name="local models" resetKeys={[nodes]}><LocalModelsCard nodes={nodes} /></ErrorBoundary>
-    </div>
   );
 }

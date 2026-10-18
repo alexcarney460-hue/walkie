@@ -12,10 +12,12 @@ export function hueVar(name: "--mh" | "--ph" | "--th", hue: number): CSSProperti
 
 export function Avatar({ handle, name, size = 24, agent }: { handle: string; name: string; size?: number; agent?: boolean }) {
   const hue = hueFor(handle);
-  const style = { "--av-h": hue, width: size, height: size, fontSize: Math.round(size * 0.4) } as CSSProperties;
+  const style = { "--av-h": hue, width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.4)) } as CSSProperties;
+  // Under 20 px two letters do not fit; one initial keeps the tile readable.
+  const letters = size < 20 ? initials(name).slice(0, 1) : initials(name);
   return (
     <span className={agent ? "avatar avatar-agent" : "avatar"} style={style} aria-hidden="true">
-      {initials(name)}
+      {letters}
     </span>
   );
 }

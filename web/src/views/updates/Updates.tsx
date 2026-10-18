@@ -12,7 +12,7 @@ import { EmptyState, ErrorState, RelTime, SkeletonRows, hueVar } from "../../com
 import { tagHue } from "../../lib/format.ts";
 import { RichMarkdown } from "../../lib/markdown-rich.tsx";
 import { hrefFor } from "../../lib/route.ts";
-import { READ_CONCURRENCY, eachLimited, orderUpdates, reportedProjects, unreportedProjects, type UpdateEntry } from "../../lib/updates.ts";
+import { READ_CONCURRENCY, eachLimited, orderUpdates, reportedProjects, type UpdateEntry } from "../../lib/updates.ts";
 import { projectsStore, useProjects } from "../../state/projects.ts";
 import { ReportPicker } from "./ReportPicker.tsx";
 
@@ -58,7 +58,6 @@ export function UpdatesView({ projects, entries, onRetry }: { projects: readonly
   // With nothing on, the picker is the way forward: it opens again when the last project is switched off.
   const none = reported.length === 0;
   useEffect(() => { if (none) setOpen(true); }, [none]);
-  const example = unreportedProjects(projects)[0]?.prefix ?? "WEB";
   // The picker is the second child of this fragment in both shapes of the page, so React keeps it (and its checkboxes) mounted.
   return (
     <>
@@ -70,7 +69,7 @@ export function UpdatesView({ projects, entries, onRetry }: { projects: readonly
           </div>
         </>
       ) : (
-        <EmptyState icon={<Newspaper size={22} strokeWidth={1.5} />} title="No project updates yet" command={`walkie projects report ${example} on`}>
+        <EmptyState icon={<Newspaper size={22} strokeWidth={1.5} />} title="No project updates yet">
           <p>Turn on a project's hourly status report and its update appears here. {ABOUT}</p>
         </EmptyState>
       )}

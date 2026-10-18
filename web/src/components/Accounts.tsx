@@ -12,10 +12,11 @@ import {
 } from "../../../src/protocol/accounts-format.ts";
 import { hueFor } from "../lib/format.ts";
 import { ResetsRow } from "./AccountResets.tsx";
+import { RememberedDetails } from "./RememberedDetails.tsx";
 import { ago, agoLong } from "../lib/time.ts";
 
 /** What the tile's badge says: the reading's state, or what the remembered reset times say (RESET-CLOCK-1). */
-type BadgeState = DisplayState | "likely";
+export type BadgeState = DisplayState | "likely";
 
 const STATE_TEXT: Record<BadgeState, string> = {
   ok: "Live", stale: "Stale", unknown: "Unknown", exhausted: "Exhausted", relogin: "Needs re-login", likely: "Likely available",
@@ -30,6 +31,10 @@ function badgeState(state: DisplayState, avail: Availability): BadgeState {
   if (avail.kind === "available_unconfirmed") return "likely";
   if (avail.kind === "exhausted" && (state === "unknown" || state === "stale")) return "exhausted";
   return state;
+}
+
+export function effectiveAccountState(account: AccountView, now: number): BadgeState {
+  return badgeState(displayState(account.usage, now), clockAvailability(account.clock, account.usage, now));
 }
 
 /** A reset time that counts down live (the shared 1 s clock re-renders it) with the exact local time on hover. */
@@ -77,7 +82,7 @@ function LeaseList({ account: a, now }: { account: AccountView; now: number }) {
     <ul className="acct-leases" aria-label="Sessions on this account">
       {leases.slice(0, 8).map((l) => (
         <li key={`${l.node_id}:${l.agent ?? ""}:${l.since}`}>
-          <span className="mono truncate">{l.handle}/{l.hostname}{l.agent ? ` · ${l.agent}` : ""}</span>
+          <span className="truncate">{l.handle}/{l.hostname}{l.agent ? ` · ${l.agent}` : ""}</span>
           <span className="muted tnum">{agoLong(l.since, now)}</span>
         </li>
       ))}
@@ -87,7 +92,8 @@ function LeaseList({ account: a, now }: { account: AccountView; now: number }) {
 }
 
 export function inUse(a: AccountView): boolean {
-  return a.machines.some((m) => m.agents.length > 0);
+  // A peer can send a malformed machine list; it counts as not in use instead of breaking the page.
+  return Array.isArray(a.machines) && a.machines.some((m) => Array.isArray(m?.agents) && m.agents.length > 0);
 }
 
 /** The tighter of the 5-hour and weekly windows (what runs out first). */
@@ -157,7 +163,7 @@ function StateBadge({ state }: { state: BadgeState }) {
 export function AccountTile({ account: a, now }: { account: AccountView; now: number }) {
   const state = displayState(a.usage, now);
   const avail = clockAvailability(a.clock, a.usage, now);
-  const badge = badgeState(state, avail);
+  const badge = effectiveAccountState(a, now);
   const ws = mainWindows(a.usage);
   const remembered = (kind: ResetClock["kind"]) => clockFor(a.clock, { kind, scope: null });
   // RESET-CLOCK-1: model windows remembered from an older reading (no current one lists them).
@@ -166,22 +172,29 @@ export function AccountTile({ account: a, now }: { account: AccountView; now: nu
   const host = a.usage_host ?? a.machines[0]?.hostname ?? "the machine with this login";
   return (
     <article className={`acct-tile is-${badge}${agents ? "" : " is-idle"}`} data-provider={a.provider} aria-label={`${PROVIDER_NAME[a.provider]} account ${a.label}: ${STATE_TEXT[badge]}`}>
-      <header className="acct-tile-head">
+      <RememberedDetails id={`account-${a.key}`} className="acct-tile-details" summary={<>
+      <span className="acct-tile-head">
         <AccountIcon account={a} size={34} />
-        <div className="acct-tile-id">
+        <span className="acct-tile-id">
           <span className="acct-tile-name">
             <span className="acct-provider">{PROVIDER_NAME[a.provider]}</span>
             {a.plan && <span className="chip acct-plan">{a.plan}</span>}
           </span>
-          <span className="acct-label mono truncate" title={a.label}>{a.label}</span>
-        </div>
+          <span className="acct-label truncate" title={a.label}>{a.label}</span>
+        </span>
         <StateBadge state={badge} />
-      </header>
+      </span>
+      <span className="acct-compact-bars">
+        <span className={`acct-meter is-compact ${levelOf(state, ws.session)}`}>5-hour: {ws.session ? `${leftPct(ws.session)}% left` : "—"}<span className="acct-bar" aria-hidden="true"><span className="acct-fill" style={{ width: `${ws.session ? leftPct(ws.session) : 0}%` }} /></span></span>
+        <span className={`acct-meter is-compact ${levelOf(state, ws.weekly)}`}>Weekly: {ws.weekly ? `${leftPct(ws.weekly)}% left` : "—"}<span className="acct-bar" aria-hidden="true"><span className="acct-fill" style={{ width: `${ws.weekly ? leftPct(ws.weekly) : 0}%` }} /></span></span>
+        <span>{a.machines.length} machine{a.machines.length === 1 ? "" : "s"}</span>
+      </span>
+      </>}>
       <ul className="acct-machines">
         {a.machines.map((m) => (
           <li key={m.node_id} className={m.online ? "" : "is-off"}>
             <span className={`dot ${m.online ? "dot-on" : "dot-off"}`} aria-hidden="true" />
-            <span className="mono truncate">{m.handle}/{m.hostname}</span>
+            <span className="acct-machine-name truncate">{m.handle}/{m.hostname}</span>
             <span className="muted tnum">{m.online ? (m.agents.length ? `${m.agents.length} agent${m.agents.length === 1 ? "" : "s"}` : "idle") : "offline"}</span>
           </li>
         ))}
@@ -235,6 +248,7 @@ export function AccountTile({ account: a, now }: { account: AccountView; now: nu
             ? `${state === "stale" ? "Stale: last reading" : "Updated"} ${agoLong(a.usage.at, now)} from ${a.usage_host ?? "?"}${a.usage.source === "session" ? " (session file)" : a.usage.source === "log" ? " (CLI log)" : ""}.`
             : "No reading yet."}
       </footer>
+      </RememberedDetails>
     </article>
   );
 }
@@ -248,7 +262,7 @@ export function AccountMini({ account: a, now }: { account: AccountView; now: nu
       <AccountIcon account={a} size={30} />
       <span className="acct-mini-body">
         <span className="acct-mini-top">
-          <span className="acct-mini-name truncate">{PROVIDER_NAME[a.provider]} <span className="mono muted">{a.label}</span></span>
+          <span className="acct-mini-name truncate">{PROVIDER_NAME[a.provider]} <span className="muted">{a.label}</span></span>
           {state !== "ok" && <StateBadge state={state} />}
         </span>
         <span className="acct-mini-bars">
@@ -270,7 +284,7 @@ export function AccountChip({ account: a, now, labelled }: { account: AccountVie
   return (
     <span className={`acct-chip is-${state} ${levelOf(state, w)}`} data-provider={a.provider} title={`${PROVIDER_NAME[a.provider]} ${a.label}: ${usageLine(a, now)}`}>
       <span className="acct-chip-mono" aria-hidden="true">{PROVIDER_MONOGRAM[a.provider]}</span>
-      {labelled && <span className="acct-chip-label mono truncate" aria-hidden="true">{a.label}</span>}
+      {labelled && <span className="acct-chip-label truncate" aria-hidden="true">{a.label}</span>}
       <span className="acct-chip-bar" aria-hidden="true"><span className="acct-fill" style={{ width: `${left ?? 0}%` }} /></span>
       <span className="tnum">{state === "relogin" ? "re-login" : state === "exhausted" ? "0%" : left === null ? "?" : `${left}%`}</span>
       <span className="sr-only">{` ${PROVIDER_NAME[a.provider]} account ${a.label}, ${usageLine(a, now)}`}</span>

@@ -3,7 +3,7 @@
 // grows any other field fails the strict schemas instead of reaching the page.
 import { useEffect, useSyncExternalStore } from "react";
 import { sessionHeaders } from "../lib/session.ts";
-import { ApiError } from "./client.ts";
+import { ApiError, friendlyError } from "./client.ts";
 import {
   ComputeState, CreditCheckout, Quotes, RentResult, RentalView,
   type CreditBlock, type MachineAsk, type TierId,
@@ -154,7 +154,7 @@ function createComputeStore() {
       if (mine === seq) set({ status: "ready", state, quotes, error: null, ...(authorityRequired ? { authorityRequired: true } : {}) });
     } catch (err) {
       if (mine !== seq) return;
-      const message = err instanceof ApiError ? (err.code === "compute_not_configured" ? "Rented machines aren't available yet." : err.message) : "Something went wrong. Try again.";
+      const message = err instanceof ApiError ? (err.code === "compute_not_configured" ? "Rented machines aren't available yet." : friendlyError(err)) : "Something went wrong. Try again.";
       set({ ...snap, status: snap.state ? "ready" : "error", error: message });
     }
   }

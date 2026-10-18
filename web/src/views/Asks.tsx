@@ -35,6 +35,9 @@ function AskRow({ view, showState }: { view: AskView; showState: boolean }) {
   const forMe = addressedToMe(view, me?.handle ?? null);
   const actionable = canAnswer(view, me?.handle ?? null, agents, now) && me?.role !== "observer";
   const expiryPct = Math.max(0, Math.min(100, (left / Math.max(1, expiresAt - view.ask.ts)) * 100));
+  const to = typeof body.to === "string" ? body.to : "";
+  const target = to.replace(/^@/, "").split("/");
+  const targetName = target.length === 3 ? target[2] : displayName(team?.members, target[0] ?? "");
 
   return (
     <li className={`ask-row is-${state} ${actionable ? "is-actionable" : ""}`}>
@@ -43,7 +46,7 @@ function AskRow({ view, showState }: { view: AskView; showState: boolean }) {
         <div className="ask-row-head">
           <AuthorName author={view.ask.author} />
           <ArrowRight size={13} strokeWidth={1.75} className="muted" aria-label="to" />
-          <span className="chip mono ask-row-to">{body.to}</span>
+          <span className="chip ask-row-to" title={to}>{targetName}</span>
           {forMe && <span className="chip chip-amber">For you</span>}
           {!forMe && actionable && <span className="chip chip-amber" title="The target agent routes asks to a person">Needs a person</span>}
         </div>
@@ -68,7 +71,7 @@ function AskRow({ view, showState }: { view: AskView; showState: boolean }) {
               <AuthorAvatar author={a.author} size={18} />
               <div>
                 <p className="ask-row-answer-who">
-                  {a.author.agent ? <span className="mono">{a.author.agent}</span> : displayName(team?.members, a.author.handle)}
+                  {a.author.agent ? <span>{a.author.agent}</span> : displayName(team?.members, a.author.handle)}
                   <span className="muted"> {declined ? "declined" : "answered"} · <RelTime ts={a.ts} long /></span>
                 </p>
                 <Markdown text={displayStoredText(String((a.body as { text: string }).text))} opts={md} />
@@ -105,7 +108,7 @@ export function Asks() {
   const mine = asks.filter((a) => canAnswer(a, me?.handle ?? null, agents, now)).length;
 
   return (
-    <div className="page">
+    <div className="page asks-page">
       <PageHeader
         title="Asks"
         meta={mine ? <><span className="text-amber">{mine} waiting on you</span> · agents block until someone answers or the ask expires</> : "Directed questions between people and agents. The asker waits for an answer or the expiry."}
@@ -121,9 +124,8 @@ export function Asks() {
         <EmptyState
           icon={<CircleHelp size={18} strokeWidth={1.75} />}
           title={tab === "open" ? "No open asks" : tab === "resolved" ? "Nothing answered yet" : "No expired asks"}
-          command={tab === "open" ? `walkie ask @${me?.handle ?? "teammate"} "Can I run the migration on staging?"` : undefined}
         >
-          {tab === "open" && <p>Agents use <span className="mono">walkie ask</span> to ask a person or another agent and wait for the answer. Asks for you land here.</p>}
+          {tab === "open" && <p>Questions for you appear here. Open Home to see what needs an answer now.</p>}
         </EmptyState>
       ) : (
         <ul className="ask-list">{list.map((v) => <AskRow key={v.ask.id} view={v} showState={tab !== "open"} />)}</ul>

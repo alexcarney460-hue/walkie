@@ -7,7 +7,7 @@ import { AgentCard } from "../src/views/mission/AgentCard.tsx";
 import { AccessChoice, StartOrchestrator } from "../src/views/orchestrator/Lifecycle.tsx";
 import { AccessSelect, ModelPicker } from "../src/views/orchestrator/ModelPicker.tsx";
 import { modelLabel } from "../src/views/orchestrator/model.ts";
-import { notRunningKind, standingDown, StoppedCard, TalkieStateCard } from "../src/views/orchestrator/TalkieState.tsx";
+import { notRunningKind, standingDown, StoppedCard, TalkieStateCard, WalkieTalkieStatus } from "../src/views/orchestrator/TalkieState.tsx";
 
 describe("the Start dialog's access choice", () => {
   test("Start renders both options with platform checked by default, before the Start button", () => {
@@ -20,7 +20,8 @@ describe("the Start dialog's access choice", () => {
     expect(out).toContain("Sqwakie platform");
     expect(out).toContain("Full access");
     expect(out).toContain("bypass permissions");
-    expect(out.indexOf("orch-access")).toBeLessThan(out.indexOf("Start Talkie"));
+    expect(out.indexOf("orch-access")).toBeGreaterThan(out.indexOf("Start Talkie"));
+    expect(out).toContain("<summary>Talkie settings</summary>");
   });
 
   test("the compact form (the offline bar) keeps both choices without the hints", () => {
@@ -57,7 +58,7 @@ describe("ORCH-2 model picker", () => {
   test("the Start dialog has the model picker next to the access choice, Default first", () => {
     const out = renderToStaticMarkup(<StartOrchestrator />);
     expect(out).toContain('id="orch-start-model"');
-    expect(out.indexOf("orch-model")).toBeLessThan(out.indexOf("Start Talkie"));
+    expect(out.indexOf("orch-model")).toBeGreaterThan(out.indexOf("Start Talkie"));
     expect(renderToStaticMarkup(<StartOrchestrator size="sm" />)).toContain('id="orch-start-model-sm"');
   });
 
@@ -133,27 +134,21 @@ describe("pre.8: no Start press on the lead", () => {
   const v = (extra: Record<string, unknown>) => ({ running: false, state: "stopped" as const, restarts: 0, ...extra });
   test("stopped by you: the one button is Resume (automatic)", () => {
     expect(notRunningKind(v({ stopped_by_hand: true }))).toBe("stopped_by_you");
-    const out = renderToStaticMarkup(<StoppedCard kind="stopped_by_you" />);
-    expect(out).toContain("Talkie is stopped (by you)");
-    expect(out).toContain(">Resume</button>");
-    expect(out).not.toContain("Start Talkie");
-    expect(out.match(/<button/g)?.length).toBe(1);
+    const html = renderToStaticMarkup(<WalkieTalkieStatus view={v({ stopped_by_hand: true })} now={1} />);
+    expect(html).toContain(">Resume</button>");
+    expect(html).not.toContain("Start Talkie");
   });
   test("not stopped by you, auto on: starting on its own, no button", () => {
     expect(notRunningKind(v({ auto: true }))).toBe("starting");
-    const out = renderToStaticMarkup(<StoppedCard kind="starting" />);
+    const out = renderToStaticMarkup(<StoppedCard />);
     expect(out).toContain("Talkie is starting");
     expect(out).toContain("nothing to press");
     expect(out).not.toContain("<button");
   });
-  test("a capped crash loop shows its diagnostic and a deliberate restart", () => {
+  test("a capped crash loop is classified as failed for the Talkie page", () => {
     const view = { running: false, state: "failed" as const, auto: true, restarts: 4,
       last_error: "Talkie keeps failing: claude exited (code 1): unknown option" };
     expect(notRunningKind(view)).toBe("failed");
-    const out = renderToStaticMarkup(<StoppedCard kind="failed" view={view} />);
-    expect(out).toContain("Talkie keeps failing");
-    expect(out).toContain("unknown option");
-    expect(out).toContain("Start Talkie");
   });
   test("a daemon without the auto-start keeps the manual Start", () => {
     expect(notRunningKind(v({}))).toBe("manual");

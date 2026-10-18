@@ -452,8 +452,11 @@ ul.mdr-list ul.mdr-list { list-style: circle; }
 /* start / stop (the dashboard is the person at this machine; the phone app has no orchestrator) */
 .orch-start { display: grid; justify-items: start; gap: 8px; width: 100%; }
 .orch-start .btn { display: inline-flex; align-items: center; gap: 6px; }
-.orch-offline-start { flex-wrap: wrap; }
-.orch-offline-start .orch-start { width: auto; }
+.orch-offline-start { flex-wrap: wrap; align-items: center; position: static; color: var(--text-2); background: var(--surface); border-color: var(--line); }
+.orch-offline-start .orch-start { width: auto; display: flex; align-items: center; }
+.orch-offline-start .orch-start .btn svg { color: currentColor; }
+.orch-rec-message.is-clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.orch-rec-outgoing blockquote { white-space: pre-wrap; overflow-wrap: anywhere; }
 .orch-access { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
 .orch-access-legend { padding: 0; margin-bottom: 2px; font-size: 12px; font-weight: 600; color: var(--text-2); }
 .orch-access-option { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; cursor: pointer; font-size: 13px; }
@@ -520,4 +523,5 @@ ul.mdr-list ul.mdr-list { list-style: circle; }
 .orch-rec-context, .orch-rec-outgoing { margin: 10px 0; padding: 8px 12px; border-left: 3px solid var(--line); background: var(--bg); }
 .orch-rec-label { font-size: 12px; font-weight: 600; }
 .orch-rec-message { white-space: pre-line; overflow-wrap: anywhere; }
+.orch-rec-outgoing blockquote.orch-rec-message { margin-left: 0; margin-right: 0; }
 @media (max-width: 480px) { .orch-recommendations { padding: 12px; } .orch-rec-actions .btn { min-height: 44px; } }

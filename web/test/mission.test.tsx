@@ -79,7 +79,7 @@ test("Mission Control default: working and needing a person only; per machine 'N
   expect(out).not.toContain("Summarised notes");
   // atlas: 1 idle + 1 offline from the stream, 2 + 26 from the daemon's archive counts.
   expect(out).toMatch(/data-testid="archive-link-atlas"[^>]*>.*3 idle · 27 offline.*in the archive/);
-  expect(out).toMatch(/href="#\/mission\?tab=archive&amp;machine=atlas"/);
+  expect(out).toMatch(/href="#\/agents\?tab=archive&amp;machine=atlas"/);
   expect(out).toMatch(/data-testid="archive-link-maren-mbp"[^>]*>.*1 idle/);
   expect(out).toContain("Needs you");
   expect(out).toContain("Stuck");
@@ -126,7 +126,7 @@ test("Archive tab: idle and ended agents of the chosen machine, from the stream 
   expect(out).not.toContain("Build the archive view"); // working: live, not archived
   expect(out.indexOf("Lint fixes")).toBeLessThan(out.indexOf("Audit invoice cents")); // newest first
   expect(out).toMatch(/1 idle · 2 offline/);
-  expect(out).toContain('aria-selected="true" href="#/mission?tab=archive"');
+  expect(out).toContain('aria-selected="true" href="#/agents?tab=archive"');
 });
 
 test("archive entries: an archived agent that reported again leaves the archive; stream copies win", () => {

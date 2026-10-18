@@ -11,7 +11,7 @@ import { useSyncExternalStore } from "react";
 //   #/projects/<channel>/page[?group=<slug>]   the project's status page (PROJECT-PAGES-1), at a group of its screens
 //   any + ?agent=<id>
 
-export type View = "mission" | "updates" | "projects" | "simple" | "orchestrator" | "board" | "asks" | "artifacts" | "team" | "integrations" | "accounts" | "machine" | "seats";
+export type View = "home" | "settings" | "agents" | "mission" | "updates" | "projects" | "simple" | "orchestrator" | "board" | "asks" | "artifacts" | "team" | "integrations" | "accounts" | "machine" | "seats";
 
 export interface Route {
   view: View;
@@ -35,7 +35,7 @@ export interface Route {
   group?: string;
 }
 
-const VIEWS: View[] = ["mission", "updates", "projects", "simple", "orchestrator", "board", "asks", "artifacts", "team", "integrations", "accounts", "seats"];
+const VIEWS: View[] = ["home", "settings", "agents", "mission", "updates", "projects", "simple", "orchestrator", "board", "asks", "artifacts", "team", "integrations", "accounts", "seats"];
 
 export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -50,7 +50,7 @@ export function parseHash(hash: string): Route {
   const params = new URLSearchParams(query);
   const first = parts[0] as View | undefined;
   const isMachine = parts[0] === "machines" && !!parts[1];
-  const view: View = isMachine ? "machine" : first && VIEWS.includes(first) ? first : "mission";
+  const view: View = isMachine ? "machine" : first && VIEWS.includes(first) ? first === "mission" ? "agents" : first : "home";
   const route: Route = { view };
   if (isMachine) route.node = parts[1];
   if (view === "board") {
@@ -80,6 +80,7 @@ export function parseHash(hash: string): Route {
   if (agent) route.agent = agent;
   const tab = params.get("tab");
   if (tab) route.tab = tab;
+  if (view === "team" && route.tab === "models") return { view: "settings", tab: "models" };
   const machine = params.get("machine");
   if (machine) route.machine = machine;
   return route;

@@ -5,6 +5,7 @@ import {
   type ComputeState, type CreditBlock, type MachineAsk, type Quotes, type RentResult, type RentalView, type TierId,
 } from "../../api/compute.ts";
 import { ErrorState, SkeletonRows } from "../../components/primitives.tsx";
+import { friendlyError } from "../../api/client.ts";
 import {
   ACTIVE_STATES, CREDIT_BLOCKS, CREDIT_TERMS, IDLE_MINUTES_DEFAULT, MAX_MACHINES_PER_REQUEST, expiresInText, expiryText, usd,
 } from "../../../../src/protocol/compute.ts";
@@ -45,7 +46,7 @@ export function computeErrorText(err: unknown): string {
     if (err.code === "account_frozen") return "Renting is paused on this team's account. Contact Sqwakie support.";
     if (err.code === "agent_admin_off") return "Agents can't rent machines here while agent admin is off.";
     if (err.code === "compute_not_configured") return "Rented machines aren't available yet.";
-    return err.message;
+    return err.code === "not_found" ? friendlyError(err) : err.message;
   }
   return "Something went wrong. Try again.";
 }

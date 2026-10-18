@@ -17,10 +17,10 @@ describe("recommendation panel", () => {
     expect(renderToStaticMarkup(<RecommendationsPanel />)).toContain("Loading recommendations");
     expect(render([])).toContain("No recommendations right now");
   });
-  test("groups plain-language suggestions and keeps evidence closed", () => {
+  test("shows one suggestions list with closed detail for evidence", () => {
     const html = render(recommendationFixtures());
-    for (const label of ["Work to start", "Cards to move", "Reviews waiting", "Stalled", "Machines to set up"]) expect(html).toContain(label);
-    expect(html.match(/<details>/g)?.length).toBe(5);
+    expect(html).toContain("<summary>Details</summary>");
+    expect(html.match(/<summary>Details<\/summary>/g)?.length).toBe(5);
     expect(html).not.toContain("<details open");
     expect(html).toContain("Fictional fixture");
     expect(html).toContain("[Talkie recommendation 00000003]");
@@ -37,14 +37,14 @@ describe("recommendation panel", () => {
   test("an ask shows word for word what approving sends as you, and what Talkie wrote quoted as not sent", () => {
     const [, , review, stalled] = recommendationFixtures();
     const html = render([review!, stalled!]);
-    expect(html.match(/Approving does this in your name/g)?.length).toBe(2);
+    expect(html.match(/Approving sends this in your name/g)?.length).toBe(2);
     expect(html).toContain("Please take the review of card DEMO-3.");
     expect(html).toContain("Talkie wrote this (it is not sent)");
     expect(html).toContain("the import task");
     expect(render([{ ...stalled!, outgoing: null }])).toContain("Its card is gone, so approving it will be refused.");
     // Once answered there is nothing left to send.
-    expect(render([{ ...review!, status: "approved", can_approve: false, can_dismiss: false }])).not.toContain("Approving does this in your name");
-    expect(render([recommendationFixtures()[0]!])).not.toContain("Approving does this in your name");
+    expect(render([{ ...review!, status: "approved", can_approve: false, can_dismiss: false }])).not.toContain("Approving sends this in your name");
+    expect(render([recommendationFixtures()[0]!])).not.toContain("Approving sends this in your name");
   });
   test("open recommendations past the server's cap are counted, not dropped silently", () => {
     const html = renderToStaticMarkup(<RecommendationItems recs={recommendationFixtures()} more={3} onAnswer={() => {}} onRefresh={() => {}} />);

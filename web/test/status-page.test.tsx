@@ -226,12 +226,14 @@ test("the group the address names is the one marked as current in the index", ()
 
 // ---- empty states and the page's other faces ------------------------------------------------------------------------
 
-test("with no screens it is friendly and gives the one command that adds one, with this project's prefix; no index", () => {
+test("with no screens it asks an agent to add one without a visible command or index", () => {
   const html = view({ ...PAYLOAD, screens: { total: 0, newest_at: null, groups: [] } });
   expect(html).toContain("No screens yet");
-  expect(html).toContain('walkie projects screen POR ./screenshot.png --title &quot;Home&quot; --group &quot;Site&quot; --status works --about &quot;The home page.&quot;');
+  expect(html).toContain("<summary>How this works</summary>");
+  expect(html).toContain("walkie projects screen POR");
+  expect(html).not.toContain("<details open");
   expect(html).not.toContain("spage-index");
-  expect(html).toContain("The team&#x27;s agents add them from a terminal");
+  expect(html).toContain("Ask an agent to add the first screen");
 });
 
 test("with no report yet it still shows the counts and the facts, and says when the headline will come", () => {
@@ -363,11 +365,11 @@ test("a refresh that failed after a good load keeps the page and says so, with t
   expect(off).toContain("couldn&#x27;t refresh this page just now");
 });
 
-test("with the report off it explains and gives the command, and shows none of the project's data", () => {
+test("with the report off it points to project settings and shows none of the project's data", () => {
   const html = view({ ...PAYLOAD, mode: "off" });
   expect(html).toContain("The status page is off for this project");
-  expect(html).toContain("walkie projects report POR on");
-  expect(html).toContain("the Hourly status report switch");
+  expect(html).not.toContain("walkie projects report");
+  expect(html).toContain("project settings to turn on hourly status reports");
   for (const leak of ["Dispatch board", "Live build", "ddee2f0bca", "Customers can sign in", "Done in 24 hours"]) expect(html).not.toContain(leak);
 });
 

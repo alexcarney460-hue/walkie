@@ -287,8 +287,7 @@ function BoardBody({ project, cards, boardId, cardId, room, page, group, me, age
           </select>
         )}
         <label className="check pboard-mine"><input type="checkbox" checked={filters.mine} onChange={(e) => setFilters({ ...filters, mine: e.target.checked })} />Mine</label>
-        {selected.size > 0 && <span className="pboard-sel tnum">{selected.size} selected · <kbd>m</kbd> then <kbd>1</kbd>–<kbd>9</kbd> to move</span>}
-        <span className="pboard-keys muted" aria-hidden="true"><kbd>j</kbd><kbd>k</kbd> <kbd>h</kbd><kbd>l</kbd> focus · <kbd>↵</kbd> open · <kbd>c</kbd> new · <kbd>m</kbd> then <kbd>1</kbd>–<kbd>9</kbd> move</span>
+        {selected.size > 0 && <span className="pboard-sel tnum">{selected.size} selected</span>}
       </div>
       {error && <ErrorState compact message={error} />}
       <div className="pboard-notice">{cardUpload.notice}</div>

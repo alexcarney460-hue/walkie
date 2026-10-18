@@ -1,14 +1,16 @@
 import type { ReactNode } from "react";
-import { Armchair, CircleHelp, FileText, FolderKanban, Gauge, LayoutGrid, ListChecks, MessagesSquare, Moon, Newspaper, Plug, Search, Sparkles, Sun, Users } from "lucide-react";
-import { canAnswer, machineHue } from "../lib/format.ts";
-import { hueVar } from "./primitives.tsx";
-import { MachineStatsLine } from "./MachineStats.tsx";
+import { FolderKanban, House, MessagesSquare, Moon, Search, Settings, Sparkles, Sun } from "lucide-react";
+import { machineHue } from "../lib/format.ts";
 import { planBadgeText, planTone } from "../lib/plan.ts";
 import { hrefFor, useRoute, type View } from "../lib/route.ts";
 import { toggleTheme, useTheme } from "../lib/theme.ts";
 import { useNow } from "../lib/time.ts";
 import { unreadCount } from "../state/reducer.ts";
 import { useActions, useStore } from "../state/store.tsx";
+import { useHomeNeeds } from "../views/home/needs.tsx";
+import { settingsWarning } from "../views/settings/model.ts";
+import { MachineStatsLine } from "./MachineStats.tsx";
+import { hueVar } from "./primitives.tsx";
 
 export function Logo({ size = 22 }: { size?: number }) {
   return (
@@ -20,35 +22,31 @@ export function Logo({ size = 22 }: { size?: number }) {
   );
 }
 
-const NAV: Array<{ view: View; label: string; short: string; key: string; icon: typeof LayoutGrid; tab?: false }> = [
-  { view: "mission", label: "Mission Control", short: "Agents", key: "m", icon: LayoutGrid },
-  // Every reported project's plain-English status report (UPDATES-1); not a phone tab (six fit): the Projects page links to it there.
-  { view: "updates", label: "Updates", short: "Updates", key: "r", icon: Newspaper, tab: false },
-  { view: "projects", label: "Projects", short: "Projects", key: "p", icon: FolderKanban },
-  // Plain-language board (WALK-75). Not a phone tab: the six tabs stay Agents, Projects, Talkie, Channels, Asks, Team.
-  { view: "simple", label: "Simple", short: "Simple", key: "n", icon: ListChecks, tab: false },
-  { view: "orchestrator", label: "Talkie", short: "Talkie", key: "o", icon: Sparkles },
-  { view: "board", label: "Channels", short: "Channels", key: "b", icon: MessagesSquare },
-  { view: "asks", label: "Asks", short: "Asks", key: "a", icon: CircleHelp },
-  // Not in the phone tab bar (six tabs fit: Agents · Projects · Chat · Channels · Asks · Team).
-  { view: "artifacts", label: "Artifacts", short: "Files", key: "f", icon: FileText, tab: false },
-  { view: "team", label: "Team", short: "Team", key: "t", icon: Users },
-  // Not in the phone tab bar (six tabs fit); reachable from the Team page there.
-  { view: "integrations", label: "Integrations", short: "Integrations", key: "i", icon: Plug, tab: false },
-  // Provider accounts and usage left (ACCOUNTS-1); on phones, the strip on Mission Control links here.
-  { view: "accounts", label: "Accounts", short: "Accounts", key: "u", icon: Gauge, tab: false },
-  // Remote seats (PROTOCOL §11): agents a teammate starts on a machine whose person allowed it; not a phone tab.
-  { view: "seats", label: "Seats", short: "Seats", key: "s", icon: Armchair, tab: false },
+export const NAV: Array<{ view: View; label: string; key: string; icon: typeof House }> = [
+  { view: "home", label: "Home", key: "h", icon: House },
+  { view: "projects", label: "Projects", key: "p", icon: FolderKanban },
+  { view: "orchestrator", label: "Talkie", key: "o", icon: Sparkles },
+  { view: "board", label: "Channels", key: "b", icon: MessagesSquare },
+  { view: "settings", label: "Settings", key: "s", icon: Settings },
 ];
+
+export function primaryView(view: View): View {
+  if (view === "asks" || view === "home" || view === "agents" || view === "mission" || view === "machine") return "home";
+  if (view === "projects" || view === "orchestrator" || view === "board") return view;
+  return "settings";
+}
 
 function useBadges(): Partial<Record<View, { n: number; tone: "signal" | "amber" | "neutral" }>> {
   const s = useStore();
   const now = useNow();
+  const { count, pending } = useHomeNeeds();
   const unread = (s.team?.channels ?? []).reduce((acc, c) => acc + unreadCount(s, c.name), 0);
-  const myAsks = s.asks.filter((a) => canAnswer(a, s.me?.handle ?? null, s.agents, now)).length;
+  let warning = false;
+  try { warning = settingsWarning(s, now, pending.length); } catch { warning = false; }
   return {
     board: unread ? { n: unread, tone: "neutral" } : undefined,
-    asks: myAsks ? { n: myAsks, tone: "amber" } : undefined,
+    home: count ? { n: count, tone: "amber" } : undefined,
+    settings: warning ? { n: 1, tone: "amber" } : undefined,
   };
 }
 
@@ -129,7 +127,7 @@ function MachinesMini() {
 export function PlanBadge() {
   const { team, me } = useStore();
   const plan = team?.plan ?? me?.plan ?? null;
-  if (!plan) return null;
+  if (!plan || planTone(plan) !== "amber") return null;
   return (
     <a className={`plan-badge plan-badge-${planTone(plan)}`} href={hrefFor({ view: "team", tab: "billing" })} title="Plan and billing">
       <span className="plan-badge-dot" aria-hidden="true" />
@@ -149,7 +147,7 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
         <Logo />
         <div className="rail-brand-text">
           <span className="rail-team truncate">{me?.team?.name ?? "Sqwakie"}</span>
-          <span className="rail-me mono truncate">{me?.handle ?? "?"} · {me?.node.hostname}</span>
+          <span className="rail-me mono truncate" title={me?.node.hostname}>{me?.handle ?? "?"}</span>
         </div>
       </div>
       <button type="button" className="rail-search" onClick={onSearch}>
@@ -160,17 +158,15 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
       <nav className="rail-nav">
         {NAV.map((item) => {
           const Icon = item.icon;
-          const active = route.view === item.view;
+          const active = primaryView(route.view) === item.view;
           const badge = badges[item.view];
           return (
-            <a key={item.view} href={hrefFor({ view: item.view })} className={["rail-link", item.view === "simple" ? "simple-nav" : "", active ? "is-active" : ""].filter(Boolean).join(" ")} aria-current={active ? "page" : undefined}>
+            <a key={item.view} href={hrefFor({ view: item.view })} className={`rail-link${active ? " is-active" : ""}`} aria-current={active ? "page" : undefined}>
               <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
               <span className="rail-link-label">{item.label}</span>
-              {badge ? (
-                <span className={`badge badge-${badge.tone} tnum`} aria-label={`${badge.n} pending`}>{badge.n}</span>
-              ) : (
-                <span className="rail-hint" aria-hidden="true"><kbd>g</kbd><kbd>{item.key}</kbd></span>
-              )}
+              {badge && item.view !== "settings" ? (
+                <span className={`badge badge-${badge.tone} tnum`}>{badge.n}<span className="sr-only"> pending</span></span>
+              ) : badge ? <><span className="nav-warning-dot" aria-hidden="true" /><span className="sr-only">Settings need attention</span></> : null}
             </a>
           );
         })}
@@ -186,13 +182,11 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
 }
 
 export function MobileBar({ onSearch }: { onSearch: () => void }) {
-  const route = useRoute();
   const { me } = useStore();
   return (
     <header className="mobilebar">
       <Logo size={20} />
       <span className="mobilebar-team truncate">{me?.team?.name ?? "Sqwakie"}</span>
-      <a href={hrefFor({ view: "simple" })} className="mobile-simple" aria-current={route.view === "simple" ? "page" : undefined}>Simple</a>
       <ConnectionIndicator compact />
       <span className="mobilebar-spacer" />
       <ThemeButton />
@@ -208,17 +202,18 @@ export function TabBar() {
   const badges = useBadges();
   return (
     <nav className="tabbar" aria-label="Primary">
-      {NAV.filter((item) => item.tab !== false).map((item) => {
+      {NAV.map((item) => {
         const Icon = item.icon;
-        const active = route.view === item.view;
+        const active = primaryView(route.view) === item.view;
         const badge = badges[item.view];
         return (
           <a key={item.view} href={hrefFor({ view: item.view })} className={active ? "tab is-active" : "tab"} aria-current={active ? "page" : undefined}>
             <span className="tab-icon">
               <Icon size={19} strokeWidth={1.75} aria-hidden="true" />
-              {badge && <span className={`tab-badge badge-${badge.tone}`} aria-label={`${badge.n} pending`} />}
+              {badge && <><span className={`tab-badge badge-${badge.tone}`} aria-hidden="true" />
+                <span className="sr-only">{item.view === "settings" ? "Settings need attention" : `${badge.n} pending`}</span></>}
             </span>
-            <span className="tab-label">{item.short}</span>
+            <span className="tab-label">{item.label}</span>
           </a>
         );
       })}

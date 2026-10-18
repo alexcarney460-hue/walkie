@@ -51,7 +51,10 @@ const FRIENDLY: Record<string, string> = {
 };
 
 export function friendlyError(err: unknown): string {
-  if (err instanceof ApiError) return FRIENDLY[err.code] ?? err.message;
+  if (err instanceof ApiError) {
+    if (err.code === "not_found" && /^no route\b/i.test(err.message)) return "This part of the dashboard is unavailable. Try again.";
+    return FRIENDLY[err.code] ?? err.message;
+  }
   return "Something went wrong. Try again.";
 }
 

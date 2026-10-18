@@ -6,6 +6,7 @@ import { PlanLimitNotice } from "../components/PlanLimitNotice.tsx";
 import { CopyCommand, ErrorState, RelTime, SkeletonRows } from "../components/primitives.tsx";
 import { fullTime } from "../lib/time.ts";
 import { useActions, useStore } from "../state/store.tsx";
+import { useHomeNeeds } from "./home/needs.tsx";
 
 const HANDLE_RE = /^[a-z][a-z0-9-]{0,23}$/;
 const CHANNEL_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
@@ -22,20 +23,10 @@ function useFlash(): [string | null, (m: string) => void] {
 
 export function PendingJoins() {
   const { refreshTeam } = useActions();
-  const [items, setItems] = useState<PendingJoin[] | null>(null);
+  const { pending: items, pendingStatus, retryPending } = useHomeNeeds();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [limit, setLimit] = useState<PlanLimitDetails | null>(null);
-  const [nonce, setNonce] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    api.pending()
-      .then((r) => { if (!cancelled) setItems(r.requests); })
-      .catch((err) => { if (!cancelled) setError(friendlyError(err)); });
-    return () => { cancelled = true; };
-  }, [nonce]);
 
   const decide = async (p: PendingJoin, approve: boolean) => {
     setBusy(p.node_id);
@@ -43,7 +34,7 @@ export function PendingJoins() {
     setLimit(null);
     try {
       await api.admit({ node_id: p.node_id, approve, ...(p.link ? { link: p.link, generation: p.generation } : {}) });
-      setItems((list) => (list ?? []).filter((x) => x.node_id !== p.node_id));
+      retryPending?.();
       refreshTeam();
     } catch (err) {
       const d = planLimitOf(err);
@@ -53,16 +44,16 @@ export function PendingJoins() {
     }
   };
 
-  if (error && !items) return <ErrorState compact message={error} onRetry={() => setNonce((n) => n + 1)} />;
-  if (!items) return <SkeletonRows rows={1} />;
-  if (!items.length) return <p className="panel-empty">No machines waiting to join. Additional machines for an admitted Tailscale login need approval unless they use an add-machine link.</p>;
+  if (pendingStatus === "error") return <ErrorState compact message="Couldn't check machines waiting to join." onRetry={() => retryPending?.()} />;
+  if (pendingStatus !== "ready") return <SkeletonRows rows={1} />;
+  if (!items.length) return null;
   return (
     <ul className="pending-list">
       {items.map((p) => (
         <li key={p.node_id} className="pending-row">
           <div className="pending-text">
-            <span className="mono">{p.hostname}</span>
-            <span className="muted">Tailscale login <span className="mono">{p.login}</span>{p.handle ? <> · @{p.handle}</> : null}</span>
+            <span>{p.hostname}</span>
+            <span className="muted">Tailscale login <span>{p.login}</span>{p.handle ? <> · @{p.handle}</> : null}</span>
             <span className="pending-meta muted tnum">Requested <RelTime ts={p.requested_at} long /> · {p.ip} · node {p.node_id.slice(0, 8)}</span>
           </div>
           <div className="pending-actions">

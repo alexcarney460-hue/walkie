@@ -9,7 +9,7 @@ const GENERIC = new Set(["unauthorized", "rate_limited", "network", "timeout", "
  * the daemon shutting down), capitalised; the friendly text for everything else.
  */
 export function lifecycleError(err: unknown): string {
-  if (err instanceof ApiError && !GENERIC.has(err.code) && err.status >= 400 && err.message.trim()) {
+  if (err instanceof ApiError && err.code !== "not_found" && !GENERIC.has(err.code) && err.status >= 400 && err.message.trim()) {
     const m = err.message.trim();
     return m.charAt(0).toUpperCase() + m.slice(1);
   }

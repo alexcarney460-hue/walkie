@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { ArrowUpRight, Check, Minus } from "lucide-react";
 import { api, friendlyError } from "../api/client.ts";
+import { RememberedDetails } from "../components/RememberedDetails.tsx";
 import type { PlanView } from "../api/types.ts";
 import { PLAN_LABEL, activationMessage, overLimit, planDeadline, safeExternalUrl, statusLabel, usage } from "../lib/plan.ts";
 import { useActions } from "../state/store.tsx";
@@ -65,7 +66,7 @@ function ActivateForm() {
         <label htmlFor="lic-key">Activation code</label>
         <textarea id="lic-key" className="input mono billing-key" rows={2} value={key} spellCheck={false} autoComplete="off"
           onChange={(e) => setKey(e.target.value)} placeholder="eyJ2IjoyLCJraW5kIjoi…" aria-describedby="lic-key-hint" />
-        <span id="lic-key-hint" className="field-hint">Same as <span className="mono">walkie license activate &lt;code&gt;</span>, and like it, a code is exchanged on the roster authority&apos;s dashboard. Renewals happen automatically.</span>
+        <span id="lic-key-hint" className="field-hint">Paste the activation code from your welcome page. Renewals happen automatically.</span>
       </div>
       <div className="form-actions">
         <button type="submit" className="btn btn-sm" disabled={busy}>{busy ? "Activating…" : "Activate license"}</button>
@@ -110,7 +111,7 @@ export function BillingPanel({ plan, owner }: { plan: PlanView; owner: boolean }
         {showUpgrade && <ExternalButton href={upgrade} primary={!manage || plan.status !== "grace"}>Upgrade</ExternalButton>}
         <ExternalButton href={manage} primary={plan.status === "grace"}>Manage billing</ExternalButton>
       </div>
-      {owner && <ActivateForm />}
+      {owner && <RememberedDetails id="billing-activation" summary="Have an activation code?"><ActivateForm /></RememberedDetails>}
     </div>
   );
 }

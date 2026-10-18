@@ -30,7 +30,7 @@
   background: oklch(0.42 0.07 var(--own-h));
   color: oklch(0.96 0.02 var(--own-h));
   box-shadow: 0 0 0 2px var(--surface);
-  font-size: 8.5px;
+  font-size: var(--fs-12);
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1;
@@ -118,8 +118,9 @@
 .acct-label { color: var(--text-3); font-size: var(--fs-12); }
 .acct-machines { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-12); }
 .acct-machines li { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.acct-machines li .mono { flex: 1; min-width: 0; color: var(--text-2); }
-.acct-machines li.is-off .mono { color: var(--text-4); }
+.acct-machine-name { flex: 1; min-width: 0; color: var(--text-2); }
+.acct-mono, .acct-chip-mono { font-family: var(--font-sans); }
+.acct-machines li.is-off .acct-machine-name { color: var(--text-4); }
 .acct-meters { display: grid; gap: 10px; }
 .acct-note { padding: 8px 10px; border-radius: 6px; font-size: var(--fs-12); line-height: 1.45; }
 .acct-note-bad { border: 1px solid var(--red-line); background: var(--red-soft); color: var(--text); }
@@ -161,7 +162,7 @@
 .acct-mini-body { display: grid; gap: 5px; flex: 1; min-width: 0; }
 .acct-mini-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .acct-mini-name { flex: 1; min-width: 0; font-size: var(--fs-12); font-weight: 600; }
-.acct-mini-name .mono { font-weight: 400; }
+.acct-mini-name .muted { font-weight: 400; }
 .acct-mini .acct-state { height: 16px; padding: 0 5px; font-size: 10px; }
 .acct-mini-bars { display: grid; gap: 3px; }
 .acct-mini-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 6px; }
@@ -195,7 +196,7 @@
   background: var(--surface-3);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--fs-12);
   font-weight: 700;
 }
 .acct-chip-bar { position: relative; width: 28px; height: 4px; overflow: hidden; border-radius: 2px; background: var(--surface-3); }
@@ -289,3 +290,12 @@
 .acct-pool-uses { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
 .pool-banner { margin: 12px 16px 0; }
 .pool-banner .btn { margin-left: 6px; }
+.acct-tile-details > summary { display: grid; gap: 8px; cursor: pointer; list-style: none; }
+.acct-tile-details > summary::-webkit-details-marker { display: none; }
+.acct-compact-bars { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--text-2); font-size: var(--fs-12); }
+.acct-compact-bars > span { min-width: 112px; }
+.acct-compact-bars .acct-bar { display: block; height: 3px; margin-top: 4px; }
+.acct-tile-details[open] > summary { margin-bottom: 12px; }
+.accounts-page .page-meta button { border: 0; padding: 0; background: none; color: inherit; text-decoration: underline; cursor: pointer; }
+.accounts-page .acct-grid { display: grid; grid-template-columns: 1fr; }
+.accounts-page .acct-tile { max-width: none; }

@@ -59,7 +59,7 @@ export function buildActivity(events: readonly Event[], nodes: readonly NodeView
     }
     const b = e.body as StatusBody;
     const key = `${e.origin}/${b.agent}`;
-    const agentRoute: Route = { view: "mission", agent: `${e.author.handle}/${host}/${b.agent}` };
+    const agentRoute: Route = { view: "agents", agent: `${e.author.handle}/${host}/${b.agent}` };
     const prev = lastState.get(key);
     lastState.set(key, b.state);
     if (!firstSeen.has(key)) firstSeen.set(key, e.ts);
@@ -95,7 +95,7 @@ export function buildActivity(events: readonly Event[], nodes: readonly NodeView
           items[g.idx] = { ...gi, id: e.id, ts: e.ts, count: g.agents.size, text: churnText(g.agents.size) };
         } else {
           churnGroup.set(host, { idx: items.length, agents: new Set([key]) });
-          items.push({ id: e.id, ts: e.ts, kind: "churn", who: host, text: churnText(1), state: "offline", count: 1, to: { view: "mission", tab: "archive", machine: host } });
+          items.push({ id: e.id, ts: e.ts, kind: "churn", who: host, text: churnText(1), state: "offline", count: 1, to: { view: "agents", tab: "archive", machine: host } });
         }
         continue;
       }

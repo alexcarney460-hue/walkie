@@ -92,7 +92,7 @@ export function DataRoom({ project, cards }: { project: ProjectView; cards: Card
       ) : !files ? (
         <SkeletonRows rows={4} />
       ) : shown.length === 0 ? (
-        <EmptyState icon={<Upload size={18} strokeWidth={1.75} />} title="No files yet" command={`walkie room ${project.prefix} add ./brief.pdf --pin`}>
+        <EmptyState icon={<Upload size={18} strokeWidth={1.75} />} title="No files yet">
           <p>Drop files here, or use Upload. Specs, contracts, designs, data: the project's documents, next to its board. Pin the ones every agent on a card should read.</p>
         </EmptyState>
       ) : (

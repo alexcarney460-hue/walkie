@@ -7,6 +7,7 @@ import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
 import { projectsStore } from "../../state/projects.ts";
 import { useStore } from "../../state/store.tsx";
 import { useDialogFocus } from "./dialogFocus.ts";
+import { ProjectReportToggle } from "./StatusReportSwitch.tsx";
 
 /** Settings, visibility, archive and delete: the project's creator and the team's owners (the daemon checks too). */
 export function ProjectSettings({ project, onClose }: { project: ProjectView; onClose: () => void }) {
@@ -21,7 +22,7 @@ export function ProjectSettings({ project, onClose }: { project: ProjectView; on
   const [prOpened, setPrOpened] = useState(project.automations.pr_opened);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLFormElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   useDialogFocus(dialogRef, closeRef, onClose);
 
@@ -59,11 +60,13 @@ export function ProjectSettings({ project, onClose }: { project: ProjectView; on
 
   return (
     <div className="palette-layer" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <form ref={dialogRef} className="palette dialog" role="dialog" aria-modal="true" aria-labelledby="ps-title" tabIndex={-1} onSubmit={submit}>
+      <div ref={dialogRef} className="palette dialog" role="dialog" aria-modal="true" aria-labelledby="ps-title" tabIndex={-1}>
         <header className="dialog-head">
           <h2 id="ps-title" className="dialog-title">Project settings</h2>
           <button ref={closeRef} type="button" className="btn btn-ghost btn-icon btn-sm" onClick={onClose} aria-label="Close" autoFocus><X size={15} strokeWidth={1.75} /></button>
         </header>
+        {project.state === "active" && <div className="dialog-body"><div className="project-report-immediate"><ProjectReportToggle project={project} /><span className="field-hint">(applies now)</span></div></div>}
+        <form onSubmit={submit}>
         <div className="dialog-body">
           {!admin && <p className="field-hint">Only {project.creator === me?.handle ? "you" : `@${project.creator}`} (the creator) and the team's owners can change these.</p>}
           <fieldset disabled={!admin || busy} className="dialog-fields">
@@ -83,7 +86,7 @@ export function ProjectSettings({ project, onClose }: { project: ProjectView; on
                 ? <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void apply({ state: "archived" })}>Archive project</button>
                 : <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void apply({ state: "active" })}>Restore project</button>}
               <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => {
-                if (window.confirm(`Delete ${project.name}? Its signed history stays; an owner can restore it with: walkie projects restore ${project.prefix}`)) void apply({ state: "deleted" }, () => navigate({ view: "projects" }));
+                if (window.confirm(`Delete ${project.name}? Its history stays and an owner can restore it later.`)) void apply({ state: "deleted" }, () => navigate({ view: "projects" }));
               }}>Delete project</button>
             </div>
           )}
@@ -92,7 +95,8 @@ export function ProjectSettings({ project, onClose }: { project: ProjectView; on
           <button type="button" className="btn btn-sm" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn btn-primary btn-sm" disabled={!admin || busy}>Save</button>
         </footer>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }

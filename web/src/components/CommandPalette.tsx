@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Armchair, Bot, CircleHelp, FileText, FolderKanban, Gauge, Hash, LayoutGrid, ListChecks, Lock, LogOut, MessagesSquare, Moon, Newspaper, Plug, Search, Sparkles, User, Users } from "lucide-react";
+import { Armchair, Bot, CircleHelp, FileText, FolderKanban, Gauge, Hash, House, LayoutGrid, ListChecks, Lock, LogOut, MessagesSquare, Moon, Newspaper, Plug, Search, Settings, Sparkles, User, Users } from "lucide-react";
 import { api } from "../api/client.ts";
 import { STATE_LABEL, displayName } from "../lib/format.ts";
 import { getRoute, navigate } from "../lib/route.ts";
@@ -8,6 +8,14 @@ import { useStore } from "../state/store.tsx";
 import { displayStoredText } from "../../../src/protocol/display-text.ts";
 
 interface Cmd { id: string; group: string; label: string; hint?: string; icon: typeof Bot; keys?: string; run: () => void }
+const BOARD_KEYS = [
+  ["Board: move focus", "J / K / H / L"],
+  ["Board: open focused card", "Enter"],
+  ["Board: new card", "C"],
+  ["Board: move selected cards to a column", "M then 1–9"],
+  ["Board: select focused card", "X"],
+  ["Board: search cards", "/"],
+] as const;
 
 function score(text: string, q: string): number {
   if (!q) return 1;
@@ -37,18 +45,21 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 
   const commands = useMemo<Cmd[]>(() => {
     const views: Cmd[] = [
-      { id: "v-m", group: "Go to", label: "Mission Control", icon: LayoutGrid, keys: "G M", run: () => navigate({ view: "mission" }) },
-      { id: "v-r", group: "Go to", label: "Updates · project status reports", icon: Newspaper, keys: "G R", run: () => navigate({ view: "updates" }) },
+      { id: "v-h", group: "Go to", label: "Home", icon: House, keys: "G H", run: () => navigate({ view: "home" }) },
       { id: "v-p", group: "Go to", label: "Projects", icon: FolderKanban, keys: "G P", run: () => navigate({ view: "projects" }) },
-      { id: "v-n", group: "Go to", label: "Simple", icon: ListChecks, keys: "G N", run: () => navigate({ view: "simple" }) },
       { id: "v-o", group: "Go to", label: "Talkie", icon: Sparkles, keys: "G O", run: () => navigate({ view: "orchestrator" }) },
       { id: "v-b", group: "Go to", label: "Channels", icon: MessagesSquare, keys: "G B", run: () => navigate({ view: "board" }) },
-      { id: "v-a", group: "Go to", label: "Asks", icon: CircleHelp, keys: "G A", run: () => navigate({ view: "asks" }) },
-      { id: "v-f", group: "Go to", label: "Artifacts", icon: FileText, keys: "G F", run: () => navigate({ view: "artifacts" }) },
-      { id: "v-t", group: "Go to", label: "Team", icon: Users, keys: "G T", run: () => navigate({ view: "team" }) },
-      { id: "v-i", group: "Go to", label: "Integrations", icon: Plug, keys: "G I", run: () => navigate({ view: "integrations" }) },
-      { id: "v-u", group: "Go to", label: "Accounts · usage left", icon: Gauge, keys: "G U", run: () => navigate({ view: "accounts" }) },
-      { id: "v-s", group: "Go to", label: "Seats", icon: Armchair, keys: "G S", run: () => navigate({ view: "seats" }) },
+      { id: "v-s", group: "Go to", label: "Settings", icon: Settings, keys: "G S", run: () => navigate({ view: "settings" }) },
+      { id: "v-m", group: "Settings", label: "Agents", icon: LayoutGrid, keys: "G M", run: () => navigate({ view: "agents" }) },
+      { id: "v-a", group: "Settings", label: "Asks", icon: CircleHelp, keys: "G A", run: () => navigate({ view: "asks" }) },
+      { id: "v-t", group: "Settings", label: "Team", icon: Users, keys: "G T", run: () => navigate({ view: "team" }) },
+      { id: "v-u", group: "Settings", label: "Accounts", icon: Gauge, keys: "G U", run: () => navigate({ view: "accounts" }) },
+      { id: "v-seat", group: "Settings", label: "Seats", icon: Armchair, run: () => navigate({ view: "seats" }) },
+      { id: "v-i", group: "Settings", label: "Integrations", icon: Plug, keys: "G I", run: () => navigate({ view: "integrations" }) },
+      { id: "v-f", group: "Settings", label: "Files", icon: FileText, keys: "G F", run: () => navigate({ view: "artifacts" }) },
+      { id: "v-r", group: "Settings", label: "Updates", icon: Newspaper, keys: "G R", run: () => navigate({ view: "updates" }) },
+      { id: "v-n", group: "Settings", label: "Plain-language board", icon: ListChecks, keys: "G N", run: () => navigate({ view: "simple" }) },
+      { id: "v-models", group: "Settings", label: "Local models", icon: Bot, run: () => navigate({ view: "settings", tab: "models" }) },
     ];
     const agentCmds: Cmd[] = agents.map((a) => ({
       id: `a-${a.id}`, group: "Agents", label: `${a.agent} · ${a.hostname}`, hint: `${STATE_LABEL[a.effective_state]}${a.status.title ? ` · ${displayStoredText(a.status.title)}` : ""}`,
@@ -59,7 +70,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }));
     const people: Cmd[] = (team?.members ?? []).map((m) => ({
       id: `p-${m.handle}`, group: "People", label: displayName(team?.members, m.handle), hint: `@${m.handle} · ${agents.filter((a) => a.handle === m.handle).length} agents`,
-      icon: User, run: () => navigate({ view: "mission" }),
+      icon: User, run: () => navigate({ view: "agents" }),
     }));
     const actions: Cmd[] = [
       { id: "t-toggle", group: "Actions", label: "Toggle light / dark theme", icon: Moon, run: toggleTheme },
@@ -81,6 +92,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     for (const { c } of ranked) groups.set(c.group, [...(groups.get(c.group) ?? []), c]);
     return [...groups.values()].flat();
   }, [commands, q]);
+  const shortcutHints = BOARD_KEYS.filter(([label, hint]) => !q.trim() || `${label} ${hint}`.toLowerCase().includes(q.trim().toLowerCase()));
 
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
@@ -119,7 +131,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           <kbd>esc</kbd>
         </div>
         <ul className="palette-list" id="palette-list" role="listbox" ref={listRef}>
-          {results.length === 0 && <li className="palette-empty">Nothing matches “{q}”.</li>}
+          {results.length === 0 && shortcutHints.length === 0 && <li className="palette-empty">Nothing matches “{q}”.</li>}
           {results.map((c, i) => {
             const header = c.group !== lastGroup ? c.group : null;
             lastGroup = c.group;
@@ -145,6 +157,10 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             );
           })}
         </ul>
+        {shortcutHints.length > 0 && <div className="palette-shortcuts" aria-label="Keyboard shortcuts">
+          <div className="palette-group">Keyboard shortcuts · on a board</div>
+          {shortcutHints.map(([label, hint]) => <div className="palette-shortcut" key={label}><span>{label}</span><span>{hint}</span></div>)}
+        </div>}
       </div>
     </div>
   );

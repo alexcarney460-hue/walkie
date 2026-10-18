@@ -134,7 +134,7 @@ function IdleAndArchived({ node, idle, onOpen }: { node: NodeView; idle: AgentVi
         <div className="mdx-archive-more">
           <span className="muted tnum" data-testid="archive-partial">Showing {a.rows.length} of {known} archived</span>
           <button type="button" className="btn btn-sm" onClick={a.loadMore}>Show more</button>
-          <a className="text-link" href={hrefFor({ view: "mission", tab: "archive", machine: node.hostname })}>Open the full archive</a>
+          <a className="text-link" href={hrefFor({ view: "agents", tab: "archive", machine: node.hostname })}>Open the full archive</a>
         </div>
       )}
     </details>

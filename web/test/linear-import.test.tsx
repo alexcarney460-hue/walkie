@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create } from "react-test-renderer";
 import type { ImportPlan, ImportPlanProject } from "../src/api/types.ts";
 import type { State } from "../src/state/reducer.ts";
 import { installWindow } from "./window-stub.ts";
@@ -68,8 +69,16 @@ test("the selection is what the person ticked", () => {
   expect(sel.projects[0]!.prefix).toBe("WR");
 });
 
-test("the project list offers the import", () => {
+test("the project list reaches import from its More menu", async () => {
   const state = { ...initialState, phase: "ready" as const, me: { handle: "maren", role: "owner" } as State["me"] };
-  const html = renderToStaticMarkup(<StaticStore state={state}><ProjectList /></StaticStore>);
-  expect(html).toContain("Import from Linear");
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<StaticStore state={state}><ProjectList /></StaticStore>); });
+  const more = tree!.root.findAllByType("button").find((button) => button.props["aria-label"] === "More project actions");
+  expect(more).toBeDefined();
+  await act(async () => { more!.props.onClick(); });
+  const item = tree!.root.findAllByType("button").find((button) => button.props.role === "menuitem" && button.children.includes("Import from Linear"));
+  expect(item).toBeDefined();
+  await act(async () => { item!.props.onClick(); });
+  expect(tree!.root.findAllByProps({ role: "dialog" }).some((dialog) => dialog.props["aria-labelledby"] === "li-title")).toBe(true);
+  await act(async () => { tree!.unmount(); });
 });

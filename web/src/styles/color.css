@@ -70,7 +70,9 @@
   background-image: radial-gradient(1100px 300px at 18% -140px, oklch(var(--hue-solid-l) var(--hue-solid-c) var(--view-h) / calc(var(--hue-tint-a) * 1.6)), transparent 70%);
   background-repeat: no-repeat;
 }
-.view-mission .main { --view-h: 150; }
+.view-home .main { --view-h: 215; }
+.view-settings .main { --view-h: 235; }
+.view-agents .main { --view-h: 150; }
 .view-projects .main { --view-h: 268; }
 .view-orchestrator .main { --view-h: 300; }
 .view-accounts .main { --view-h: 72; }

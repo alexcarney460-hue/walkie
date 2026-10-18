@@ -72,7 +72,7 @@
               <input type="number" id="j-seat-max" data-consent-max-input inputmode="numeric" min="1" max="64" step="1" value="4">
             </div>
             <p class="welcome-note">Allow the verified owner to provision this <strong>company machine</strong> remotely. Named launchers may run agents as your macOS/Windows-WSL/Linux user. Owners can use Sqwakie&rsquo;s allow-listed remote admin commands. Launched agents can run arbitrary code, read and change files and keys you can access, and use your Sqwakie daemon as you. Owner-provided subscription logins may be leased for a run. Sqwakie records who provisioned and launched.</p>
-            <p class="welcome-note">Owner and named launchers: verified in the Mac app or terminal before final consent; the invite alone does not carry their names. Proposed profile: developer-worker, with its version confirmed at final consent. Seat cap: <span data-field="seat-cap">0</span>. On Windows, enrollment may keep WSL running after sign-in and change power settings.</p>
+            <p class="welcome-note">Owner and named launchers: verified in the Mac app or terminal before final consent; the invite alone does not carry their names. Proposed profile: developer-worker, with its version confirmed at final consent. Seat cap: <span data-field="seat-cap">0</span>. On Windows, enrollment may keep WSL running after sign-in and change power settings. A fresh Windows/WSL run is not verified.</p>
             <p class="welcome-note">You can stop seats with <code>walkie seats deny</code>, stop remote setup with <code>walkie admin remote off</code> and <code>walkie agents admin off</code>, or leave the team.</p>
             <p class="welcome-note" data-ssh-consent hidden>This link also asks that its owner, the owner&rsquo;s everyday agents and Talkie may sign in to this computer over SSH as your user, through Sqwakie, using a Sqwakie SSH service that listens only on this computer and accepts only key logins. Sqwakie records the caller, the source machine and the time and length of each session, never its content, and posts one summary to you. This is part of the same consent: it is shown in full in the Sqwakie app or your terminal before you confirm, and you can end it with <code>walkie ssh revoke</code>.</p>
             <p class="welcome-note" data-ssh-damaged hidden>This link can&rsquo;t turn on owner SSH: its SSH authorization is damaged. Ask the owner for a new add-machine link. The rest of the enrollment works without SSH.</p>
@@ -85,7 +85,7 @@
           <p class="welcome-note" data-package-instructions hidden>Open the downloaded package. When you return, this page opens Sqwakie to finish joining. If it does not, select “Open Sqwakie to finish joining.” macOS may ask you to approve the app. Keep this page open until Sqwakie starts.</p>
           <section data-windows-section hidden aria-label="Windows installer">
             <h2>Windows / WSL</h2>
-            <p>PowerShell bootstrap pending signed release verification. The installer command will appear after that gate.</p>
+            <p>PowerShell bootstrap pending signed release verification. A fresh Windows/WSL run is not verified. The installer command will appear after that gate.</p>
             <button type="button" data-windows-copy hidden>Copy installer</button>
             <code data-field="windows-command" hidden></code>
           </section>
@@ -113,7 +113,7 @@
         <section class="state" data-state="fleet" aria-labelledby="j-fleet">
           <span class="state-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg></span>
           <h1 id="j-fleet">Add this machine to your team.</h1>
-          <p class="lead">A team owner made this link to add machines as <b data-field="fleet-handle">theirs</b>. Run one command on each machine: it installs Sqwakie, starts it in the background and joins the team, with no questions asked.</p>
+          <p class="lead">A team owner made this link to add machines as <b data-field="fleet-handle">theirs</b>. Run one command on each Mac or Linux machine: it installs Sqwakie, starts it in the background and joins the team, with no questions asked. The Windows line below wraps that command. A fresh Windows/WSL run is not verified.</p>
           <div class="facts">
             <span class="fact">For <b data-field="fleet-uses">&hellip;</b></span>
             <span class="fact">Until <b data-field="fleet-expires">&hellip;</b></span>
@@ -134,13 +134,13 @@
             </div>
           </div>
           <ol class="welcome-steps from-2" start="2">
-            <li>On Windows, it runs inside WSL2 (Windows Subsystem for Linux): open PowerShell and run this instead:</li>
+            <li>On Windows, the documented path is WSL2 (Windows Subsystem for Linux). A fresh Windows/WSL run is not verified. Open PowerShell and run this instead:</li>
           </ol>
           <div class="install">
             <div class="install-shell">
               <div class="install-core">
                 <code class="install-cmd"><span class="p" aria-hidden="true">&gt;</span> <span data-copy-src data-field="fleet-command-win">&hellip;</span></code>
-                <button class="copy" type="button" data-copy="Windows command copied" aria-label="Copy the install command for Windows (WSL2)">
+                <button class="copy" type="button" data-copy="Windows command copied" aria-label="Copy the Windows command. A fresh Windows/WSL run is not verified.">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg>
                   <span data-copy-label>Copy</span>
                 </button>

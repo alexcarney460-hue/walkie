@@ -19,6 +19,7 @@ afterAll(() => {
 
 type Mod = {
   MachineDetail: () => ReactNode; Sidebar: (p: { onSearch: () => void }) => ReactNode;
+  MissionControl: () => ReactNode;
   StaticStore: (p: { state: State; children: ReactNode }) => ReactNode; initialState: State;
   parseHash: typeof import("../src/lib/route.ts").parseHash; hrefFor: typeof import("../src/lib/route.ts").hrefFor;
   goBack: typeof import("../src/lib/route.ts").goBack;
@@ -28,12 +29,12 @@ type Mod = {
 };
 let mod: Mod;
 beforeAll(async () => {
-  const [md, sh, st, rd, rt] = await Promise.all([
+  const [md, sh, st, rd, rt, mission] = await Promise.all([
     import("../src/views/machine/MachineDetail.tsx"), import("../src/components/Shell.tsx"), import("../src/state/store.tsx"),
-    import("../src/state/reducer.ts"), import("../src/lib/route.ts"),
+    import("../src/state/reducer.ts"), import("../src/lib/route.ts"), import("../src/views/mission/MissionControl.tsx"),
   ]);
   mod = {
-    MachineDetail: md.MachineDetail, Sidebar: sh.Sidebar, StaticStore: st.StaticStore, initialState: rd.initialState,
+    MachineDetail: md.MachineDetail, Sidebar: sh.Sidebar, MissionControl: mission.MissionControl, StaticStore: st.StaticStore, initialState: rd.initialState,
     parseHash: rt.parseHash, hrefFor: rt.hrefFor, goBack: rt.goBack, splitAgents: md.splitAgents, machineAsks: md.machineAsks, transportText: md.transportText,
   };
 });
@@ -102,7 +103,14 @@ test("route: #/machines/<id> is the machine page and round-trips, with an agent 
   expect(mod.parseHash(`#/machines/${ALEX}`)).toEqual({ view: "machine", node: ALEX });
   expect(mod.parseHash(`#/machines/${ALEX}?agent=x`)).toEqual({ view: "machine", node: ALEX, agent: "x" });
   expect(mod.hrefFor({ view: "machine", node: ALEX })).toBe(`#/machines/${ALEX}`);
-  expect(mod.parseHash("#/machines")).toEqual({ view: "mission" }); // no id: home
+  expect(mod.parseHash("#/machines")).toEqual({ view: "home" }); // no id: home
+});
+
+test("Agents page links each machine to its detail route", () => {
+  go("#/agents");
+  const html = render(state(), <mod.MissionControl />);
+  expect(html).toContain(`href="#/machines/${ALEX}"`);
+  expect(html).toContain(`href="#/machines/${KIRA}"`);
 });
 
 test("Back: previous view, ignoring drawers opened and closed on the way; never leaves the dashboard", () => {
@@ -123,11 +131,18 @@ test("Back: previous view, ignoring drawers opened and closed on the way; never 
   expect(w.location.hash).toBe("#/team");
 });
 
-test("the sidebar's machines link to their machine page, the open one marked current", () => {
+test("the sidebar links to each machine, marks the current one and shows live stats", () => {
   go(`#/machines/${KIRA}`);
   const out = render(state(), <mod.Sidebar onSearch={() => {}} />);
   expect(out).toContain(`href="#/machines/${ALEX}"`);
   expect(out).toMatch(new RegExp(`href="#/machines/${KIRA}" class="rail-machine[^"]*is-active"[^>]*aria-current="page"`));
+  expect(out).toContain("1/2");
+  expect(out).toContain("Memory");
+  expect(out).toContain("Temperature");
+  expect(out).toContain("Load 1/5/15");
+  expect(out).toContain("71.4");
+  expect(out).toContain('<span class="tnum muted rail-rtt">this</span>');
+  expect(out).toContain('<span class="tnum muted rail-rtt">off</span>');
 });
 
 test("machine page: header facts, live stats, agents working first, idle collapsed, accounts, open ask", () => {

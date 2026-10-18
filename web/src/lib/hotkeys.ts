@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { getRoute, navigate, type View } from "./route.ts";
 
-const G_MAP: Record<string, View> = { m: "mission", r: "updates", p: "projects", n: "simple", o: "orchestrator", b: "board", a: "asks", f: "artifacts", t: "team", i: "integrations", u: "accounts", s: "seats" };
+const G_MAP: Record<string, View> = { h: "home", m: "agents", r: "updates", p: "projects", n: "simple", o: "orchestrator", b: "board", a: "asks", f: "artifacts", t: "team", i: "integrations", u: "accounts", s: "settings" };
 
 export const SHORTCUTS: Array<{ keys: string[]; label: string }> = [
-  { keys: ["g", "m"], label: "Mission Control" },
+  { keys: ["g", "h"], label: "Home" },
+  { keys: ["g", "m"], label: "Agents and machines" },
   { keys: ["g", "r"], label: "Updates (project status reports)" },
   { keys: ["g", "p"], label: "Projects" },
   { keys: ["g", "n"], label: "Simple" },
@@ -15,7 +16,13 @@ export const SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ["g", "t"], label: "Team" },
   { keys: ["g", "i"], label: "Integrations" },
   { keys: ["g", "u"], label: "Accounts (usage left)" },
-  { keys: ["g", "s"], label: "Seats" },
+  { keys: ["g", "s"], label: "Settings" },
+  { keys: ["j", "k", "h", "l"], label: "Board: move focus" },
+  { keys: ["Enter"], label: "Board: open focused card" },
+  { keys: ["c"], label: "Board: new card" },
+  { keys: ["m", "1–9"], label: "Board: move selected cards to a column" },
+  { keys: ["x"], label: "Board: select focused card" },
+  { keys: ["/"], label: "Board: search cards" },
 ];
 
 export function isTyping(target: EventTarget | null): boolean {
@@ -26,7 +33,7 @@ export function isTyping(target: EventTarget | null): boolean {
 }
 
 /** Global keys: ⌘K / Ctrl+K palette, and g-then-letter view jumps (1 s window). */
-export function useGlobalHotkeys(openPalette: () => void): void {
+export function useGlobalHotkeys(openPalette: () => void, openShortcuts: () => void): void {
   useEffect(() => {
     let gAt = 0;
     const onKey = (e: KeyboardEvent) => {
@@ -36,6 +43,7 @@ export function useGlobalHotkeys(openPalette: () => void): void {
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target)) return;
+      if (e.key === "?") { e.preventDefault(); openShortcuts(); return; }
       const key = e.key.toLowerCase();
       if (key === "g") {
         gAt = Date.now();
@@ -50,5 +58,5 @@ export function useGlobalHotkeys(openPalette: () => void): void {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openPalette]);
+  }, [openPalette, openShortcuts]);
 }

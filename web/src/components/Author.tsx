@@ -54,7 +54,7 @@ export function AuthorName({ author }: { author: Event["author"] }) {
   const agentId = host ? `${author.handle}/${host}/${author.agent}` : undefined;
   return (
     <span className="author-line">
-      <span className="author-agent-name mono">{author.agent}</span>
+      <span className="author-agent-name">{author.agent}</span>
       <button
         type="button"
         className="author-agent"
@@ -63,7 +63,7 @@ export function AuthorName({ author }: { author: Event["author"] }) {
         disabled={!agentId}
       >
         <Bot size={11} strokeWidth={2} aria-hidden="true" />
-        <span>{name.split(" ")[0]}'s agent{host ? ` on ${host}` : ""}</span>
+        <span>{name.split(" ")[0]}'s agent</span>
       </button>
     </span>
   );

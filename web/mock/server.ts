@@ -40,6 +40,7 @@ import { sha256Hex } from "./world.ts";
 import { addMachineCommand, addMachineLink, releaseTag } from "../../src/protocol/add-machine.ts";
 import { fleetLinkCommand, fleetLinkUrl, fleetLinkWindowsCommand } from "../../src/protocol/fleet-link.ts";
 import { CATALOG } from "../../src/pool/catalog.ts";
+import { nextRuns, validateCron, type Schedule } from "../../src/protocol/talkie-schedule.ts";
 
 const mockLinks: Array<{ id: string; short: string; handle: string; role: string; uses: number; used: number; pending: number;
   expires_at: number; approve: boolean; created_at: number; created_by: string; revoked_at: number | null; state: string }> = [];
@@ -51,6 +52,20 @@ const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'sel
 const SECURITY_HEADERS = { "Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" };
 
 const world = seedWorld({ hasTeam: process.env.WALKIE_MOCK_FIRST_RUN !== "1" });
+const scheduleCron = "0 * * * *";
+const fictionalSchedule: Schedule = {
+  id: "11111111-1111-4111-8111-111111111111", name: "Project check-in", cron: scheduleCron,
+  task: { template: "project-reports" }, enabled: true, created_by: "maren",
+  last_run: null, next_run: nextRuns(scheduleCron, Date.now(), 1)[0] ?? null,
+  last_result: null, failures: 0, run_id: null,
+};
+let mockSchedules: Schedule[] = [fictionalSchedule];
+let mockTalkie = { running: false, state: "stopped", auto: false, restarts: 0, stopped_by_hand: false,
+  access: "platform", model_setting: "default", model: null as string | null };
+const mockMessages = [
+  { id: "mock-talkie-person-1", thread: "mock-talkie-thread-1", role: "person", text: "Which cards need my review?", ts: Date.now() - 5 * 60_000, via: "dashboard", state: "sent" },
+  { id: "mock-talkie-reply-1", thread: "mock-talkie-thread-1", role: "orchestrator", text: "The pricing page is waiting for your review. I can open its card.", ts: Date.now() - 4 * 60_000, tools: [], reply_to: "mock-talkie-person-1" },
+];
 if (process.env.WALKIE_MOCK_ROLE === "member" || process.env.WALKIE_MOCK_ROLE === "observer") {
   world.me().role = process.env.WALKIE_MOCK_ROLE;
 }
@@ -70,7 +85,6 @@ const seats = new MockSeats(() => world.nodeViews(), () => world.me().handle, ()
 const compute = new MockCompute();
 const recommendations = new MockRecommendations();
 const phones = [{ id: "3f9a1c2b7d4e", name: "iPhone", created_at: Date.now() - 3 * 86_400_000, last_seen: Date.now() - 12 * 60_000, expires_at: Date.now() + 87 * 86_400_000 }];
-if (world.hasTeam && process.env.WALKIE_MOCK_CAPTURE !== "1") sim.start();
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store" } });
@@ -164,7 +178,7 @@ async function api(req: Request, url: URL): Promise<Response> {
   if (path === "/v1/license" && method === "GET") return json(world.planView());
   if (path === "/v1/agents") return json(world.agentsPayload(q));
   if (path === "/v1/guests" && method === "GET") return json({ guests: [], killed: false });
-  if (path === "/v1/orchestrator" && method === "GET") return json({ local: { running: false, state: "stopped", auto: false, restarts: 0 } });
+  if (path === "/v1/orchestrator" && method === "GET") return json({ local: mockTalkie });
   if (path === "/v1/admin" && method === "GET") return json({ agent_admin: true, remote_admin: true, machine: world.meNodeHost, audit: [] });
   if (path === "/v1/accounts") return json({ accounts: world.accountViews(), pool: { policy: "company", at: Date.now() - 3_600_000, by: "maren" } });
   if (path.startsWith("/v1/compute/")) return computeRoute(req, path, method);
@@ -259,6 +273,80 @@ async function api(req: Request, url: URL): Promise<Response> {
   }
   const recResponse = await recommendations.handle(req, world.me().role !== "observer");
   if (recResponse) return recResponse;
+  if (path === "/v1/orchestrator/messages" && method === "GET") {
+    const thread = url.searchParams.get("thread") ?? undefined;
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 500) || 500, 1), 2_000);
+    const sinceRaw = url.searchParams.get("since");
+    const since = sinceRaw === null ? undefined : Number(sinceRaw);
+    if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) return fail(400, "invalid", "since must be epoch ms");
+    return json({ messages: mockMessages.filter((message) => (!thread || message.thread === thread) && (since === undefined || message.ts >= since)).slice(-limit) });
+  }
+  if (path === "/v1/orchestrator/say" && method === "POST") {
+    const input = await body(req) as { text?: string; thread?: string } | undefined;
+    if (!input?.text?.trim() || input.text.length > 16_000) return fail(400, "invalid", "text is required");
+    const message = { id: crypto.randomUUID(), thread: input.thread ?? crypto.randomUUID(), role: "person", text: input.text, ts: Date.now(), via: "dashboard", state: "sent" };
+    mockMessages.push(message);
+    return json({ message });
+  }
+  if (path === "/v1/orchestrator/stop-reply" && method === "POST") return json({ stopped: true, local: mockTalkie });
+  if (path === "/v1/orchestrator/start" && method === "POST") {
+    const input = await body(req) as { access?: string; model?: string } | undefined;
+    mockTalkie = { ...mockTalkie, running: true, state: "running", auto: false, stopped_by_hand: false,
+      access: input?.access === "full" ? "full" : "platform", model_setting: input?.model ?? "default", model: input?.model ?? null };
+    return json({ local: mockTalkie });
+  }
+  if (path === "/v1/orchestrator/stop" && method === "POST") {
+    const stopped = mockTalkie.running ? "local" : "none";
+    mockTalkie = { ...mockTalkie, running: false, state: "stopped", stopped_by_hand: true };
+    return json({ stopped, local: mockTalkie });
+  }
+  if (path === "/v1/orchestrator/auto" && method === "POST") {
+    mockTalkie = { ...mockTalkie, running: true, state: "running", auto: true, stopped_by_hand: false };
+    return json({ local: mockTalkie });
+  }
+  if (path === "/v1/orchestrator/model" && method === "POST") {
+    const input = await body(req) as { model?: string } | undefined;
+    if (!input?.model) return fail(400, "invalid", "model is required");
+    mockTalkie = { ...mockTalkie, model_setting: input.model, model: input.model };
+    return json({ local: mockTalkie });
+  }
+  if (path === "/v1/orchestrator/access" && method === "POST") {
+    const input = await body(req) as { access?: string } | undefined;
+    if (input?.access !== "platform" && input?.access !== "full") return fail(400, "invalid", "access must be platform or full");
+    mockTalkie = { ...mockTalkie, access: input.access };
+    return json({ local: mockTalkie });
+  }
+  if (path === "/v1/orchestrator/schedules" && method === "GET") return json({ schedules: mockSchedules, status: null });
+  if (path === "/v1/orchestrator/schedules/next" && method === "GET") {
+    const cron = url.searchParams.get("cron") ?? "";
+    try { validateCron(cron); return json({ times: nextRuns(cron, Date.now()) }); }
+    catch (err) { return fail(400, "invalid_cron", err instanceof Error ? err.message : "invalid cron"); }
+  }
+  if (path === "/v1/orchestrator/schedules" && method === "POST") {
+    if (!isOwner()) return fail(403, "forbidden", "only a team owner manages Talkie schedules");
+    const input = await body(req) as Partial<Schedule> | undefined;
+    if (!input?.name || !input.cron || !input.task) return fail(400, "invalid", "name, cron and task are required");
+    try { validateCron(input.cron); } catch (err) { return fail(400, "invalid_cron", err instanceof Error ? err.message : "invalid cron"); }
+    const schedule: Schedule = { ...fictionalSchedule, id: crypto.randomUUID(), name: input.name, cron: input.cron, task: input.task,
+      next_run: nextRuns(input.cron, Date.now(), 1)[0] ?? null };
+    mockSchedules = [...mockSchedules, schedule];
+    return json({ schedule });
+  }
+  const scheduleMatch = /^\/v1\/orchestrator\/schedules\/([0-9a-f-]{36})(?:\/(run-now))?$/.exec(path);
+  if (scheduleMatch && ["PATCH", "DELETE", "POST"].includes(method)) {
+    if (!isOwner()) return fail(403, "forbidden", "only a team owner manages Talkie schedules");
+    const schedule = mockSchedules.find((item) => item.id === scheduleMatch[1]);
+    if (!schedule) return fail(404, "not_found", "no such schedule");
+    if (method === "POST" && scheduleMatch[2] === "run-now") return json({ run_id: crypto.randomUUID() });
+    if (method === "DELETE") { mockSchedules = mockSchedules.filter((item) => item.id !== schedule.id); return json({ removed: true }); }
+    if (method === "PATCH") {
+      const input = await body(req) as Partial<Schedule> | undefined;
+      if (input?.cron) try { validateCron(input.cron); } catch (err) { return fail(400, "invalid_cron", err instanceof Error ? err.message : "invalid cron"); }
+      const updated = { ...schedule, ...input, id: schedule.id };
+      mockSchedules = mockSchedules.map((item) => item.id === schedule.id ? updated : item);
+      return json({ schedule: updated });
+    }
+  }
   const integ = await integrations.handle(req, path, url, world);
   if (integ) return integ;
   const proj = await projects.handle(req, path, json, fail);
@@ -501,11 +589,8 @@ async function staticFile(url: URL): Promise<Response> {
   return new Response(index, { headers: { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" } });
 }
 
-const server = Bun.serve({
-  hostname: "127.0.0.1",
-  port: PORT,
-  idleTimeout: 0, // SSE connections stay open; heartbeats every 15 s
-  async fetch(req) {
+/** The same request handler can be exercised without binding a port in restricted test environments. */
+export async function mockFetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     try {
       if (url.pathname === "/auth") {
@@ -521,7 +606,10 @@ const server = Bun.serve({
       process.stderr.write(`mock error on ${req.method} ${url.pathname}: ${String(err)}\n`);
       return fail(500, "internal", "internal error");
     }
-  },
-});
+}
 
-process.stdout.write(`walkie mock on http://${server.hostname}:${server.port}  (team: ${world.hasTeam ? world.teamName : "none"}, role: ${world.me().role}, plan: ${planMode})\n`);
+if (import.meta.main) {
+  if (world.hasTeam && process.env.WALKIE_MOCK_CAPTURE !== "1") sim.start();
+  const server = Bun.serve({ hostname: "127.0.0.1", port: PORT, idleTimeout: 0, fetch: mockFetch });
+  process.stdout.write(`walkie mock on http://${server.hostname}:${server.port}  (team: ${world.hasTeam ? world.teamName : "none"}, role: ${world.me().role}, plan: ${planMode})\n`);
+}

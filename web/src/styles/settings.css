@@ -1,0 +1,11 @@
+.settings-page { max-width: 800px; margin-inline: auto; }
+.settings-list { list-style: none; padding: 0; margin: 20px 0; display: grid; gap: 8px; }
+.settings-row { display: grid; grid-template-columns: 24px 1fr 18px; align-items: center; gap: 16px; min-height: 64px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface-1); color: var(--text); }
+.settings-row > span { display: grid; gap: 3px; min-width: 0; }
+.settings-status { color: var(--text-2); font-size: var(--fs-13); }
+.settings-row.is-warning, .settings-row.is-warning .settings-status { color: var(--amber); }
+.settings-row:hover { background: var(--hover); }
+.nav-warning-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--amber); }
+.rail-fleet { display: flex; align-items: center; gap: 7px; padding: 5px 9px; font-size: var(--fs-12); color: var(--text-2); }
+.rail-fleet.text-amber { color: var(--amber); }
+.rail-fleet .dot { flex: none; }

@@ -11,6 +11,7 @@ import { StartOrchestrator, StopOrchestrator } from "./Lifecycle.tsx";
 import { modelLabel } from "./model.ts";
 import type { OrchestratorAccess, OrchestratorView } from "../../api/types.ts";
 import { CopyCommand } from "../../components/primitives.tsx";
+import { RememberedDetails } from "../../components/RememberedDetails.tsx";
 
 export type TalkieView = OrchestratorView["local"];
 
@@ -94,33 +95,12 @@ export function ResumeButton({ size }: { size?: "sm" }) {
   );
 }
 
-export function StoppedCard({ kind, view }: { kind: Exclude<NotRunningKind, "manual">; view?: TalkieView | null }) {
-  if (kind === "failed") {
-    return (
-      <div className="orch-card" role="alert" aria-labelledby="orch-failed-title">
-        <div className="orch-card-icon" aria-hidden="true"><KeyRound size={18} strokeWidth={1.75} /></div>
-        <h2 id="orch-failed-title" className="orch-card-title">Talkie keeps failing</h2>
-        <p className="orch-card-body">{view?.last_error ?? "Claude exited repeatedly. Check walkie talkie status for the error."}</p>
-        <StartOrchestrator />
-      </div>
-    );
-  }
-
-  if (kind === "starting") {
-    return (
-      <div className="orch-card" role="status" aria-labelledby="orch-starting-title">
-        <div className="orch-card-icon" aria-hidden="true"><Loader size={18} strokeWidth={1.75} /></div>
-        <h2 id="orch-starting-title" className="orch-card-title">Talkie is starting</h2>
-        <p className="orch-card-body">{view?.last_error ?? "It starts on its own on this machine; nothing to press."}</p>
-      </div>
-    );
-  }
+export function StoppedCard({ view }: { view?: TalkieView | null }) {
   return (
-    <div className="orch-card" role="region" aria-labelledby="orch-stopped-title">
-      <div className="orch-card-icon" aria-hidden="true"><Play size={18} strokeWidth={1.75} /></div>
-      <h2 id="orch-stopped-title" className="orch-card-title">Talkie is stopped (by you)</h2>
-      <p className="orch-card-body">It stays stopped until you resume it. Resume makes it automatic again: it runs here while this machine leads your team, and stands by otherwise.</p>
-      <ResumeButton />
+    <div className="orch-card" role="status" aria-labelledby="orch-starting-title">
+      <div className="orch-card-icon" aria-hidden="true"><Loader size={18} strokeWidth={1.75} /></div>
+      <h2 id="orch-starting-title" className="orch-card-title">Talkie is starting</h2>
+      <p className="orch-card-body">{view?.last_error ?? "It starts on its own on this machine; nothing to press."}</p>
     </div>
   );
 }
@@ -143,7 +123,7 @@ export function TalkieStateCard({ view }: { view: TalkieView }) {
         <p className="orch-card-body">
           {view.lead
             ? <>Your team's Talkie runs on <strong className="mono">{view.lead}</strong>, the lead machine. This machine takes over on its own if {view.lead} is offline for 5 minutes, and hands back when it returns.</>
-            : <>No team machine can lead yet (the lead is the roster authority, or an owner's machine, with a model login). This machine starts it as soon as it may lead.</>}
+            : <>No team machine can lead yet. This machine starts it as soon as it may lead.</>}
         </p>
       </div>
     );
@@ -154,7 +134,7 @@ export function TalkieStateCard({ view }: { view: TalkieView }) {
       <h2 id="orch-login-title" className="orch-card-title">Talkie needs a model login</h2>
       <p className="orch-card-body">{view.needs ?? "Sign in to Claude Code on this machine."} It starts on its own the moment one is there.</p>
       {view.logins && view.logins.length > 0 && <p className="orch-card-note">Found here: {view.logins.join(", ")}.</p>}
-      <CopyCommand command="claude" />
+      <RememberedDetails id="talkie-login-how" summary="How to sign in here"><CopyCommand command="claude" /></RememberedDetails>
     </div>
   );
 }

@@ -55,7 +55,7 @@ export function AskCard({ view }: { view: AskView }) {
           <AuthorAvatar author={answer.author} size={18} />
           <div className="ask-answer-body">
             <span className="ask-answer-who">
-              {answer.author.agent ? <span className="mono">{answer.author.agent}</span> : displayName(team?.members, answer.author.handle)}
+              {answer.author.agent ? <span>{answer.author.agent}</span> : displayName(team?.members, answer.author.handle)}
               <span className="muted"> {(answer.body as { declined?: boolean }).declined ? "declined" : "answered"} · {clock(answer.ts)}</span>
             </span>
             <Markdown text={displayStoredText(String((answer.body as { text: string }).text))} opts={md} />

@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Image as ImageIcon, ImageOff, RefreshCw } from "lucide-react";
 import type { ScreenGroupView, ScreensView, ScreenView } from "../../api/types.ts";
-import { EmptyState, PlainTime } from "../../components/primitives.tsx";
+import { CopyCommand, EmptyState, PlainTime } from "../../components/primitives.tsx";
+import { RememberedDetails } from "../../components/RememberedDetails.tsx";
 import { hrefFor, navigate } from "../../lib/route.ts";
 import { imageKey, loadImage, peekImage, type ScreenImage } from "../../lib/screen-image.ts";
 import { aspectOf, chipOf, groupScrollTop, isTall, screenAlt, whoLabel } from "../../lib/status-page.ts";
@@ -157,8 +158,11 @@ export function ScreensSection({ channel, prefix, screens, group, note }: { chan
     return (
       <>
         {notice}
-        <EmptyState icon={<ImageIcon size={22} strokeWidth={1.5} />} title="No screens yet" command={`walkie projects screen ${prefix} ./screenshot.png --title "Home" --group "Site" --status works --about "The home page."`}>
-          <p>Screens are pictures of what the product looks like today, grouped by who uses them, each with a line about what it shows and whether it works. The team's agents add them from a terminal; they appear here.</p>
+        <EmptyState icon={<ImageIcon size={22} strokeWidth={1.5} />} title="No screens yet">
+          <p>Screens are pictures of what the product looks like today. Ask an agent to add the first screen.</p>
+          <RememberedDetails id="status-page-screens" summary="How this works">
+            <CopyCommand command={`walkie projects screen ${prefix} ./screenshot.png --title "Home" --group "Site" --status works --about "The home page."`} />
+          </RememberedDetails>
         </EmptyState>
       </>
     );

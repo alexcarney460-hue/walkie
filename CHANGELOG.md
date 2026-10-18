@@ -5,6 +5,15 @@ workflow on push. Both refuse a tag without a matching `## vX.Y.Z` section here,
 release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as a GitHub prerelease by
 `scripts/release.sh` only — the workflow's push trigger excludes pre-release tags.
 
+## v0.2.0-pre.19 (unreleased)
+
+- The dashboard keeps people in the loop with less to read: the navigation is five places on desktop and phone (Home, Projects, Talkie, Channels and Settings), and every older page and link still works (WALK-186).
+- Home is the live agent view, with what needs you on top: asks for you (answer or decline in place), stuck or waiting agents, cards waiting on your decision, Talkie suggestions to approve, machines waiting to join (owners) and logins on your machines that need signing in again, then each project's progress, then every person, machine and agent card with live activity and the accounts strip. The Home badge counts the same list on every page.
+- Settings holds the rest, one row each with a live status line: Team and billing, Machines and agents, Accounts, Seats, Integrations, Files, Status reports, Local models and the plain-language board. A row turns amber, and the Settings item shows a dot, when it needs you.
+- Pages put what to act on first and keep detail behind remembered disclosures: project boards collapse the status report to its verdict, a card puts Move, Assignee and Description first and its change history last, Talkie has one stopped bar and one Suggestions list, Accounts starts with a summary that filters the list, and Team opens its forms in sheets. No CLI commands or full agent addresses appear in the everyday pages (tooltips keep them).
+- Before you approve a Talkie suggestion that sends a message in your name, the exact message is shown.
+- Loading, empty and error states with Retry, 44 px phone targets, no sideways scrolling at phone width, AA contrast for status pills in both themes, a keyboard shortcuts list on `?`, and settings pages that load on demand.
+
 ## v0.2.0-pre.18 (unreleased)
 
 - On Linux, the daemon collects zombies left by killed descendants after `prctl(PR_SET_CHILD_SUBREAPER)` made it their subreaper. It waitpids only zombies it did not spawn, and a pre-prctl snapshot pid leaves the owned set when its start ticks change, so a reused pid can be collected (WALK-175).

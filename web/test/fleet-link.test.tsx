@@ -55,6 +55,7 @@ test("owner: an Add machines button on Machines and a Fleet links section", () =
   const out = render(state("owner", "maren"), <mod.Team />);
   expect(out).toContain(">Add machines</button>");
   expect(out).toContain('title="One link that adds many machines"');
+  expect(out).toContain('<summary>Advanced</summary>');
   expect(out).toContain('id="fleet-h">Fleet links</h2>');
 });
 

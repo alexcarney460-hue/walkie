@@ -65,8 +65,8 @@ export function StatusPageView({ project, state, group, onRetry }: { project: Pr
     return (
       <section className="spage" aria-label="Status page">
         {refreshNotice}
-        <EmptyState icon={<FileText size={22} strokeWidth={1.5} />} title="The status page is off for this project" command={`walkie projects report ${project.prefix} on`}>
-          <p>The page is written from the project's hourly status report. The project's creator or an owner turns it on from the Projects list (the Hourly status report switch).</p>
+        <EmptyState icon={<FileText size={22} strokeWidth={1.5} />} title="The status page is off for this project">
+          <p>Open the board's project settings to turn on hourly status reports.</p>
         </EmptyState>
       </section>
     );

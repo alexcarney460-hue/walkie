@@ -123,6 +123,7 @@ function ViewFallback({ name, detail }: { name: string; detail: string }) {
     <div className="page boundary-view" data-testid="boundary-view">
       <h1 className="page-title">{name}</h1>
       <ItemFallback detail={detail} />
+      <button type="button" className="btn btn-primary btn-sm" onClick={() => window.location.reload()}>Reload</button>
     </div>
   );
 }
@@ -139,7 +140,7 @@ function RootFallback({ message, detail, onBack }: { message: string; detail: st
         <Details text={detail} />
         <div className="firstrun-actions">
           <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>Reload</button>
-          <a className="btn" href={hrefFor({ view: "mission" })} onClick={onBack}>Back to Mission Control</a>
+          <a className="btn" href={hrefFor({ view: "home" })} onClick={onBack}>Back to Home</a>
         </div>
       </div>
     </main>

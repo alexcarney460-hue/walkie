@@ -91,7 +91,7 @@ export function ProjectRows({ p, on, off, open, setOn, toggleIssue, setOpen }: {
                   <Flags flags={i.flags} />
                 </li>
               ))}
-              {p.issues.length > 300 && <li className="muted">… {p.issues.length - 300} more (edit them in the plan file: walkie import linear --dry-run)</li>}
+              {p.issues.length > 300 && <li className="muted">… {p.issues.length - 300} more (review them in the import plan)</li>}
             </ul>
           </td>
         </tr>

@@ -52,7 +52,7 @@ test("Mission Control card: the best group, its single-machine and split picks, 
   expect(out).toContain("Split across 2");
   expect(out).toContain("Qwen3 235B-A22B · 4-bit");
   expect(out).toContain("on office-studio + office-mini");
-  expect(out).toContain('href="#/team?tab=models"');
+  expect(out).toContain('href="#/settings?tab=models"');
 });
 
 test("card when nothing fits now: says so and names what idle machines could run; empty team", () => {

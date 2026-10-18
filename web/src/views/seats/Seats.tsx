@@ -11,6 +11,7 @@ import { useStore } from "../../state/store.tsx";
 import { MessageBoundary } from "../orchestrator/Messages.tsx";
 import { BusyCard, busyCounts, clockTime } from "./BusyCard.tsx";
 import { AgentAdminCard } from "./AgentAdminCard.tsx";
+import { RememberedDetails } from "../../components/RememberedDetails.tsx";
 import { LegacyMemory } from "./LegacyMemory.tsx";
 import { SeatOwnership } from "./SeatOwnership.tsx";
 
@@ -407,9 +408,10 @@ export function Seats() {
           </div>
           <div className="seats-side">
             {data.local.allow && <BusyCard local={data.local} onChange={reload} />}
+            <h2>This machine's permissions</h2>
             <ThisMachine local={data.local} hostname={me?.node.hostname ?? "this machine"} onChange={reload} />
             <AgentAdminCard />
-            <LegacyMemory />
+            <RememberedDetails id="seats-advanced" summary="Advanced"><LegacyMemory /></RememberedDetails>
             <Section title="Machines" id="seat-hosts-h">
               {others.length ? (
                 <ul className="seat-hosts">

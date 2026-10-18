@@ -6,8 +6,9 @@ import { Ban, Download, Paperclip, Pin, Trash2, Unlink, Upload, X } from "lucide
 import { api, friendlyError } from "../../api/client.ts";
 import type { AgentView, CardView, ProjectView, TimelineEntry } from "../../api/types.ts";
 import { AskAnswer } from "../../components/AskAnswer.tsx";
+import { RememberedDetails } from "../../components/RememberedDetails.tsx";
 import { ErrorState, RelTime, SkeletonRows } from "../../components/primitives.tsx";
-import { agentAddress, canAnswer } from "../../lib/format.ts";
+import { agentAddress, canAnswer, displayName } from "../../lib/format.ts";
 import { assignees } from "../../lib/projects.ts";
 import { useNow } from "../../lib/time.ts";
 import { SAVED_REFRESHING, storeWriteAnswer } from "../../lib/store-write.ts";
@@ -28,8 +29,14 @@ const IGNORED: Record<string, string> = {
   unknown_board: "that board doesn't exist",
 };
 
-function who(a: TimelineEntry["author"]): string {
-  return `@${a.handle}${a.agent ? `/${a.agent}` : ""}`;
+function who(a: TimelineEntry["author"], members: Parameters<typeof displayName>[0]): string {
+  const person = displayName(members, a.handle);
+  return a.agent ? `${a.agent} · ${person.split(" ")[0]}'s agent` : person;
+}
+
+function assigneeLabel(address: string, members: Parameters<typeof displayName>[0]): string {
+  const parts = address.replace(/^@/, "").split("/");
+  return parts.length === 3 ? `${parts[2]} · ${displayName(members, parts[0] ?? "").split(" ")[0]}'s agent` : address;
 }
 
 function describe(t: TimelineEntry, project: ProjectView): string {
@@ -153,7 +160,6 @@ export function CardDrawer({ card, project, onClose, byCard }: {
         </header>
         <div className="drawer-body">
           {card.state !== "open" && <p className="card-state-note">This card is {card.state}.</p>}
-          <ProvenanceSection status={historyError ? "error" : shown ? "ready" : "loading"} timeline={shown?.timeline} columns={provColumns} />
           <div className="card-fields">
             <label className="field">
               <span className="field-label">Move to</span>
@@ -171,11 +177,78 @@ export function CardDrawer({ card, project, onClose, byCard }: {
             )}
             <label className="field">
               <span className="field-label">Assignee</span>
-              <select className="select mono" value={card.assignee ?? ""} disabled={busy} onChange={(e) => void save({ assignee: e.target.value || null })}>
+              <select className="select" title={card.assignee ?? undefined} value={card.assignee ?? ""} disabled={busy} onChange={(e) => void save({ assignee: e.target.value || null })}>
                 <option value="">Unassigned</option>
-                {[...new Set([...(card.assignee ? [card.assignee] : []), ...people])].map((a) => <option key={a} value={a}>{a}</option>)}
+                {[...new Set([...(card.assignee ? [card.assignee] : []), ...people])].map((a) => <option key={a} value={a} title={a}>{assigneeLabel(a, team?.members)}</option>)}
               </select>
             </label>
+          </div>
+
+          <div className="drawer-section">
+            <h3 className="drawer-h">Description</h3>
+            <textarea className="textarea card-body" rows={5} value={body} maxLength={16_000} placeholder="What needs doing, links, acceptance criteria" onChange={(e) => setBody(e.target.value)} />
+            {body !== card.body && <div className="card-actions"><button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void save({ body })}>Save description</button></div>}
+          </div>
+
+          <div className="drawer-section">
+            <h3 className="drawer-h">Activity and comments</h3>
+            {historyError ? <ErrorState compact message={historyError} onRetry={() => setReload((n) => n + 1)} /> : !shown ? <SkeletonRows rows={3} /> : (
+              <ol className="card-timeline">
+                {shown.timeline.map((t) => (
+                  <li key={t.id} className={`ctl ctl-${t.kind}${t.ignored ? " is-ignored" : ""}`}>
+                    <div className="ctl-top">
+                      <span title={`@${t.author.handle}/${t.author.node}${t.author.agent ? `/${t.author.agent}` : ""}`}>{who(t.author, team?.members)}</span>
+                      <RelTime ts={t.ts} className="muted" />
+                    </div>
+                    {t.kind === "comment" ? <p className="ctl-text">{t.text}</p> : <p className="ctl-op">{describe(t, project)}</p>}
+                    {t.ignored && <p className="ctl-ignored">Not applied: {IGNORED[t.ignored] ?? t.ignored}</p>}
+                  </li>
+                ))}
+              </ol>
+            )}
+            <div className="card-comment">
+              <textarea className="textarea" rows={2} value={comment} maxLength={16_000} placeholder="Comment (everyone on the project sees it)" aria-label="Comment"
+                onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(); }} />
+              <button type="button" className="btn btn-sm btn-primary" disabled={busy || !comment.trim()} onClick={() => void send()}>Comment</button>
+            </div>
+          <div className="drawer-section">
+            <h3 className="drawer-h">Blocked</h3>
+            <div className="card-block">
+              <input className="input" value={reason} maxLength={300} placeholder="What it's waiting on" onChange={(e) => setReason(e.target.value)} />
+              {card.blocked
+                ? <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void save({ blocked: false, blocked_reason: null })}>Unblock</button>
+                : <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void save({ blocked: true, blocked_reason: reason.trim() || null })}><Ban size={13} strokeWidth={2} />Mark blocked</button>}
+            </div>
+          </div>
+
+          <div className="drawer-section">
+            <h3 className="drawer-h">Agents on it</h3>
+            {onIt.length ? (
+              <ul className="card-agents">
+                {onIt.map((a) => (
+                  <li key={a.id}><AgentFaces agents={[a]} max={1} /><span className="truncate" title={agentAddress(a)}>{a.agent} · {displayName(team?.members, a.handle).split(" ")[0]}'s agent</span><span className={`muted state-text-${a.effective_state}`}>{a.effective_state}</span></li>
+                ))}
+              </ul>
+            ) : <p className="muted">No agent reports working on {card.key}.</p>}
+          </div>
+
+          {openAsks.length > 0 && (
+            <div className="drawer-section">
+              <h3 className="drawer-h">Open asks about {card.key}</h3>
+              {openAsks.map((a) => (
+                <div key={a.ask.id} className="card-ask">
+                  <p>{String((a.ask.body as { text?: string }).text ?? "")}</p>
+                  <AskAnswer view={a} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          </div>
+
+          <CardFiles card={card} project={project} />
+
+          <div className="card-fields card-meta-fields">
             <label className="field">
               <span className="field-label">Estimate</span>
               <input className="input tnum" type="number" min={0} max={1000} defaultValue={card.estimate ?? ""} key={`e${card.rev}`}
@@ -193,70 +266,6 @@ export function CardDrawer({ card, project, onClose, byCard }: {
             </label>
           </div>
 
-          <div className="drawer-section">
-            <h3 className="drawer-h">Description</h3>
-            <textarea className="textarea card-body" rows={5} value={body} maxLength={16_000} placeholder="What needs doing, links, acceptance criteria" onChange={(e) => setBody(e.target.value)} />
-            {body !== card.body && <div className="card-actions"><button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void save({ body })}>Save description</button></div>}
-          </div>
-
-          <CardFiles card={card} project={project} />
-
-          <div className="drawer-section">
-            <h3 className="drawer-h">Blocked</h3>
-            <div className="card-block">
-              <input className="input" value={reason} maxLength={300} placeholder="What it's waiting on" onChange={(e) => setReason(e.target.value)} />
-              {card.blocked
-                ? <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void save({ blocked: false, blocked_reason: null })}>Unblock</button>
-                : <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void save({ blocked: true, blocked_reason: reason.trim() || null })}><Ban size={13} strokeWidth={2} />Mark blocked</button>}
-            </div>
-          </div>
-
-          <div className="drawer-section">
-            <h3 className="drawer-h">Agents on it</h3>
-            {onIt.length ? (
-              <ul className="card-agents">
-                {onIt.map((a) => (
-                  <li key={a.id}><AgentFaces agents={[a]} max={1} /><span className="mono truncate">{agentAddress(a)}</span><span className={`muted state-text-${a.effective_state}`}>{a.effective_state}</span></li>
-                ))}
-              </ul>
-            ) : <p className="muted">No agent reports working on {card.key}. An agent joins it with walkie_task_start or a branch named after the key.</p>}
-          </div>
-
-          {openAsks.length > 0 && (
-            <div className="drawer-section">
-              <h3 className="drawer-h">Open asks about {card.key}</h3>
-              {openAsks.map((a) => (
-                <div key={a.ask.id} className="card-ask">
-                  <p>{String((a.ask.body as { text?: string }).text ?? "")}</p>
-                  <AskAnswer view={a} />
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="drawer-section">
-            <h3 className="drawer-h">History and comments</h3>
-            {historyError ? <ErrorState compact message={historyError} onRetry={() => setReload((n) => n + 1)} /> : !shown ? <SkeletonRows rows={3} /> : (
-              <ol className="card-timeline">
-                {shown.timeline.map((t) => (
-                  <li key={t.id} className={`ctl ctl-${t.kind}${t.ignored ? " is-ignored" : ""}`}>
-                    <div className="ctl-top">
-                      <span className="mono">{who(t.author)}</span>
-                      <RelTime ts={t.ts} className="muted" />
-                    </div>
-                    {t.kind === "comment" ? <p className="ctl-text">{t.text}</p> : <p className="ctl-op">{describe(t, project)}</p>}
-                    {t.ignored && <p className="ctl-ignored">Not applied: {IGNORED[t.ignored] ?? t.ignored}</p>}
-                  </li>
-                ))}
-              </ol>
-            )}
-            <div className="card-comment">
-              <textarea className="textarea" rows={2} value={comment} maxLength={16_000} placeholder="Comment (everyone on the project sees it)" aria-label="Comment"
-                onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(); }} />
-              <button type="button" className="btn btn-sm btn-primary" disabled={busy || !comment.trim()} onClick={() => void send()}>Comment</button>
-            </div>
-          </div>
-
           {error && <p className="field-error" role="alert">{error}</p>}
           <div className="drawer-section card-danger">
             {card.state === "deleted"
@@ -266,6 +275,9 @@ export function CardDrawer({ card, project, onClose, byCard }: {
                 <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => { if (window.confirm(`Delete ${card.key}? It stays in the signed history and can be restored.`)) void save({ state: "deleted" }); }}><Trash2 size={13} strokeWidth={2} />Delete</button>
               </>}
           </div>
+          <RememberedDetails id={`card-provenance-${card.id}`} summary="History of changes">
+          <ProvenanceSection status={historyError ? "error" : shown ? "ready" : "loading"} timeline={shown?.timeline} columns={provColumns} />
+          </RememberedDetails>
         </div>
       </aside>
     </div>

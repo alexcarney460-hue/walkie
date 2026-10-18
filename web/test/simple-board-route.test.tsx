@@ -19,7 +19,7 @@ test.skipIf(!tooling)("simple mode is readable at phone and desktop widths in bo
 import React from ${source("web/node_modules/react/index.js")};
 import { createRoot } from ${source("web/node_modules/react-dom/client.js")};
 import { SimpleBoard } from ${source("web/src/views/simple/SimpleBoard.tsx")};
-import { Sidebar, MobileBar } from ${source("web/src/components/Shell.tsx")};
+import { Sidebar, MobileBar, TabBar } from ${source("web/src/components/Shell.tsx")};
 import { api } from ${source("web/src/api/client.ts")};
 import { StaticStore } from ${source("web/src/state/store.tsx")};
 import { initialState } from ${source("web/src/state/reducer.ts")};
@@ -57,7 +57,8 @@ function App() {
     React.createElement(StaticStore, { state },
       React.createElement(Sidebar, { onSearch: () => {} }),
       React.createElement(MobileBar, { onSearch: () => {} }),
-      React.createElement(SimpleBoard)));
+      React.createElement(SimpleBoard),
+      React.createElement(TabBar)));
 }
 createRoot(document.getElementById("root")).render(React.createElement(App));
 `;
@@ -138,10 +139,10 @@ try {
         return getComputedStyle(document.body).backgroundColor;
       };
       const box = button.getBoundingClientRect();
-      const link = document.querySelector(".mobile-simple");
-      const linkBox = link.getBoundingClientRect();
-      const linkStyle = getComputedStyle(link);
-      const rail = [...document.querySelectorAll(".rail-link")].find((a) => a.textContent.includes("Simple"));
+      // Simple lives under Settings (WALK-186): the Settings item is the current one in the tab bar and the rail.
+      const tab = document.querySelector('.tabbar a[aria-current="page"]');
+      const tabBox = tab ? tab.getBoundingClientRect() : null;
+      const rail = document.querySelector('.rail-link[aria-current="page"]');
       const railBox = rail ? rail.getBoundingClientRect() : null;
       return {
         font: parseFloat(styleOf(root).fontSize),
@@ -152,8 +153,8 @@ try {
         overflow: document.documentElement.scrollWidth <= window.innerWidth + 1 && document.body.scrollWidth <= window.innerWidth + 1,
         draggable: document.querySelectorAll("[draggable=true]").length,
         text: root.innerText,
-        mobile: { display: linkStyle.display, width: linkBox.width, height: linkBox.height },
-        rail: railBox ? { width: railBox.width, height: railBox.height, display: getComputedStyle(rail).display } : null,
+        mobile: tabBox ? { display: getComputedStyle(tab).display, width: tabBox.width, height: tabBox.height, text: tab.textContent } : null,
+        rail: railBox ? { width: railBox.width, height: railBox.height, display: getComputedStyle(rail).display, text: rail.textContent } : null,
       };
     });
     check(prefix + "base font", metrics.font >= 18, metrics.font);
@@ -167,8 +168,8 @@ try {
     check(prefix + "no agent word", !/\\bagents?\\b/i.test(metrics.text), metrics.text.slice(0, 200));
     check(prefix + "says assistant", /\\bassistant\\b/i.test(metrics.text));
     colors[theme] = metrics.color + "|" + metrics.background;
-    if (width === 390) check(prefix + "phone link", metrics.mobile.display !== "none" && metrics.mobile.width >= 44 && metrics.mobile.height >= 44, metrics.mobile);
-    if (width === 1440) check(prefix + "sidebar link", !!metrics.rail && metrics.rail.display !== "none" && metrics.rail.height >= 44, metrics.rail);
+    if (width === 390) check(prefix + "phone Settings tab is current", !!metrics.mobile && metrics.mobile.display !== "none" && metrics.mobile.text.includes("Settings") && metrics.mobile.width >= 44 && metrics.mobile.height >= 44, metrics.mobile);
+    if (width === 1440) check(prefix + "sidebar Settings is current", !!metrics.rail && metrics.rail.display !== "none" && metrics.rail.text.includes("Settings"), metrics.rail);
     await page.locator(".simple-card").first().focus();
     await page.keyboard.press("Enter");
     await page.getByRole("dialog").waitFor();

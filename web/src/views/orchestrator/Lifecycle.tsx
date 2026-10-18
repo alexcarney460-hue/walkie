@@ -3,13 +3,14 @@
 // the phone app has no Orchestrator tab. Start sends only the access and model the person picks (ORCH-2: `platform`, the default,
 // always allows the Sqwakie tools and CLI; `full` allows every tool); the rest is the daemon's defaults (Claude from its
 // PATH or the usual install places, the home directory, default permissions). `walkie orchestrator start` sets them.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Play, Square } from "lucide-react";
 import { api } from "../../api/client.ts";
 import type { OrchestratorAccess } from "../../api/types.ts";
 import { ErrorState } from "../../components/primitives.tsx";
 import { lifecycleError } from "./lifecycle-error.ts";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { RememberedDetails } from "../../components/RememberedDetails.tsx";
 
 const STARTED_WAIT_MS = 20_000;
 
@@ -35,7 +36,7 @@ export function AccessChoice({ value, onChange, disabled, compact }: { value: Or
 }
 
 /** Starts the orchestrator: "Starting…" until it answers (and until it shows as running here), the daemon's refusal inline. */
-export function StartOrchestrator({ size }: { size?: "sm" }) {
+export function StartOrchestrator({ size, settings }: { size?: "sm"; settings?: ReactNode }) {
   const pending = useRef(false);
   const [phase, setPhase] = useState<"idle" | "starting" | "started">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +62,7 @@ export function StartOrchestrator({ size }: { size?: "sm" }) {
       if (lead && !window.confirm(`Talkie is already running on ${lead}; start here anyway?`)) return;
       const { local } = await api.orchestratorStart(access, model);
       if (local.running) { started = true; setPhase("started"); return; }
-      setError(local.last_error ? `It didn't start: ${local.last_error}` : "It didn't start. Try walkie talkie start in a terminal to see why.");
+      setError(local.last_error ? `It didn't start: ${local.last_error}` : "Talkie did not start. Check this machine's settings and try again.");
     } catch (err) {
       setError(lifecycleError(err));
     } finally {
@@ -70,12 +71,15 @@ export function StartOrchestrator({ size }: { size?: "sm" }) {
   };
   return (
     <div className="orch-start">
-      <AccessChoice value={access} onChange={setAccess} disabled={phase !== "idle"} compact={size === "sm"} />
-      <ModelPicker value={model} onPick={setModel} disabled={phase !== "idle"} compact={size === "sm"} id={size === "sm" ? "orch-start-model-sm" : "orch-start-model"} />
       <button type="button" className={`btn btn-primary${size === "sm" ? " btn-sm" : ""}`} disabled={phase !== "idle"} aria-busy={phase !== "idle"} onClick={() => void start()}>
         <Play size={size === "sm" ? 13 : 15} strokeWidth={2} aria-hidden="true" />
         {phase === "idle" ? "Start Talkie" : "Starting…"}
       </button>
+      <RememberedDetails id="talkie-start-settings" summary="Talkie settings">
+        <AccessChoice value={access} onChange={setAccess} disabled={phase !== "idle"} compact={size === "sm"} />
+        <ModelPicker value={model} onPick={setModel} disabled={phase !== "idle"} compact={size === "sm"} id={size === "sm" ? "orch-start-model-sm" : "orch-start-model"} />
+        {settings}
+      </RememberedDetails>
       {error && <ErrorState message={error} compact />}
     </div>
   );
