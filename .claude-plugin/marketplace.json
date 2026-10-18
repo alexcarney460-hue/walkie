@@ -1,0 +1,13 @@
+{
+  "name": "walkie",
+  "description": "Claude Code plugins for Sqwakie (walkie), a walkie-talkie for a team's AI agents.",
+  "owner": {
+    "name": "RC Studios"
+  },
+  "plugins": [
+    {
+      "name": "walkie",
+      "source": "./"
+    }
+  ]
+}

@@ -76,7 +76,8 @@ describe("walkie compute (fake daemon)", () => {
     expect(t.out[0]).toContain("$1,095.00/month");
     expect(t.out[0]).toContain("$1.52/h  $1,109.60/month · 5-minute minimum");
     expect(t.out[0]).not.toMatch(/\$0\.75\/h  \$547\.50\/month · /); // CPU tiers: no minimum line
-    expect(t.out[0]).toContain("Each machine includes 1,024 GiB of outbound data, then $0.02 per GiB.");
+    expect(t.out[0]).toContain("Each machine includes 1,024 GiB of outbound data per 730 hours, prorated by rented hours, then $0.02 per GiB.");
+    expect(t.out[0]).not.toContain("GiB of outbound data, then"); // the flat allowance sentence is gone (E0 r2 HIGH)
     noCost(t.out.join("\n"));
     const j = fakeCtx(["quotes"], { json: true }, { computeQuotes: async () => QUOTES });
     await compute(j.ctx);

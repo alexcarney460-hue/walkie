@@ -23,9 +23,11 @@ const recordingBinary = (v: string) => `#!/bin/sh\ncase "$1" in version) echo "w
 const sha256 = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
 
 interface Release { binary: string; sums: string; sig: Uint8Array | null }
-function release(opts: { version?: string; binaryVersion?: string; tamperSums?: boolean; noSig?: boolean; noVersionLine?: boolean; record?: boolean } = {}): Release {
+/** A script whose interpreter is a file that is not executable: running it fails with "Permission denied" (exit 126), as on a noexec /tmp. */
+const unrunnableBinary = "#!/etc/hosts\n";
+function release(opts: { version?: string; binaryVersion?: string; tamperSums?: boolean; noSig?: boolean; noVersionLine?: boolean; record?: boolean; unrunnable?: boolean } = {}): Release {
   const version = opts.version ?? "v0.1.0";
-  const binary = (opts.record ? recordingBinary : fakeBinary)(opts.binaryVersion ?? version.replace(/^v/, ""));
+  const binary = opts.unrunnable ? unrunnableBinary : (opts.record ? recordingBinary : fakeBinary)(opts.binaryVersion ?? version.replace(/^v/, ""));
   const sums = `${opts.noVersionLine ? "" : `version ${version}\n`}${sha256(binary)}  ${asset}\n`;
   const sig = signRelease(new TextEncoder().encode(sums), keyPem);
   return { binary, sums: opts.tamperSums ? sums.replace(/^version v0\.1\.0/, "version v9.9.9") : sums, sig: opts.noSig ? null : sig };
@@ -173,6 +175,27 @@ describe.skipIf(!haveTools)("install.sh on a stock system (env -i, system PATH o
     expect(r.code).toBe(1);
     expect(r.err).toContain("reports 'walkie 0.0.9', not 'walkie 0.1.0'");
     expect(existsSync(r.bin)).toBe(false);
+  });
+
+  // sq-qa C1 pre.19 LOW: on a /tmp mounted noexec the installer used to say "the downloaded binary reports ''".
+  test("a temporary directory that cannot run programs (noexec /tmp) is named with the TMPDIR way out; nothing installed", async () => {
+    current = release({ unrunnable: true });
+    const r = await install({ WALKIE_VERSION: "v0.1.0" });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("could not run the downloaded binary");
+    expect(r.err).toContain("noexec");
+    expect(r.err).toContain('TMPDIR="$HOME" sh');
+    expect(r.err).not.toContain("reports ''");
+    expect(existsSync(r.bin)).toBe(false);
+  });
+
+  test("the noexec refusal leaves an existing installation untouched and says so", async () => {
+    current = release({ unrunnable: true });
+    const r = await install({ WALKIE_VERSION: "v0.1.0" }, { existing: "0.0.5" });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("could not run the downloaded binary");
+    expect(r.err).toContain("the installed walkie 0.0.5 is unchanged");
+    expect(readFileSync(r.bin, "utf8")).toBe(fakeBinary("0.0.5"));
   });
 
   // Release gate 2026-09-26 (Codex 2 / Fable 2): the installer never rolls an installation back silently, and the

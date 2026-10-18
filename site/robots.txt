@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
 Disallow: /join
+Disallow: /api/
 Sitemap: https://sqwakie.si/sitemap.xml

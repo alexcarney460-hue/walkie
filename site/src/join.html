@@ -17,7 +17,7 @@
   <meta name="twitter:description" content="Join your team's machines with a one-time link from a team owner.">
   <meta name="twitter:image" content="{{og_image}}">
   <meta name="robots" content="noindex, nofollow">
-  <!-- The URL's #fragment carries an invite code or a fleet link: it never reaches a server, and this page sends nothing. -->
+  <!-- The URL's #fragment carries an invite code or a fleet link: it never reaches a server. All this page sends is metrics.js's same-origin analytics (a page view and copy clicks), which carries the path without the fragment. -->
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#211f1d">
@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="/assets/site.css">
   <script src="/assets/join.js" defer></script>
   <script src="/assets/site.js" defer></script>
+  <script src="/assets/metrics.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>

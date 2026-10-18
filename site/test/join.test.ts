@@ -599,18 +599,33 @@ describe("the code never leaves the page", () => {
     const site = readFileSync(join(SITE, "assets", "site.js"), "utf8");
     for (const api of ["fetch(", "XMLHttpRequest", "sendBeacon", "WebSocket"]) expect(site.includes(api)).toBe(false);
   });
-  test("Vercel serves /join with connect-src 'none', no inline script, no referrer, no framing", () => {
+  test("Vercel serves /join with connect-src 'self' only, no inline script, no referrer, no framing", () => {
     for (const source of ["/join", "/join.html"]) {
       const rule = vercel.headers.find((h) => h.source === source);
       const get = (k: string) => rule?.headers.find((h) => h.key === k)?.value ?? "";
       const csp = get("Content-Security-Policy");
       expect(csp).toContain("default-src 'none'");
-      expect(csp).toContain("connect-src 'none'");
+      // Same origin only, for metrics.js's page view; never a third-party origin.
+      expect(csp).toMatch(/(^|; )connect-src 'self'(;|$)/);
       expect(csp).toContain("script-src 'self'");
       expect(csp).not.toContain("unsafe-inline");
       expect(csp).toContain("frame-ancestors 'none'");
       expect(csp).toContain("form-action 'none'");
       expect(get("Referrer-Policy")).toBe("no-referrer");
     }
+  });
+  test("metrics.js loads only the same-origin Vercel script and never sends the fragment", () => {
+    const src = readFileSync(join(SITE, "assets", "metrics.js"), "utf8");
+    expect(src.match(/https?:\/\//g) ?? []).toEqual([]);
+    const loaded: string[] = [];
+    const win: Record<string, unknown> = { location: new URL("https://sqwakie.si/join#k=SECRET") };
+    const doc = { addEventListener() {}, createElement: () => ({}), head: { appendChild: (s: { src: string }) => loaded.push(s.src) } };
+    new Function("window", "document", src)(win, doc);
+    expect(loaded).toEqual(["/_vercel/insights/script.js"]);
+    const before = (win.vaq as unknown[][]).find((a) => a[0] === "beforeSend")?.[1] as (e: { url: string }) => { url: string };
+    const sent = (url: string) => before({ url }).url;
+    expect(sent("https://sqwakie.si/join#k=SECRET")).toBe("https://sqwakie.si/join");
+    expect(sent("https://sqwakie.si/join?code=SECRET&utm_source=x#k=SECRET")).toBe("https://sqwakie.si/join?utm_source=x");
+    expect(sent("https://sqwakie.si/welcome?session_id=cs_live_SECRET&ref=hn")).toBe("https://sqwakie.si/welcome?ref=hn");
   });
 });

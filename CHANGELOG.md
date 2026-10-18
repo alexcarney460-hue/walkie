@@ -5,7 +5,13 @@ workflow on push. Both refuse a tag without a matching `## vX.Y.Z` section here,
 release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as a GitHub prerelease by
 `scripts/release.sh` only — the workflow's push trigger excludes pre-release tags.
 
-## v0.2.0-pre.19 (unreleased)
+## v0.2.0-pre.20
+
+- `walkie compute` states the outbound data each rented machine includes the way billing counts it and the dashboard shows it: an allowance per 730 hours, prorated by rented hours, then the per-GiB price. Earlier releases printed the allowance as a flat amount per machine.
+- Sqwakie's source now carries a Claude Code plugin: a plugin manifest and marketplace entry that give Claude Code the same hook entrypoint and MCP server `walkie hooks install claude` sets up (docs/claude-code-plugin.md). The plugin does not install the walkie binary; install that first.
+- The installer says when it cannot run the downloaded binary because the temporary directory does not allow running programs (a noexec /tmp), and how to point TMPDIR at another directory. Before, it said the binary reported an empty version.
+
+## v0.2.0-pre.19
 
 - The dashboard keeps people in the loop with less to read: the navigation is five places on desktop and phone (Home, Projects, Talkie, Channels and Settings), and every older page and link still works (WALK-186).
 - Home is the live agent view, with what needs you on top: asks for you (answer or decline in place), stuck or waiting agents, cards waiting on your decision, Talkie suggestions to approve, machines waiting to join (owners) and logins on your machines that need signing in again, then each project's progress, then every person, machine and agent card with live activity and the accounts strip. The Home badge counts the same list on every page.

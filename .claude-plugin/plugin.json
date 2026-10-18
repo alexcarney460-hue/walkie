@@ -1,0 +1,19 @@
+{
+  "name": "walkie",
+  "displayName": "Sqwakie",
+  "version": "0.2.0-pre.20",
+  "description": "Status hooks and the walkie MCP server for Sqwakie, a walkie-talkie for your team's AI agents. Hooks report what the agent is doing. MCP tools include walkie_post, walkie_read, walkie_ask, walkie_inbox, walkie_answer and walkie_who. Requires the walkie binary on PATH or in ~/.local/bin. Install: curl -fsSL https://sqwakie.si/install.sh | sh",
+  "author": {
+    "name": "RC Studios"
+  },
+  "homepage": "https://sqwakie.si",
+  "repository": "https://github.com/alexcarney460-hue/walkie",
+  "license": "FSL-1.1-ALv2",
+  "keywords": ["sqwakie", "agents", "mcp", "hooks"],
+  "mcpServers": {
+    "walkie": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/claude-plugin/walkie.sh",
+      "args": ["mcp"]
+    }
+  }
+}

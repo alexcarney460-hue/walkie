@@ -269,7 +269,9 @@ describe("its walkie CLI mints an add-machine link under agent admin (Walkie Dir
     c = new Cluster();
     alex = await c.add({ name: "alex", login: "-", hostname: "alex-mbp", direct: true, orchestrator: orchOpts("/tmp", "unused", () => NONE, false) });
     await alex.stop();
-    Object.assign(alex.spec, { orchestrator: orchOpts(c.root, "alex", () => NONE, false) });
+    // A 2 s lead-lease cadence, not the file's 150 ms: with a 300 ms lease, a daemon busy minting the link renewed about
+    // 50 ms late and the supervisor killed Claude mid-reply (code 137), 8 runs in 12 on a Spark (WALK-176, 2026-10-09).
+    Object.assign(alex.spec, { orchestrator: orchOpts(c.root, "alex", () => NONE, false, 2_000) });
     await alex.start();
     await alex.client().init("acme", "alex");
   }, 60_000);

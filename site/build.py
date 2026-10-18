@@ -48,6 +48,8 @@ def load_brand() -> dict[str, str]:
     package_href = f"https://github.com/{owner}/{cli}-releases/releases/download/v{installer_version()}/{name}.pkg" if package_available else ""
     return {
         "name": name,
+        # Lowercase name for third-party listing URLs (footer "Listed on" line).
+        "slug": name.lower(),
         "cli": cli,
         "tagline": tagline,
         "version": installer_version(),

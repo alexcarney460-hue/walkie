@@ -14,9 +14,9 @@ import {
 
 const USAGE = "walkie compute quotes | rent <tier>[=count] … [--idle <minutes>] [--yes] | list | stop <id|all> [--yes] | credit [buy 50|200|1000] | handover object";
 
-/** "Each machine includes 1,024 GiB of outbound data, then $0.02 per GiB." */
+/** "Each machine includes 1,024 GiB of outbound data per 730 hours, prorated by rented hours, then $0.02 per GiB." (the dashboard's words) */
 export function egressText(q: Quotes): string {
-  return `Each machine includes ${q.egress_included_gib.toLocaleString("en-US")} GiB of outbound data, then ${usd(q.egress_price_per_gib_micros)} per GiB.`;
+  return `Each machine includes ${q.egress_included_gib.toLocaleString("en-US")} GiB of outbound data per 730 hours, prorated by rented hours, then ${usd(q.egress_price_per_gib_micros)} per GiB.`;
 }
 
 export function quotesText(q: Quotes): string {

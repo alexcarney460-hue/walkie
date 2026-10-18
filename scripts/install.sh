@@ -31,7 +31,7 @@ REPO="${WALKIE_REPO:-alexcarney460-hue/walkie-releases}"
 BIN_DIR="${WALKIE_BIN_DIR:-$HOME/.local/bin}"
 # The release a plain `curl … | sh` installs. Bump this one line when a new release should be what new machines get;
 # site/build.py reads it for the landing page's footer, so the page and the installer can't drift apart.
-DEFAULT_VERSION="v0.2.0-pre.19"
+DEFAULT_VERSION="v0.2.0-pre.20"
 VERSION="${WALKIE_VERSION:-$DEFAULT_VERSION}"
 if [ -n "${WALKIE_MIN_VERSION:-}" ] && [ -z "${WALKIE_VERSION:-}" ] && [ -n "${WALKIE_BASE_URL:-}" ]; then VERSION="$WALKIE_MIN_VERSION"; fi
 # The Walkie release-signing public key (EC P-256). Not the license key. Rotated only by a new installer.
@@ -187,7 +187,11 @@ fi
 
 # 5. The downloaded binary must report the signed version, checked before anything on PATH changes.
 chmod 755 "$tmp/walkie"
-reported=$("$tmp/walkie" version 2>/dev/null || true)
+run_rc=0
+reported=$("$tmp/walkie" version 2>/dev/null) || run_rc=$?
+# 126: the system refused to run it at all, most often because the temporary directory is mounted noexec.
+[ "$run_rc" != 126 ] \
+  || die "could not run the downloaded binary in $tmp (permission denied: the temporary directory may be mounted noexec): nothing installed${existing:+ (the installed walkie $existing is unchanged)}. Run the installer again with TMPDIR set to a directory that can run programs, for example: curl -fsSL https://sqwakie.si/install.sh | TMPDIR=\"\$HOME\" sh"
 [ "$reported" = "walkie ${signed#v}" ] \
   || die "the downloaded binary reports '$reported', not 'walkie ${signed#v}': nothing installed${existing:+ (the installed walkie $existing is unchanged)}"
 

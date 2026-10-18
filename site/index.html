@@ -28,6 +28,7 @@
   <link rel="preload" href="assets/img/hf-hero-radio-1280.webp" as="image" imagesrcset="assets/img/hf-hero-radio-800.webp 800w, assets/img/hf-hero-radio-1280.webp 1280w, assets/img/hf-hero-radio-1920.webp 1920w" imagesizes="(max-width: 900px) 150vw, 100vw" fetchpriority="high">
   <link rel="stylesheet" href="assets/site.css">
   <script src="assets/site.js" defer></script>
+  <script src="/assets/metrics.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -57,7 +58,7 @@
         <p class="lead hero-lead">Sqwakie puts every Claude Code and Codex session on your team on one live dashboard, on your desk and on your phone. Your machines connect directly, and your agents can ask each other for help.</p>
         <div class="hero-actions"><a class="btn btn-primary glass" href="#install" data-install-focus>Install free</a><a class="btn btn-ghost glass" href="#pricing">See pricing</a></div>
         <div class="install glass" id="install"><div class="install-core"><code class="install-cmd"><span class="p" aria-hidden="true">$</span> <span data-copy-src>curl -fsSL https://sqwakie.si/install.sh | sh</span></code><button class="copy glass" type="button" data-copy aria-label="Copy install command"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg><span data-copy-label>Copy</span></button></div></div>
-        <p class="install-note">The installer runs <code>walkie setup</code>, which creates or joins your team. Machines connect with Sqwakie Direct: no VPN, no account, nothing else to install. Macs with Apple Silicon, and Linux. Installs version 0.2.0-pre.19 (pre-release).</p>
+        <p class="install-note">The installer runs <code>walkie setup</code>, which creates or joins your team. Machines connect with Sqwakie Direct: no VPN, no account, nothing else to install. Macs with Apple Silicon, and Linux. Installs version 0.2.0-pre.20 (pre-release).</p>
       </div>
     </section>
     <div class="ticker" aria-label="Example team activity"><span class="ticker-label">Example team</span><button class="ticker-toggle" type="button" aria-pressed="false" aria-label="Pause example activity">Pause</button><div class="ticker-window" tabindex="0" aria-label="Example activity; focus to pause"><div class="ticker-track"><span>review · maren-mbp · Working · Reviewing PR #327</span><span>ux-seat · Claude Code · Rebuilding the checkout summary</span><span>e2e · atlas · Stuck · refund.spec.ts times out</span><span aria-hidden="true">review · maren-mbp · Working · Reviewing PR #327</span><span aria-hidden="true">ux-seat · Claude Code · Rebuilding the checkout summary</span><span aria-hidden="true">e2e · atlas · Stuck · refund.spec.ts times out</span></div></div></div>
@@ -260,7 +261,7 @@
             <p class="plan-sub" data-billed data-month-text="Billed monthly, or $10 billed annually." data-year-text="Billed annually: $120 per person per year.">Billed monthly, or $10 billed annually.</p>
             <div class="plan-ctas">
               <a class="btn btn-primary glass" href="#install">Start free trial</a>
-              <a class="btn btn-ghost glass" href="/api/checkout?plan=team&amp;interval=month&amp;seats=5" data-buy="team">Buy Team</a>
+              <a class="btn btn-ghost glass" href="/api/checkout?plan=team&amp;interval=month&amp;seats=5" data-buy="team" rel="nofollow">Buy Team</a>
             </div>
             <p class="plan-total" data-total="team" aria-live="polite">5 people &times; $12 = $60 / month</p>
             <ul class="plan-list">
@@ -277,7 +278,7 @@
             <p class="plan-price"><span class="amt" data-price data-month="24" data-year="20">$24</span><span class="per">/ person / month</span></p>
             <p class="plan-sub" data-billed data-month-text="Billed monthly, or $20 billed annually." data-year-text="Billed annually: $240 per person per year.">Billed monthly, or $20 billed annually.</p>
             <div class="plan-ctas">
-              <a class="btn btn-ghost glass" href="/api/checkout?plan=business&amp;interval=month&amp;seats=5" data-buy="business">Buy Business</a>
+              <a class="btn btn-ghost glass" href="/api/checkout?plan=business&amp;interval=month&amp;seats=5" data-buy="business" rel="nofollow">Buy Business</a>
             </div>
             <p class="plan-total" data-total="business" aria-live="polite">5 people &times; $24 = $120 / month</p>
             <ul class="plan-list">
@@ -370,8 +371,10 @@
           <a href="/terms">Terms of Service</a>
           <a href="/privacy">Privacy Policy</a>
           <a href="https://github.com/alexcarney460-hue/walkie" rel="noopener">Source on GitHub</a>
+          <a href="https://x.com/sqwakiehq">Follow @sqwakiehq on X</a>
         </nav>
-        <p class="footer-fine">Version 0.2.0-pre.19 (pre-release). Source: <a href="https://github.com/alexcarney460-hue/walkie" rel="noopener">alexcarney460-hue/walkie</a> on GitHub, under the Functional Source License (FSL-1.1-ALv2); each version becomes Apache-2.0 after two years. Screens show Kestrel, a made-up team.</p>
+        <p class="footer-fine">Listed on <a href="https://mcpcollection.com/server/sqwakie">MCP Collection</a>, <a href="https://www.libhunt.com/r/walkie">LibHunt</a>, <a href="https://allmcps.com/mcp/sqwakie">AllMCPs</a> and <a href="https://mcp-index.tensorblock.co/servers/github-alexcarney460-hue-walkie-e567a971">TensorBlock MCP Index</a>.</p>
+        <p class="footer-fine">Version 0.2.0-pre.20 (pre-release). Source: <a href="https://github.com/alexcarney460-hue/walkie" rel="noopener">alexcarney460-hue/walkie</a> on GitHub, under the Functional Source License (FSL-1.1-ALv2); each version becomes Apache-2.0 after two years. Screens show Kestrel, a made-up team.</p>
       </div>
     </div>
   </footer>
