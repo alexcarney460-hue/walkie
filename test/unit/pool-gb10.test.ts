@@ -1,6 +1,6 @@
 // WALK-81: a DGX Spark (NVIDIA GB10) prints `[N/A]` for its memory (it shares unified memory with the CPU), so Walkie
 // said "No GPU found" and ranked the machine on the CPU. Everything here starts from the real nvidia-smi and
-// /proc/meminfo output captured on spark-115f and spark-0e86 (test/fixtures/machine-stats).
+// /proc/meminfo output captured on two DGX Spark machines, named spark-home and spark-garage here (test/fixtures/machine-stats).
 import { describe, expect, test } from "bun:test";
 import { parseGpuNow, parseNvidiaSmi, readAccel } from "../../src/daemon/machine-stats/accel.ts";
 import { MachineAccel, MachineStats } from "../../src/protocol/machine-stats.ts";
@@ -13,8 +13,8 @@ import { catalogOf, mk, rated } from "../helpers/pool-catalog.ts";
 import { fixture, spark } from "../helpers/pool-machines.ts";
 
 const GiB = 1024 ** 3;
-const A = "machine-stats/meminfo-gb10-spark-115f.txt";
-const B = "machine-stats/meminfo-gb10-spark-0e86.txt";
+const A = "machine-stats/meminfo-gb10-spark-home.txt";
+const B = "machine-stats/meminfo-gb10-spark-garage.txt";
 const GB10 = { name: "NVIDIA GB10", vram: 0, unified: true };
 
 // Synthetic equivalent of the preserved F2 diagnostic, with explicit platform metadata.
@@ -37,7 +37,7 @@ describe("reading the GB10", () => {
   test("the captured nvidia-smi line keeps the GPU, marked as sharing the machine's memory", () => {
     expect(fixture("machine-stats/nvidia-smi-gb10.txt")).toBe("NVIDIA GB10, [N/A]\n");
     expect(parseNvidiaSmi(fixture("machine-stats/nvidia-smi-gb10.txt"))).toEqual([GB10]);
-    expect(parseNvidiaSmi(fixture("machine-stats/nvidia-smi-gb10-spark-0e86.txt"))).toEqual([GB10]);
+    expect(parseNvidiaSmi(fixture("machine-stats/nvidia-smi-gb10-spark-garage.txt"))).toEqual([GB10]);
   });
 
   test("only a known integrated NVIDIA part counts: other names with [N/A] memory are still dropped", () => {
@@ -64,10 +64,10 @@ describe("reading the GB10", () => {
 
 describe("capacity: unified memory like Apple, sized from MemTotal", () => {
   const total = 127598832 * 1024; // /proc/meminfo MemTotal of both sparks
-  const used = (127598832 - 118608400) * 1024; // MemTotal - MemAvailable captured on spark-115f
+  const used = (127598832 - 118608400) * 1024; // MemTotal - MemAvailable of the spark-home capture
 
   test("free now = total - used - 1 GiB, if idle = total - 4 GiB, the whole of memory usable by the GPU; 273 GB/s", () => {
-    const cap = machineCapacity(spark("spark-115f", A))!;
+    const cap = machineCapacity(spark("spark-home", A))!;
     expect(cap.kind).toBe("nvidia");
     expect(cap.label).toBe("NVIDIA GB10 · 122 GB unified");
     expect(cap.notes).toEqual([]); // not "No GPU found"
@@ -108,7 +108,7 @@ describe("suggestions on a spark", () => {
   ]);
 
   test("runs on its unified memory at the GB10's bandwidth, not on the CPU", () => {
-    const s = suggestTeam([spark("spark-115f", A, { self: true, rtt_ms: null })], { cat }).suggestions[0]!;
+    const s = suggestTeam([spark("spark-home", A, { self: true, rtt_ms: null })], { cat }).suggestions[0]!;
     const p = s.single!;
     expect(p.model.id).toBe("moe-120b");
     expect(p.placement[0]!.memory).toBe("unified memory");
@@ -118,13 +118,13 @@ describe("suggestions on a spark", () => {
   });
 
   test("two sparks on one LAN: the group rule (a peer answering within 5 ms) puts them together; farther apart they are not neighbours", () => {
-    const near = groupMachines([spark("spark-115f", A, { self: true, rtt_ms: null }), spark("spark-0e86", B, { rtt_ms: 1 })]);
-    expect(near.groups.map((g) => [g.kind, g.machines.map((m) => m.hostname)])).toEqual([["local", ["spark-115f", "spark-0e86"]]]);
+    const near = groupMachines([spark("spark-home", A, { self: true, rtt_ms: null }), spark("spark-garage", B, { rtt_ms: 1 })]);
+    expect(near.groups.map((g) => [g.kind, g.machines.map((m) => m.hostname)])).toEqual([["local", ["spark-home", "spark-garage"]]]);
     expect(near.groups[0]!.why).toBe("This machine and 1 other answer within 5 ms (slowest 1 ms): likely the same local network, close enough to split a model across");
-    const far = groupMachines([spark("spark-115f", A, { self: true, rtt_ms: null }), spark("spark-0e86", B, { rtt_ms: 6 })]);
+    const far = groupMachines([spark("spark-home", A, { self: true, rtt_ms: null }), spark("spark-garage", B, { rtt_ms: 6 })]);
     expect(far.groups.map((g) => g.kind)).toEqual(["local", "single"]);
     // Together they hold more than either alone: both counted as unified memory.
-    const t = suggestTeam([spark("spark-115f", A, { self: true, rtt_ms: null }), spark("spark-0e86", B, { rtt_ms: 1 })], { cat });
+    const t = suggestTeam([spark("spark-home", A, { self: true, rtt_ms: null }), spark("spark-garage", B, { rtt_ms: 1 })], { cat });
     expect(t.suggestions[0]!.usable).toBeGreaterThan(200 * GiB);
   });
 });

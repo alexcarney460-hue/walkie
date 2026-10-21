@@ -12,8 +12,8 @@ export function checkoutUrl(plan: LicensePlan, interval: LicenseInterval, seats:
 }
 
 /**
- * The extra-board add-on (WALKIE-PROJECTS-1: each board past a project's included ones is $15/month on the team's
- * subscription). STUB: the site doesn't sell it yet; this is where the dashboard and the 402 send people.
+ * The extra-board add-on checkout (WALKIE-PROJECTS-1). STUB: the site doesn't sell extra boards, so nothing links here
+ * (E21b: the board 402 carries no link).
  */
 export function boardAddonUrl(quantity: number, licId?: string): string {
   const n = Math.max(1, Math.min(1_000, Math.floor(quantity)));

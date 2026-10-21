@@ -49,13 +49,17 @@ export function planLimitText(err: WalkieError): string | null {
   if (err.code !== "plan_limit") return null;
   const d = err.details as Partial<PlanLimitDetails> | undefined;
   const plan = d?.plan ? PLAN_NAME[d.plan] : "current";
+  // E21b: extra boards aren't on sale and an upgrade adds no board, so a board limit names no link (not even the
+  // checkout link an older daemon sends).
+  if (d?.resource === "boards") {
+    const has = typeof d.limit === "number" ? `Each project includes ${d.limit} boards (this one has ${d.used ?? "?"}); extra` : "Extra";
+    return `${has} boards aren't on sale. Nothing was removed.`;
+  }
   const url = typeof d?.upgrade_url === "string" ? d.upgrade_url : "walkie upgrade";
   const what = d?.resource === "restricted_channels"
     ? `Restricted channels need the Team plan (this team is on ${plan}).`
     : d?.resource && typeof d.limit === "number"
-      ? d.resource === "boards"
-        ? `Each project includes ${d.limit} boards (this one has ${d.used ?? "?"}); every extra board is a $15/month add-on.`
-        : `Your ${plan} plan includes ${d.limit} ${d.resource === "people" ? (d.limit === 1 ? "person" : "people") : d.resource === "projects" && d.limit === 1 ? "project" : d.resource} (${d.used ?? "?"} in use).`
+      ? `Your ${plan} plan includes ${d.limit} ${d.resource === "people" ? (d.limit === 1 ? "person" : "people") : d.resource === "projects" && d.limit === 1 ? "project" : d.resource} (${d.used ?? "?"} in use).`
       : err.message;
   // FINAL Codex 1: a subscriber adds seats to its subscription in the billing portal, never through a second checkout.
   if (d?.subscribed) return `${what} Nothing was removed. You already subscribe: add seats in the billing portal.\nbilling portal: ${c.bold(url)}`;

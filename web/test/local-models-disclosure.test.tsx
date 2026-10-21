@@ -15,7 +15,7 @@ const { LocalModelsCard, LocalModelsSection } = await import("../src/components/
 const checkedAt = Date.parse("2026-10-01T00:00:00Z");
 // The conservative admission rates none of the recorded Hub models, so the rank wording is tested on a list with some rated.
 const catalog = withRatings((await buildCatalog({ client: new HfClient({ fetch: fakeHub().fetch }), now: new Date(checkedAt) })).catalog);
-const machine = spark("fixture-spark", "machine-stats/meminfo-gb10-spark-115f.txt", { self: true });
+const machine = spark("fixture-spark", "machine-stats/meminfo-gb10-spark-home.txt", { self: true });
 const nodes = [{ ...machine, ip: "127.0.0.1", last_seen: 1, sync: { behind: 0, last_sync: 1 } } as NodeView];
 
 for (const Component of [LocalModelsCard, LocalModelsSection]) {

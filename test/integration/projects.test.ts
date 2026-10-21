@@ -227,14 +227,15 @@ describe("agents and people", () => {
 });
 
 describe("limits and privacy", () => {
-  test("boards: three per project are included; a fourth answers 402 with the add-on checkout", async () => {
+  test("boards: three per project are included; a fourth answers 402 with no checkout (extra boards aren't on sale)", async () => {
     await alex.client().createBoard(web.channel, { name: "Bugs" });
     await alex.client().createBoard(web.channel, { name: "Ideas" });
     const e = await alex.client().createBoard(web.channel, { name: "Fourth" }).then(() => null, (x: WalkieError) => x);
     expect(e?.status).toBe(402);
     expect(e?.code).toBe("plan_limit");
     expect(e?.details).toMatchObject({ resource: "boards", limit: 3, used: 3 });
-    expect(String(e?.details?.upgrade_url)).toContain("addon=board");
+    expect(e?.details?.upgrade_url).toBe("");
+    expect(e?.message).toBe("each project includes 3 boards (this one has 3); extra boards aren't on sale, and nothing was removed");
     await converged(web.channel, "three boards");
   }, 20_000);
 

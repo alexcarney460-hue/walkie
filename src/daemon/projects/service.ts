@@ -10,7 +10,6 @@ import { redactSecrets } from "../../protocol/safety.ts";
 import { Address, type BodyOf, type Event } from "../../protocol/schemas.ts";
 import { effectiveFor, PlanLimitError, peopleUsed } from "../../license/enforce.ts";
 import { upgradeUrl } from "../../license/plans.ts";
-import { boardAddonUrl } from "../../license/site.ts";
 import { isPersonAddress } from "../../protocol/projects/fold.ts";
 import { cardOpText } from "../../protocol/projects/format.ts";
 import { escalationContactDenial, escalationContactOf, isEscalationContact } from "../../protocol/projects/escalation.ts";
@@ -416,9 +415,9 @@ function extraBoardsInUse(w: WriteCtx): number {
 }
 
 /**
- * A new board (a person, or a named agent for its person). Three per project are included; each one beyond needs a
- * bought extra board (the license's `extra_boards`, a $15/month add-on): otherwise 402 plan_limit with the add-on's
- * checkout link.
+ * A new board (a person, or a named agent for its person). Three per project are included; each one beyond needs an
+ * extra board on the team's license (`extra_boards`): otherwise 402 plan_limit. Extra boards aren't on sale (E21b), so
+ * that 402 carries no checkout link (`upgrade_url` is empty).
  */
 export function createBoard(w: WriteCtx, channel: string, req: { name: string; columns?: Column[] }): BoardView {
   requireNamedAgent(w);
@@ -431,7 +430,7 @@ export function createBoard(w: WriteCtx, channel: string, req: { name: string; c
     if (inUse + 1 > bought) {
       throw new PlanLimitError({
         resource: "boards", limit: BOARDS_INCLUDED, used: p.boards.length, plan: e.plan, subscribed: e.status === "active",
-        upgrade_url: boardAddonUrl(inUse + 1, lic?.payload.lic_id),
+        upgrade_url: "",
       });
     }
   }

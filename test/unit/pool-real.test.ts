@@ -413,7 +413,7 @@ describe("Apple Silicon (alex-mac, M5 16 GB) in the pool", () => {
   });
 
   test("capacity: the Metal budget when known (else 2/3 of RAM), M5 bandwidth 153 GB/s", () => {
-    const mac = (budget?: number) => node("alexs-macbook-air", { mem: { total: 16 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, accel: { chip: "Apple M5", unified: true, gpu_limit: null, gpus: [], ...(budget ? { metal_budget: budget } : {}) } });
+    const mac = (budget?: number) => node("ana-macbook-air", { mem: { total: 16 * GiB, used: 4 * GiB, swap_used: 0, pressure: "normal" }, accel: { chip: "Apple M5", unified: true, gpu_limit: null, gpus: [], ...(budget ? { metal_budget: budget } : {}) } });
     const known = machineCapacity(mac(12124 * MiB))!.backends[0]!;
     expect(known).toMatchObject({ kind: "apple", bandwidth: 153, bandwidthKnown: true, usableIdle: 12124 * MiB });
     expect(known.usable).toBe(11 * GiB); // 16 - 4 used - 1 reserve, under the Metal budget
@@ -484,7 +484,7 @@ describe("a machine joins a split only when it helps (atlas-wsl + hestia-wsl + a
   const { planRun } = require("../../src/pool/run/plan.ts") as typeof import("../../src/pool/run/plan.ts");
   const { catalogNeed } = require("../../src/pool/run/plan.ts") as typeof import("../../src/pool/run/plan.ts");
   const { CATALOG: CAT } = require("../../src/pool/catalog.ts") as typeof import("../../src/pool/catalog.ts");
-  const mac = node("alexs-macbook-air", { mem: { total: 16 * GiB, used: 6 * GiB, swap_used: 0, pressure: "normal" }, accel: { chip: "Apple M5", unified: true, gpu_limit: null, gpus: [], metal_budget: 12124 * MiB } }, { pool: share({ cap: 3 * GiB }), rtt_ms: 12 });
+  const mac = node("ana-macbook-air", { mem: { total: 16 * GiB, used: 6 * GiB, swap_used: 0, pressure: "normal" }, accel: { chip: "Apple M5", unified: true, gpu_limit: null, gpus: [], metal_budget: 12124 * MiB } }, { pool: share({ cap: 3 * GiB }), rtt_ms: 12 });
   const need = catalogNeed(CAT.models.find((m) => m.id === "gpt-oss-20b")!, "q4");
 
   test("gpt-oss-20b from atlas-wsl: unnamed run does not use the farther WSL or Mac", () => {
@@ -492,8 +492,8 @@ describe("a machine joins a split only when it helps (atlas-wsl + hestia-wsl + a
   });
 
   test("named, the Mac joins with a share within its cap", () => {
-    const plan = planRun([atlas({ self: true, rtt_ms: null }), hestia({ pool: share(), rtt_ms: 7 }), mac], need, ["hestia-wsl", "alexs-macbook-air"]);
-    expect(plan.stages.map((s) => s.hostname)).toEqual(["atlas-wsl", "hestia-wsl", "alexs-macbook-air"]);
+    const plan = planRun([atlas({ self: true, rtt_ms: null }), hestia({ pool: share(), rtt_ms: 7 }), mac], need, ["hestia-wsl", "ana-macbook-air"]);
+    expect(plan.stages.map((s) => s.hostname)).toEqual(["atlas-wsl", "hestia-wsl", "ana-macbook-air"]);
     expect(plan.stages[2]!.bytes).toBeLessThanOrEqual(3 * GiB);
   });
 
@@ -501,6 +501,6 @@ describe("a machine joins a split only when it helps (atlas-wsl + hestia-wsl + a
     const cs = suggestCombined([atlas({ self: true, rtt_ms: null, pool: share({ share: false }) }), hestia({ pool: share(), rtt_ms: 7 }), mac]);
     const p = cs.runnable!;
     console.log("[evidence] runnable:", p.model.id, p.quant, p.placement.map((x) => `${x.hostname}:${(x.bytes / GiB).toFixed(1)}`).join(" "));
-    expect(p.placement.some((x) => x.hostname === "alexs-macbook-air")).toBe(false);
+    expect(p.placement.some((x) => x.hostname === "ana-macbook-air")).toBe(false);
   });
 });

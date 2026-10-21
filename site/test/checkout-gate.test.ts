@@ -104,6 +104,11 @@ describe("checkout gate with a mocked Stripe", () => {
       { "sec-purpose": "prefetch;prerender" },
       { purpose: "prefetch" },
       { "sec-purpose": "prefetch", "sec-fetch-user": "?1" },
+      { "x-purpose": "preview" },
+      { "x-moz": "prefetch" },
+      { "sec-purpose": "" },
+      { purpose: "" },
+      { "x-moz": "prefetch", "sec-fetch-user": "?1" },
     ];
     for (const mark of marks) {
       for (const path of [q, `${q}&lic_id=sub_unknown`]) {
@@ -116,19 +121,37 @@ describe("checkout gate with a mocked Stripe", () => {
       }
     }
   });
-  test("a HEAD request never creates a session, even with a person's navigation headers", async () => {
+  test("a HEAD request never creates a session or looks up a subscription, even with a person's navigation headers", async () => {
     for (const path of [q, `${q}&lic_id=sub_unknown`, `${q}&lic_id=sub_ABC123`]) {
       const s = withLiveSub();
+      let lookups = 0;
+      const getSubscription = s.getSubscription.bind(s);
+      s.getSubscription = async (id) => { lookups++; return getSubscription(id); };
       const res = await makeCheckoutGet(deps(s, ENV))(new Request(`${SITE}${path}`, { method: "HEAD", headers: PERSON }));
       expect(res.status).toBe(200);
       expect(res.headers.get("x-robots-tag")).toContain("noindex");
       expect(s.calls.checkout).toEqual([]);
+      expect(lookups).toBe(0);
     }
   });
   test("speculative requests are not user navigations", () => {
     expect(isUserNavigation(new Request(`https://x${q}`, { headers: { "sec-purpose": "prefetch", "sec-fetch-mode": "navigate", "sec-fetch-site": "none" } }))).toBe(false);
     expect(isUserNavigation(new Request(`https://x${q}`, { headers: { "sec-purpose": "prefetch;prerender", "sec-fetch-user": "?1" } }))).toBe(false);
     expect(isUserNavigation(new Request(`https://x${q}`, { headers: { purpose: "prefetch", "sec-fetch-user": "?1" } }))).toBe(false);
+    expect(isUserNavigation(new Request(`https://x${q}`, { headers: { "x-purpose": "preview", "sec-fetch-user": "?1" } }))).toBe(false);
+    expect(isUserNavigation(new Request(`https://x${q}`, { headers: { "x-moz": "prefetch", "sec-fetch-user": "?1" } }))).toBe(false);
+    expect(isUserNavigation(new Request(`https://x${q}`, { headers: { "sec-purpose": "", "sec-fetch-mode": "navigate", "sec-fetch-site": "none" } }))).toBe(false);
+  });
+  test("cancelling at Stripe brings the buyer back to pricing marked ?checkout=cancelled", async () => {
+    const s = new MockStripe();
+    await makeCheckoutGet(deps(s, ENV))(new Request(`https://sqwakie.si${q}`, { headers: PERSON }));
+    await makeCheckoutGet(deps(s, ENV))(get(q, PERSON));
+    await makeCheckoutPost(deps(s, ENV))(post(q, BUTTON));
+    expect(s.calls.checkout.map(c => c.cancelUrl)).toEqual([
+      "https://sqwakie.si/?checkout=cancelled#pricing",
+      `${SITE}/?checkout=cancelled#pricing`,
+      `${SITE}/?checkout=cancelled#pricing`,
+    ]);
   });
   test("a Stripe outage during the gate's lookup is a 502, never a session", async () => {
     const s = new MockStripe();

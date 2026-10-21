@@ -16,7 +16,7 @@ request the Hub answered 401 (a missing or gated repository) or 404 (an organisa
 | `machines/mac-m5-16gb-*.txt` | `sysctl hw.memsize vm.swapusage kern.memorystatus_vm_pressure_level`, `vm_stat`, `sysctl -n machdep.cpu.brand_string hw.optional.arm64 iogpu.wired_limit_mb` | a 16 GB Apple M5 Mac (the machine the work was done on), busy: about 10 GB wired, swap in use |
 
 The GB10 captures live next to the other machine stats in `test/fixtures/machine-stats/` (`nvidia-smi-gb10*.txt`,
-`meminfo-gb10-spark-*.txt`, `cpuinfo-gb10-aarch64.txt`; spark-115f and spark-0e86, DGX OS 7.2.3).
+`meminfo-gb10-spark-*.txt`, `cpuinfo-gb10-aarch64.txt`; two DGX Spark machines on DGX OS 7.2.3, named spark-home and spark-garage here).
 
 What the fixture models are for: Qwen3.8-27B (hybrid linear attention, nested `text_config`, Unsloth's only 4-bit file is
 `UD-Q4_K_M`), Qwen3.6-35B-A3B (A3B name token), gpt-oss-20b/120b (active parameters only in the card, sliding window,

@@ -198,8 +198,8 @@ segment's text. Both segments must be canonical base64url. `team` (16 hex charac
   `now < team.create ts + 14 days` **and** `team.create ts <= clock + 5 min` (a team created with a clock in the
   future has no trial once the clock is corrected: the floor would otherwise pin plan time at the fake time and
   the trial would never end); else Free. Entitlements:
-  Free 2 people, 4 machines, no restricted channels, 1 integration; Team the licensed seats, unlimited machines,
-  restricted channels, all integrations (the trial: 50 people); Business = Team plus `audit_export` and
+  Free 2 people, 4 machines, no restricted channels, 1 integration; Team the licensed seats, no plan limit on
+  machines (the node limits above still apply), restricted channels, all integrations (the trial: 50 people); Business = Team plus `audit_export` and
   `join_approval`. People = non-removed members; machines = active nodes; integrations = the distinct connectors
   enabled on active machines according to the chain's `team.integration` entries.
 - **Soft enforcement, at emit only.** The authority refuses to *emit* (and, for joins, to queue) a roster event that
@@ -2447,9 +2447,9 @@ messages; this version folds them into boards. Schemas: `src/protocol/projects/s
   one at a time, and the roster authority checks the quota again when it creates a project channel, a member's
   request included; restoring is a post in the project's channel, so two machines restoring different deleted
   projects before they sync can exceed it, a soft limit like every plan limit); paid plans and the trial: up to 200 per team. 3 boards per project are included; each one
-  beyond needs an extra board bought on the team's subscription ($15/month; license field `extra_boards`, absent = 0)
-  or the board creation answers `402 plan_limit` `{resource: "boards", limit: 3, used, upgrade_url: <add-on checkout>}`
-  (the checkout for the add-on is a stub until the site sells it). ≤ 2 000 open cards per board, ≤ 20 000 per project
+  beyond needs an extra board on the team's license (license field `extra_boards`, absent = 0; extra boards aren't on
+  sale) or the board creation answers `402 plan_limit` `{resource: "boards", limit: 3, used, upgrade_url: ""}` (no link:
+  an upgrade adds no board). ≤ 2 000 open cards per board, ≤ 20 000 per project
   (`409 card_limit`).
 
 - **Bulk writes (LINEAR-IMPORT-1, additive, no fold or validity change).** `POST /v1/projects/:channel/batch` signs

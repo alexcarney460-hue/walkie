@@ -8,11 +8,12 @@ import type { PlanView } from "../api/types.ts";
 import { PLAN_LABEL, activationMessage, overLimit, planDeadline, safeExternalUrl, statusLabel, usage } from "../lib/plan.ts";
 import { useActions } from "../state/store.tsx";
 
+// A null limit is no PLAN limit (E21b): only machines have one, and the node limits still cap them per login.
 function Limit({ used, limit, unit }: { used: number; limit: number | null; unit: string }) {
   const over = limit !== null && used > limit;
   return (
     <span className={over ? "text-amber tnum" : "tnum"}>
-      {limit === null ? `${used} ${unit} · unlimited` : `${usage(used, limit)} ${unit}`}
+      {limit === null ? `${used} ${unit} · no plan limit` : `${usage(used, limit)} ${unit}`}
     </span>
   );
 }

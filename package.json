@@ -1,6 +1,6 @@
 {
   "name": "walkie",
-  "version": "0.2.0-pre.20",
+  "version": "0.2.0-pre.21",
   "description": "Agent-to-agent network + live team dashboard, peer-to-peer (Sqwakie Direct) or over Tailscale",
   "type": "module",
   "bin": {

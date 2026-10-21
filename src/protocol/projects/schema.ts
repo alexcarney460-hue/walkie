@@ -29,7 +29,7 @@ export const MAX_CARDS_PER_PROJECT = 20_000;
 export const MAX_COLUMNS = 12;
 export const MAX_PATHS = 20;
 export const MAX_LABELS = 10;
-/** Boards included per project (Alex 2026-09-26); each board beyond them is a paid add-on (license `extra_boards`). */
+/** Boards included per project (Alex 2026-09-26); each board beyond them needs the license's `extra_boards` (not on sale). */
 export const BOARDS_INCLUDED = 3;
 /** Projects on the Free plan (Alex 2026-09-26); paid plans and the trial: unlimited (up to MAX_PROJECTS). */
 export const FREE_PROJECTS = 1;

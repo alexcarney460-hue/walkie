@@ -24,8 +24,8 @@ let live: Catalog;
 beforeAll(async () => { live = withRatings((await buildCatalog({ client: new HfClient({ fetch: fakeHub().fetch }), now: new Date(T) })).catalog); });
 
 const sparks = () => [
-  spark("spark-115f", "machine-stats/meminfo-gb10-spark-115f.txt", { self: true, rtt_ms: null }),
-  spark("spark-0e86", "machine-stats/meminfo-gb10-spark-0e86.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-0e86.txt"),
+  spark("spark-home", "machine-stats/meminfo-gb10-spark-home.txt", { self: true, rtt_ms: null }),
+  spark("spark-garage", "machine-stats/meminfo-gb10-spark-garage.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-garage.txt"),
   mac16("alex-mac", { rtt_ms: 40 }),
 ];
 const view = (catalog: Catalog, over: Partial<ModelsView> = {}): ModelsView => ({ catalog, source: "huggingface", state: "fresh", checkedAt: T, note: null, ...over });
@@ -129,7 +129,7 @@ describe("--json", () => {
     };
     expect(j.catalog).toMatchObject({ source: "huggingface", state: "fresh", checked_at: "2026-10-01T22:40:00.000Z", models: 16, note: null });
     expect(j.best_overall?.hf_url).toMatch(/^https:\/\/huggingface\.co\//);
-    expect(j.machines.map((m) => m.hostname)).toEqual(["spark-115f", "spark-0e86", "alex-mac"]);
+    expect(j.machines.map((m) => m.hostname)).toEqual(["spark-home", "spark-garage", "alex-mac"]);
     const one = j.groups.find((g) => g.single)!.single!;
     expect(one).toMatchObject({ hf_url: expect.stringMatching(/^https:\/\/huggingface\.co\//), maker: expect.any(String), size_b: expect.any(Number) });
     expect(one.reason.length).toBeGreaterThan(10);
@@ -154,7 +154,7 @@ describe("--nodes-file: what-if machines from a file of captured reports", () =>
 
   test("a captured fleet reads back as the machines it was", () => {
     const nodes = readNodesFile(file("fleet.json", JSON.stringify({ nodes: sparks() })));
-    expect(nodes.map((n) => [n.hostname, n.self, n.rtt_ms])).toEqual([["spark-115f", true, null], ["spark-0e86", false, 1], ["alex-mac", false, 40]]);
+    expect(nodes.map((n) => [n.hostname, n.self, n.rtt_ms])).toEqual([["spark-home", true, null], ["spark-garage", false, 1], ["alex-mac", false, 40]]);
     expect(nodes[0]!.stats?.accel?.gpus).toEqual([{ name: "NVIDIA GB10", vram: 0, unified: true }]);
     expect(readNodesFile(file("array.json", JSON.stringify(sparks()))).length).toBe(3); // a bare array too
   });

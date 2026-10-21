@@ -1337,8 +1337,8 @@ limits. What the Projects layer adds:
   export, which signs nothing, and automations at creation) ignored by the fold, so an agent that signs such an op
   directly changes nothing. Since pre.5 (AGENT-PROJECTS, fold 8) a NAMED agent may create a project or add a board
   for its person, as in Linear: its person becomes the creator and keeps every admin right; the agent is held to
-  the person's plan limits (Free: 1 project; boards past the included three consume the team's bought add-on
-  boards), may create a private project only when the person is an owner, can't set automations or path / repo rules at creation, and
+  the person's plan limits (Free: 1 project; boards past the included three consume the license's extra
+  boards, which aren't on sale), may create a private project only when the person is an owner, can't set automations or path / repo rules at creation, and
   writes at the lower agent rate. An unnamed agent caller is refused before any channel is created. Risk accepted:
   a prompt-injected agent can create projects and boards up to those limits (visible, attributed to the agent,
   deletable by its person).
@@ -1399,8 +1399,8 @@ limits. What the Projects layer adds:
   scripts should keep card ids. When a member unknowingly reuses a private project's prefix, the earliest created
   project answers to the shared keys; the other is reached by channel / card id. Plans and bounds (1 project on Free, 3 boards per project, 2 000 open cards per board,
   20 000 per project, 200 projects) are soft, checked where things are created, like every plan limit; a modified
-  daemon can exceed them, and every other daemon still folds what it sends. The extra-board checkout is a stub until
-  the site sells the add-on.
+  daemon can exceed them, and every other daemon still folds what it sends. Extra boards aren't on sale, so the board
+  402 carries no checkout link.
 
 ## Linear import (LINEAR-IMPORT-1)
 

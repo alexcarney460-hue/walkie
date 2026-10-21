@@ -47,6 +47,12 @@ describe("plan_limit errors", () => {
     expect(planLimitDetails({ resource: "bogus", limit: 2, used: 2, upgrade_url: "x" })).toBeUndefined();
     expect(planLimitDetails({ resource: "people", limit: "2", used: 2, upgrade_url: "x" })).toBeUndefined();
   });
+  test("E21b: machines and projects promise no unlimited; boards name no price", () => {
+    const d = (resource: "machines" | "projects" | "boards", limit: number) => ({ resource, limit, used: limit, plan: "free" as const, upgrade_url: "https://x" });
+    expect(limitMessage(d("machines", 4))).toBe("Your Free plan includes 4 machines (4 used). Upgrade to add more.");
+    expect(limitMessage(d("projects", 1))).toBe("Your Free plan includes 1 project (1 in use). Upgrade to add more.");
+    expect(limitMessage(d("boards", 3))).toBe("Each project includes 3 boards (this one has 3). Extra boards aren't on sale.");
+  });
   test("restricted channel message", () => {
     expect(limitMessage({ resource: "restricted_channels", limit: 0, used: 0, plan: "free", upgrade_url: "https://x" }))
       .toContain("Restricted channels are part of the Team plan");

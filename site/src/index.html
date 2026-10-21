@@ -58,12 +58,13 @@
         <div class="hero-actions"><a class="btn btn-primary glass" href="#install" data-install-focus>Install free</a><a class="btn btn-ghost glass" href="#pricing">See pricing</a></div>
         <div class="install glass" id="install"><div class="install-core"><code class="install-cmd"><span class="p" aria-hidden="true">$</span> <span data-copy-src>{{install}}</span></code><button class="copy glass" type="button" data-copy aria-label="Copy install command"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg><span data-copy-label>Copy</span></button></div></div>
         <p class="install-note">The installer runs <code>{{cli}} setup</code>, which creates or joins your team. Machines connect with {{name}} Direct: no VPN, no account, nothing else to install. Macs with Apple Silicon, and Linux. Installs version {{release}}.</p>
+        <div class="agent-handoff"><p class="agent-handoff-label">Or hand it to your agent</p><div class="install glass"><div class="install-core"><code class="install-cmd agent-prompt"><span data-copy-src data-field="agent-prompt">Read {{site_url}}/agents.md and follow only its &ldquo;Install without running setup&rdquo; steps on this machine. Do not run {{cli}} setup, join a team or install hooks. Then show me what the version command printed.</span></code><button class="copy glass" type="button" data-copy="Agent prompt copied" aria-label="Copy the prompt for your agent"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg><span data-copy-label>Copy</span></button></div></div></div>
       </div>
     </section>
     <div class="ticker" aria-label="Example team activity"><span class="ticker-label">Example team</span><button class="ticker-toggle" type="button" aria-pressed="false" aria-label="Pause example activity">Pause</button><div class="ticker-window" tabindex="0" aria-label="Example activity; focus to pause"><div class="ticker-track"><span>review · maren-mbp · Working · Reviewing PR #327</span><span>ux-seat · Claude Code · Rebuilding the checkout summary</span><span>e2e · atlas · Stuck · refund.spec.ts times out</span><span aria-hidden="true">review · maren-mbp · Working · Reviewing PR #327</span><span aria-hidden="true">ux-seat · Claude Code · Rebuilding the checkout summary</span><span aria-hidden="true">e2e · atlas · Stuck · refund.spec.ts times out</span></div></div></div>
     <section class="section mission-section" id="features" aria-labelledby="features-title"><div class="wrap">
-      <header class="sec-head reveal"><p class="kicker">Mission Control</p><h2 id="features-title">Know who&rsquo;s working, who&rsquo;s waiting and who&rsquo;s stuck.</h2><p class="sec-lead">Agents show up on their own. {{name}} reads what each one is doing right now, and the ones that need a person rise to the top.</p></header>
-      <div class="mission-layout"><figure class="shot mission-shot reveal"><div class="bezel"><img src="assets/img/mission-dark.webp" width="1440" height="900" loading="lazy" decoding="async" alt="Mission Control: Kestrel's agents, their states, machines and sub-agents." /></div><figcaption>Mission Control for Kestrel, a made-up team. Working agents first, and what needs you on top.</figcaption></figure>
+      <header class="sec-head reveal"><p class="kicker">The dashboard</p><h2 id="features-title">Know who&rsquo;s working, who&rsquo;s waiting and who&rsquo;s stuck.</h2><p class="sec-lead">Agents show up on their own. {{name}} reads what each one is doing right now, and the ones that need a person rise to the top.</p></header>
+      <div class="mission-layout"><figure class="shot mission-shot reveal"><div class="bezel"><img src="assets/img/mission-dark.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The dashboard's Home for Kestrel: the questions and agents that need a person, projects, machines and live activity." /></div><figcaption>Home for Kestrel, a made-up team. What needs you is on top, with live activity beside it.</figcaption></figure>
       <ul class="features">
         <li class="feature reveal"><span class="channel">CH 01</span><div><h3>Live agent states</h3><p>Working, waiting on you, stuck or idle, from what each agent is doing. Hook events show up right away, and the rest is picked up within about half a minute.</p></div></li>
         <li class="feature reveal"><span class="channel">CH 02</span><div><h3>Sub-agents in view</h3><p>When a Claude Code session fans out, each sub-agent gets a row of its own under it. You see the whole tree at a glance.</p></div></li>
@@ -71,7 +72,7 @@
         <li class="feature reveal"><span class="channel">CH 05</span><div><h3>Usage left on every account</h3><p>See how much of each Claude, Codex and Kimi plan is left, and when the limits reset. Codex resets can be used right from the dashboard.</p></div></li>
         <li class="feature reveal"><span class="channel">CH 06</span><div><h3>Talkie, the orchestrator you can chat with</h3><p>It starts on its own once a machine has a Claude login: one per team, on your own account, offering to bring in your projects from Linear, GitHub or your repos, and keeping the boards current. The chat is stored on that machine and isn&rsquo;t synced to teammates.</p></div></li>
       </ul></div>
-      <div class="machine-layout"><div class="machine-copy reveal"><p class="channel">CH 04</p><h3 class="h3-lg">A page per machine</h3><p class="sec-lead">Click a machine to see its agents, memory, load, temperature and GPU, and the questions waiting on it.</p></div><figure class="shot machine-shot reveal"><div class="bezel"><img src="assets/img/machine-dark.webp" width="1142" height="570" loading="lazy" decoding="async" alt="Atlas machine page with agents, system health and Direct connection." /></div><figcaption>Every machine has a page: its stats, its agents and the asks waiting on it.</figcaption></figure></div>
+      <div class="machine-layout"><div class="machine-copy reveal"><p class="channel">CH 04</p><h3 class="h3-lg">A page per machine</h3><p class="sec-lead">Click a machine to see its agents, memory, load, temperature and GPU, and the questions waiting on it.</p></div><figure class="shot machine-shot reveal"><div class="bezel"><img src="assets/img/machine-dark.webp" width="1142" height="570" loading="lazy" decoding="async" alt="The atlas machine page: live memory, CPU, temperature and GPU, and the agents running on it." /></div><figcaption>Every machine has a page: its stats, its agents and the asks waiting on it.</figcaption></figure></div>
     </div></section>
     <section class="section agents-section" aria-labelledby="agents-title"><div class="wrap agents-layout"><div class="agents-copy reveal"><p class="kicker">Agents help each other</p><h2 id="agents-title">A question can cross the team.</h2><p class="sec-lead">Your agent can ask a teammate&rsquo;s agent a question and get the answer back. Questions for a person wait in Asks until someone answers.</p></div><div class="agents-art reveal"><picture><source media="(max-width: 760px)" srcset="assets/img/hf-agents-talk-960.webp"><img src="assets/img/hf-agents-talk-1600.webp" srcset="assets/img/hf-agents-talk-960.webp 960w, assets/img/hf-agents-talk-1600.webp 1600w" sizes="(max-width: 1100px) 92vw, 55vw" width="1600" height="1195" loading="lazy" decoding="async" alt="Two radios exchanging an amber signal." /></picture><svg class="agent-arc draw-line" viewBox="0 0 700 310" aria-hidden="true"><path d="M110 220 Q350 -80 590 210" /></svg></div></div></section>
     <!-- 3. Direct -->
@@ -94,7 +95,7 @@
           <li class="step reveal">
             <span class="step-n" aria-hidden="true">02</span>
             <h3>Invite your team</h3>
-            <p>The first person creates the team. <code>{{cli}} invite</code> or the Team page makes a one-time invite code, good for 7 days.</p>
+            <p>The first person creates the team. <code>{{cli}} invite</code>, or Add a teammate in the dashboard (Settings, then Team and billing), makes a one-time invite code, good for 7 days.</p>
           </li>
           <li class="step reveal">
             <span class="step-n" aria-hidden="true">03</span>
@@ -117,7 +118,7 @@
           <figure class="shot">
             <div class="bezel">
               <div class="bezel-core">
-                <img src="assets/img/team-dark.webp" width="768" height="366" alt="The Team page's machine list: five machines, all online and in sync, each on the Direct network with its latency." loading="lazy" decoding="async">
+                <img src="assets/img/team-dark.webp" width="768" height="366" alt="The Team page's machine list: five machines, each with its owner, all online, each with an Open link." loading="lazy" decoding="async">
               </div>
             </div>
             <figcaption>A team&rsquo;s machines, all connected with {{name}} Direct.</figcaption>
@@ -133,7 +134,7 @@
           <div class="story-text reveal">
             <p class="kicker">Team compute</p>
             <h2 id="compute-title">Your team&rsquo;s machines, as one pool.</h2>
-            <p class="sec-lead">{{name}} works out the largest model from its catalog that fits on your machines together, and can split one model across them.</p>
+            <p class="sec-lead">{{name}} suggests a model from its catalog that fits on your machines together, and can split one model across them.</p>
             <ul class="points">
               <li>Suggestions come from the memory each machine has free right now, with a rough speed. Nothing downloads or runs until a person starts it.</li>
               <li>Split runs use llama.cpp across the machines that share, over the connections {{name}} already has between your machines. Nothing is opened to the network: llama.cpp listens only on this machine (127.0.0.1).</li>
@@ -144,7 +145,7 @@
           <figure class="shot reveal">
             <div class="bezel">
               <div class="bezel-core">
-                  <img src="assets/img/pool-dark.webp" width="768" height="560" alt="The team compute panel compares model fit and estimated speed across the team's machines." loading="lazy" decoding="async">
+                  <img src="assets/img/pool-dark.webp" width="768" height="560" alt="Local models: what the team could run on its own machines, with an estimated speed, on one machine or split across several." loading="lazy" decoding="async">
               </div>
             </div>
             <figcaption>What a team could run with its machines together, before starting a model.</figcaption>
@@ -160,9 +161,9 @@
           <div class="story-text reveal">
             <p class="kicker">On your phone</p>
             <h2 id="phone-title">Answer your agents from anywhere.</h2>
-            <p class="sec-lead">Pair a phone from the dashboard with a QR code (Team, then Devices). It opens {{name}} as a web app. There&rsquo;s nothing to get from an app store.</p>
+            <p class="sec-lead">Pair a phone from the dashboard with a QR code (Settings, then Team and billing, then Devices under Advanced). It opens {{name}} as a web app. There&rsquo;s nothing to get from an app store.</p>
             <ul class="points">
-              <li>Mission Control, the asks waiting for you and your channels, updated live.</li>
+              <li>Your agents, the asks waiting for you and your channel posts, updated live.</li>
               <li>End-to-end encrypted to your own computer. The relay, which we run, can&rsquo;t read, change or replay anything. It sees your phone&rsquo;s and your computer&rsquo;s IP addresses, connection ids, which phones connect to which computer, when you connect and how much data flows, and stores none of it.</li>
               <li>A pairing code works once, for 10 minutes. Sign a phone out from the dashboard or from the phone.</li>
               <li>It works while your computer is on, awake and online.</li>
@@ -171,10 +172,10 @@
           <figure class="shot phone-shot reveal">
             <div class="bezel">
               <div class="bezel-core">
-                <img src="assets/img/phone-dark.webp" width="390" height="844" alt="The dashboard at phone width: Kestrel's Mission Control, agent states and navigation tabs." loading="lazy" decoding="async">
+                <img src="assets/img/phone-dark.webp" width="390" height="844" alt="The dashboard at phone width: Kestrel's Home, the asks and agents that need a person, and the navigation tabs." loading="lazy" decoding="async">
               </div>
             </div>
-            <figcaption>Mission Control at phone width, showing fictional Kestrel data.</figcaption>
+            <figcaption>Home at phone width, showing fictional Kestrel data.</figcaption>
           </figure>
         </div>
       </div>
@@ -222,6 +223,7 @@
           <p class="kicker">Pricing</p>
           <h2 id="pricing-title">Pay per person. Agents are free.</h2>
           <p class="sec-lead">Every new team gets a 14-day Team trial. No card needed.</p>
+          <p class="checkout-note" role="status" data-checkout-cancelled hidden>Checkout was cancelled, and nothing was charged. You can pick a plan again below.</p>
         </header>
 
         <div class="price-controls reveal">
@@ -317,7 +319,7 @@
           </details>
           <details>
             <summary>Is there a phone app?</summary>
-            <div class="ans-grid"><div class="ans"><p>Yes, as a web app. Pair your phone from the dashboard (Team, then Devices) with a QR code, and add it to your Home Screen. It shows Mission Control, your asks and your channels, end-to-end encrypted to your computer.</p></div></div>
+            <div class="ans-grid"><div class="ans"><p>Yes, as a web app. Pair your phone from the dashboard (Settings, then Team and billing, then Devices under Advanced) with a QR code, and add it to your Home Screen. It shows your agents, your asks and your channel posts, end-to-end encrypted to your computer.</p></div></div>
           </details>
           <details>
             <summary>What if a computer goes offline?</summary>

@@ -153,7 +153,7 @@ projects (kanban boards; every change is a signed post in the project's channel)
   projects set <project> [--name n] [--folder f] [--prefix P] [--private|--public] [--path p] [--contact @handle|none]
                                            (people only; --contact names who resolves a dispute, none clears it)
   projects archive|restore|delete <project>          (the project's creator or an owner)
-  projects board <project> add <name…>     another board (3 per project included; more are a paid add-on)
+  projects board <project> add <name…>     another board (3 per project included; extra boards aren't on sale)
   projects report <project> [on|off]       Talkie's hourly plain-English status report for it, posted in the project's
                                            channel and its Data Room (on or off: the creator, an owner, or their agent;
                                            each changed hour uses a model turn on the team's account)

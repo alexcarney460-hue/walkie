@@ -12,8 +12,9 @@ let reading: Reading = { mem: { total: 16 * GiB, used: 9 * GiB, swap_used: 0, pr
 
 beforeAll(async () => {
   c = new Cluster();
+  // readAccel null: the host's real GPU (nvidia-smi) stays out of the test; its temperature moving 2 C between ticks republishes (:47).
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", machineStats: { intervalMs: 100, heartbeatMs: 60_000,
-    read: async () => reading,
+    read: async () => reading, readAccel: async () => null,
     readSys: () => ({ os: "darwin", arch: "arm64", cpus: 8, load1: 0, load5: 0, load15: 0, cpu_busy_pct: 0 }) } });
   kira = await c.add({ name: "kira", login: "kira@example.com", hostname: "kiras-mbp" }); // stats off (as a v0.1.3 peer sends none)
   await alex.client().init("acme", "alex");

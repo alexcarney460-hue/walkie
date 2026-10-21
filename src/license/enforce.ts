@@ -38,10 +38,19 @@ const RESOURCE_TEXT: Record<PlanLimitDetails["resource"], string> = {
   projects: "projects", boards: "boards per project",
 };
 
+/**
+ * A board limit's text: no price and no link, since extra boards aren't on sale. The daemon's 402 uses it, and the MCP
+ * server rewrites an older daemon's board 402 (which still named a price and a checkout link) with it (E21b r2).
+ */
+export function boardLimitMessage(d: { limit?: unknown; used?: unknown }): string {
+  if (typeof d.limit !== "number") return "extra boards aren't on sale, and nothing was removed";
+  return `each project includes ${d.limit} boards (this one has ${typeof d.used === "number" ? d.used : "?"}); extra boards aren't on sale, and nothing was removed`;
+}
+
 export function planLimitMessage(d: PlanLimitDetails): string {
   const plan = d.plan === "free" ? "Free" : d.plan === "team" ? "Team" : "Business";
   if (d.resource === "restricted_channels") return `restricted channels need the Team plan (this team is on ${plan}); upgrade: ${d.upgrade_url}`;
-  if (d.resource === "boards") return `each project includes ${d.limit} boards (this one has ${d.used}); every extra board is a $15/month add-on: ${d.upgrade_url}`;
+  if (d.resource === "boards") return boardLimitMessage(d);
   return `the ${plan} plan includes ${d.limit} ${RESOURCE_TEXT[d.resource]} (${d.used} in use); nothing was removed. Upgrade: ${d.upgrade_url}`;
 }
 
@@ -121,7 +130,9 @@ export function planLimitFromPeer(raw: unknown, r: Roster, now: number, clock = 
   const seats = d.resource === "people" ? d.used + 1 : Math.max(1, d.used);
   const e = effectiveFor(r, now, clock);
   const { subscribed: _s, ...rest } = d;
-  return { ...rest, subscribed: e.status === "active", upgrade_url: upgradeUrl({ ...e, plan: d.plan }, seats, r.license) };
+  // E21b: extra boards aren't on sale and an upgrade adds no board, so a board limit carries no link.
+  const upgrade_url = d.resource === "boards" ? "" : upgradeUrl({ ...e, plan: d.plan }, seats, r.license);
+  return { ...rest, subscribed: e.status === "active", upgrade_url };
 }
 
 /** Throws 402 `plan_limit` if the roster event would exceed the team's plan (authority emit path). */

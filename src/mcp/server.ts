@@ -9,6 +9,7 @@ import { ORCHESTRATOR_AGENT } from "../protocol/orchestrator.ts";
 import { isSeatAgent } from "../protocol/seats.ts";
 import type { Event, MeView } from "../protocol/schemas.ts";
 import { defang, redactSecrets, wrapForModel } from "../protocol/safety.ts";
+import { boardLimitMessage } from "../license/enforce.ts";
 import { askPolicy, detectRuntime, detectTask, otherRuntimeName, repoContext, resolveAgentName } from "../agent/identity.ts";
 import { readSharePolicy } from "../agent/share-policy.ts";
 import { loadState, shareableTask, shareableTitle, stateProvenance } from "../hooks/state.ts";
@@ -30,14 +31,18 @@ Teammates (people and their agents on other machines) can post to channels, ask 
 
 /**
  * One tool call as the model sees it. Errors never pass through raw: secret-shaped tokens are redacted
- * and the text is defanged (tools that return external content wrap it themselves, see tools.ts).
+ * and the text is defanged (tools that return external content wrap it themselves, see tools.ts). A board limit is
+ * rewritten from its details: a daemon not yet restarted after an update still names a board price and a checkout
+ * link, and extra boards aren't on sale (E21b r2).
  */
 export async function handleToolCall(client: WalkieClient, name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text: string; data?: string; mimeType?: string }>; isError?: boolean }> {
   try {
     return isBrowserTool(name) ? await callBrowserTool(client, name, args)
       : isSkillTool(name) ? await callSkillTool(client, name, args, TOOLS) : await callTool(client, name, args);
   } catch (err) {
-    const msg = err instanceof WalkieError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+    const msg = err instanceof WalkieError
+      ? `${err.code}: ${err.code === "plan_limit" && err.details?.resource === "boards" ? boardLimitMessage(err.details) : err.message}`
+      : err instanceof Error ? err.message : String(err);
     return { content: [{ type: "text", text: `walkie error — ${defang(redactSecrets(msg).text, 2000)}` }], isError: true };
   }
 }

@@ -18209,7 +18209,7 @@
       "post": {
         "operationId": "post_projects_channel_boards",
         "summary": "Add a board to a project",
-        "description": "Three boards per project are included; more need a bought extra-board add-on.",
+        "description": "Each project includes three boards; extra boards aren't on sale.",
         "tags": [
           "projects"
         ],
@@ -18327,7 +18327,7 @@
             }
           },
           "402": {
-            "description": "plan_limit: boards beyond the 3 included without a bought add-on (resource boards)",
+            "description": "plan_limit: boards beyond the 3 included and the license's extra_boards (resource boards; upgrade_url is empty: extra boards aren't on sale)",
             "content": {
               "application/json": {
                 "schema": {

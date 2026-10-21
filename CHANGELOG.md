@@ -5,6 +5,12 @@ workflow on push. Both refuse a tag without a matching `## vX.Y.Z` section here,
 release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as a GitHub prerelease by
 `scripts/release.sh` only — the workflow's push trigger excludes pre-release tags.
 
+## v0.2.0-pre.21
+
+- Each project includes three boards, and extra boards aren't on sale. The board limit (`402 plan_limit` with resource `boards`) now says so: the daemon's answer, the CLI, the dashboard's notice, the `walkie_board_add` MCP tool and the `walkie projects board add` help no longer name a $15/month add-on, and the answer carries no checkout link (`upgrade_url` is empty). The MCP server rewrites the board limit of a daemon not yet restarted after the update, so a model is not handed the old price or link.
+- The dashboard no longer promises unlimited machines or projects: a machine or project limit says "Upgrade to add more", and the Billing panel shows "no plan limit" for Team machines (machine limits still apply).
+- A fleet link with no use limit is described as "no link limit; plan and machine limits still apply" on the dashboard and in `walkie team link`, instead of "any number of machines", "No limit" or "unlimited".
+
 ## v0.2.0-pre.20
 
 - `walkie compute` states the outbound data each rented machine includes the way billing counts it and the dashboard shows it: an allowance per 730 hours, prorated by rented hours, then the per-GiB price. Earlier releases printed the allowance as a flat amount per machine.
@@ -20,11 +26,11 @@ release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as
 - Before you approve a Talkie suggestion that sends a message in your name, the exact message is shown.
 - Loading, empty and error states with Retry, 44 px phone targets, no sideways scrolling at phone width, AA contrast for status pills in both themes, a keyboard shortcuts list on `?`, and settings pages that load on demand.
 
-## v0.2.0-pre.18 (unreleased)
+## v0.2.0-pre.18 (2026-10-14)
 
 - On Linux, the daemon collects zombies left by killed descendants after `prctl(PR_SET_CHILD_SUBREAPER)` made it their subreaper. It waitpids only zombies it did not spawn, and a pre-prctl snapshot pid leaves the owned set when its start ticks change, so a reused pid can be collected (WALK-175).
 
-## v0.2.0-pre.17 (unreleased)
+## v0.2.0-pre.17 (2026-10-09)
 
 - Rental compute is on: an owner rents machines for the team's agents from the dashboard's "Add compute" or `walkie compute`, paid from prepaid credit ($50, $200 or $1,000 blocks through Stripe Checkout) used per minute. Only the CPU tiers (Agent box, Agent box XL) are offered for now; GPU tiers are not listed while their capacity is 0, and a GPU rent is refused. Rented machines run on DigitalOcean, join the team as the owner's machines with seats on, and are deleted with everything on them when they stop. A team's roster authority must run this release to rent: older daemons never offer Add compute (WALK-48).
 - Prepaid compute credit is non-refundable and expires 60 days after purchase. The soonest-expiring credit is spent first, expired credit is written off by the minute tick (one ledger entry per block), a running machine whose credit expires with nothing else to cover it stops as if it ran out of credit, and `walkie compute credit` and the dashboard show each block's remaining amount and expiry date (blocks within 7 days highlighted). A machine that fails to boot (it never reports in or joins: no report within 15 minutes, or its own setup reports failure) has the charge for its first 15 minutes credited back once its deletion is confirmed, at most 3 per team in a rolling 24 hours; later minutes, including the deletion time, stay billed. Minutes billed after a provider deletion that happened earlier than our metering are corrected back. Both go back to the block they came from, with its expiry. Migration 7 adds the ledger's `lot` column and the `expire` entry kind (WALK-48).
@@ -36,14 +42,14 @@ release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as
 - Licences keep renewing when compute switches on: a licence bound by an earlier release renews for its roster authority with a signed roster proof. The site keeps its own record of which licences are bound to each team, written by every licence bind and once by an operator backfill for licences bound before this release. A team's first compute enrollment is admitted only for its licence's authority, and while an authority fork is open the team's licence renewals and re-activations pause until the operator resolves it (up to 21 days of slack before a licence lapses) (WALK-48).
 - Operator alerts that concern money, abuse or a team waiting on the operator are confirmed: each waits in the store until Telegram accepts it and the minute tick retries it, money first, with nothing dropped. Two CPU alerts flag possible cryptocurrency mining: a machine at 90% CPU or more with no agent work for 10 minutes, and one at 90% or more for an hour whatever its work. They alert only; nothing is stopped (WALK-48).
 
-## v0.2.0-pre.16 (unreleased)
+## v0.2.0-pre.16 (2026-10-08)
 
 - The product is now named Sqwakie, and its orchestrator is named Talkie, in the CLI, dashboard, phone app, desktop app windows and menus, site and guides. The `walkie` command, `~/.walkie` home, `WALKIE_*` settings, MCP server and tool names, and the desktop app bundle name are unchanged, so existing installs and older teammates keep working; messages stored or sent by older versions are shown with the new name (WALK-134).
 - Product links, the installer, update checks and phone pairing use https://sqwakie.si; getwalkie.vercel.app keeps working. `walkie update` retries transient download failures and timeouts up to three times and still fails fast on signature, checksum and 4xx errors (WALK-166).
 - The daemon no longer stalls for seconds on large event logs: unfiltered event pages, ask, seat and peer reads, project catch-up and board classification are bounded by selective indexes, added by migration 19 when a pre.15 store upgrades (WALK-167).
 - Codex usage meters stay with the right account when a vault or lease login shares the local sessions folder, including homes removed before or during an upgrade (WALK-167).
 
-## v0.2.0-pre.15 (unreleased)
+## v0.2.0-pre.15 (2026-10-04)
 
 - Kimi accounts can be added by a person through device login into a private vault home, metered from either Kimi credential filename, used by same-machine seats, and removed with optional `--move`; rotating Kimi credentials cannot be leased to another machine. Kimi and Codex vault paths refuse links. After login, Walkie verifies an owner-only 0700 account home; later reads refuse a loosened home or a credential without current-user ownership and 0600 mode (WALK-164).
 
@@ -136,7 +142,7 @@ release notes. A pre-release tag (`vX.Y.Z-pre.N`, like this one) is published as
 - Scope every memory read and retract to its owner; keep empty or unavailable Claude session memory out of hook output.
 - Add local per-person project primers and scoped lexical recall through CLI, MCP, Claude SessionStart, and owned-seat briefs; Codex and Kimi report native context injection as unsupported.
 
-## v0.2.0-pre.14 (unreleased)
+## v0.2.0-pre.14 (2026-10-04)
 
 - Stale roster role and channel requests are refused after a member is removed or demoted. Older channel requests also cannot overwrite a newer restricted member list or its order. Grants are sent only when a live signed check confirms the roster authority runs this release or newer; a cached version never authorizes a grant. An interactive grant with a live signed old authority version returns `409 authority_update_required`; a request made while the authority is unreachable or its live version cannot be confirmed is queued. A queued grant is sent only after a live signed version check for that send confirms this release or newer; a failed or old answer keeps it queued for a later flush. Update the roster authority’s machine first, or move the authority to an updated owner machine, then update the rest. Until then, an updated machine can remove people but cannot invite, raise or demote roles, set channel lists, or finish an offboard.
 - Team recommendations remove private project titles even when names are unspaced, split across long text, or surrounded by symbols. Latin private names inside Chinese, Japanese, Korean and Thai text are removed too; punctuation-only ASCII titles are ignored, and Hangul titles match whole syllables.

@@ -52,7 +52,7 @@ describe("GET /api/checkout", () => {
     expect(res.headers.get("location")).toBe("https://checkout.stripe.test/c/pay/cs_test_1");
     expect(s.calls.checkout).toEqual([{
       price: "price_biz_y", quantity: 12, plan: "business", interval: "year",
-      successUrl: "https://site.test/welcome?session_id={CHECKOUT_SESSION_ID}", cancelUrl: "https://site.test/#pricing",
+      successUrl: "https://site.test/welcome?session_id={CHECKOUT_SESSION_ID}", cancelUrl: "https://site.test/?checkout=cancelled#pricing",
     }]);
   });
 
@@ -60,7 +60,7 @@ describe("GET /api/checkout", () => {
     const s = new MockStripe();
     const res = await makeCheckout(deps(s, without("SITE_URL")))(new Request("https://preview.test/api/checkout"));
     expect(res.status).toBe(303);
-    expect(s.calls.checkout[0]).toMatchObject({ price: "price_team_m", quantity: 1, cancelUrl: "https://preview.test/#pricing" });
+    expect(s.calls.checkout[0]).toMatchObject({ price: "price_team_m", quantity: 1, cancelUrl: "https://preview.test/?checkout=cancelled#pricing" });
   });
 
   test("bad parameters are 400 and never reach Stripe", async () => {

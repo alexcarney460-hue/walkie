@@ -84,15 +84,15 @@ export function limitMessage(d: PlanLimitDetails): string {
     case "people":
       return `Your ${plan} plan includes ${plural(d.limit, "person", "people")} (${d.used} used). Upgrade to add more.`;
     case "machines":
-      return `Your ${plan} plan includes ${plural(d.limit, "machine", "machines")} (${d.used} used). Upgrade for unlimited machines.`;
+      return `Your ${plan} plan includes ${plural(d.limit, "machine", "machines")} (${d.used} used). Upgrade to add more.`;
     case "restricted_channels":
       return `Restricted channels are part of the Team plan. Upgrade to create one, or make this channel public.`;
     case "integrations":
       return `Your ${plan} plan includes ${plural(d.limit, "integration", "integrations")} (${d.used} enabled). Upgrade to enable more.`;
     case "projects":
-      return `Your ${plan} plan includes ${plural(d.limit, "project", "projects")} (${d.used} in use). Upgrade for unlimited projects.`;
+      return `Your ${plan} plan includes ${plural(d.limit, "project", "projects")} (${d.used} in use). Upgrade to add more.`;
     case "boards":
-      return `Each project includes ${plural(d.limit, "board", "boards")} (this one has ${d.used}). Extra boards are $15/month each.`;
+      return `Each project includes ${plural(d.limit, "board", "boards")} (this one has ${d.used}). Extra boards aren't on sale.`;
   }
 }
 

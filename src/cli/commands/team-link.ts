@@ -31,7 +31,7 @@ function usesArg(ctx: Ctx): number {
 
 function usesText(l: Pick<FleetLinkView, "uses" | "used" | "pending">): string {
   const taken = l.used + l.pending;
-  return l.uses === 0 ? `${l.used} joined · unlimited` : `${l.used} joined · ${Math.max(0, l.uses - taken)} of ${l.uses} left`;
+  return l.uses === 0 ? `${l.used} joined · no link limit` : `${l.used} joined · ${Math.max(0, l.uses - taken)} of ${l.uses} left`;
 }
 
 function daysLeft(ms: number): string {
@@ -56,7 +56,7 @@ async function linkMint(ctx: Ctx): Promise<number> {
   const ownerMachines = bool(ctx.args, "owner-machines");
   const client = ctx.client();
   const whose = target ?? (await client.me()).handle ?? "you";
-  await requirePerson(ctx, `make a link that adds ${uses === 0 ? "any number of" : `up to ${uses}`} machines as @${whose}'s`, whose);
+  await requirePerson(ctx, `make a link that adds ${uses === 0 ? "machines (no link limit; plan and machine limits still apply)" : `up to ${uses} machines`} as @${whose}'s`, whose);
   const res = await client.mintLink({ ...(target ? { for: target } : {}), uses, expires_days: days, approve, ...(observer ? { observer: true } : {}), ...(ownerMachines ? { owner_machines: true } : {}) });
   if (ctx.json) { ctx.out(JSON.stringify(res)); return EXIT.ok; }
   ctx.out(mintedText(res));
@@ -64,7 +64,8 @@ async function linkMint(ctx: Ctx): Promise<number> {
 }
 
 export function mintedText(res: FleetLinkMinted): string {
-  const n = res.uses === 0 ? "any number of machines" : `up to ${res.uses} machines`;
+  // E21b r2: a link with no use limit still admits machines only within the plan's machine limit and the node limits.
+  const n = res.uses === 0 ? "no link limit (plan and machine limits still apply); machines" : `up to ${res.uses} machines`;
   return `${c.green("fleet link")} ${res.short} · ${n} join as @${res.handle}'s (${res.role}) · expires in ${daysLeft(res.expires_at)}` +
     `${res.approve ? " · each waits for an owner's approval" : ""}\n\n` +
     (res.role === "owner" ? "Owner-level access: these machines can mint links, remove members, move authority and read restricted channels.\n\n" : "") +

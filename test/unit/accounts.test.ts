@@ -562,11 +562,11 @@ describe("walkie accounts output", () => {
   });
   test("re-login hint names the machine that reported it", () => {
     const expired = { at: now, state: "relogin" as const, reason: "login_expired" as const, source: "none" as const, until: null, windows: [] };
-    const out = renderAccounts([view({ provider: "codex", usage: expired, usage_host: "spark-0e86", machines: [
+    const out = renderAccounts([view({ provider: "codex", usage: expired, usage_host: "spark-garage", machines: [
       { ...view().machines[0]!, usage: null },
-      { ...view().machines[0]!, node_id: "spark", hostname: "spark-0e86", self: false, usage: expired },
+      { ...view().machines[0]!, node_id: "spark", hostname: "spark-garage", self: false, usage: expired },
     ] })], now);
-    expect(out).toContain("needs re-login — On spark-0e86: run `codex login`");
+    expect(out).toContain("needs re-login — On spark-garage: run `codex login`");
     expect(out).not.toContain("On alex-mbp: run `codex login`");
   });
   test("--json for a model: rebuilt from an allowlist, left_pct added, labels validated, trust + provenance", () => {

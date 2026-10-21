@@ -20,8 +20,8 @@ const SHARE = { share: true, runtime: true, busy: false, cap: null, serve: true 
 const sys = (os: MachineSys["os"], arch: MachineSys["arch"]): MachineSys => ({ os, arch, cpus: 20, load1: 0 });
 const withSys = (n: GroupInput, s: MachineSys | undefined, over: Partial<GroupInput> = {}): GroupInput => ({ ...n, ...over, pool: SHARE, stats: { ...n.stats!, ...(s ? { sys: s } : {}) } });
 
-const sparkA = (over: Partial<GroupInput> = {}) => withSys(spark("spark-115f", "machine-stats/meminfo-gb10-spark-115f.txt", { self: true, rtt_ms: null }), sys("linux", "arm64"), over);
-const sparkB = (over: Partial<GroupInput> = {}) => withSys(spark("spark-0e86", "machine-stats/meminfo-gb10-spark-0e86.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-0e86.txt"), sys("linux", "arm64"), over);
+const sparkA = (over: Partial<GroupInput> = {}) => withSys(spark("spark-home", "machine-stats/meminfo-gb10-spark-home.txt", { self: true, rtt_ms: null }), sys("linux", "arm64"), over);
+const sparkB = (over: Partial<GroupInput> = {}) => withSys(spark("spark-garage", "machine-stats/meminfo-gb10-spark-garage.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-garage.txt"), sys("linux", "arm64"), over);
 /** The captured Apple M5 Mac, given 64 GB of memory with 8 GB used (the 16 GB capture has too little free for a model). */
 const mac = (over: Partial<GroupInput> = {}): GroupInput => {
   const n = withSys(mac16("alex-mac", { rtt_ms: 40 }), sys("darwin", "arm64"), over);
@@ -75,7 +75,7 @@ describe("the pick's placement says when its speed is a GPU's that Walkie's runt
   });
 
   test("a platform that was not reported counts as CPU only, so its GPU speed is flagged too (the capacity's own conservative rule)", () => {
-    const n = withSys(spark("spark-115f", "machine-stats/meminfo-gb10-spark-115f.txt", { self: true, rtt_ms: null }), undefined);
+    const n = withSys(spark("spark-home", "machine-stats/meminfo-gb10-spark-home.txt", { self: true, rtt_ms: null }), undefined);
     expect(suggestTeam([n], { cat }).machines[0]!.best!.placement[0]!.gpuSpeedOnly).toBe(true);
   });
 
@@ -99,7 +99,7 @@ describe("the pick's placement says when its speed is a GPU's that Walkie's runt
     expect(cs.runnable).not.toBeNull();
     expect(cs.runnable!.placement.some((x) => x.gpuSpeedOnly)).toBe(false);
     // Whatever part of it lands on the spark runs from system memory, at the CPU's speed.
-    expect(cs.runnable!.placement.filter((x) => x.hostname === "spark-0e86").every((x) => x.memory === "system memory (CPU)")).toBe(true);
+    expect(cs.runnable!.placement.filter((x) => x.hostname === "spark-garage").every((x) => x.memory === "system memory (CPU)")).toBe(true);
   });
 
   test("the caveat names no host: it is safe beside teammates' self-reported names", () => {
@@ -151,10 +151,10 @@ describe("walkie pool says it beside the speed and under the machine", () => {
     };
     expect(typeof j.best_overall.gpu_speed_only).toBe("boolean");
     const bySpeed = Object.fromEntries(j.machines.map((m) => [m.hostname, m.best?.gpu_speed_only]));
-    expect(bySpeed["spark-115f"]).toBe(true);
+    expect(bySpeed["spark-home"]).toBe(true);
     expect(bySpeed["alex-mac"]).toBe(false);
     const notes = Object.fromEntries(j.groups.flatMap((g) => g.machines).map((m) => [m.hostname, m.runtime_note]));
-    expect(notes["spark-115f"]).toContain("counted as CPU only");
+    expect(notes["spark-home"]).toContain("counted as CPU only");
     expect(notes["alex-mac"]).toBeNull();
     expect(typeof j.combined.pick.gpu_speed_only).toBe("boolean");
     expect(j.combined.runnable?.gpu_speed_only ?? false).toBe(false);

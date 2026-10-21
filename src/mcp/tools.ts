@@ -77,7 +77,7 @@ const RAW_TOOLS: Omit<ToolDef, "annotations">[] = [
     inputSchema: obj({}) },
   { name: "walkie_project_create", description: "Create a project (a kanban board) for your person, only when your user asked for one. You act for your person: they become its creator; its settings, visibility and deletion stay theirs. Plan limits apply (Free: one project). private: true only if your person is a team owner.",
     inputSchema: obj({ name: str("Project name"), prefix: str("Card key prefix, 2-10 letters/digits (e.g. WEB); derived from the name if omitted"), folder: str("Folder to group it under"), description: str("Description"), private: { type: "boolean", description: "Private to the team's owners" }, board: str("Name of its first board (default Board)") }, ["name"]) },
-  { name: "walkie_board_add", description: "Add a board to a project, only when your user asked for one. Three boards per project are included; more need the board add-on.",
+  { name: "walkie_board_add", description: "Add a board to a project, only when your user asked for one. Each project includes three boards; extra boards aren't on sale.",
     inputSchema: obj({ project: str("Project prefix (WEB) or channel"), name: str("Board name") }, ["project", "name"]) },
   { name: "walkie_tasks", description: "List task cards across projects (newest change first). Filter by project (prefix or channel), mine (assigned to you), query (search), role (backlog, todo, active, review, done).",
     inputSchema: obj({ project: str("Project prefix (WEB) or channel"), mine: { type: "boolean", description: "Only cards assigned to you" }, query: str("Search words"), role: str("Comma list of column roles, e.g. todo,active"), limit: int("Max cards (default 30, max 100)") }) },

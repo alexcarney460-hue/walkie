@@ -16,7 +16,7 @@ const USES = [5, 10, 25, 50, 100, 250, 0] as const;
 const STATE_LABEL: Record<FleetLinkView["state"], string> = { active: "Active", used_up: "Used up", expired: "Expired", revoked: "Revoked", dead: "Can't be used" };
 
 function usesText(l: Pick<FleetLinkView, "uses" | "used" | "pending">): string {
-  if (l.uses === 0) return `${l.used} joined · no limit`;
+  if (l.uses === 0) return `${l.used} joined · no link limit`;
   return `${l.used} joined · ${Math.max(0, l.uses - l.used - l.pending)} of ${l.uses} left`;
 }
 
@@ -132,7 +132,7 @@ export function FleetLinkSheet({ onClose }: { onClose: () => void }) {
                 <div className="field">
                   <label htmlFor="fl-uses">How many machines</label>
                   <select id="fl-uses" className="select" value={uses} onChange={(e) => setUses(Number(e.target.value))}>
-                    {USES.map((n) => <option key={n} value={n}>{n === 0 ? "No limit" : `Up to ${n}`}</option>)}
+                    {USES.map((n) => <option key={n} value={n}>{n === 0 ? "No link limit (plan and machine limits apply)" : `Up to ${n}`}</option>)}
                   </select>
                 </div>
                 <div className="field">
@@ -182,7 +182,7 @@ export function FleetLinkResult({ res }: { res: FleetLinkMinted }) {
         <span className="mono">@{res.handle}</span>&rsquo;s. Or run the command yourself on each machine.
       </p>
       <div className="am-facts">
-        <span className="am-fact">{res.uses === 0 ? <>Any number of machines</> : <>Up to <b>{res.uses}</b> {res.uses === 1 ? "machine" : "machines"}</>}</span>
+        <span className="am-fact">{res.uses === 0 ? <>No link limit; plan and machine limits still apply</> : <>Up to <b>{res.uses}</b> {res.uses === 1 ? "machine" : "machines"}</>}</span>
         <span className="am-fact">They join as <b className="mono">@{res.handle}</b>&rsquo;s ({res.role})</span>
         <span className="am-fact">Works until <b>{fullTime(res.expires_at)}</b></span>
         {res.approve && <span className="am-fact">Each waits for <b>your approval</b></span>}

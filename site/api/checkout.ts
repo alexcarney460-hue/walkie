@@ -67,7 +67,7 @@ export function makeCheckout(deps: Deps, createSession = true): (req: Request) =
       const session = await deps.stripe().createCheckoutSession({
         price: env.values[PRICE_ENV[q.plan][q.interval]] as string, quantity: q.seats, plan: q.plan, interval: q.interval,
         successUrl: `${origin}/welcome?session_id={CHECKOUT_SESSION_ID}`,
-        cancelUrl: `${origin}/#pricing`,
+        cancelUrl: `${origin}/?checkout=cancelled#pricing`,
       });
       if (!session.url) return fail(502, "checkout_unavailable");
       return redirect(session.url);
@@ -78,9 +78,12 @@ export function makeCheckout(deps: Deps, createSession = true): (req: Request) =
   };
 }
 
-/** True for a request the browser marked as a prefetch or prerender (Sec-Purpose, or the legacy Purpose header). */
+/** Headers a browser adds to a prefetch, prerender or preview: Sec-Purpose, and the older Purpose, X-Purpose and X-Moz. */
+const SPECULATIVE_HEADERS = ["sec-purpose", "purpose", "x-purpose", "x-moz"] as const;
+
+/** True for a request that carries any of those headers, whatever its value (an empty one included). */
 export function isSpeculative(req: Request): boolean {
-  return Boolean(req.headers.get("sec-purpose") || req.headers.get("purpose"));
+  return SPECULATIVE_HEADERS.some(name => req.headers.get(name) !== null);
 }
 
 /** True for a GET a person deliberately started (a click or a typed/opened URL), per Fetch Metadata. */

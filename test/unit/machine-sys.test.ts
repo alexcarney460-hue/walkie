@@ -92,7 +92,8 @@ describe("load republishing", () => {
     let now = 0;
     const published: MachineStats[] = [];
     const s = new MachineStatsSampler((st) => published.push(st), createLogger({}), {
-      read: async () => ({ mem: MEM, temp_c: 50 }), readSys: () => ({ ...SYS, load1: load }), clock: () => now,
+      // readAccel null: a real GPU's temperature moving 2 C between the ticks would publish at the `false` tick below.
+      read: async () => ({ mem: MEM, temp_c: 50 }), readSys: () => ({ ...SYS, load1: load }), clock: () => now, readAccel: async () => null,
     });
     await s.tick();
     now += 30_000;

@@ -16,8 +16,8 @@ import { mac16, spark } from "../helpers/pool-machines.ts";
 const T = Date.parse("2026-10-01T22:40:00Z");
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 const nodes = () => [
-  spark("spark-115f", "machine-stats/meminfo-gb10-spark-115f.txt", { self: true, rtt_ms: null }),
-  spark("spark-0e86", "machine-stats/meminfo-gb10-spark-0e86.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-0e86.txt"),
+  spark("spark-home", "machine-stats/meminfo-gb10-spark-home.txt", { self: true, rtt_ms: null }),
+  spark("spark-garage", "machine-stats/meminfo-gb10-spark-garage.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-garage.txt"),
   mac16("alex-mac", { rtt_ms: 40 }),
 ];
 

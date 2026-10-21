@@ -469,6 +469,7 @@ export interface PlanLimitDetails {
   limit: number; used: number; plan: PlanName;
   /** True when the team already has an active license: `upgrade_url` is then the billing portal. */
   subscribed?: boolean;
+  /** Empty for `boards`: extra boards aren't on sale and an upgrade adds no board, so there is no link. */
   upgrade_url: string;
 }
 

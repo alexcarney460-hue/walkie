@@ -117,6 +117,10 @@
     });
   });
 
+  // ---- back from a cancelled Stripe Checkout (its cancel URL is /?checkout=cancelled#pricing) ----
+  var cancelledNote = document.querySelector("[data-checkout-cancelled]");
+  if (cancelledNote && new URLSearchParams(window.location.search).get("checkout") === "cancelled") cancelledNote.hidden = false;
+
   // ---- pricing: monthly/annual toggle, seat stepper, live checkout links ----
   var pricing = document.querySelector("[data-pricing]");
   if (pricing) {

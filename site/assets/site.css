@@ -279,3 +279,6 @@ html:not(.js) .price-controls{display:none}
   .glass::after{display:none}
 }
 @media(prefers-reduced-motion:reduce){.faq summary::after{transition:none}.stepper-core button:active{transform:none}}
+.agent-handoff{width:min(620px,100%);margin-top:22px}.agent-handoff-label{color:var(--text-3);font-size:.85rem;line-height:1.55}.hero .agent-handoff .install{width:100%;margin-top:8px}.install-cmd.agent-prompt{white-space:normal;overflow-wrap:anywhere;overflow-x:visible;line-height:1.55}
+.checkout-note{max-width:62ch;margin-top:14px;color:var(--amber);font-size:.95rem}
+.notfound-card .install{margin-top:22px}.notfound-card .btn{margin-top:22px}

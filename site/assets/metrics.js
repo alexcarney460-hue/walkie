@@ -31,7 +31,9 @@
     if (el.hasAttribute("data-copy")) {
       var core = el.closest(".install-core");
       var src = core && core.querySelector("[data-copy-src]");
-      track("copy_command", { page: page, field: (src && src.getAttribute("data-field")) || "install" });
+      var field = (src && src.getAttribute("data-field")) || "install";
+      if (field === "agent-prompt") track("copy_agent_prompt", { page: page });
+      else track("copy_command", { page: page, field: field });
       return;
     }
     if (el.tagName === "A" && /^https:\/\/github\.com\//.test(el.href || "")) {
@@ -49,6 +51,8 @@
 
   // Back from Stripe Checkout: count the return (whether it was paid is read from Stripe, not from here).
   if (page === "/welcome" && /[?&]session_id=/.test(window.location.search)) track("checkout_return", {});
+  // Back from a cancelled Checkout (cancel URL /?checkout=cancelled#pricing).
+  if (page === "/" && new URLSearchParams(window.location.search).get("checkout") === "cancelled") track("checkout_cancelled", {});
 
   var s = document.createElement("script");
   s.src = "/_vercel/insights/script.js";

@@ -1,4 +1,4 @@
-// Capture the fictional Kestrel team's live Mission Control from the built dashboard.
+// Capture the fictional Kestrel team's Home (v0.2.0-pre.19's first page; it replaced Mission Control) from the built dashboard.
 // Run with BASE=http://127.0.0.1:7495 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node site/capture-mission.mjs <png dir>
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
@@ -19,7 +19,7 @@ try {
     if (await gotIt.isVisible()) await gotIt.click();
     await page.getByText(/Needs you/).first().waitFor();
     await page.waitForTimeout(2200);
-    await page.mouse.move(shot.width - 5, shot.height - 5);
+    await page.mouse.move(Math.round(shot.width / 2), 20); // empty space above the page title: no hover highlight
     await page.screenshot({ path: join(out, `${shot.name}.png`) });
     console.log(`captured ${shot.name}: ${shot.width}x${shot.height}`);
     await page.close();

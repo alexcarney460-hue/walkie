@@ -143,8 +143,8 @@ test("POOL-REAL-1: a model one machine runs at least as fast as the split is sho
 const sparks = (): NodeView[] => {
   const asView = (g: ReturnType<typeof spark>): NodeView => ({ node_id: g.node_id, handle: "alex", hostname: g.hostname, ip: "100.64.0.1", online: true, last_seen: 1, rtt_ms: g.rtt_ms, self: g.self, sync: { behind: 0, last_sync: 1 }, stats: g.stats } as NodeView);
   return [
-    asView(spark("spark-115f", "machine-stats/meminfo-gb10-spark-115f.txt", { self: true, rtt_ms: null })),
-    asView(spark("spark-0e86", "machine-stats/meminfo-gb10-spark-0e86.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-0e86.txt")),
+    asView(spark("spark-home", "machine-stats/meminfo-gb10-spark-home.txt", { self: true, rtt_ms: null })),
+    asView(spark("spark-garage", "machine-stats/meminfo-gb10-spark-garage.txt", { rtt_ms: 1 }, "machine-stats/nvidia-smi-gb10-spark-garage.txt")),
     asView({ ...mac16("alex-mac", { rtt_ms: 40 }) }),
   ];
 };

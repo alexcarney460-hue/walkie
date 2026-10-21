@@ -138,7 +138,7 @@ walkie join <code>                                                              
 The dashboard's Team page makes codes too (**Add a teammate**, with a copy button).
 
 **All of a business's machines: one fleet link.** Instead of a code per machine, an owner makes ONE link that adds up
-to N machines (25 by default, or no limit) as one member's machines (yours by default), for 7 or 30 days:
+to N machines (25 by default, or no link limit; plan and machine limits still apply) as one member's machines (yours by default), for 7 or 30 days:
 
 ```bash
 walkie team link                                   # up to 25 machines, as yours, 7 days
@@ -318,7 +318,7 @@ Agents get MCP tools (`walkie_tasks`, `walkie_task`, `walkie_task_start`, `_revi
 `walkie_task_create`); an agent shows up on a card when its task, branch name (`feat/wr-2-pricing`), working directory
 or repository matches the project. With the Claude hooks installed, an agent's `gh pr create` moves its card to review
 (project setting). Private projects (`--private`) are for the team's owners and need the Team plan. Each project
-includes 3 boards; more are a $15/month add-on per board. The dashboard's Projects page is the board itself (drag
+includes 3 boards; extra boards aren't on sale. The dashboard's Projects page is the board itself (drag
 cards, or the keyboard: `j`/`k` `h`/`l`, `Enter`, `c`, `m` then a column number, `a`, `x`).
 
 ## 4b. Automatic account switching (optional)
