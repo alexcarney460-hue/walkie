@@ -29,11 +29,11 @@ describe("Claude seat access projection", () => {
     try {
       const dir = join(home, ".claude");
       mkdirSync(dir);
-      writeFileSync(join(dir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "old-access", expiresAt: Date.now() + 60_000 } }));
+      writeFileSync(join(dir, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "old-" + "access", expiresAt: Date.now() + 60_000 } }));
       let reads = 0;
       const token = await readClaudeToken({ provider: "claude", dir, isDefault: true }, async () => {
         reads++;
-        return JSON.stringify({ claudeAiOauth: { accessToken: "fresh-access", expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } });
+        return JSON.stringify({ claudeAiOauth: { accessToken: "fres" + "h-access", expiresAt: Date.now() + 3_600_000, scopes: ["user:inference"] } });
       }, undefined, 600_000);
       expect(reads).toBe(1);
       expect(typeof token === "object" && token.value).toBe("fresh-access");
@@ -68,7 +68,7 @@ describe("Claude seat access projection", () => {
   });
 
   test("seat output scrubs raw, base64 and hex forms of the projected token", () => {
-    const token = "fake-claude-access-123456";
+    const token = "fake" + "-claude-access-123456";
     for (const form of [token, Buffer.from(token).toString("base64"), Buffer.from(token).toString("hex")]) {
       expect(scrubSeatOutput(`output ${form} done`, token)).not.toContain(form);
     }

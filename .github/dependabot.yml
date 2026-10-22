@@ -1,0 +1,21 @@
+# Version updates for the package manifests this repository develops.
+# src/daemon/provision/locks/* are pinned installer snapshots, not packages developed here.
+# desktop/ and relay/ have no package manifest.
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: bun
+    directory: /site
+    schedule:
+      interval: weekly
+  - package-ecosystem: bun
+    directory: /web
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

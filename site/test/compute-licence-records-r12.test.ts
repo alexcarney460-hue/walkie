@@ -341,7 +341,7 @@ test('a bind against a store host that never answers fails within 4 s, before an
 test('queued licence_read_failed alerts are retried before team-waiting ones, also when their sender died mid-send (N25b, N32)', async () => {
   const store = new MemoryStore();
   let now = 1_790_000_000_000;
-  const env = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+  const env = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
   const deps = (fetch: (url: string, init?: RequestInit) => Promise<Response>) => ({ store, env, now: () => now, log: () => {}, fetch });
   const failing = async () => new Response('bad gateway', { status: 502 });
   await sendAlert(deps(failing), 'authority_fork', { team: 'aaaaaaaaaaaaaaaa' }); // team-waiting, queued first

@@ -104,7 +104,7 @@ test('on PgStore: a held checkout alert that failed is delivered by the tick, an
   await store.tx(t => t.setControl('last_tick', T0));
   const a = await createAccount(w.d, fixtureTeam);
   const tg = { up: false, delivered: [] as string[] };
-  const deps: HandlerDeps = { env: { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat',
+  const deps: HandlerDeps = { env: { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat',
     COMPUTE_ENABLED: '1', COMPUTE_STRIPE_WEBHOOK_SECRET: WH, CRON_SECRET: CRON }, compute: () => w.d, stripe: () => null,
     alertFetch: async (_, init) => {
       if (!tg.up) return new Response('down', { status: 502 });

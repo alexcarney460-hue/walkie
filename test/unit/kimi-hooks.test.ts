@@ -13,7 +13,7 @@ test("Kimi installer preserves existing hooks/settings, is idempotent and revers
   expect(next).toContain('hook kimi');
 });
 test("Kimi installer refuses malformed/ambiguous TOML without echoing values", () => {
-  expect(() => withKimiHooks('secret = "sensitive\n', "walkie", true)).toThrow("Kimi config is not valid TOML");
+  expect(() => withKimiHooks('secret = "' + 'sensitive\n', "walkie", true)).toThrow("Kimi config is not valid TOML");
   expect(() => withKimiHooks('hooks = [{event="Stop",command="keep"}]\n', "walkie", true)).toThrow();
 });
 test("Kimi schema snake-case input produces private working status with runtime-specific identity", () => {

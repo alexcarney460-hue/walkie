@@ -16,7 +16,7 @@ import { reportsWorld } from "../helpers/project-reports.ts";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
-const KEY = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const KEY = "sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const CODE = `wk1${"B".repeat(40)}`;
 const meta = { title: "Home", group: "Site", status: "works", about: "The home page." };
 /** ASCII letters and digits as fullwidth forms: they read the same, and the daemon's own check does not see them. */

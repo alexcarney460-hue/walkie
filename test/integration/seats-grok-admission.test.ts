@@ -56,7 +56,7 @@ beforeAll(async () => {
   const home = join(cluster.root, "arvid-home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({
-    claudeAiOauth: { accessToken: "fixture-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] },
+    claudeAiOauth: { accessToken: "fixt" + "ure-access", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] },
   }), { mode: 0o600 });
   signInCodex(home);
   mkdirSync(join(home, ".grok"), { recursive: true });

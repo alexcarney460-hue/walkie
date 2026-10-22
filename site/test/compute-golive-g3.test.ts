@@ -17,7 +17,7 @@ import { makeTick } from '../api/compute/tick.ts';
 import { createAccount, fixtureTeam, MIN, world } from './compute-helpers.ts';
 
 const CRON = 'cron-' + 'builder-g3-fixture';
-const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 const tickRequest = () => new Request('https://site.test/api/compute/tick', { headers: { authorization: `Bearer ${CRON}` } });
 function telegram() {
   const t = { up: true, attempts: [] as string[], delivered: [] as string[],

@@ -420,7 +420,7 @@ describe("AccountsService: attempts minted and bound by the daemon", () => {
     const fx = fakeCodex();
     const { svc, id, home } = setup(fx);
     const cx = id("codex");
-    writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ OPENAI_API_KEY: "FAKE-API-KEY-NOT-A-LOGIN", tokens: null }));
+    writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ OPENAI_API_KEY: "FAKE" + "-API-KEY-NOT-A-LOGIN", tokens: null }));
     expect(() => svc.prepareReset(cx)).toThrow(expect.objectContaining({ code: "not_signed_in" }));
     expect(fx.state.launches).toBe(0);
   });

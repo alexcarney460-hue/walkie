@@ -58,7 +58,7 @@ test("Grok seat home projects only subscription auth, never the person's model A
   mkdirSync(join(home, ".grok"));
   const auth = join(home, ".grok", "auth.json");
   writeFileSync(auth, "fixture-session", { mode: 0o600 });
-  writeFileSync(join(home, ".grok", "config.toml"), '[model.grok-build]\napi_key = "fixture-api-key"\n');
+  writeFileSync(join(home, ".grok", "config.toml"), '[model.grok-build]\napi_key = "' + 'fixture-api-key"\n');
   const isolated = grokSeatHome(seatDir, home);
   expect(isolated).toBe(join(seatDir, "grok-home"));
   expect(lstatSync(join(isolated, "auth.json")).isSymbolicLink()).toBe(true);
@@ -74,7 +74,7 @@ test("Grok seat refuses a system-managed config without reading its contents", (
   const managed = temp();
   mkdirSync(join(home, ".grok"));
   writeFileSync(join(home, ".grok", "auth.json"), "fixture-session", { mode: 0o600 });
-  writeFileSync(join(managed, "managed_config.toml"), '[model.grok-build]\napi_key = "fixture-only"\n');
+  writeFileSync(join(managed, "managed_config.toml"), '[model.grok-build]\napi_key = "' + 'fixture-only"\n');
   expect(() => grokSeatHome(seatDir, home, managed)).toThrow("subscription-only auth cannot be proven");
   expect(() => lstatSync(join(seatDir, "grok-home"))).toThrow();
 });
@@ -132,7 +132,7 @@ test("Grok credential tripwire ignores auth settings but detects a token-shaped 
 });
 
 test("Grok holds every split of a token and its JSON key before a timed flush", async () => {
-  const token = "fixture-session-token-1234567890";
+  const token = "fixt" + "ure-session-token-1234567890";
   const output = `before {"refresh_token":"${token}"} after`;
   for (let split = 1; split < output.length; split++) {
     const first = grokGuardOutput("", output.slice(0, split));

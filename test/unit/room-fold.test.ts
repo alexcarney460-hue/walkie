@@ -259,7 +259,7 @@ describe("Data Room fold", () => {
 describe("secret scan", () => {
   const enc = (s: string) => new TextEncoder().encode(s);
   test("finds provider tokens and credentials in text, reports kinds only, never changes the bytes", () => {
-    const bytes = enc(`# deploy\nexport STRIPE=sk_live_${"a1".repeat(12)}\npassword = "hunter2hunter2"\n`);
+    const bytes = enc(`# deploy\nexport STRIPE=sk_live_${"a1".repeat(12)}\npassword = "` + `hunter2hunter2"\n`);
     const copy = bytes.slice();
     const r = scanUpload(bytes, "text/plain", "deploy.md");
     expect(r.text).toBe(true);

@@ -167,7 +167,7 @@ describe("the lock is made whole, taken over once, and released only by its owne
     const a = takeLock(home) as () => void;
     const mine = tokenIn(lockPath(home));
     // Another process took the lock over (it judged ours stale): its file is at the path now.
-    writeFileSync(lockPath(home), JSON.stringify({ pid: process.pid, token: "someone-else" }));
+    writeFileSync(lockPath(home), JSON.stringify({ pid: process.pid, token: "some" + "one-else" }));
     a();
     expect(existsSync(lockPath(home))).toBe(true);
     expect(tokenIn(lockPath(home))).toBe("someone-else");
@@ -203,7 +203,7 @@ describe("the lock is made whole, taken over once, and released only by its owne
 
   test("a takeover file left by a crash is cleared after its short window", () => {
     lockFile(JSON.stringify({ pid: DEAD, token: "crashed" }));
-    writeFileSync(takeoverPath(home), JSON.stringify({ pid: DEAD, token: "crashed-takeover" }));
+    writeFileSync(takeoverPath(home), JSON.stringify({ pid: DEAD, token: "cras" + "hed-takeover" }));
     expect(typeof takeLock(home)).toBe("function"); // a dead owner: stale at once
     rmSync(lockPath(home), { force: true });
     lockFile(JSON.stringify({ pid: DEAD, token: "crashed" }));

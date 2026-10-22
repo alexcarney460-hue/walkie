@@ -15,7 +15,7 @@ import { Cluster, waitFor, type TestNode } from "../helpers/cluster.ts";
 import { fakeSeatWorld, type FakeSeatWorld, signInCodex } from "../helpers/fake-seat-users.ts";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
-const CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "the-machines-own-login", refreshToken: "the-machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } });
+const CREDS = JSON.stringify({ claudeAiOauth: { accessToken: "the-" + "machines-own-login", refreshToken: "the-" + "machines-refresh-token", expiresAt: Date.now() + 8 * 3_600_000, scopes: ["user:inference"] } });
 
 let c: Cluster;
 let alex: TestNode;

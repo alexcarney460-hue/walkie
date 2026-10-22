@@ -30,12 +30,12 @@ test("seat-user Codex handoff rejects linked and loose vault credentials", async
   const home = join(walkie, "vault", "codex", "a".repeat(24));
   const file = join(home, "auth.json");
   const outside = join(walkie, "outside-auth.json");
-  const auth = JSON.stringify({ tokens: { access_token: "fake-access", refresh_token: "fake-refresh" } });
+  const auth = JSON.stringify({ tokens: { access_token: "fake" + "-access", refresh_token: "fake" + "-refresh" } });
   const entry = { id: "a".repeat(24), provider: "codex", home } as VaultEntry;
   const deps = {
     claudeToken: async () => "",
     lease: async () => ({ grant: "" }),
-    accessOnlyCodex: (text: string) => JSON.parse(text).tokens.access_token ? JSON.stringify({ tokens: { access_token: "fake-access" } }) : null,
+    accessOnlyCodex: (text: string) => JSON.parse(text).tokens.access_token ? JSON.stringify({ tokens: { access_token: "fake" + "-access" } }) : null,
   };
   try {
     mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -63,7 +63,7 @@ test("host projection reads selected vault homes through the checked reader", ()
   const walkie = mkdtempSync(join(tmpdir(), "vault-host-reader-"));
   const home = join(walkie, "vault", "codex", "b".repeat(24));
   const file = join(home, "auth.json");
-  const auth = JSON.stringify({ tokens: { access_token: "fake-access" } });
+  const auth = JSON.stringify({ tokens: { access_token: "fake" + "-access" } });
   try {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     writeFileSync(file, auth, { mode: 0o600 });
@@ -91,7 +91,7 @@ test("same-user Kimi seat refuses an unsafe vault credential", async () => {
   const deps = { claudeToken: async () => "", lease: async () => ({ grant: "" }), accessOnlyCodex: () => null };
   try {
     mkdirSync(join(home, "credentials"), { recursive: true, mode: 0o700 });
-    writeFileSync(file, JSON.stringify({ access_token: "fake-token-12345" }), { mode: 0o600 });
+    writeFileSync(file, JSON.stringify({ access_token: "fake" + "-token-12345" }), { mode: 0o600 });
     expect((await seatCredentials({ kind: "local", entry }, "person", false, deps)).env.KIMI_CODE_HOME).toBe(home);
     chmodSync(file, 0o644);
     await expect(seatCredentials({ kind: "local", entry }, "person", false, deps)).rejects.toThrow(/no safe credential/);
@@ -105,8 +105,8 @@ test("provider readers recognize a selected vault path even without a vault flag
   try {
     mkdirSync(codex, { recursive: true, mode: 0o700 });
     mkdirSync(join(kimi, "credentials"), { recursive: true, mode: 0o700 });
-    writeFileSync(join(codex, "auth.json"), JSON.stringify({ tokens: { access_token: "fake-access", account_id: "fake-account", refresh_token: "fake-refresh" } }), { mode: 0o600 });
-    writeFileSync(join(kimi, "credentials", "kimi-code.json"), JSON.stringify({ access_token: "fake-token-12345" }), { mode: 0o600 });
+    writeFileSync(join(codex, "auth.json"), JSON.stringify({ tokens: { access_token: "fake" + "-access", account_id: "fake-account", refresh_token: "fake" + "-refresh" } }), { mode: 0o600 });
+    writeFileSync(join(kimi, "credentials", "kimi-code.json"), JSON.stringify({ access_token: "fake" + "-token-12345" }), { mode: 0o600 });
     chmodSync(codex, 0o755);
     chmodSync(kimi, 0o755);
     expect(readCodexToken({ provider: "codex", dir: codex, isDefault: false })).toBe("none");

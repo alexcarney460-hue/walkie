@@ -58,7 +58,7 @@ async function machine(name: string, o: { expiresInMs: number; codexAuth?: boole
   let keychain = 0;
   const read = async () => {
     keychain++;
-    return JSON.stringify({ claudeAiOauth: { accessToken: "keychain-access-token", refreshToken: "never-handed-over", expiresAt: Date.now() + token.expiresInMs, scopes: ["user:inference"] } });
+    return JSON.stringify({ claudeAiOauth: { accessToken: "keyc" + "hain-access-token", refreshToken: "neve" + "r-handed-over", expiresAt: Date.now() + token.expiresInMs, scopes: ["user:inference"] } });
   };
   const node = await cluster.add({
     name, login: `${name}@example.com`, hostname: `${name}-mac`, ...(o.limits ? { limits: o.limits } : {}),

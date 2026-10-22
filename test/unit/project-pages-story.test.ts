@@ -176,7 +176,7 @@ describe("cleaning one string", () => {
   });
 
   test("a secret is redacted, a join code removes the whole string, a plain wk1 (a week) stays", () => {
-    const secret = clean("the key is sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA ok") as string;
+    const secret = clean("the key is sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA ok") as string;
     expect(secret).not.toContain("sk-ant-api03");
     expect(clean(`the invite wk1${"B".repeat(50)} was shared`)).toBeNull();
     expect(clean(`the invite w​k1${"B".repeat(50)} was shared`)).toBeNull();

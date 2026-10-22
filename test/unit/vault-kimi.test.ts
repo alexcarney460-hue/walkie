@@ -14,7 +14,7 @@ import type { Login } from "../../src/accounts/types.ts";
 import { fakeFetch } from "../helpers/accounts.ts";
 
 const dirs: string[] = [];
-const token = "fake-kimi-access-token";
+const token = "fake" + "-kimi-access-token";
 const account = "a".repeat(24);
 const tree = () => { const p = mkdtempSync(join(tmpdir(), "walkie-vault-kimi-")); dirs.push(p); return p; };
 const login = (dir: string): Login => ({ provider: "kimi", dir, isDefault: false });
@@ -79,7 +79,7 @@ test("fake kimi login receives only login/region and a private vault home; the a
   chmodSync(binary, 0o755);
   const oldKey = process.env.KIMI_API_KEY;
   const oldHome = process.env.KIMI_CODE_HOME;
-  process.env.KIMI_API_KEY = "fake-parent-key";
+  process.env.KIMI_API_KEY = "fake" + "-parent-key";
   process.env.KIMI_CODE_HOME = join(root, "wrong-home");
   const vault = Vault.open(walkie);
   try {

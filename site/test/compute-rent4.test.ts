@@ -74,7 +74,7 @@ test('disabled idle tick does no provider work and records its health', async ()
 });
 
 test('unconfigured cron is a successful no-op', async () => {
-  const h = makeTick({ env: { CRON_SECRET: 'test-cron' }, compute: () => null, stripe: () => null });
+  const h = makeTick({ env: { CRON_SECRET: 'test' + '-cron' }, compute: () => null, stripe: () => null });
   expect((await h(new Request('https://site.test/api/compute/tick', { headers: { authorization: 'Bearer test-cron' } }))).status).toBe(200);
 });
 

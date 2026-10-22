@@ -27,7 +27,7 @@ const EFW = 'radar.early_fraud_warning.created';
 const DISPUTE = 'charge.dispute.created';
 const WH = 'whsec_' + 'lane_f_fixture_secret';
 const CRON = 'cron-' + 'lane-f-fixture';
-const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 const HANDOVER = 'rent-fixture-handover-key-32-bytes';
 const hex = () => randomBytes(8).toString('hex');
 

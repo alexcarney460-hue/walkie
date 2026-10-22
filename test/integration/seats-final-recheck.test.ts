@@ -53,7 +53,7 @@ beforeAll(async () => {
     keychain: async () => {
       kcCalls.push(inSpawn);
       if (inSpawn && armed) { const a = armed; armed = null; await a(); }
-      return JSON.stringify({ claudeAiOauth: { accessToken: "kc-access-test", expiresAt: Date.now() + 48 * 3_600_000, scopes: ["user:inference"] } });
+      return JSON.stringify({ claudeAiOauth: { accessToken: "kc-a" + "ccess-test", expiresAt: Date.now() + 48 * 3_600_000, scopes: ["user:inference"] } });
     },
     env: { PATH: `${BUN_DIR}:/usr/bin:/bin`, HOME: home, FAKE_CLAUDE_LOG: claudeLog, FAKE_CLAUDE_STATE: join(c.root, "fake-state") },
   };

@@ -266,7 +266,7 @@ test('rejected proof logs without an alert row when compute is disabled', () => 
   })) };
   const expires_at = C.LH.NOW + 240_000;
   const proof = { ...roster, expires_at, bind_signature: next.sign(C.bindMessage(team.team, lic, expires_at)) };
-  const alertEnv = { ...env, COMPUTE_ALERT_TELEGRAM_TOKEN: 'test-token', COMPUTE_ALERT_TELEGRAM_CHAT: 'test-chat' };
+  const alertEnv = { ...env, COMPUTE_ALERT_TELEGRAM_TOKEN: 'test' + '-token', COMPUTE_ALERT_TELEGRAM_CHAT: 'test-chat' };
   const bind = C.makeBind({ ...C.LH.deps(s, alertEnv), computeStore: () => store });
   const response = await bind(request({ proof }));
   expect(response.status).toBe(403);

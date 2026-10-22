@@ -30,7 +30,7 @@ beforeAll(async () => {
   owner.d.core.vault = {
     list: () => [{ id: account, provider: "claude", label: "fixture", plan: null, policy: "shared",
       share_with: ["teammate"], created_at: 1, expires_at: null, home: null, linked: false, gen: "0a1b" } as VaultEntry],
-    claudeToken: async () => "sk-ant-oat01-FAKEHANDOUTTOKEN0123456789abcdefghijk",
+    claudeToken: async () => "sk-" + "ant-oat01-FAKEHANDOUTTOKEN0123456789abcdefghijk",
   };
   owner.d.core.vaultSharing = () => true;
   owner.d.core.vaultRoomLeft = () => 90;

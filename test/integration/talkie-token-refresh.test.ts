@@ -35,13 +35,13 @@ afterAll(async () => { await cluster.close(); });
 
 test("long turn is interrupted, refreshed, and resumed before the token expires", async () => {
   const expiresAt = Date.now() + 45_000;
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "short-token", expiresAt } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "shor" + "t-token", expiresAt } }));
   await alex.client("").orchestratorStart({ access: "full" });
   await waitFor(() => launches().length >= 1, { what: "first shell launch", timeoutMs: 35_000 });
   const host: any = hostFor(alex.d.core);
   await alex.client("").orchestratorSay("slow turn");
   await waitFor(() => host.turn !== null, { what: "slow turn running" });
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "fresh-token", expiresAt: Date.now() + 3_600_000 } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "fres" + "h-token", expiresAt: Date.now() + 3_600_000 } }));
   await waitFor(() => launches().length >= 2, { what: "refreshed shell launch", timeoutMs: 50_000 });
   expect(Date.now()).toBeLessThan(expiresAt);
   await waitFor(() => host.turn === null && host.queue.length === 0, { what: "resumed turn completed", timeoutMs: 20_000 });

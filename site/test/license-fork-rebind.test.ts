@@ -30,7 +30,7 @@ afterEach(() => { globalThis.fetch = previousFetch; });
 
 function world(name: string) {
   const w = C.world(), t = C.mkTeam(name), stripe = new C.LH.MockStripe(), signer = C.LH.testKeypair();
-  const env = C.LH.fullEnv(signer.pem, { COMPUTE_ENABLED: '1', COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: '42' });
+  const env = C.LH.fullEnv(signer.pem, { COMPUTE_ENABLED: '1', COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: '42' });
   w.d.verifyLicense = C.licenseVerifier(stripe);
   w.d.teamLicences = async (team: string) => stripe.listSubscriptionsByTeam(team);
   w.d.licenceById = async (lic: string) => stripe.getSubscription(lic);

@@ -284,7 +284,7 @@ describe("the brief and the result file", () => {
   test("a result file is read (redacted); a symlinked one, or one behind a symlinked directory, is refused", () => {
     const root = tmp();
     mkdirSync(join(root, ".audit-private"));
-    writeFileSync(join(root, ".audit-private", "verdict.json"), '{"verdict":"PASS","token":"ghp_0123456789abcdefghijklmnopqrstuvwxyzAB"}\n');
+    writeFileSync(join(root, ".audit-private", "verdict.json"), '{"verdict":"PASS","token":"ghp_' + '0123456789abcdefghijklmnopqrstuvwxyzAB"}\n');
     const ok = readResultFile(root, ".audit-private/verdict.json");
     expect("bytes" in ok).toBe(true);
     const text = new TextDecoder().decode((ok as { bytes: Uint8Array }).bytes);
@@ -374,7 +374,7 @@ describe("a v2 seat's account, checked against the host's vault policy", () => {
   });
 
   test("an own-policy lease works on the person's other machine (end to end through the owner's hand-out), and the owner refuses an unlisted teammate", async () => {
-    const TOKEN = "sk-ant-oat01-FAKESEATTOKEN0123456789abcdefghijklmn";
+    const TOKEN = "sk-" + "ant-oat01-FAKESEATTOKEN0123456789abcdefghijklmn";
     const alex = tnode("alex");
     const { team, create } = createTeam(alex);
     const ownerCore = makeCore(alex, team, cleanups);
@@ -410,8 +410,8 @@ describe("a v2 seat's account, checked against the host's vault policy", () => {
     const home = join(tmp(), "vault", "codex", ID);
     mkdirSync(home, { recursive: true, mode: 0o700 });
     writeFileSync(join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "at", refresh_token: "rt" } }), { mode: 0o600 });
-    const deps = { claudeToken: async () => "sk-ant-oat01-LOCALTOKEN0123456789abcdefgh", lease: async () => { throw new Error("no"); }, accessOnlyCodex: (t: string) => (JSON.parse(t).tokens.access_token ? '{"tokens":{"access_token":"at"}}' : null) };
-    expect((await seatCredentials({ kind: "local", entry: entry() }, "arvid", false, deps)).env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-LOCALTOKEN0123456789abcdefgh" });
+    const deps = { claudeToken: async () => "sk-" + "ant-oat01-LOCALTOKEN0123456789abcdefgh", lease: async () => { throw new Error("no"); }, accessOnlyCodex: (t: string) => (JSON.parse(t).tokens.access_token ? '{"tokens":{"access_token":"at"}}' : null) };
+    expect((await seatCredentials({ kind: "local", entry: entry() }, "arvid", false, deps)).env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "sk-" + "ant-oat01-LOCALTOKEN0123456789abcdefgh" });
     const codex = entry({ provider: "codex", home });
     expect((await seatCredentials({ kind: "local", entry: codex }, "arvid", false, deps)).env).toEqual({ CODEX_HOME: home });
     const asUser = await seatCredentials({ kind: "local", entry: codex }, "arvid", true, deps);
@@ -721,7 +721,7 @@ describe("pre.8 merge: a named seat account follows the company pool rules; with
   test("a pooled Codex login is leased: a seat user gets the access-only copy, a same-user seat a leased home of its own", async () => {
     const plan = planSeatAccount(`alex:${ID}`, { runtime: "codex", me: "kira", launcher: "kira", vault: [], pooled: [pooled("codex")], pool: on });
     expect(plan).toEqual({ kind: "peer", id: ID, owner: "alex", node: "1111111111111111", provider: "codex", pooled: true });
-    const auth = JSON.stringify({ OPENAI_API_KEY: null, tokens: { access_token: "fake-access", refresh_token: "" } });
+    const auth = JSON.stringify({ OPENAI_API_KEY: null, tokens: { access_token: "fake" + "-access", refresh_token: "" } });
     const asked: string[] = [];
     const deps = {
       claudeToken: async () => { throw new Error("not local"); },

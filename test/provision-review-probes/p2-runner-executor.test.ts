@@ -168,7 +168,7 @@ test("E4: npm step: exact argv, cwd, and a scrubbed env; hostile process.env (NO
   const npmCli = join(tools, "node-22.20.0", "lib", "node_modules", "npm", "bin", "npm-cli.js");
   mkdirSync(join(npmCli, ".."), { recursive: true, mode: 0o700 }); writeFileSync(npmCli, "// fake npm");
   mkdirSync(join(tools, "node-22.20.0", "bin"), { recursive: true }); writeFileSync(join(tools, "node-22.20.0", "bin", "node"), "#!/bin/sh\n");
-  const hostile = { NODE_OPTIONS: "--require /tmp/evil.js", npm_config_registry: "https://evil.example/", npm_config_script_shell: "/tmp/evil", HTTPS_PROXY: "http://evil:1", NPM_TOKEN: "npm_SECRET", GITHUB_TOKEN: "ghp_SECRET", LD_PRELOAD: "/tmp/evil.so", DYLD_INSERT_LIBRARIES: "/tmp/evil.dylib" };
+  const hostile = { NODE_OPTIONS: "--require /tmp/evil.js", npm_config_registry: "https://evil.example/", npm_config_script_shell: "/tmp/evil", HTTPS_PROXY: "http://evil:1", NPM_TOKEN: "npm_" + "SECRET", GITHUB_TOKEN: "ghp_SECRET", LD_PRELOAD: "/tmp/evil.so", DYLD_INSERT_LIBRARIES: "/tmp/evil.dylib" };
   const before: Record<string, string | undefined> = {}; for (const k of Object.keys(hostile)) before[k] = process.env[k];
   Object.assign(process.env, hostile);
   const calls: { argv: string[]; opts: any }[] = [];

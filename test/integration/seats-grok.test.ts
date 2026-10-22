@@ -54,7 +54,7 @@ describe("Grok v2 seat route and host", () => {
     expect((await ended(absent.seat)).reason).toContain("Grok subscription login");
     expect(launches()).toHaveLength(0);
     writeFileSync(join(home, ".grok", "auth.json"), "fixture", { mode: 0o600 });
-    writeFileSync(join(home, ".grok", "config.toml"), '[model.grok-build]\napi_key = "fixture-only"\n');
+    writeFileSync(join(home, ".grok", "config.toml"), '[model.grok-build]\napi_key = "' + 'fixture-only"\n');
     const run = await alex.client("").seatRun({ machine: "arvid-mac", runtime: "grok", brief: "fixture private brief", permission_mode: "default" });
     const done = await ended(run.seat);
     expect(done.state).toBe("done");

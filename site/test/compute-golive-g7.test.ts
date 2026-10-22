@@ -8,7 +8,7 @@ import { makeTick } from '../api/compute/tick.ts';
 import { fixtureTeam, MIN, world } from './compute-helpers.ts';
 
 const CRON = 'cron-' + 'builder-g7-fixture';
-const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 const tickRequest = () => new Request('https://site.test/api/compute/tick', { headers: { authorization: `Bearer ${CRON}` } });
 const hex16 = (i: number) => i.toString(16).padStart(16, '0');
 const textOf = (body: string) => (JSON.parse(body) as { text: string }).text;

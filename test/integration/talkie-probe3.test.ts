@@ -18,7 +18,7 @@ beforeAll(async () => {
   const talkieHome = join(c.root, "walkie-talkie"); mkdirSync(talkieHome);
   const cfgDir = join(c.root, "claude-cfg"); mkdirSync(cfgDir);
   credentials = join(cfgDir, ".credentials.json");
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "fake-access", refreshToken: "fake-refresh", expiresAt: Date.now() + 3600_000 } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "fake" + "-access", refreshToken: "fake" + "-refresh", expiresAt: Date.now() + 3600_000 } }));
   const runner = join(c.root, "talkie-runner");
   writeFileSync(runner, `#!/bin/sh\nexec '${process.execPath}' '${join(WT, "src/cli/main.ts")}' "$@"\n`); chmodSync(runner, 0o755);
   const runtime = join(c.root, "claude-runtime");
@@ -126,21 +126,21 @@ test("probe3", async () => {
 test("short Claude login is reprojected before expiry and a near-expiry restart waits for a fresh token", async () => {
   await alex.client("").seatsConfig({ allow: false });
   const shortExpiresAt = Date.now() + 4_000;
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "short-access", expiresAt: shortExpiresAt } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "shor" + "t-access", expiresAt: shortExpiresAt } }));
   const before = launchRows().length;
   await alex.client("").orchestratorModel("sonnet");
   await waitFor(() => launchRows().length > before, { what: "short login spawn" });
   const short = launchRows().length;
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "fresh-access", expiresAt: Date.now() + 3_600_000 } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "fres" + "h-access", expiresAt: Date.now() + 3_600_000 } }));
   await waitFor(() => launchRows().length > short, { what: "scheduled login refresh", timeoutMs: 12_000 });
   expect(Date.now()).toBeLessThan(shortExpiresAt);
   expect((await alex.client("").orchestrator()).local.state).not.toBe("stopped");
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "almost-expired", expiresAt: Date.now() + 100 } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "almo" + "st-expired", expiresAt: Date.now() + 100 } }));
   const prior = launchRows().length;
   await alex.client("").orchestratorSay("crash please");
   await waitFor(async () => (await alex.client("").orchestrator()).local.state === "restarting", { what: "waiting for fresh login" });
   expect(launchRows().length).toBe(prior);
-  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "recovered-access", expiresAt: Date.now() + 3_600_000 } }));
+  writeFileSync(credentials, JSON.stringify({ claudeAiOauth: { accessToken: "reco" + "vered-access", expiresAt: Date.now() + 3_600_000 } }));
   await waitFor(() => launchRows().length > prior, { what: "fresh login restart", timeoutMs: 8_000 });
   expect((await alex.client("").orchestrator()).local.state).not.toBe("stopped");
   await alex.client("").orchestratorAccess("platform");

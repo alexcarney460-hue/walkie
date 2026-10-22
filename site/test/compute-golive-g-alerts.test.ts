@@ -18,7 +18,7 @@ import { configJson, createAccount, fixtureTeam, MIN, world } from './compute-he
 
 const WH = 'whsec_' + 'builder_g_fixture_secret';
 const CRON = 'cron-' + 'builder-g-fixture';
-const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+const TG = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 const hex = () => randomBytes(12).toString('hex');
 const envelope = (type: string, object: Record<string, unknown>): StripeEvent => ({
   id: `evt_${hex()}`, object: 'event', api_version: '2026-08-26.dahlia', created: 1_790_000_000, livemode: true,

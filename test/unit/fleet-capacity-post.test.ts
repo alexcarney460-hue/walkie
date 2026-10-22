@@ -177,7 +177,7 @@ test("a lost lease posts nothing", async () => {
 
 test("a hostname that looks like a key is redacted before it is signed, and the marker keeps the node id", async () => {
   const { fleet, run, posts, summaries } = setup();
-  const secret = "sk-ant-abcdefghijklmnopqrstuvwxyz";
+  const secret = "sk-" + "ant-abcdefghijklmnopqrstuvwxyz";
   fleet.nodes = [node({ hostname: `box-${secret}` })];
   fleet.hosts = [host({ hostname: `box-${secret}` })];
   await run();

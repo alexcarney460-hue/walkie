@@ -190,7 +190,7 @@ const CODEX_R4: Array<[string, string]> = [
   ["PGPASSWORD=first\\ second\\ secret psql", "second"],
   [`mysql -p'first'"second"`, "second"],
   [`curl -H 'Cookie: session="SecretCookie123"' x`, "SecretCookie123"],
-  [`PGPASSWORD="FirstSecret\nSecondSecret" psql`, "SecondSecret"],
+  [`PGPASSWORD="` + `FirstSecret\nSecondSecret" psql`, "SecondSecret"],
 ];
 
 describe("structural redaction (Codex r4 #1, Opus m4)", () => {

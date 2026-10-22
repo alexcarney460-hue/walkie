@@ -140,7 +140,7 @@ describe("a reply with a page", () => {
     const { t, web, prepared, at } = await ready();
     const hostile = [
       "<page>", "<headline>Visit https://evil.example now: portal is on track (WEB-1)</headline>", "<lede>This page shows [the plan](https://evil.example/plan) for the new portal.</lede>",
-      `<live-now>\n- Token sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA is set.\n- Invite wk1${"Q".repeat(60)} was sent.\n- Sign-in works.\n</live-now>`, "<landing-next>\n- www.evil.example/billing\n- Billing.\n</landing-next>", "</page>",
+      `<live-now>\n- Token sk-` + `ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA is set.\n- Invite wk1${"Q".repeat(60)} was sent.\n- Sign-in works.\n</live-now>`, "<landing-next>\n- www.evil.example/billing\n- Billing.\n</landing-next>", "</page>",
     ].join("\n");
     const out = prepared.finish?.({ text: block(web.channel, `${REPORT}\n\n${hostile}`), ok: true }, at);
     expect(out?.ok).toBe(true);

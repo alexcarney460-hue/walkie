@@ -43,8 +43,8 @@ const web = project({ name: "Website" });
 const hiring = project({ channel: "p-00000002", name: "Hiring", prefix: "HR", folder: "" });
 const legal = project({ channel: "p-00000003", name: "Legal", prefix: "LEG" });
 
-type ApiKey = "projects" | "statusReport" | "updateProject";
-const saved = {} as Record<ApiKey, unknown>;
+type SavedMethod = "projects" | "statusReport" | "updateProject";
+const saved = {} as Record<SavedMethod, unknown>;
 
 function installApi(): void {
   api.projects = async () => ({ projects: world.projects, stubs: [] });

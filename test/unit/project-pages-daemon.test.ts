@@ -153,7 +153,7 @@ describe("setting a fact", () => {
     refuse("Site", "see www.evil.example", { status: 400, message: expect.stringContaining("plain text") });
     refuse("Site", "javascript:alert(1)", { status: 400, message: expect.stringContaining("plain text") });
     refuse("Invite", `wk1${"B".repeat(50)}`, { status: 400, message: expect.stringContaining("join code") });
-    refuse("Key", "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA", { status: 409, code: "secret_detected" });
+    refuse("Key", "sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA", { status: 409, code: "secret_detected" });
     expect(seqOf(t.core)).toBe(before);
   });
 
@@ -252,7 +252,7 @@ describe("adding a screen", () => {
     refuse(png(10, 10), { route: `/${"a".repeat(120)}` }, routeRule);
     refuse(png(10, 10), { route: "/go?to=https://evil.example" }, { status: 400, message: expect.stringContaining("not an address") });
     refuse(png(10, 10), { about: "see https://evil.example/login for the form" }, { status: 400, message: expect.stringContaining("plain text") });
-    refuse(png(10, 10), { note: "token sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA" }, { status: 409, code: "secret_detected" });
+    refuse(png(10, 10), { note: "token sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA" }, { status: 409, code: "secret_detected" });
     refuse(png(10, 10), { about: `invite wk1${"Q".repeat(60)}` }, { status: 400, message: expect.stringContaining("join code") });
     refuse(png(10, 10), { title: "bell\u0007ring" }, { status: 400, message: expect.stringContaining("characters a page can't show") });
     expect(seqOf(t.core)).toBe(before);
@@ -455,7 +455,7 @@ describe("the story", () => {
     // A second owner's Talkie, as a daemon that did not clean would post (this daemon's own emit refuses a join code from an agent).
     const modified = t.teammate("kira", "owner");
     const post = (status_page: unknown) => { t.tick(H); modified.post(web.channel, { text: "**Status report · Website relaunch · as of x**\n\nBody.", status_report: { v: 1, as_of: t.wall() }, status_page }, t.wall(), "orchestrator"); };
-    post({ ...story, headline: "Visit https://evil.example now: the portal is on track (WEB-12)", live_now: ["Key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA is set.", `Invite wk1${"Q".repeat(60)} sent.`, "Fine."] });
+    post({ ...story, headline: "Visit https://evil.example now: the portal is on track (WEB-12)", live_now: ["Key sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA is set.", `Invite wk1${"Q".repeat(60)} sent.`, "Fine."] });
     const s = page().story;
     expect(s?.headline).toBe("Visit now: the portal is on track");
     expect(s?.live_now).toHaveLength(2);

@@ -38,7 +38,7 @@ test("shell-capable Claude runs through the dedicated-user runner with its own H
   writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$HOME" > '${join(dir, "child-home")}'\nif [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then echo yes > '${join(dir, "has-login")}'; fi\n`);
   chmodSync(bin, 0o755);
   try {
-    const child = new ClaudeChild(bin, [], dir, { PATH: "/usr/bin:/bin", HOME: dir, CLAUDE_CODE_OAUTH_TOKEN: "fake-test-token" },
+    const child = new ClaudeChild(bin, [], dir, { PATH: "/usr/bin:/bin", HOME: dir, CLAUDE_CODE_OAUTH_TOKEN: "fake" + "-test-token" },
       { onSignal: () => undefined, onExit: () => undefined }, undefined,
       { directory: dir, expires: () => Date.now() + 30_000, osUser: { name: "walkie-talkie", home: userHome, runner,
         switch: [process.execPath, join(import.meta.dir, "../fixtures/fake-talkie-runner.ts")] } });

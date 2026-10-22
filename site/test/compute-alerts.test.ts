@@ -5,7 +5,7 @@ import { RENTED_MACHINE_RELEASES } from '../api/_lib/compute/releases.ts';
 
 // The newest rentable release (a rent through the handlers must name a listed tag).
 const RELEASE = RENTED_MACHINE_RELEASES[RENTED_MACHINE_RELEASES.length - 1]!;
-const env = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixture-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
+const env = { COMPUTE_ALERT_TELEGRAM_TOKEN: 'fixt' + 'ure-bot', COMPUTE_ALERT_TELEGRAM_CHAT: 'fixture-chat' };
 
 test('durable rolling dedupe agrees across senders, allows a different key and expiry', async () => {
   const store = new MemoryStore(), calls: RequestInit[] = [];

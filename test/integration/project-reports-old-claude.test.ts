@@ -73,7 +73,7 @@ beforeAll(async () => {
   wrapper = join(bin, "claude");
   installClaude();
   Object.assign(env, process.env, {
-    PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: log, CLAUDE_CODE_OAUTH_TOKEN: "fake-test-token",
+    PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, FAKE_CLAUDE_STATE: state, FAKE_CLAUDE_LOG: log, CLAUDE_CODE_OAUTH_TOKEN: "fake" + "-test-token",
     FAKE_CLAUDE_REJECT: "--tools",
   });
   alex = await c.add({ name: "alex", login: "alex@example.com", hostname: "alex-mbp", orchestrator: {

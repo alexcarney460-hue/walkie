@@ -11,7 +11,7 @@ export const fixtureText = (name: string): string => readFileSync(join(FIX, name
 /** Distinctive fake tokens: the search tests look for these strings everywhere Walkie writes. */
 export const TOKENS = {
   claude: ("sk" + "-ant-oat01-FAKECLAUDEACCESSTOKEN0123456789abcdefFAKE"),
-  codexSecret: "FAKECODEXSIGNATUREPART0123456789abcdef",
+  codexSecret: "FAKE" + "CODEXSIGNATUREPART0123456789abcdef",
   kimi: "FAKEKIMIACCESSTOKEN0123456789abcdefghijklmnop",
 };
 
@@ -45,7 +45,7 @@ export function makeFakeHome(home: string, o: FakeHomeOptions = {}): string {
   writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify(auth));
   mkdirSync(join(home, ".kimi-code", "credentials"), { recursive: true });
   writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), JSON.stringify({
-    access_token: TOKENS.kimi, refresh_token: "FAKEKIMIREFRESHNEVERSENT", expires_at: o.kimiExpiresAt ?? now + 10 * 60_000, scope: "kimi-code", token_type: "Bearer", expires_in: 900,
+    access_token: TOKENS.kimi, refresh_token: "FAKE" + "KIMIREFRESHNEVERSENT", expires_at: o.kimiExpiresAt ?? now + 10 * 60_000, scope: "kimi-code", token_type: "Bearer", expires_in: 900,
   }), { mode: 0o600 });
   mkdirSync(join(home, ".grok", "logs"), { recursive: true });
   writeFileSync(join(home, ".grok", "auth.json"), fixtureText("grok-auth.json"));

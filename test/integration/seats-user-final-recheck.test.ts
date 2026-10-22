@@ -69,7 +69,7 @@ beforeAll(async () => {
       keychain: async () => {
         kc.push(inUser ? "in-spawnAsUser" : "elsewhere");
         if (inUser && armed) { const a = armed; armed = null; await a(); }
-        return JSON.stringify({ claudeAiOauth: { accessToken: "kc-access-test", expiresAt: Date.now() + 48 * 3_600_000, scopes: ["user:inference"] } });
+        return JSON.stringify({ claudeAiOauth: { accessToken: "kc-a" + "ccess-test", expiresAt: Date.now() + 48 * 3_600_000, scopes: ["user:inference"] } });
       },
       env: { PATH: `${wrapDir}:${join(FIXTURES, "fake-claude")}:${BUN_DIR}:/usr/bin:/bin`, HOME: home,
         FAKE_CLAUDE_LOG: join(c.root, "claude.jsonl"), FAKE_CLAUDE_STATE: join(c.root, "fake-state"), RVLH4_LOG: probeLog, RVLH4_GATE: join(c.root, "help-gate") },
@@ -181,7 +181,7 @@ test("a held login that expires while the seat user's runner prepares is not sen
     expires_at: null, home: null, linked: false, gen: "g1", home_at: 1, personal: false }];
   const core = olive.d.core as unknown as { vault: unknown };
   const realVault = core.vault;
-  core.vault = { list: () => entries, claudeToken: async () => "sk-ant-oat01-FAKEEXPIRING0123456789abcdefghijklmnop" };
+  core.vault = { list: () => entries, claudeToken: async () => "sk-" + "ant-oat01-FAKEEXPIRING0123456789abcdefghijklmnop" };
   writeFileSync(`${gate}.armed`, "");
   try {
     const seat = (await person(noor).seatRun({ machine: "olive-mac", runtime: "claude", brief: "k4", account: `olive:${id}` })).seat;

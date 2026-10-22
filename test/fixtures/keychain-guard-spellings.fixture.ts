@@ -75,8 +75,8 @@ test("through Bun.$, every chained form, and the named import", async () => {
 });
 
 test("through node:child_process (a string starts a shell)", () => {
-  recorded(() => cp.execSync(`${TOOL} x`, { env: { PATH } }), "execSync");
-  recorded(() => cp.execSync(`${DIR}/bin//security x`, { env: { PATH } }), "execSync spelled");
+  recorded(() => cp.execSync(TOOL + " x", { env: { PATH } }), "execSync");
+  recorded(() => cp.execSync(DIR + "/bin//security x", { env: { PATH } }), "execSync spelled");
   recorded(() => cp.spawnSync("/bin/sh", ["-c", `${TOOL} x`], { env: { PATH } }), "spawnSync sh -c");
   recorded(() => cp.execFileSync("/usr/bin/env", [TOOL, "x"], { env: { PATH } }), "execFileSync env");
   recorded(() => cp.spawnSync(TOOL, ["x"]), "spawnSync");

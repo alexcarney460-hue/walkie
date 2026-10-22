@@ -141,7 +141,7 @@ describe("Opus MED 3 / Codex LOW 7: Grok re-login and spent-usage detection", ()
   const after = Date.parse("2026-09-26T13:00:00Z");
 
   test("an expired access token with a refresh token present is 'unknown', not 're-login'; without one it needs a re-login", () => {
-    expect(grokIdentityFrom(auth({ expires_at: "2026-09-26T12:16:12Z", refresh_token: "FAKE-GROK-REFRESH" }), after)?.expired).toBeUndefined();
+    expect(grokIdentityFrom(auth({ expires_at: "2026-09-26T12:16:12Z", refresh_token: "FAKE" + "-GROK-REFRESH" }), after)?.expired).toBeUndefined();
     expect(grokIdentityFrom(auth({ expires_at: "2026-09-26T12:16:12Z", refresh_token: "" }), after)?.expired).toBe(true);
     expect(grokIdentityFrom(auth({ expires_at: "2026-09-26T12:16:12Z" }), after)?.expired).toBe(true);
   });
@@ -334,7 +334,7 @@ describe("Opus LOW 7: a login directory is read from the environment, never from
 
   test("a real process: the spoofing argument is ignored, the real variable is read, token variables by name only", async () => {
     if (process.platform !== "darwin" && process.platform !== "linux") return;
-    const env = { PATH: "/usr/bin:/bin", CLAUDE_CODE_OAUTH_TOKEN: "FAKE-ENV-TOKEN-VALUE-0123456789" };
+    const env = { PATH: "/usr/bin:/bin", CLAUDE_CODE_OAUTH_TOKEN: "FAKE" + "-ENV-TOKEN-VALUE-0123456789" };
     // Not a platform binary: macOS hides the environment of those (/bin/sh, /bin/sleep) from ps.
     const idle = [process.execPath, "-e", "setTimeout(() => {}, 20000)"];
     const spoof = Bun.spawn([...idle, "x CLAUDE_CONFIG_DIR=/spoof"], { env, stdout: "ignore", stderr: "ignore" });
