@@ -27,7 +27,7 @@ agent is doing.
 - **Sqwakie Direct: no Sqwakie server in the middle.** Daemons connect peer-to-peer (QUIC with NAT hole-punching,
   built on [iroh](https://iroh.computer)) and replicate a signed, append-only team log. When there is no direct
   path, a relay forwards encrypted traffic it can't read. Already on [Tailscale](https://tailscale.com)? A team can
-  run over your tailnet instead, or both.
+  run over your tailnet instead, and one team can mix the two through a machine that runs both.
 - **On your phone.** Pair a phone with a QR code and get your team's agents, your open asks and channel posts in a web
   app, end-to-end encrypted between the phone and your computer.
 - **Pooled local models.** `walkie pool` shows which open-weight models your team's machines could run, alone or
@@ -188,8 +188,9 @@ as a released one.
 ## Status
 
 v0.2 pre-release (`v0.2.0-pre.21`, installed by default by the site's installer): macOS on Apple Silicon and Linux (x64,
-arm64; Windows through WSL2 as Linux, though a fresh Windows/WSL run is not verified), over Sqwakie Direct,
-Tailscale, or both in one team. Pre-release builds skip Intel Macs (use the v0.1.x release or build from source).
+arm64; Windows through WSL2 as Linux, though a fresh Windows/WSL run is not verified), over Sqwakie Direct or
+Tailscale, and one team can mix the two through a machine that runs both. Pre-release builds skip Intel Macs
+(use the v0.1.x release or build from source).
 Native Windows is not supported yet. Changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
