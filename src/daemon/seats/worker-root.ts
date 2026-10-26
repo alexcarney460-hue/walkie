@@ -167,10 +167,10 @@ export function workerRootOccupied(root: string): boolean {
     return false;
   }
   if (process.platform !== "darwin") throw new Error("worker root process verification is unavailable on this OS");
-  const ps = Bun.spawnSync(["ps", "eww", "-A", "-o", "pid=,command="], { stdout: "pipe", stderr: "pipe", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+  const ps = Bun.spawnSync(["ps", "eww", "-A", "-o", "pid=,command="], { stdout: "pipe", stderr: "pipe", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
   if (ps.exitCode !== 0) throw new Error("cannot verify worker root process environments");
   if (ps.stdout.toString().includes(root)) return true;
-  const files = Bun.spawnSync(["lsof", "-nP", "-t", "+D", root], { stdout: "pipe", stderr: "pipe", env: { PATH: "/usr/sbin:/usr/bin:/bin", LC_ALL: "C" } });
+  const files = Bun.spawnSync(["lsof", "-nP", "-t", "+D", root], { stdout: "pipe", stderr: "pipe", timeout: 2_000, env: { PATH: "/usr/sbin:/usr/bin:/bin", LC_ALL: "C" } });
   if (files.stdout.length) return true;
   if (files.exitCode === 1 && !files.stdout.length && !files.stderr.length) return false;
   throw new Error("cannot verify worker root open files");

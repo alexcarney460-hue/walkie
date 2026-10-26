@@ -261,7 +261,7 @@ function pidName(rt: AgentRuntime, pid: number): string {
   return `${rt === "claude-code" ? "claude" : rt}-pid${pid}`;
 }
 
-const PLACEHOLDER_NAME = /^(claude|codex|kimi|grok|gemini|opencode)-pid[0-9]+$/;
+const PLACEHOLDER_NAME = /^(claude|codex|kimi|grok|gemini|opencode|hermes)-pid[0-9]+$/;
 /**
  * A process-only placeholder card whose every process this scan reported under another name: the process gained its name
  * (a lookup that timed out earlier succeeded), so the placeholder is a duplicate of the named card, not a session that ended.
@@ -269,6 +269,23 @@ const PLACEHOLDER_NAME = /^(claude|codex|kimi|grok|gemini|opencode)-pid[0-9]+$/;
 function renamedPlaceholder(name: string, keys: ReadonlySet<string>, next: ReadonlyMap<string, ReadonlySet<string>>): boolean {
   if (!PLACEHOLDER_NAME.test(name) || !keys.size) return false;
   return [...keys].every((key) => [...next.values()].some((named) => named.has(key)));
+}
+
+function keysStillRunning(keys: ReadonlySet<string>, running: ReadonlySet<string>): boolean {
+  for (const key of keys) if (running.has(key)) return true;
+  return false;
+}
+
+/**
+ * A different, real card in this scan owns one of these processes. A pid placeholder does not: that name is what a
+ * failed session lookup publishes, and it must not retire the session we already know.
+ */
+function claimedByOtherName(name: string, keys: ReadonlySet<string>, next: ReadonlyMap<string, ReadonlySet<string>>): boolean {
+  for (const [other, theirs] of next) {
+    if (other === name || PLACEHOLDER_NAME.test(other)) continue;
+    for (const key of keys) if (theirs.has(key)) return true;
+  }
+  return false;
 }
 
 /** Per process (pid + start): what earlier scans learned about it. */
@@ -610,7 +627,7 @@ export class AgentDiscovery {
       const login = loginDirOf(rt, loginEnv.get(p.pid));
       const newestKid = [...(children.get(p.pid) ?? [])].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0) || b.pid - a.pid)
         .map((k) => env.get(k.pid)).find((e) => e && (e.CLAUDE_CODE_SESSION_ID || e.KIMI_SESSION_ID || e.GROK_SESSION_ID || e.WALKIE_AGENT));
-      const session = await this.sessionOf(p, rt, newestKid, entry, login, deadline, active);
+      let session = await this.sessionOf(p, rt, newestKid, entry, login, deadline, active);
       if (!active()) return;
       const agentEnv: NodeJS.ProcessEnv = {
         ...((loginEnv.get(p.pid)?.WALKIE_AGENT ?? kimiEnv.get(p.pid)?.WALKIE_AGENT ?? newestKid?.WALKIE_AGENT)
@@ -621,8 +638,17 @@ export class AgentDiscovery {
         ...(session && rt === "grok" ? { GROK_SESSION_ID: session } : {}),
       };
       const hermesProfile = rt === "hermes" ? hermesProfileOf(p.command) : null;
-      const agent = rt === "hermes" ? (hermesProfile ? `hermes-${hermesProfile}` : pidName(rt, p.pid))
-        : resolveAgentName(agentEnv) ?? pidName(rt, p.pid);
+      const fallback = pidName(rt, p.pid);
+      let agent = rt === "hermes" ? (hermesProfile ? `hermes-${hermesProfile}` : fallback)
+        : resolveAgentName(agentEnv) ?? fallback;
+      // A session-id lookup that timed out (the usual case when ps/lsof is slow) must not forget a name we
+      // already have. The placeholder that replaced it was then the only card for this process, and the live
+      // session was marked "Process exited" while its pid was still in the table.
+      const known = entry.discovered;
+      if (agent === fallback && known && known.agent !== fallback && known.pid === p.pid && known.runtime === rt) {
+        agent = known.agent;
+        session = session ?? known.session;
+      }
       // A seat running as this user (`--same-user`) is published by its host daemon, never as a discovered session
       // (Opus seats r9 LOW): its WALKIE_AGENT, or the runtime's own, names a seat.
       // The daemon's own names (board steward, fleet desk) are never a discovered session (fix round 2, Opus LOW).
@@ -1027,16 +1053,17 @@ export class AgentDiscovery {
     }
     // Not in this scan: exited (offline right away, whoever posted its status) only when its process is gone. A
     // process still running that wasn't reported (over the per-runtime cap, or not examined within the scan's budget)
-    // keeps its agent and state (Codex r2 #8 / #12).
+    // keeps its agent and state (Codex r2 #8 / #12). A pid placeholder for the same process is not a rename: a slow
+    // lookup must not mark the live session exited.
     for (const [name, keys] of this.live) {
       if (next.has(name)) continue;
-      if ([...keys].some((k) => this.runningKeys.has(k) && ![...next.values()].some((v) => v.has(k)))) { next.set(name, keys); this.keepAlive(name, now); }
+      if (keysStillRunning(keys, this.runningKeys) && !claimedByOtherName(name, keys, next)) { next.set(name, keys); this.keepAlive(name, now); continue; }
       // A card whose own process is gone stays while a hooked working session of its profile is still live under the
       // census rule that retires rows (hermes-status.ts): a hook after this scan began, or, until ten minutes pass since
       // the last hook, a Hermes process that names the profile or names none.
-      else if (name.startsWith("hermes-") && hermesProfileLive(core.store, name.slice(7), this.hermesCensus.processes,
-        this.hermesCensus.capturedAt)) { next.set(name, keys); this.keepAlive(name, now); }
-      else this.markOffline(name, true, renamedPlaceholder(name, keys, next) ? now : undefined);
+      if (name.startsWith("hermes-") && hermesProfileLive(core.store, name.slice(7), this.hermesCensus.processes,
+        this.hermesCensus.capturedAt)) { next.set(name, keys); this.keepAlive(name, now); continue; }
+      this.markOffline(name, true, renamedPlaceholder(name, keys, next) ? now : undefined);
     }
     this.live = next;
     try {

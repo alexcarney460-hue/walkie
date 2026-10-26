@@ -3964,7 +3964,7 @@ async function codexLoginStatus(env: Record<string, string>, home: string): Prom
 /** A process's start time as `ps` prints it (stable for the process's life), or null when it isn't running. */
 function processStart(pid: number): string | null {
   try {
-    const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+    const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
     const out = r.stdout.toString().trim();
     return r.exitCode === 0 && out ? out : null;
   } catch {
@@ -3993,7 +3993,7 @@ function workerProcessPresent(r: RootRecord): boolean {
 /** The processes of process group `pgid` and their start times (ms), from `ps`; [] when it can't tell. */
 export function groupMembers(pgid: number): Array<{ pid: number; startMs: number }> {
   try {
-    const r = Bun.spawnSync(["ps", "-A", "-o", "pid=,pgid=,lstart="], { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+    const r = Bun.spawnSync(["ps", "-A", "-o", "pid=,pgid=,lstart="], { stdout: "pipe", stderr: "ignore", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
     if (r.exitCode !== 0) return [];
     const out: Array<{ pid: number; startMs: number }> = [];
     for (const line of r.stdout.toString().split("\n")) {

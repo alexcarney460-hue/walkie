@@ -268,21 +268,35 @@ describe("Codex 2: the chain cursor and every in-memory effect follow the transa
 
 // ---- Codex 3 (HIGH): durable commits ----------------------------------------------------------------------
 
-describe("Codex 3: a transaction that writes this node's own event commits with synchronous=FULL", () => {
-  test("a local emit and a ledger transaction run FULL; a peer's event and a verdict update stay NORMAL", () => {
+describe("Codex 3: this node's own event is fsynced before peers are told, off the event loop", () => {
+  test("a local emit stays NORMAL and is pushed only after the WAL barrier; a peer event does not barrier", async () => {
     const { m, id, A, clock } = team();
     const seen: string[] = [];
     const db = A.store.db as unknown as { exec: (sql: string) => unknown };
     const orig = db.exec.bind(A.store.db);
     db.exec = (sql: string) => { if (sql.startsWith("PRAGMA synchronous")) seen.push(sql); return orig(sql); };
+    let release: () => void = () => {};
+    let started = false;
+    A.store.setDurableBarrier(() => new Promise<void>((resolve) => { started = true; release = resolve; }));
+    const pushed: string[] = [];
+    A.onLocalEvent = (ev) => pushed.push(ev.id);
     expect(A.store.synchronous).toBe("NORMAL");
-    A.emit("msg.post", { text: "mine" }, { channel: "general" });
-    expect(seen).toEqual(["PRAGMA synchronous = FULL", "PRAGMA synchronous = NORMAL"]);
-    seen.length = 0;
-    A.ingest(ev(id, m, "msg.post", { text: "theirs" }, { channel: "general", ts: clock() }), "remote");
+    expect((A.store.db.query<{ fullfsync: number }, []>("PRAGMA fullfsync").get())?.fullfsync).toBe(0);
+    const mine = A.emit("msg.post", { text: "mine" }, { channel: "general" });
     expect(seen).toEqual([]);
-    A.store.transaction(() => { A.emit("msg.post", { text: "a" }, { channel: "general" }); A.emit("msg.post", { text: "b" }, { channel: "general" }); }, { durable: true });
-    expect(seen).toEqual(["PRAGMA synchronous = FULL", "PRAGMA synchronous = NORMAL"]); // once, around the outermost transaction
+    for (let i = 0; i < 20 && !started; i++) await Bun.sleep(1);
+    expect(started).toBe(true);
+    expect(pushed).toEqual([]);
+    const t0 = performance.now();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(performance.now() - t0).toBeLessThan(500);
+    release();
+    await A.store.whenDurable();
+    expect(pushed).toEqual([mine.id]);
+    const before = pushed.length;
+    A.ingest(ev(id, m, "msg.post", { text: "theirs" }, { channel: "general", ts: clock() }), "remote");
+    await A.store.whenDurable();
+    expect(pushed.length).toBe(before);
     expect(A.store.synchronous).toBe("NORMAL");
     expect((A.store.db.query<{ synchronous: number }, []>("PRAGMA synchronous").get())?.synchronous).toBe(1);
   });

@@ -7,6 +7,7 @@ import { AgentTable } from "./agent-table.ts";
 import { indexedClaim } from "./orchestrator/schedule-claims.ts";
 
 import { FleetLinkRegistry, ensureFleetLinkSchema } from "./fleet-link-registry.ts";
+import { WalSync } from "./wal-sync.ts";
 
 const ROSTER_KIND_SQL = "('team.create','team.member','team.node','channel.upsert','team.authority','team.license','team.integration')";
 
@@ -302,6 +303,8 @@ export class Store {
   private deferred: (() => void)[] = [];
   private readonly hooks: TxHook[] = [];
   private syncMode: "NORMAL" | "FULL" = "NORMAL";
+  /** Fsync of this node's own commits, off the event loop (wal-sync.ts). */
+  private readonly wal: WalSync;
   private vvCache: Record<string, number> | null = null;
   /** `agents_latest` in memory (agent-table.ts): every write to the table below goes through this store, which mirrors it. */
   private readonly agentTable = new AgentTable(
@@ -309,13 +312,14 @@ export class Store {
 
   constructor(path: string) {
     this.db = new Database(path, { create: true, strict: true });
-    // Durability (FINAL Codex 3): a transaction that writes an event THIS node signed (and so allocates
-    // its seq) commits with synchronous=FULL, so the row is on disk before it is acknowledged and pushed:
-    // under NORMAL a WAL commit can be lost to a power cut, after which the node would sign different
-    // content under the same seq and peers would hold a conflicting first copy forever. Other rows
-    // (peers' events, verdicts, caches) stay NORMAL: a lost one is simply pulled again. SQLite refuses
-    // to change the safety level inside a transaction, so the mode is chosen before one starts.
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    this.wal = new WalSync(path);
+    // Durability (FINAL Codex 3, DAEMON-STALL): a commit stays synchronous=NORMAL so it does not fsync
+    // on this thread. synchronous=FULL (and macOS F_FULLFSYNC, which SQLite uses when fullfsync is on)
+    // blocked the daemon's one thread for seconds when the disk was busy, which is what memory pressure
+    // does. fullfsync stays off so a later checkpoint doesn't use F_FULLFSYNC either. This node's own
+    // event is fsynced by WalSync before peers are told (core.ts); a power cut before that loses it
+    // only locally, so the seq is not reused under different content. Peers' events were already NORMAL.
+    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA fullfsync = OFF; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     this.migrate();
     ensureFleetLinkSchema(this.db);
     this.links = new FleetLinkRegistry(this.db);
@@ -324,14 +328,17 @@ export class Store {
   /** The roster authority's fleet links (FLEET-LINK-1): local, never replicated. */
   readonly links: FleetLinkRegistry;
 
-  private setSync(mode: "NORMAL" | "FULL"): void {
-    if (mode === this.syncMode) return;
-    this.db.exec(`PRAGMA synchronous = ${mode}`);
-    this.syncMode = mode;
-  }
-
-  /** The current safety level (tests). */
+  /** The current safety level (tests). Commits stay NORMAL; the WAL barrier is off this thread. */
   get synchronous(): "NORMAL" | "FULL" { return this.syncMode; }
+
+  /** This node's commit is in the WAL. Peers wait on `whenDurable` of the returned generation. */
+  noteDurable(): number { return this.wal.note(); }
+
+  /** Resolves once `gen` (default: every note so far) has been fsynced off the event loop. */
+  whenDurable(gen?: number): Promise<void> { return this.wal.whenDurable(gen); }
+
+  /** Tests: stall or replace the disk barrier. */
+  setDurableBarrier(fn: () => Promise<void>): void { this.wal.setBarrier(fn); }
 
   /** Registers in-memory state that transactions snapshot and restore (FINAL Codex 2). */
   onTransaction<S>(hook: TxHook<S>): void { this.hooks.push(hook as TxHook); }
@@ -341,14 +348,13 @@ export class Store {
    * inside it run only once the OUTERMOST transaction committed, in order; a level that throws
    * discards what it queued (its savepoint rolled back) and restores every registered in-memory
    * snapshot, so nothing rolled back ever escapes or lingers (INTEGRATIONS-FIX-2 #1, FINAL Codex 2).
-   * `durable` (a transaction that will emit this node's own events, e.g. a connector's ledger write)
-   * commits with synchronous=FULL; it is decided at the outermost level.
+   * `durable` is accepted for callers that mark a ledger write. It no longer flips synchronous=FULL
+   * on this thread; own events are barrier-fsynced after the commit, before peers are told.
    */
   transaction<T>(fn: () => T, opts: { durable?: boolean } = {}): T {
+    void opts.durable;
     const mark = this.deferred.length;
     const snaps = this.hooks.map((h) => h.snapshot());
-    const outermost = this.txDepth === 0;
-    if (outermost && opts.durable) this.setSync("FULL");
     this.txDepth++;
     let out: T;
     try {
@@ -361,7 +367,6 @@ export class Store {
       throw err;
     } finally {
       this.txDepth--;
-      if (outermost) this.setSync("NORMAL");
     }
     if (this.txDepth === 0) this.flushDeferred();
     return out;
@@ -485,6 +490,7 @@ export class Store {
   close(): void {
     if (this.claimIndexTimer) clearTimeout(this.claimIndexTimer);
     this.claimIndexTimer = null;
+    this.wal.close();
     try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* best effort on shutdown */ }
     this.db.close(false);
   }
@@ -554,10 +560,8 @@ export class Store {
     return this.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events").get()?.n ?? 0;
   }
 
-  /** Inserts a full event (status ok or rejected) and advances vv. This node's own rows commit durably (FULL). */
+  /** Inserts a full event (status ok or rejected) and advances vv. Own rows are barrier-fsynced before peers are told. */
   insertEvent(ev: Event, status: "ok" | "rejected", reason: string | null, fin = false): void {
-    const durable = ev.origin === this.selfId && this.txDepth === 0;
-    if (durable) this.setSync("FULL");
     try {
       this.db.transaction(() => {
         this.insertFull(ev, status, reason, fin);
@@ -567,8 +571,6 @@ export class Store {
     } catch (err) {
       this.vvCache = null;
       throw err;
-    } finally {
-      if (durable) this.setSync("NORMAL");
     }
   }
 

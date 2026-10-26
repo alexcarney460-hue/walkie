@@ -170,7 +170,7 @@ function processGone(pid: number): boolean {
 function processInert(pid: number): boolean {
   if (processGone(pid)) return true;
   const ps = Bun.spawnSync(["/bin/ps", "-p", String(pid), "-o", "stat="],
-    { stdout: "pipe", stderr: "pipe", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+    { stdout: "pipe", stderr: "pipe", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
   return ps.exitCode === 0 && /^[ZX]/.test(ps.stdout.toString().trim());
 }
 function darwinBsdInfo(pid: number): Pick<DarwinProcess, "pid" | "ppid" | "pgid" | "uid" | "stat" | "started"> | null {
@@ -203,7 +203,7 @@ function darwinBsdInfo(pid: number): Pick<DarwinProcess, "pid" | "ppid" | "pgid"
  * whose ps parent chain no longer reaches the probe, and whose session is unreadable can escape. */
 function darwinProcessInventory(): Map<number, DarwinProcess> {
   const ps = Bun.spawnSync(["/bin/ps", "-A", "-o", "pid=,ppid=,pgid=,sess=,uid=,stat=,lstart="],
-    { stdout: "pipe", stderr: "pipe", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+    { stdout: "pipe", stderr: "pipe", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
   if (ps.exitCode !== 0) throw new OssProbeFailure("OSS probe process inventory failed");
   return darwinInventoryFromPs(ps.stdout.toString());
 }
