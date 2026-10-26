@@ -107,12 +107,13 @@ describe("config / logger / service", () => {
     }
   });
 
-  test("logger writes JSON lines and rotates", () => {
+  test("logger writes JSON lines and rotates", async () => {
     const dir = mkdtempSync("/tmp/walkie-log-");
     try {
       const file = join(dir, "daemon.log");
       const log = createLogger({ file, maxBytes: 200, keep: 2 });
       for (let i = 0; i < 20; i++) log.info("line", { i });
+      await log.flush();
       expect(existsSync(`${file}.1`)).toBe(true);
       expect(existsSync(`${file}.2`)).toBe(true);
       expect(existsSync(`${file}.3`)).toBe(false);

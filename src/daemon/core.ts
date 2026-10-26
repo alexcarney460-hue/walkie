@@ -1010,9 +1010,18 @@ export class Core {
     // inside a ledger transaction that then fails leaves no trace anywhere, and its seq is reused.
     this.store.afterCommit(() => {
       this.hub.publishEvent(ev);
-      if (ev.origin === this.nodeId) this.onLocalEvent?.(ev);
       if (catalogPost(ev)) this.onCatalogChange?.();
       if (ev.kind === "msg.post" || ev.kind === "artifact.share") this.onPostChange?.(ev, "accepted");
+      // Peers are told only after the WAL fsync (wal-sync.ts). That wait is not on this thread: a slow
+      // disk delays replication, not the socket. Local publication above already happened. The handler is
+      // the one installed now: a handler set later does not receive an event that had nowhere to go.
+      const push = ev.origin === this.nodeId ? this.onLocalEvent : null;
+      if (push) {
+        const gen = this.store.noteDurable();
+        void this.store.whenDurable(gen).then(() => push(ev)).catch((err) => {
+          this.log.warn("durable_push_failed", { err: err instanceof Error ? err.message : String(err) });
+        });
+      }
     });
   }
 

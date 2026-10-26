@@ -63,6 +63,7 @@ describe("#1 an emit inside a transaction that rolls back", () => {
       rolledBackId = ev.id;
       throw new Error("ledger write failed");
     })).toThrow("ledger write failed");
+    await core.store.whenDurable();
     await Bun.sleep(20);
     expect(core.store.getRow(rolledBackId)).toBeNull();
     expect(core.store.allocatedSelfSeq(core.nodeId)).toBe(seqBefore);
@@ -71,6 +72,7 @@ describe("#1 an emit inside a transaction that rolls back", () => {
     expect(sse.frames()).not.toContain("SECRET-ROLLED-BACK");
     // The next emit takes that seq again, with different content: the only copy anyone ever sees.
     const next = core.emit("msg.post", { text: "the real one" }, { channel: "general" });
+    await core.store.whenDurable();
     await Bun.sleep(20);
     expect(next.id).toBe(rolledBackId);
     expect(seen.map((e) => e.id)).toEqual([next.id]);
@@ -96,7 +98,9 @@ describe("#1 an emit inside a transaction that rolls back", () => {
       } catch { /* the savepoint rolled back */ }
       core.emit("msg.post", { text: "c" }, { channel: "general" });
     });
-    expect(order).toEqual(["in-tx", "pub:a", "push:a", "pub:c", "push:c"]);
+    expect(order).toEqual(["in-tx", "pub:a", "pub:c"]);
+    await core.store.whenDurable();
+    expect(order).toEqual(["in-tx", "pub:a", "pub:c", "push:a", "push:c"]);
     const texts = core.store.queryEvents({ kinds: ["msg.post"], limit: 10 }).map((r) => (JSON.parse(r.json) as Event).body.text);
     expect(texts.sort()).toEqual(["a", "c"]);
   });

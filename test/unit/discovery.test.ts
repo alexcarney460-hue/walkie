@@ -105,6 +105,21 @@ describe("process parsing", () => {
 });
 
 describe("agent discovery", () => {
+  test("a failed session lookup does not mark a still-running session exited", async () => {
+    const { core, fx, disc } = setup();
+    fx.procs.push(proc(700, 1, "grok -p --prompt-file /fixture/task"), proc(701, 700, "node /fixture/mcp", ME, T0 + 2_000));
+    fx.env.set(701, { GROK_SESSION_ID: "abc123-4567" });
+    await disc.tick();
+    expect(status(core, "grok-abc123")).toMatchObject({ state: "working" });
+    fx.env.delete(701);
+    await disc.tick();
+    expect(status(core, "grok-abc123")).toMatchObject({ state: "working" });
+    expect(status(core, "grok-abc123")?.activity).not.toBe(EXITED_ACTIVITY);
+    expect(status(core, "grok-pid700")).toBeNull();
+    fx.procs = [proc(1, 0, "/sbin/launchd", 0)];
+    await disc.tick();
+    expect(status(core, "grok-abc123")).toMatchObject({ state: "offline", activity: EXITED_ACTIVITY });
+  });
   test("Grok child session id matches its hook card without a second process card", async () => {
     const { core, fx, disc, repo } = setup();
     fx.procs.push(proc(700, 1, "grok -p --prompt-file /fixture/task"), proc(701, 700, "node /fixture/mcp", ME, T0 + 2_000));

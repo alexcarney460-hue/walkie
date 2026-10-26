@@ -35,7 +35,7 @@ export function fakePids(marker: string): number[] {
     }
     return out;
   }
-  const r = Bun.spawnSync(["ps", "-axwwE", "-o", "pid=,command="], { stdout: "pipe", stderr: "ignore", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+  const r = Bun.spawnSync(["ps", "-axwwE", "-o", "pid=,command="], { stdout: "pipe", stderr: "ignore", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
   if (r.exitCode !== 0) throw new Error("ps failed");
   const re = new RegExp(`(?:^|\\s)${want.replace(/[-]/g, "\\-")}(?:\\s|$)`);
   for (const line of r.stdout.toString().split("\n")) {
@@ -58,7 +58,7 @@ export function procList(scope: string | null): Proc[] {
     ? (() => { const pids = fakePids(scope); return pids.length ? ["ps", "-o", "pid=,stat=", "-p", pids.join(",")] : null; })()
     : ["ps", "-U", String(process.getuid?.() ?? -1), "-o", "pid=,stat="];
   if (!argv) return [];
-  const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
+  const r = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe", timeout: 2_000, env: { PATH: "/bin:/usr/bin", LC_ALL: "C" } });
   const text = r.stdout.toString();
   // ps exits 1 with nothing printed (and nothing on stderr) when no process matches: an empty list. Anything else is
   // a failure to tell.

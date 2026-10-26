@@ -2444,9 +2444,11 @@ The provider and approximate region remain observable to a shell user through ha
   is held (`future_ts`) on every peer, expires from the hold after 24 h and is pulled again (peers resume pulls past
   the held row, so the origin isn't re-fetched every round). Nothing it says is lost, but nothing is shown either.
   The authority is exempt (its entries apply whatever their `ts`). `walkie doctor` reports clock skew above 5 s.
-- **Durability**: a transaction that writes an event this node signed commits with `synchronous=FULL` (on disk before
-  it is acknowledged or pushed), so a power cut can't make the node reuse a sequence number its peers already hold
-  under different content. Peers' events and verdicts commit with `NORMAL`: a lost one is pulled again.
+- **Durability**: a transaction that writes an event this node signed commits with `synchronous=NORMAL` and
+  `fullfsync` off, so the commit does not fsync on the daemon thread (that fsync stalled the process for seconds
+  when the disk was busy). Peers are told only after a WAL fsync on a background thread. A power cut before that
+  fsync loses the event locally and nowhere else, so the node does not reuse the sequence number for different
+  content peers already hold. Peers' events and verdicts were already `NORMAL`: a lost one is pulled again.
 - **Plan limits are enforced by the authority's daemon only, at emit time** (soft enforcement by design): a modified
   authority binary can ignore them, and every node still accepts what it signs, because plans never enter validity.
   The vendor-key trust is what licensing rests on: a leak of the private signing key (`~/keys/…`, the site's

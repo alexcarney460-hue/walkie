@@ -316,7 +316,7 @@ export class Ledger {
  * nothing on stderr). Throws when it can't tell (SEATS-FIX-8, Codex r8 MEDIUM 1).
  */
 export function processStart(pid: number): string | null {
-  const r = Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe", cwd: "/", env: { PATH: "/usr/bin:/bin", LC_ALL: "C" } });
+  const r = Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe", timeout: 2_000, cwd: "/", env: { PATH: "/usr/bin:/bin", LC_ALL: "C" } });
   const out = r.stdout.toString().trim();
   if (r.exitCode === 0 && out) return out;
   if (r.exitCode === 1 && !out && !r.stderr.toString().trim()) return null;
